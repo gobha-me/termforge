@@ -1,6 +1,9 @@
 # TermForge: compiled static library.
 add_library(${PROJECT_NAME}_lib STATIC
   core/terminal.cpp
+  core/screen.cpp
+  core/renderer.cpp
+  core/input.cpp
   drivers/ansi_rgb_driver.cpp
   drivers/fallback_driver.cpp
   drivers/select_driver.cpp
