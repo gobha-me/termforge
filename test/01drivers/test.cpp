@@ -63,6 +63,24 @@ TEST_CASE("AnsiRgbDriver: identical color runs coalesce SGR sequences", "[driver
   REQUIRE(out.find("38;2;255;0;0") == out.rfind("38;2;255;0;0"));  // fg appears once
 }
 
+
+TEST_CASE("AnsiRgbDriver: odd-height image renders its last row (no dropped row)", "[drivers][failure]") {
+  AnsiRgbDriver d;
+  std::string out;
+  d.set_output(&out);
+  // 1x3 image: three rows must all render — the bug dropped row 3.
+  Image img{1, 3, {Pixel{255, 0, 0, 255}, Pixel{0, 255, 0, 255}, Pixel{0, 0, 255, 255}}};
+  REQUIRE(d.draw_image(0, 0, img).has_value());
+  d.flush();
+  // two half-block cells rendered (rows 0-1, then row 2 + padding)
+  int blocks = 0;
+  size_t pos = 0;
+  while ((pos = out.find("\xE2\x96\x80", pos)) != std::string::npos) { ++blocks; pos += 3; }
+  REQUIRE(blocks == 2);
+  // the third row's blue is present as a foreground color
+  REQUIRE(out.find("38;2;0;0;255") != std::string::npos);
+}
+
 TEST_CASE("FallbackDriver: image degrades to ASCII luminance", "[drivers]") {
   FallbackDriver d;
   std::string out;

@@ -37,11 +37,16 @@ auto AnsiRgbDriver::draw_image(int x, int y, const Image& image)
     return (static_cast<int>(p.r) << 16) | (static_cast<int>(p.g) << 8) | p.b;
   };
 
-  for (int row = 0; row + 1 < image.height(); row += 2) {
+  // Render two rows per cell (upper/lower half-block). For an odd-height
+  // image the final row pairs with a transparent-black lower half so no row
+  // is silently dropped.
+  for (int row = 0; row < image.height(); row += 2) {
     m_buf += std::format("\033[{};{}H", y + row / 2 + 1, x + 1);
     for (int col = 0; col < image.width(); ++col) {
       const Pixel& up = image.at(col, row);
-      const Pixel& lo = image.at(col, row + 1);
+      static const Pixel kTransparent{0, 0, 0, 0};
+      const Pixel& lo = (row + 1 < image.height()) ? image.at(col, row + 1)
+                                                   : kTransparent;
       const int fg = rgb_id(up), bg = rgb_id(lo);
       if (fg != cur_fg) {
         m_buf += std::format("\033[38;2;{};{};{}m", up.r, up.g, up.b);
