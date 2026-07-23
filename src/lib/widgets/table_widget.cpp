@@ -35,6 +35,12 @@ auto TableWidget::clear_rows() -> void {
   mark_dirty();
 }
 
+auto TableWidget::set_selected(int row) -> void {
+  const int max_row = static_cast<int>(m_rows.size()) - 1;
+  m_selected = std::clamp(row, -1, max_row);
+  mark_dirty();
+}
+
 auto TableWidget::scroll(int delta) -> void {
   const int max_scroll =
       std::max(0, static_cast<int>(m_rows.size()) - (rect().h - 1));
@@ -107,14 +113,17 @@ auto TableWidget::draw(Screen& screen) -> void {
     if (row_idx >= static_cast<int>(m_rows.size())) break;
 
     const auto& row = m_rows[static_cast<std::size_t>(row_idx)];
-    const Rgb bg = (row_idx % 2 == 0) ? m_row_bg : m_alt_bg;
+    const bool is_sel = (row_idx == m_selected);
+    const Rgb fg = is_sel ? m_selected_fg : m_row_fg;
+    const Rgb bg = is_sel ? m_selected_bg
+                          : (row_idx % 2 == 0 ? m_row_bg : m_alt_bg);
     cx = r.x;
     for (std::size_t c = 0; c < m_columns.size() && cx < r.x + r.w; ++c) {
       const int w = std::min(widths[c], r.x + r.w - cx);
       const std::string& cell =
           c < row.size() ? row[c] : std::string{};
       render_cell(screen, cx, r.y + 1 + vr, w, cell, m_columns[c].align,
-                  m_row_fg, bg);
+                  fg, bg);
       cx += w + 1;
     }
   }
@@ -140,6 +149,18 @@ auto TableWidget::on_event(const Event& ev) -> bool {
   if (const auto* m = std::get_if<MouseEvent>(&ev)) {
     if (m->scroll_up) { scroll(-3); return true; }
     if (m->scroll_down) { scroll(3); return true; }
+    if (m->pressed && m->button == 0 && rect().contains(m->x, m->y)) {
+      // Header row: consumed but inert (reserved for future sorting).
+      if (m->y == rect().y) return true;
+      const int clicked = m_scroll + (m->y - rect().y - 1);
+      if (clicked >= 0 && clicked < static_cast<int>(m_rows.size())) {
+        m_selected = clicked;
+        mark_dirty();
+        if (m_on_select)
+          m_on_select(clicked, m_rows[static_cast<std::size_t>(clicked)]);
+      }
+      return true;  // any click inside the table is consumed
+    }
   }
   return false;
 }

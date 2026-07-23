@@ -101,7 +101,7 @@ auto App::route_mouse(const MouseEvent& ev,
   // Check in reverse order (last registered = topmost).
   for (auto it = widgets.end(); it != widgets.begin();) {
     --it;
-    if ((*it)->rect().contains(ev.x, ev.y)) {
+    if ((*it)->hit_test(ev.x, ev.y)) {
       return (*it)->on_event(ev);
     }
   }

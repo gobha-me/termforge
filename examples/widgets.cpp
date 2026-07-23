@@ -76,6 +76,11 @@ class WidgetsDemo final : public App {
     m_input.on_change([this](const std::string& t) {
       set_status(std::format("Input: \"{}\"", t));
     });
+    // A click focuses the input itself; keep the app's focus model in sync.
+    m_input.on_click([this] {
+      m_focus = kInput;
+      update_focus();
+    });
 
     // Progress.
     m_progress.set_label("Loading...");
@@ -84,10 +89,15 @@ class WidgetsDemo final : public App {
   }
 
   auto on_event(const Event& ev) -> void override {
-    // Mouse events: route to the widget under the cursor.
+    // Mouse events: route to the widget under the cursor. The menu is
+    // listed last (= topmost) so its open dropdown wins over the widgets
+    // it overlays. A press outside the menu closes the dropdown first,
+    // then still routes to whatever was clicked.
     if (const auto* m = std::get_if<MouseEvent>(&ev)) {
-      if (route_mouse(*m, {&m_menu, &m_input, &m_btn_ok, &m_btn_cancel,
-                           &m_list}))
+      if (m->pressed && m_menu.dropdown_open() && !m_menu.hit_test(m->x, m->y))
+        m_menu.close_dropdown();
+      if (route_mouse(*m, {&m_input, &m_btn_ok, &m_btn_cancel, &m_list,
+                           &m_menu}))
         return;
     }
 
@@ -200,7 +210,8 @@ class WidgetsDemo final : public App {
     screen.write_text(W - 18, 0, std::format(" Focus: {:6}", names[m_focus]),
                       Rgb{0x60, 0x60, 0x80}, Rgb{0x20, 0x20, 0x40});
 
-    // Menu bar drawn LAST so the dropdown overlays all other content.
+    // Menu bar drawn LAST so the dropdown overlays all other content
+    // (and listed last in route_mouse above so it's topmost for clicks).
     m_menu.set_geometry({0, 0, W, menu_h});
     m_menu.draw(screen);
 

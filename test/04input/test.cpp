@@ -130,6 +130,21 @@ TEST_CASE("Input: SGR mouse release decodes", "[input][mouse]") {
   REQUIRE_FALSE(m->pressed);
 }
 
+TEST_CASE("Input: drag motion is not a press", "[input][mouse]") {
+  // Regression: ?1002h motion-while-pressed sets bit 5 (32) in the button
+  // code; unmasked it decoded as a fresh press, so dragging across a
+  // Button re-fired its click handler continuously.
+  Input in;
+  auto ev = in.decode("\033[<32;5;3M");
+  REQUIRE(!ev.empty());
+  auto* m = std::get_if<MouseEvent>(&ev.front());
+  REQUIRE(m != nullptr);
+  REQUIRE_FALSE(m->pressed);
+  REQUIRE(m->button == 0);
+  REQUIRE(m->x == 4);
+  REQUIRE(m->y == 2);
+}
+
 TEST_CASE("Input: SGR mouse scroll wheel decodes", "[input][mouse]") {
   Input in;
   // Scroll up: button 64 (bit 6 set, low bit 0).

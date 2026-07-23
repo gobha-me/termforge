@@ -51,6 +51,12 @@ class TextInput final : public Widget {
     m_on_change = std::move(cb);
   }
 
+  // Callback when the widget is clicked. A click focuses the widget and
+  // places the cursor; the parent uses this to sync its own focus model.
+  auto on_click(std::function<void()> cb) -> void {
+    m_on_click = std::move(cb);
+  }
+
   auto draw(Screen& screen) -> void override;
   auto on_event(const Event& ev) -> bool override;
 
@@ -72,6 +78,7 @@ class TextInput final : public Widget {
   Rgb m_placeholder_fg{0x50, 0x50, 0x60};
 
   std::function<void(const std::string&)> m_on_change;
+  std::function<void()> m_on_click;
 };
 
 }  // namespace termforge
