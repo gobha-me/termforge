@@ -3,6 +3,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdio>
+#include <initializer_list>
 #include <thread>
 
 #include <sys/ioctl.h>
