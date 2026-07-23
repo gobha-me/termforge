@@ -33,6 +33,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/cmake/dependencies.cmake)
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/src/lib)
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/src/bin)
 
+option(${PROJECT_NAME}_EXAMPLES "ENABLE EXAMPLES" ON)
 option(${PROJECT_NAME}_TESTS "ENABLE TESTS" ON)
 
 if (${PROJECT_NAME}_TESTS)
@@ -41,5 +42,9 @@ if (${PROJECT_NAME}_TESTS)
 
   add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/test)
 endif(${PROJECT_NAME}_TESTS)
+
+if (${PROJECT_NAME}_EXAMPLES)
+  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/examples)
+endif(${PROJECT_NAME}_EXAMPLES)
 
 # TODO Install Template - even if it is commented out as examples
