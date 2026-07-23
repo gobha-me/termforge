@@ -1,0 +1,113 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  gcc:
+    name: GCC ${{ matrix.version }} (Ubuntu ${{ matrix.os }})
+    runs-on: ubuntu-${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [latest]
+        version: [13, 14]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GCC ${{ matrix.version }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-${{ matrix.version }}
+
+      - name: Configure
+        run: >
+          cmake -B build
+          -DCMAKE_CXX_COMPILER=g++-${{ matrix.version }}
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  clang:
+    name: Clang ${{ matrix.version }} (Ubuntu ${{ matrix.os }})
+    runs-on: ubuntu-${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [latest]
+        version: [17, 18]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clang ${{ matrix.version }}
+        run: |
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          sudo add-apt-repository "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-${{ matrix.version }} main"
+          sudo apt-get update
+          sudo apt-get install -y clang-${{ matrix.version }}
+
+      - name: Configure
+        run: >
+          cmake -B build
+          -DCMAKE_CXX_COMPILER=clang++-${{ matrix.version }}
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  asan-ubsan:
+    name: ASan + UBSan (GCC, Ubuntu latest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GCC
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-14
+
+      - name: Configure (ASan + UBSan)
+        run: >
+          cmake -B build
+          -DCMAKE_CXX_COMPILER=g++-14
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+
+  fedora:
+    name: GCC (Fedora latest)
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - name: Install toolchain
+        run: dnf install -y gcc-c++ cmake git make
+
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
