@@ -127,7 +127,7 @@ TEST_CASE("KittyDriver: empty image is a warning event", "[drivers][kitty][failu
   REQUIRE(r.error().source == "kitty");
 }
 
-TEST_CASE("KittyDriver: draw_image emits APC transmit + place", "[drivers][kitty]") {
+TEST_CASE("KittyDriver: draw_image emits APC transmit + virtual placement + placeholders", "[drivers][kitty]") {
   KittyDriver d;
   std::string out;
   d.set_output(&out);
@@ -141,9 +141,13 @@ TEST_CASE("KittyDriver: draw_image emits APC transmit + place", "[drivers][kitty
   REQUIRE(out.find("f=32") != std::string::npos);         // RGBA format
   REQUIRE(out.find("s=1") != std::string::npos);          // width
   REQUIRE(out.find("v=1") != std::string::npos);          // height
+  REQUIRE(out.find("q=2") != std::string::npos);          // quiet (no ack)
   REQUIRE(out.find("\033\\") != std::string::npos);       // ST terminator
-  // Should contain a placement command.
+  // Should contain a virtual placement command.
   REQUIRE(out.find("a=p") != std::string::npos);          // place
+  REQUIRE(out.find("U=1") != std::string::npos);          // virtual placement
+  // Should contain the Unicode placeholder character (U+10EEEE).
+  REQUIRE(out.find("\xF4\x8F\xBB\xAE") != std::string::npos);
 }
 
 TEST_CASE("KittyDriver: same image drawn twice reuses image ID (no re-upload)", "[drivers][kitty]") {
@@ -157,9 +161,10 @@ TEST_CASE("KittyDriver: same image drawn twice reuses image ID (no re-upload)", 
   out.clear();
   REQUIRE(d.draw_image(5, 5, img).has_value());
   d.flush();
-  // Second draw should NOT contain a transmit (a=t), only a place (a=p).
+  // Second draw should NOT contain a transmit (a=t), only placeholder cells.
   REQUIRE(out.find("a=t") == std::string::npos);
-  REQUIRE(out.find("a=p") != std::string::npos);
+  // Should still emit placeholder cells at the new position.
+  REQUIRE(out.find("\xF4\x8F\xBB\xAE") != std::string::npos);
 }
 
 TEST_CASE("KittyDriver: large image chunks at 4096 bytes", "[drivers][kitty]") {
@@ -193,4 +198,47 @@ TEST_CASE("KittyDriver: draw_text emits SGR colors", "[drivers][kitty]") {
   REQUIRE(out.find("38;2;255;0;0") != std::string::npos);   // fg red
   REQUIRE(out.find("48;2;0;0;255") != std::string::npos);   // bg blue
   REQUIRE(out.find("Hi") != std::string::npos);
+}
+
+TEST_CASE("KittyDriver: placeholder grid for 2x2 image", "[drivers][kitty]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  // 2x2 image → 2 rows × 2 cols of placeholder cells.
+  Image img{2, 2, {Pixel{255, 0, 0, 255}, Pixel{0, 255, 0, 255},
+                   Pixel{0, 0, 255, 255}, Pixel{255, 255, 0, 255}}};
+  REQUIRE(d.draw_image(0, 0, img).has_value());
+  d.flush();
+
+  // Count placeholder characters (U+10EEEE = F4 8F BB AE).
+  int ph_count = 0;
+  std::size_t pos = 0;
+  while ((pos = out.find("\xF4\x8F\xBB\xAE", pos)) != std::string::npos) {
+    ++ph_count;
+    pos += 4;
+  }
+  REQUIRE(ph_count == 4);  // 2×2 grid
+
+  // Virtual placement should specify c=2, r=2.
+  REQUIRE(out.find("c=2") != std::string::npos);
+  REQUIRE(out.find("r=2") != std::string::npos);
+
+  // SGR reset after the grid.
+  REQUIRE(out.find("\033[0m") != std::string::npos);
+}
+
+TEST_CASE("KittyDriver: diacritics present for non-zero row/col", "[drivers][kitty]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  // 3x1 image: 1 row, 3 cols. Cell (0,1) has col=1 → diacritic U+0301.
+  // Cell (0,2) has col=2 → diacritic U+0302.
+  Image img{3, 1, {Pixel{255, 0, 0, 255}, Pixel{0, 255, 0, 255},
+                   Pixel{0, 0, 255, 255}}};
+  REQUIRE(d.draw_image(0, 0, img).has_value());
+  d.flush();
+
+  // U+0301 in UTF-8: CC 81. U+0302 in UTF-8: CC 82.
+  REQUIRE(out.find("\xCC\x81") != std::string::npos);  // col 1 diacritic
+  REQUIRE(out.find("\xCC\x82") != std::string::npos);  // col 2 diacritic
 }

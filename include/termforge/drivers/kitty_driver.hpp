@@ -6,6 +6,11 @@
 // Supports full 32-bit RGBA, chunked transmission, image IDs for server-side
 // caching, and Unicode placeholders for tmux compatibility.
 //
+// Unicode placeholders: images are placed as U+10EEEE text cells with
+// diacritical row/column indices and SGR foreground encoding the image ID.
+// This makes images part of the terminal's text grid, surviving tmux pane
+// operations (splits, resizes, detach/reattach).
+//
 // Text is rendered identically to AnsiRgbDriver (SGR truecolor) — the Kitty
 // protocol only handles pixel data, not text styling.
 //
@@ -16,6 +21,7 @@
 #include <expected>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace termforge {
 
@@ -44,11 +50,22 @@ class KittyDriver final : public TerminalDriver {
   // Returns the assigned image ID, or an error.
   auto transmit(const Image& image) -> std::expected<std::uint32_t, ErrorEvent>;
 
-  // Place a previously transmitted image at the cursor position.
-  auto place(std::uint32_t image_id, int x, int y) -> void;
+  // Create a virtual placement and emit Unicode placeholder cells.
+  // The image becomes part of the text grid (tmux-safe).
+  auto place_unicode(std::uint32_t image_id, int x, int y, int cols,
+                     int rows) -> void;
 
   // Delete all transmitted images from terminal memory.
   auto delete_all() -> void;
+
+  // Encode an image ID as an SGR foreground color sequence.
+  // IDs ≤ 0xFFFFFF fit in 24-bit RGB; higher IDs need the 4th byte
+  // encoded via an additional diacritic (not yet supported).
+  auto emit_id_as_sgr(std::uint32_t id) -> void;
+
+  // Append a Unicode placeholder cell (U+10EEEE + diacritics) to m_buf.
+  // row/col are 0-based indices within the image placement.
+  static void append_placeholder(std::string& buf, int row, int col);
 
   std::string* m_sink{nullptr};
   std::string m_buf;
@@ -56,9 +73,13 @@ class KittyDriver final : public TerminalDriver {
   int m_cur_bg{-1};
 
   std::uint32_t m_next_image_id{1};
+  std::uint32_t m_next_placement_id{1};
   // Cache: image content hash -> image ID, to avoid re-uploading the same
   // image on every frame. Key is a simple FNV-1a hash of the pixel data.
   std::unordered_map<std::uint64_t, std::uint32_t> m_image_cache;
+  // Track which image IDs already have a virtual placement (avoid
+  // re-creating the placement on re-draw, just re-emit the cells).
+  std::unordered_set<std::uint32_t> m_placed_images;
 };
 
 }  // namespace termforge
