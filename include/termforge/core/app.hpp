@@ -69,6 +69,13 @@ class App {
   // from draw() is already in the Screen.
   auto render_pixel_regions(Widget& widget) -> void;
 
+  // Route a MouseEvent to the widget whose rect contains (x,y).
+  // Widgets are checked in reverse registration order (last added =
+  // topmost). Returns true if any widget consumed the event.
+  // The subclass calls this from on_event for MouseEvents.
+  auto route_mouse(const MouseEvent& ev,
+                   std::initializer_list<Widget*> widgets) -> bool;
+
  private:
   // Flush collected pixel-region images to the driver. Called by run()
   // after renderer->present so images overlay cells.

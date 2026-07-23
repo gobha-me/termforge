@@ -172,11 +172,14 @@ void emit(const char* seq) { ::write(STDOUT_FILENO, seq, std::strlen(seq)); }
 }  // namespace
 
 auto Terminal::enter_screen() -> void {
-  emit("\033[?1049h\033[?25l\033[2J\033[H");  // alt-buffer, hide cursor, clear, home
+  // alt-buffer, hide cursor, clear, home, SGR mouse (1006), button-event
+  // mouse tracking (1002: report press/release + scroll).
+  emit("\033[?1049h\033[?25l\033[2J\033[H\033[?1006h\033[?1002h");
 }
 
 auto Terminal::leave_screen() -> void {
-  emit("\033[0m\033[?25h\033[?1049l");  // reset attrs, show cursor, main screen
+  // Disable mouse tracking, reset attrs, show cursor, main screen.
+  emit("\033[?1002l\033[?1006l\033[0m\033[?25h\033[?1049l");
 }
 
 auto Terminal::is_console_vt() const noexcept -> bool {

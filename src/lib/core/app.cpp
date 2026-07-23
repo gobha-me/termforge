@@ -95,6 +95,18 @@ auto App::on_event(const Event& ev) -> void {
   }
 }
 
+auto App::route_mouse(const MouseEvent& ev,
+                      std::initializer_list<Widget*> widgets) -> bool {
+  // Check in reverse order (last registered = topmost).
+  for (auto it = widgets.end(); it != widgets.begin();) {
+    --it;
+    if ((*it)->rect().contains(ev.x, ev.y)) {
+      return (*it)->on_event(ev);
+    }
+  }
+  return false;
+}
+
 auto App::render_pixel_regions(Widget& widget) -> void {
   if (!m_driver || !m_driver->capabilities().kitty_graphics) return;
 
