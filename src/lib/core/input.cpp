@@ -90,11 +90,46 @@ auto Input::decode_one(std::string_view buf) -> std::size_t {
 
 auto Input::parse_csi(std::string_view buf) -> std::size_t {
   // buf starts with ESC [ . Minimal CSI grammar: params (0-9;) + final byte.
+  // SGR mouse: ESC [ < b ; x ; y (M|m) — three params after '<'.
+
+  // Check for SGR mouse marker first.
+  if (buf.size() >= 4 && buf[2] == '<') {
+    std::size_t i = 3;
+    int params[3] = {0, 0, 0};
+    int pi = 0;
+    while (i < buf.size() && pi < 3 &&
+           (std::isdigit(static_cast<unsigned char>(buf[i])) ||
+            buf[i] == ';')) {
+      if (buf[i] == ';') { ++pi; ++i; continue; }
+      if (pi < 3) params[pi] = params[pi] * 10 + (buf[i] - '0');
+      ++i;
+    }
+    if (i >= buf.size()) return 0;  // incomplete
+    const char fin = buf[i];
+    ++i;
+
+    if (fin == 'M' || fin == 'm') {
+      MouseEvent me;
+      const int btn = params[0];
+      me.x = params[1] - 1;  // SGR is 1-based, we're 0-based
+      me.y = params[2] - 1;
+      me.pressed = (fin == 'M');
+      // Decode button + modifiers from the button code.
+      me.button = btn & 0x03;
+      me.scroll_up = (btn & 64) && (btn & 0x01) == 0;
+      me.scroll_down = (btn & 64) && (btn & 0x01) == 1;
+      m_events.push_back(me);
+      return i;
+    }
+    // Not a mouse event despite '<' marker — fall through to generic CSI.
+  }
+
+  // Generic CSI: params (0-9;) + final byte.
   std::size_t i = 2;
   int p1 = 0, p2 = 0;
   bool have_p2 = false;
   while (i < buf.size() && (std::isdigit(static_cast<unsigned char>(buf[i])) || buf[i] == ';' || buf[i] == '<')) {
-    if (buf[i] == '<') { ++i; continue; }  // SGR mouse marker
+    if (buf[i] == '<') { ++i; continue; }
     if (buf[i] == ';') {
       have_p2 = true;
       ++i;
@@ -107,21 +142,6 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
   if (i >= buf.size()) return 0;  // incomplete
   const char fin = buf[i];
   ++i;
-
-  // SGR mouse: ESC [ < b ; x ; y (M|m)
-  if (buf.size() >= 3 && buf[2] == '<') {
-    // Re-scan for the '<' form properly: params were b;x;y after '<'.
-    // For simplicity, treat p1 as button, p2 as x; we captured only two ints
-    // here, so decode defensively: require M/m terminator.
-    if (fin == 'M' || fin == 'm') {
-      MouseEvent me;
-      me.pressed = (fin == 'M');
-      // Note: a production parser would capture all three params; this first
-      // pass prioritizes not wedging on malformed input.
-      m_events.push_back(me);
-      return i;
-    }
-  }
 
   switch (fin) {
     case 'A': m_events.push_back(KeyEvent{Key::Up}); break;
