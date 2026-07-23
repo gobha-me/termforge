@@ -1,9 +1,11 @@
 #include "termforge/drivers/kitty_driver.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstring>
 #include <format>
+#include <vector>
 
 #include "detail/base64.hpp"
 
@@ -125,22 +127,24 @@ void KittyDriver::draw_text(int x, int y, std::string_view text, Rgb fg,
   m_buf += text;
 }
 
-auto KittyDriver::draw_image(int x, int y, const Image& image)
-    -> std::expected<void, ErrorEvent> {
-  if (image.empty()) {
-    return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
-                                      "draw_image: empty image"}};
-  }
+namespace {
 
-  // Hash the pixel data to check if we've already uploaded this image.
-  const auto* bytes =
-      reinterpret_cast<const std::byte*>(&image.at(0, 0));
+// Pack a region's screen geometry into a slot-map key.
+auto region_key(int x, int y, int w, int h) -> std::uint64_t {
+  auto u16 = [](int v) {
+    return static_cast<std::uint64_t>(static_cast<std::uint16_t>(v));
+  };
+  return (u16(x) << 48) | (u16(y) << 32) | (u16(w) << 16) | u16(h);
+}
+
+// FNV-1a hash of the dimensions plus pixel data. Dimensions matter:
+// a 4x1 and a 1x4 image can share the same byte stream but need
+// distinct uploads (the transmitted s=/v= geometry differs). Never
+// returns 0 (the slot's "nothing transmitted" sentinel).
+auto image_hash(const Image& image) -> std::uint64_t {
+  const auto* bytes = reinterpret_cast<const unsigned char*>(&image.at(0, 0));
   const std::size_t data_len = static_cast<std::size_t>(image.width()) *
                                image.height() * sizeof(Pixel);
-
-  // FNV-1a hash of the dimensions plus pixel data. Dimensions matter:
-  // a 4x1 and a 1x4 image can share the same byte stream but need
-  // distinct uploads (the transmitted s=/v= geometry differs).
   std::uint64_t hash = 14695981039346656037ULL;
   for (const std::uint32_t dim : {static_cast<std::uint32_t>(image.width()),
                                   static_cast<std::uint32_t>(image.height())}) {
@@ -150,25 +154,112 @@ auto KittyDriver::draw_image(int x, int y, const Image& image)
     }
   }
   for (std::size_t i = 0; i < data_len; ++i) {
-    hash ^= static_cast<std::uint64_t>(
-        reinterpret_cast<const unsigned char*>(bytes)[i]);
+    hash ^= static_cast<std::uint64_t>(bytes[i]);
     hash *= 1099511628211ULL;
   }
+  return hash == 0 ? 1 : hash;
+}
 
-  auto it = m_image_cache.find(hash);
-  std::uint32_t img_id;
-  if (it != m_image_cache.end()) {
-    img_id = it->second;  // already uploaded — reuse
+// Top-left crop to at most max_w x max_h cells/pixels.
+auto crop_image(const Image& image, int max_w, int max_h) -> Image {
+  const int w = std::min(image.width(), max_w);
+  const int h = std::min(image.height(), max_h);
+  std::vector<Pixel> px;
+  px.reserve(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+  for (int yy = 0; yy < h; ++yy)
+    for (int xx = 0; xx < w; ++xx) px.push_back(image.at(xx, yy));
+  return Image{w, h, std::move(px)};
+}
+
+// Bound on tracked regions; past this the least-recently-drawn slot is
+// deleted terminal-side and reused. Far above any realistic UI.
+constexpr std::size_t kMaxRegionSlots = 16;
+
+}  // namespace
+
+auto KittyDriver::region_slot(std::uint64_t key) -> RegionSlot& {
+  if (auto it = m_regions.find(key); it != m_regions.end()) return it->second;
+
+  RegionSlot slot;
+  if (m_regions.size() >= kMaxRegionSlots) {
+    auto lru = m_regions.begin();
+    for (auto it = m_regions.begin(); it != m_regions.end(); ++it)
+      if (it->second.last_used < lru->second.last_used) lru = it;
+    delete_image(lru->second.image_id);
+    // Recycle the evicted ids: with at most kMaxRegionSlots slots alive,
+    // image ids stay small (<= 255), which the placeholder path needs —
+    // kitty resolves placeholder cells reliably only via the 38;5;<id>
+    // fg encoding, which caps the id at one byte.
+    slot.image_id = lru->second.image_id;
+    slot.placement_id = lru->second.placement_id;
+    m_regions.erase(lru);
   } else {
-    auto res = transmit(image);
-    if (!res) return std::unexpected{res.error()};
-    img_id = *res;
-    m_image_cache[hash] = img_id;
+    slot.image_id = m_next_image_id++;
+    slot.placement_id = m_next_placement_id++;
+  }
+  return m_regions.emplace(key, slot).first->second;
+}
+
+auto KittyDriver::draw_image(int x, int y, const Image& image)
+    -> std::expected<void, ErrorEvent> {
+  if (image.empty()) {
+    return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
+                                      "draw_image: empty image"}};
   }
 
-  // Place using Unicode placeholders (tmux-safe). Each image pixel maps to
-  // one terminal cell. The terminal scales the pixel data to fit.
-  place_unicode(img_id, x, y, image.width(), image.height());
+  // Unicode placeholders index cells through a 297-entry diacritic table;
+  // crop so the transmitted geometry matches the placeable cell grid
+  // exactly. Classic placements have no such limit.
+  bool cropped = false;
+  Image cropped_img;
+  const Image* img = &image;
+  if (m_mode == PlacementMode::UnicodePlaceholders &&
+      (image.width() > kDiacriticCount || image.height() > kDiacriticCount)) {
+    cropped_img = crop_image(image, kDiacriticCount, kDiacriticCount);
+    img = &cropped_img;
+    cropped = true;
+  }
+
+  // Each region keeps one stable image id; changed content is retransmitted
+  // under that id (the terminal replaces the stored data), so animation
+  // doesn't accumulate images terminal-side.
+  auto& slot = region_slot(region_key(x, y, img->width(), img->height()));
+  bool content_changed = false;
+  if (const auto hash = image_hash(*img); hash != slot.content_hash) {
+    transmit(*img, slot.image_id);
+    slot.content_hash = hash;
+    content_changed = true;
+  }
+  slot.last_used = m_frame;
+
+  if (m_mode == PlacementMode::Classic) {
+    // kitty does NOT refresh an existing classic placement when the image
+    // data is replaced (verified empirically) — recreate the placement on
+    // every content change. Delete + re-place land in the same flush, so
+    // the swap is atomic on screen. Virtual (placeholder) placements DO
+    // track the latest data, so the unicode path skips this.
+    if (content_changed && slot.placed) {
+      m_buf += std::format("\033_Ga=d,d=i,i={},p={},q=2\033\\",
+                           slot.image_id, slot.placement_id);
+      slot.placed = false;
+    }
+    if (!slot.placed) {
+      place_classic(slot, x, y, img->width(), img->height());
+      slot.placed = true;
+    }
+  } else {
+    // Placeholder cells are re-emitted every frame (the cell grid is the
+    // placement); the virtual placement itself is created once.
+    place_unicode(slot, x, y, img->width(), img->height());
+    slot.placed = true;
+  }
+
+  if (cropped && !m_warned_crop) {
+    m_warned_crop = true;
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        "draw_image: image cropped to the 297-cell placeholder limit"}};
+  }
   return {};
 }
 
@@ -180,14 +271,12 @@ void KittyDriver::flush() {
     std::fflush(stdout);
   }
   m_buf.clear();
+  ++m_frame;  // LRU clock for region-slot eviction
 }
 
 // ── Kitty APC protocol ──────────────────────────────────────────────────────
 
-auto KittyDriver::transmit(const Image& image)
-    -> std::expected<std::uint32_t, ErrorEvent> {
-  const std::uint32_t id = m_next_image_id++;
-
+auto KittyDriver::transmit(const Image& image, std::uint32_t id) -> void {
   // Encode the raw RGBA pixel data as base64.
   const auto* raw = reinterpret_cast<const std::byte*>(&image.at(0, 0));
   const std::size_t raw_len = static_cast<std::size_t>(image.width()) *
@@ -218,26 +307,32 @@ auto KittyDriver::transmit(const Image& image)
     }
     offset += kChunkSize;
   }
-
-  return id;
 }
 
-auto KittyDriver::place_unicode(std::uint32_t image_id, int x, int y,
+auto KittyDriver::place_classic(const RegionSlot& slot, int x, int y,
                                 int cols, int rows) -> void {
-  // Clamp to what the diacritic table supports (297 rows/columns). The
-  // placement command below must declare the same clamped extent so the
-  // declared geometry matches the emitted cell grid.
-  const int clamped_rows = rows > kDiacriticCount ? kDiacriticCount : rows;
-  const int clamped_cols = cols > kDiacriticCount ? kDiacriticCount : cols;
+  // Position the cursor, then place. a=p displays a transmitted image at
+  // the cursor; C=1 keeps the cursor where it is. c=/r= scale the image to
+  // the region's cell grid (one image pixel per cell) — without them the
+  // terminal would render at natural pixel size, ~1 cell. Emitted once per
+  // slot; retransmitting the image data refreshes the placement in-place.
+  m_buf += std::format("\033[{};{}H", y + 1, x + 1);
+  m_buf += std::format("\033_Ga=p,i={},p={},c={},r={},C=1,q=2\033\\",
+                       slot.image_id, slot.placement_id, cols, rows);
+}
 
-  // Create a virtual placement if we haven't already for this image.
-  if (m_placed_images.find(image_id) == m_placed_images.end()) {
-    const std::uint32_t pid = m_next_placement_id++;
+auto KittyDriver::place_unicode(const RegionSlot& slot, int x, int y,
+                                int cols, int rows) -> void {
+  // draw_image cropped the image to the diacritic table's extent, so
+  // cols/rows are already <= kDiacriticCount and the declared geometry
+  // matches the emitted cell grid exactly.
+
+  // Create the virtual placement once per slot.
+  if (!slot.placed) {
     // a=p (place), i=<image_id>, p=<placement_id>, U=1 (virtual),
     // c=<cols>, r=<rows>, q=2 (suppress response)
     m_buf += std::format("\033_Ga=p,i={},p={},U=1,c={},r={},q=2\033\\",
-                         image_id, pid, clamped_cols, clamped_rows);
-    m_placed_images.insert(image_id);
+                         slot.image_id, slot.placement_id, cols, rows);
   }
 
   // Emit the placeholder cell grid. Each cell is:
@@ -245,14 +340,14 @@ auto KittyDriver::place_unicode(std::uint32_t image_id, int x, int y,
   //   U+10EEEE + row diacritic + column diacritic
   // The image ID is encoded once per row (SGR persists across cells).
 
-  for (int ry = 0; ry < clamped_rows; ++ry) {
+  for (int ry = 0; ry < rows; ++ry) {
     // Position cursor at start of this row.
     m_buf += std::format("\033[{};{}H", y + ry + 1, x + 1);
 
     // Set SGR foreground to the image ID (24-bit).
-    emit_id_as_sgr(image_id);
+    emit_id_as_sgr(slot.image_id);
 
-    for (int cx = 0; cx < clamped_cols; ++cx) {
+    for (int cx = 0; cx < cols; ++cx) {
       append_placeholder(m_buf, ry, cx);
     }
   }
@@ -263,14 +358,21 @@ auto KittyDriver::place_unicode(std::uint32_t image_id, int x, int y,
 }
 
 auto KittyDriver::emit_id_as_sgr(std::uint32_t id) -> void {
-  // Encode the 24-bit image ID as an SGR truecolor foreground.
-  // The terminal reads the fg color of each placeholder cell as the
-  // image ID. Supports IDs up to 0xFFFFFF (16.7M — far more than needed).
-  const auto r = static_cast<int>((id >> 16) & 0xFF);
-  const auto g = static_cast<int>((id >> 8) & 0xFF);
-  const auto b = static_cast<int>(id & 0xFF);
-  m_buf += std::format("\033[38;2;{};{};{}m", r, g, b);
-  m_cur_fg = static_cast<int>(id & 0xFFFFFF);
+  // Encode the image ID as the placeholder cells' SGR foreground. Use
+  // 256-color mode (38;5;<id>) for one-byte ids — kitty resolves this
+  // form reliably, while the 24-bit (38;2) form was observed to be
+  // ignored (accepted placement, nothing rendered). Ids stay <= 255 by
+  // construction (region_slot recycles evicted ids); the 24-bit form is
+  // kept only as a fallback for out-of-range ids.
+  if (id <= 0xFF) {
+    m_buf += std::format("\033[38;5;{}m", id);
+  } else {
+    const auto r = static_cast<int>((id >> 16) & 0xFF);
+    const auto g = static_cast<int>((id >> 8) & 0xFF);
+    const auto b = static_cast<int>(id & 0xFF);
+    m_buf += std::format("\033[38;2;{};{};{}m", r, g, b);
+  }
+  m_cur_fg = -1;  // unknown to draw_text's rgb cache — force re-emit
 }
 
 void KittyDriver::append_placeholder(std::string& buf, int row, int col) {
@@ -285,6 +387,11 @@ void KittyDriver::append_placeholder(std::string& buf, int row, int col) {
   buf.append(dia, static_cast<std::size_t>(n));
   n = diacritic_utf8(col, dia);
   buf.append(dia, static_cast<std::size_t>(n));
+}
+
+auto KittyDriver::delete_image(std::uint32_t image_id) -> void {
+  // a=d (delete), d=I (this id, freeing the data and its placements).
+  m_buf += std::format("\033_Ga=d,d=I,i={},q=2\033\\", image_id);
 }
 
 auto KittyDriver::delete_all() -> void {
