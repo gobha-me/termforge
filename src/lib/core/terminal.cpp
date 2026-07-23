@@ -14,7 +14,11 @@ namespace termforge {
 struct Terminal::Impl {
   termios saved{};
   bool saved_valid{false};
-  int tty_fd{STDOUT_FILENO};
+  // The fd raw mode is applied to. Reads happen on STDIN, so prefer it when
+  // it's a tty — termios settings (VMIN/VTIME) only affect the fd they're
+  // set on, and applying them to a different fd than the one being read
+  // silently breaks read timeouts when stdin/stdout aren't the same tty.
+  int tty_fd{isatty(STDIN_FILENO) != 0 ? STDIN_FILENO : STDOUT_FILENO};
 };
 
 Terminal::Terminal() : m_impl(std::make_unique<Impl>()) {}
@@ -29,7 +33,7 @@ auto Terminal::enter_raw() -> std::expected<void, ErrorEvent> {
   if (m_raw) return {};
   if (!isatty(m_impl->tty_fd)) {
     return std::unexpected{ErrorEvent{Severity::Error, "terminal",
-                                      "stdout is not a tty"}};
+                                      "stdin/stdout is not a tty"}};
   }
   termios raw{};
   if (tcgetattr(m_impl->tty_fd, &m_impl->saved) != 0) {
@@ -144,19 +148,19 @@ auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
 auto Terminal::set_read_timeout(int deciseconds) -> void {
   if (!m_raw) return;
   termios t{};
-  if (tcgetattr(STDIN_FILENO, &t) != 0) return;
+  if (tcgetattr(m_impl->tty_fd, &t) != 0) return;
   t.c_cc[VMIN] = 0;
   t.c_cc[VTIME] = static_cast<cc_t>(deciseconds < 0 ? 0 : (deciseconds > 255 ? 255 : deciseconds));
-  tcsetattr(STDIN_FILENO, TCSANOW, &t);
+  tcsetattr(m_impl->tty_fd, TCSANOW, &t);
 }
 
 auto Terminal::set_read_blocking() -> void {
   if (!m_raw) return;
   termios t{};
-  if (tcgetattr(STDIN_FILENO, &t) != 0) return;
+  if (tcgetattr(m_impl->tty_fd, &t) != 0) return;
   t.c_cc[VMIN] = 1;
   t.c_cc[VTIME] = 0;
-  tcsetattr(STDIN_FILENO, TCSANOW, &t);
+  tcsetattr(m_impl->tty_fd, TCSANOW, &t);
 }
 
 auto Terminal::read_input(char* out, int max) -> int {

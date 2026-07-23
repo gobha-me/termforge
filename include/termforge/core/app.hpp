@@ -15,6 +15,7 @@
 // force a full repaint. The terminal is always restored on exit (RAII + the
 // Terminal destructor), even on exception.
 
+#include <atomic>
 #include <memory>
 
 #include "termforge/core/input.hpp"
@@ -98,7 +99,9 @@ class App {
   std::vector<PixelRegion> m_pixel_regions;
   bool m_running{false};
   bool m_in_screen{false};
-  bool m_resize_pending{false};
+  // Set from the SIGWINCH handler — must be atomic (lock-free atomics are
+  // async-signal-safe; a plain bool write from a handler is a data race).
+  std::atomic<bool> m_resize_pending{false};
   int m_frame_ms{33};  // ~30fps default
 
   [[nodiscard]] auto current_size() const -> Size;
