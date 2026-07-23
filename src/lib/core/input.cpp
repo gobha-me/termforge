@@ -130,6 +130,7 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
     case 'D': m_events.push_back(KeyEvent{Key::Left}); break;
     case 'H': m_events.push_back(KeyEvent{Key::Home}); break;
     case 'F': m_events.push_back(KeyEvent{Key::End}); break;
+    case 'Z': m_events.push_back(KeyEvent{Key::Tab, 0, false, false, true}); break;
     case '~':
       switch (p1) {
         case 3: m_events.push_back(KeyEvent{Key::Delete}); break;

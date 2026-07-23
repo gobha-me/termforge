@@ -9,6 +9,7 @@ set(EXAMPLES
   chat
   low_level
   dashboard
+  widgets
 )
 
 foreach(EXAMPLE ${EXAMPLES})
