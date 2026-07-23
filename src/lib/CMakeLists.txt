@@ -8,6 +8,9 @@ add_library(${PROJECT_NAME}_lib STATIC
   core/image_loader.cpp
   detail/base64.cpp
   widgets/text_box.cpp
+  widgets/table_widget.cpp
+  widgets/list_widget.cpp
+  widgets/waveform_widget.cpp
   drivers/ansi_rgb_driver.cpp
   drivers/fallback_driver.cpp
   drivers/kitty_driver.cpp

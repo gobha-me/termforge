@@ -8,6 +8,7 @@ set(EXAMPLES
   input
   chat
   low_level
+  dashboard
 )
 
 foreach(EXAMPLE ${EXAMPLES})
