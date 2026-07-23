@@ -84,6 +84,13 @@ class WidgetsDemo final : public App {
   }
 
   auto on_event(const Event& ev) -> void override {
+    // Mouse events: route to the widget under the cursor.
+    if (const auto* m = std::get_if<MouseEvent>(&ev)) {
+      if (route_mouse(*m, {&m_menu, &m_input, &m_btn_ok, &m_btn_cancel,
+                           &m_list}))
+        return;
+    }
+
     // Menu dropdown consumes all keys when open.
     if (m_menu.dropdown_open()) {
       if (m_menu.on_event(ev)) return;
