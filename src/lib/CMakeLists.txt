@@ -11,6 +11,12 @@ add_library(${PROJECT_NAME}_lib STATIC
   widgets/table_widget.cpp
   widgets/list_widget.cpp
   widgets/waveform_widget.cpp
+  widgets/label.cpp
+  widgets/button.cpp
+  widgets/progress_bar.cpp
+  widgets/text_input.cpp
+  widgets/frame.cpp
+  widgets/menu_bar.cpp
   drivers/ansi_rgb_driver.cpp
   drivers/fallback_driver.cpp
   drivers/kitty_driver.cpp
