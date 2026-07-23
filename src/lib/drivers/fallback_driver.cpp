@@ -25,7 +25,10 @@ auto FallbackDriver::capabilities() const noexcept -> Capabilities {
   return c;
 }
 
-void FallbackDriver::draw_text(int x, int y, std::string_view text) {
+void FallbackDriver::draw_text(int x, int y, std::string_view text, Rgb /*fg*/,
+                               Rgb /*bg*/) {
+  // Color is silently dropped — this is the floor driver, degradation is
+  // implicit in its tier (its capabilities() reports all-false).
   m_buf += std::format("\033[{};{}H{}", y + 1, x + 1, text);
 }
 

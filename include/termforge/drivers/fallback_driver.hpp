@@ -18,7 +18,7 @@ class FallbackDriver final : public TerminalDriver {
   ~FallbackDriver() override = default;
 
   auto init() -> std::expected<void, ErrorEvent> override;
-  auto draw_text(int x, int y, std::string_view text) -> void override;
+  auto draw_text(int x, int y, std::string_view text, Rgb fg, Rgb bg) -> void override;
   auto draw_image(int x, int y, const Image& image)
       -> std::expected<void, ErrorEvent> override;
   auto flush() -> void override;

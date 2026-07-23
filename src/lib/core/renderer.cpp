@@ -24,9 +24,9 @@ auto Renderer::present(const Screen& screen) -> void {
       }
       if (cur.blank()) {
         // Emit a space to clear the cell with its background.
-        m_driver.draw_text(x, y, " ");
+        m_driver.draw_text(x, y, " ", cur.fg, cur.bg);
       } else if (!cur.text.empty() && cur.text != "\0") {
-        m_driver.draw_text(x, y, cur.text);
+        m_driver.draw_text(x, y, cur.text, cur.fg, cur.bg);
       }
       // image_id cells are emitted by graphics drivers via draw_image at the
       // widget layer; the cell renderer skips them here.

@@ -18,10 +18,23 @@ auto AnsiRgbDriver::capabilities() const noexcept -> Capabilities {
   return c;
 }
 
-void AnsiRgbDriver::draw_text(int x, int y, std::string_view text) {
+void AnsiRgbDriver::draw_text(int x, int y, std::string_view text, Rgb fg, Rgb bg) {
   // NOTE: `text` must already be sanitized (no C0/C1/ESC) by the renderer;
   // drivers emit bytes verbatim.
-  m_buf += std::format("\033[{};{}H{}", y + 1, x + 1, text);
+  m_buf += std::format("\033[{};{}H", y + 1, x + 1);
+
+  // Emit SGR only when the color actually changes (run coalescing across
+  // calls — the renderer visits cells left-to-right, top-to-bottom).
+  const int fg_id = rgb_id(fg), bg_id = rgb_id(bg);
+  if (fg_id != m_cur_fg) {
+    m_buf += std::format("\033[38;2;{};{};{}m", fg.r, fg.g, fg.b);
+    m_cur_fg = fg_id;
+  }
+  if (bg_id != m_cur_bg) {
+    m_buf += std::format("\033[48;2;{};{};{}m", bg.r, bg.g, bg.b);
+    m_cur_bg = bg_id;
+  }
+  m_buf += text;
 }
 
 auto AnsiRgbDriver::draw_image(int x, int y, const Image& image)
@@ -60,6 +73,7 @@ auto AnsiRgbDriver::draw_image(int x, int y, const Image& image)
     }
   }
   m_buf += "\033[0m";
+  m_cur_fg = m_cur_bg = -1;  // reset invalidated the tracked SGR state
   return {};
 }
 

@@ -27,7 +27,7 @@ class TerminalDriver {
   virtual ~TerminalDriver() = default;
 
   virtual auto init() -> std::expected<void, ErrorEvent> = 0;
-  virtual auto draw_text(int x, int y, std::string_view text) -> void = 0;
+  virtual auto draw_text(int x, int y, std::string_view text, Rgb fg, Rgb bg) -> void = 0;
   virtual auto draw_image(int x, int y, const Image& image)
       -> std::expected<void, ErrorEvent> = 0;
   virtual auto flush() -> void = 0;
