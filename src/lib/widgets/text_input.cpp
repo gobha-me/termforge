@@ -4,12 +4,41 @@
 
 namespace termforge {
 
+namespace {
+
+auto is_utf8_continuation(char c) -> bool {
+  return (static_cast<unsigned char>(c) & 0xC0) == 0x80;
+}
+
+// Byte offset of the previous code point boundary before `i` (0 if none).
+auto utf8_prev(const std::string& s, int i) -> int {
+  if (i <= 0) return 0;
+  --i;
+  while (i > 0 && is_utf8_continuation(s[static_cast<std::size_t>(i)])) --i;
+  return i;
+}
+
+// Byte offset of the next code point boundary after `i` (size() if none).
+auto utf8_next(const std::string& s, int i) -> int {
+  const int len = static_cast<int>(s.size());
+  if (i >= len) return len;
+  ++i;
+  while (i < len && is_utf8_continuation(s[static_cast<std::size_t>(i)])) ++i;
+  return i;
+}
+
+}  // namespace
+
 auto TextInput::ensure_cursor_visible() -> void {
   const int visible = rect().w;
   if (visible <= 0) return;
   if (m_cursor < m_scroll) m_scroll = m_cursor;
   if (m_cursor >= m_scroll + visible) m_scroll = m_cursor - visible + 1;
   m_scroll = std::max(0, m_scroll);
+  // Never leave the window start mid-code-point.
+  while (m_scroll > 0 &&
+         is_utf8_continuation(m_text[static_cast<std::size_t>(m_scroll)]))
+    --m_scroll;
 }
 
 auto TextInput::draw(Screen& screen) -> void {
@@ -49,10 +78,12 @@ auto TextInput::draw(Screen& screen) -> void {
   if (m_focused) {
     const int cx = m_cursor - m_scroll;
     if (cx >= 0 && cx < r.w) {
-      // Get the character under the cursor (or space if at end).
+      // Get the full code point under the cursor (or space if at end).
       const std::string under =
           m_cursor < static_cast<int>(m_text.size())
-              ? m_text.substr(static_cast<std::size_t>(m_cursor), 1)
+              ? m_text.substr(static_cast<std::size_t>(m_cursor),
+                              static_cast<std::size_t>(
+                                  utf8_next(m_text, m_cursor) - m_cursor))
               : " ";
       screen.write_text(r.x + cx, y, under, m_cursor_fg, m_cursor_bg);
     }
@@ -71,22 +102,26 @@ auto TextInput::on_event(const Event& ev) -> bool {
   bool changed = false;
 
   if (k->key == Key::Left) {
-    m_cursor = std::max(0, m_cursor - 1);
+    m_cursor = utf8_prev(m_text, m_cursor);
   } else if (k->key == Key::Right) {
-    m_cursor = std::min(len, m_cursor + 1);
+    m_cursor = utf8_next(m_text, m_cursor);
   } else if (k->key == Key::Home) {
     m_cursor = 0;
   } else if (k->key == Key::End) {
     m_cursor = len;
   } else if (k->key == Key::Backspace) {
     if (m_cursor > 0) {
-      m_text.erase(static_cast<std::size_t>(m_cursor - 1), 1);
-      --m_cursor;
+      const int prev = utf8_prev(m_text, m_cursor);
+      m_text.erase(static_cast<std::size_t>(prev),
+                   static_cast<std::size_t>(m_cursor - prev));
+      m_cursor = prev;
       changed = true;
     }
   } else if (k->key == Key::Delete) {
     if (m_cursor < len) {
-      m_text.erase(static_cast<std::size_t>(m_cursor), 1);
+      m_text.erase(static_cast<std::size_t>(m_cursor),
+                   static_cast<std::size_t>(utf8_next(m_text, m_cursor) -
+                                            m_cursor));
       changed = true;
     }
   } else if (k->key == Key::Char && k->ch >= 0x20 && k->ch != 0x7F) {

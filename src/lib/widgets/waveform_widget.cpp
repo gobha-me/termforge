@@ -41,11 +41,16 @@ struct Range {
 
 auto compute_range(const std::deque<float>& samples, bool auto_range,
                    float fixed_min, float fixed_max) -> Range {
-  if (!auto_range) return {fixed_min, fixed_max};
-
-  float lo = *std::min_element(samples.begin(), samples.end());
-  float hi = *std::max_element(samples.begin(), samples.end());
+  float lo = fixed_min;
+  float hi = fixed_max;
+  if (auto_range) {
+    lo = *std::min_element(samples.begin(), samples.end());
+    hi = *std::max_element(samples.begin(), samples.end());
+  }
+  // Guard a degenerate span on BOTH paths: a fixed range with min == max
+  // would otherwise divide by zero (NaN → UB on int cast → OOB indexing).
   if (hi - lo < 1e-6f) hi = lo + 1.0f;
+  if (!auto_range) return {lo, hi};
   const float margin = (hi - lo) * 0.05f;
   return {lo - margin, hi + margin};
 }

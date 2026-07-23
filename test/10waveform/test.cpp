@@ -111,3 +111,21 @@ TEST_CASE("WaveformWidget: newest sample at right edge", "[waveform]") {
   // Right column should have full blocks at bottom.
   REQUIRE(s.at(2, 1).text == "█");
 }
+
+TEST_CASE("WaveformWidget: degenerate fixed range (min == max) is safe",
+          "[waveform][failure]") {
+  // Regression: (val - lo) / (hi - lo) divided by zero, producing NaN and
+  // an out-of-bounds pixel write in draw_pixels.
+  Screen s{4, 2};
+  WaveformWidget w{8};
+  w.set_geometry({0, 0, 4, 2});
+  w.set_range(1.0f, 1.0f);
+  w.push(1.0f);  // exactly lo → previously 0/0 = NaN
+  w.push(0.5f);
+  w.push(2.0f);
+  w.draw(s);  // must not invoke UB
+  const auto img = w.draw_pixels({0, 0, 4, 2});
+  REQUIRE(img.has_value());
+  REQUIRE(img->width() == 4);
+  REQUIRE(img->height() == 2);
+}
