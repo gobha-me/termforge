@@ -22,6 +22,7 @@
 #include "termforge/core/screen.hpp"
 #include "termforge/core/terminal.hpp"
 #include "termforge/drivers/terminal_driver.hpp"
+#include "termforge/widgets/widget.hpp"
 
 namespace termforge {
 
@@ -60,7 +61,18 @@ class App {
   [[nodiscard]] auto driver() -> TerminalDriver& { return *m_driver; }
   [[nodiscard]] auto terminal() -> Terminal& { return m_term; }
 
+  // Render a widget's pixel regions through the active driver (if it
+  // supports images). Call after widget.draw(screen) in on_render.
+  // The actual image emission is deferred until after the cell diff
+  // (renderer->present) so images overlay the text grid.
+  // No-op when the driver has no image capability — the cell fallback
+  // from draw() is already in the Screen.
+  auto render_pixel_regions(Widget& widget) -> void;
+
  private:
+  // Flush collected pixel-region images to the driver. Called by run()
+  // after renderer->present so images overlay cells.
+  auto flush_pixel_regions() -> void;
   auto setup() -> std::expected<void, ErrorEvent>;
   auto teardown() -> void;
   auto pump_input() -> void;
@@ -70,6 +82,13 @@ class App {
   std::unique_ptr<Screen> m_screen;
   std::unique_ptr<Renderer> m_renderer;
   Input m_input;
+
+  // Pixel regions collected during on_render, flushed after present.
+  struct PixelRegion {
+    Rect rect;
+    Image image;
+  };
+  std::vector<PixelRegion> m_pixel_regions;
   bool m_running{false};
   bool m_in_screen{false};
   bool m_resize_pending{false};

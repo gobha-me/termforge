@@ -36,6 +36,10 @@ class WaveformWidget final : public Widget {
 
   auto draw(Screen& screen) -> void override;
 
+  // ── pixel regions (kitty path) ───────────────────────────────────────
+  auto pixel_regions() -> std::vector<Rect> override;
+  auto draw_pixels(Rect region) -> std::optional<Image> override;
+
   [[nodiscard]] auto sample_count() const noexcept -> std::size_t {
     return m_samples.size();
   }

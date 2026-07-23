@@ -117,6 +117,7 @@ class DashboardApp final : public App {
                       Rgb{0x10, 0x10, 0x20});
     m_wave.set_geometry({0, 2 + content_h, W, wave_h - 1});
     m_wave.draw(screen);
+    render_pixel_regions(m_wave);  // kitty: native pixel chart
 
     // Footer.
     const std::string footer =

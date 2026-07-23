@@ -1,6 +1,7 @@
 #include "termforge/widgets/waveform_widget.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 namespace termforge {
 
@@ -30,6 +31,29 @@ auto WaveformWidget::auto_range() -> void {
   mark_dirty();
 }
 
+// ── shared range computation ────────────────────────────────────────────────
+
+namespace {
+
+struct Range {
+  float lo, hi;
+};
+
+auto compute_range(const std::deque<float>& samples, bool auto_range,
+                   float fixed_min, float fixed_max) -> Range {
+  if (!auto_range) return {fixed_min, fixed_max};
+
+  float lo = *std::min_element(samples.begin(), samples.end());
+  float hi = *std::max_element(samples.begin(), samples.end());
+  if (hi - lo < 1e-6f) hi = lo + 1.0f;
+  const float margin = (hi - lo) * 0.05f;
+  return {lo - margin, hi + margin};
+}
+
+}  // namespace
+
+// ── cell rendering (fallback — always present) ──────────────────────────────
+
 auto WaveformWidget::draw(Screen& screen) -> void {
   const Rect r = rect();
   if (r.w <= 0 || r.h <= 0 || m_samples.empty()) {
@@ -37,60 +61,82 @@ auto WaveformWidget::draw(Screen& screen) -> void {
     return;
   }
 
-  // Compute Y range.
-  float lo = m_min, hi = m_max;
-  if (m_auto_range) {
-    lo = *std::min_element(m_samples.begin(), m_samples.end());
-    hi = *std::max_element(m_samples.begin(), m_samples.end());
-    if (hi - lo < 1e-6f) {
-      hi = lo + 1.0f;  // avoid division by zero for flat lines
-    }
-    // Add 5% margin.
-    const float margin = (hi - lo) * 0.05f;
-    lo -= margin;
-    hi += margin;
-  }
-
-  // Each cell row covers 2 sub-positions (upper/lower half-block).
-  // Total vertical resolution = height * 2.
+  const auto [lo, hi] = compute_range(m_samples, m_auto_range, m_min, m_max);
   const int vres = r.h * 2;
 
-  // How many samples fit in the visible width.
   const int visible = std::min(static_cast<int>(m_samples.size()), r.w);
   const int start = static_cast<int>(m_samples.size()) - visible;
 
   for (int col = 0; col < visible; ++col) {
     const float val = m_samples[static_cast<std::size_t>(start + col)];
-
-    // Normalize to 0..1 within range.
     const float norm = std::clamp((val - lo) / (hi - lo), 0.0f, 1.0f);
-
-    // Map to number of filled sub-positions (0 = empty, vres = full).
     const auto level = static_cast<int>(norm * static_cast<float>(vres));
 
-    // Render column: fill from bottom up.
     for (int row = 0; row < r.h; ++row) {
-      const int sub_lo = row * 2;       // lower half of this cell
-      const int sub_hi = row * 2 + 1;   // upper half
-
+      const int sub_lo = row * 2;
+      const int sub_hi = row * 2 + 1;
       const bool lo_filled = (sub_lo < level);
       const bool hi_filled = (sub_hi < level);
-
-      const int y = r.y + r.h - 1 - row;  // bottom-up
+      const int y = r.y + r.h - 1 - row;
 
       if (lo_filled && hi_filled) {
-        screen.write_text(r.x + col, y, "█", m_fg, m_bg);  // full block
+        screen.write_text(r.x + col, y, "█", m_fg, m_bg);
       } else if (hi_filled) {
-        screen.write_text(r.x + col, y, "▀", m_fg, m_bg);  // upper half
+        screen.write_text(r.x + col, y, "▀", m_fg, m_bg);
       } else if (lo_filled) {
-        screen.write_text(r.x + col, y, "▄", m_fg, m_bg);  // lower half
+        screen.write_text(r.x + col, y, "▄", m_fg, m_bg);
       } else {
-        screen.write_text(r.x + col, y, " ", m_fg, m_bg);  // empty
+        screen.write_text(r.x + col, y, " ", m_fg, m_bg);
       }
     }
   }
 
   clear_dirty();
+}
+
+// ── pixel rendering (kitty path) ────────────────────────────────────────────
+
+auto WaveformWidget::pixel_regions() -> std::vector<Rect> {
+  return {rect()};
+}
+
+auto WaveformWidget::draw_pixels(Rect region) -> std::optional<Image> {
+  if (m_samples.empty() || region.w <= 0 || region.h <= 0)
+    return std::nullopt;
+
+  const auto [lo, hi] = compute_range(m_samples, m_auto_range, m_min, m_max);
+
+  // One pixel per cell for now (kitty maps 1:1).
+  const int w = region.w;
+  const int h = region.h;
+  const auto count = static_cast<std::size_t>(w) * h;
+
+  const Pixel bg_px{m_bg.r, m_bg.g, m_bg.b, 255};
+  const Pixel fg_px{m_fg.r, m_fg.g, m_fg.b, 255};
+  const Pixel fill_px{static_cast<std::uint8_t>(m_fg.r / 3),
+                      static_cast<std::uint8_t>(m_fg.g / 3),
+                      static_cast<std::uint8_t>(m_fg.b / 3), 255};
+
+  std::vector<Pixel> pixels(count, bg_px);
+
+  const int visible = std::min(static_cast<int>(m_samples.size()), w);
+  const int start = static_cast<int>(m_samples.size()) - visible;
+
+  // Filled area chart: bright line at the sample value, dim fill below.
+  for (int col = 0; col < visible; ++col) {
+    const float val = m_samples[static_cast<std::size_t>(start + col)];
+    const float norm = std::clamp((val - lo) / (hi - lo), 0.0f, 1.0f);
+    // y=0 is top in image coordinates; norm=1 should be at top.
+    const int y_pos =
+        h - 1 - static_cast<int>(norm * static_cast<float>(h - 1));
+
+    for (int y = y_pos + 1; y < h; ++y)
+      pixels[static_cast<std::size_t>(y) * w + col] = fill_px;
+
+    pixels[static_cast<std::size_t>(y_pos) * w + col] = fg_px;
+  }
+
+  return Image{w, h, std::move(pixels)};
 }
 
 }  // namespace termforge

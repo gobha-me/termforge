@@ -69,8 +69,10 @@ auto App::run() -> int {
       on_event(ResizeEvent{size.cols, size.rows});
     }
     pump_input();
+    m_pixel_regions.clear();
     on_render(*m_screen);
     m_renderer->present(*m_screen);
+    flush_pixel_regions();
     if (m_frame_ms > 0)
       std::this_thread::sleep_for(std::chrono::milliseconds(m_frame_ms));
   }
@@ -91,6 +93,30 @@ auto App::on_event(const Event& ev) -> void {
   if (const auto* k = std::get_if<KeyEvent>(&ev)) {
     if (k->key == Key::Escape || (k->ctrl && (k->ch == 'c' || k->ch == 'C'))) quit();
   }
+}
+
+auto App::render_pixel_regions(Widget& widget) -> void {
+  if (!m_driver || !m_driver->capabilities().kitty_graphics) return;
+
+  for (const auto& region : widget.pixel_regions()) {
+    if (auto img = widget.draw_pixels(region)) {
+      m_pixel_regions.push_back({region, std::move(*img)});
+
+      // Clear the Screen cells in this region so the cell diff doesn't
+      // emit text that would compete with the placeholder cells. The
+      // pixel image provides all visual content for these cells.
+      for (int y = region.y; y < region.y + region.h; ++y)
+        for (int x = region.x; x < region.x + region.w; ++x)
+          m_screen->at(x, y) = Cell{};
+    }
+  }
+}
+
+auto App::flush_pixel_regions() -> void {
+  for (const auto& pr : m_pixel_regions) {
+    m_driver->draw_image(pr.rect.x, pr.rect.y, pr.image);
+  }
+  if (!m_pixel_regions.empty()) m_driver->flush();
 }
 
 auto App::current_size() const -> Size {
