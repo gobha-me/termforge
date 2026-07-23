@@ -10,6 +10,7 @@ jobs:
   gcc:
     name: GCC ${{ matrix.version }} (Ubuntu ${{ matrix.os }})
     runs-on: ubuntu-${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -38,20 +39,24 @@ jobs:
   clang:
     name: Clang ${{ matrix.version }} (Ubuntu ${{ matrix.os }})
     runs-on: ubuntu-${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         os: [latest]
-        version: [17, 18]
+        # 19 is the first clang whose __cpp_concepts passes libstdc++'s
+        # <expected> guard — 17/18 cannot compile std::expected at all.
+        version: [19, 20]
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Clang ${{ matrix.version }}
+        # llvm.sh picks the right distro codename and repo signing setup
+        # (the old hand-rolled jammy repo + apt-key broke on noble runners).
         run: |
-          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-          sudo add-apt-repository "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-${{ matrix.version }} main"
-          sudo apt-get update
-          sudo apt-get install -y clang-${{ matrix.version }}
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh ${{ matrix.version }}
 
       - name: Configure
         run: >
@@ -68,6 +73,7 @@ jobs:
   asan-ubsan:
     name: ASan + UBSan (GCC, Ubuntu latest)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -96,10 +102,18 @@ jobs:
   fedora:
     name: GCC (Fedora latest)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     container: fedora:latest
     steps:
       - name: Install toolchain
-        run: dnf install -y gcc-c++ cmake git make
+        # Mirror TLS hiccups are common in fresh containers; retry a few
+        # times before giving up.
+        run: |
+          for i in 1 2 3; do
+            dnf install -y gcc-c++ cmake git make && break
+            echo "dnf attempt $i failed; retrying in 15s" && sleep 15
+          done
+          gcc --version
 
       - uses: actions/checkout@v4
 
