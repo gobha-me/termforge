@@ -58,6 +58,13 @@ class Widget {
   auto set_geometry(Rect r) -> void { m_rect = r; }
   [[nodiscard]] auto rect() const noexcept -> Rect { return m_rect; }
 
+  // Whether a screen point belongs to this widget for mouse routing.
+  // Override when the interactive area extends beyond rect() (e.g. a menu
+  // bar's open dropdown).
+  [[nodiscard]] virtual auto hit_test(int px, int py) const -> bool {
+    return m_rect.contains(px, py);
+  }
+
   // Whether the widget needs a repaint (content changed). The app can use
   // this to skip work; draw() clears it.
   [[nodiscard]] auto dirty() const noexcept -> bool { return m_dirty; }

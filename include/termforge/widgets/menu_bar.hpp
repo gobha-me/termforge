@@ -16,6 +16,15 @@
 //   Up/Down     — navigate dropdown items (when open)
 //   Enter       — select item (when open)
 //   Escape      — close dropdown
+//
+// Mouse model (button 0, acts on press):
+//   Click a title      — open that menu (click the open one again to close)
+//   Click a dropdown   — activate that item and close
+//   Hover a dropdown   — move the selection highlight
+// hit_test() covers the bar plus the open dropdown, so App::route_mouse
+// delivers dropdown clicks here instead of to the widget underneath —
+// list the MenuBar last (topmost) in route_mouse. Click-away close is the
+// parent's call (check dropdown_open() + hit_test before routing).
 
 #include <functional>
 #include <string>
@@ -48,6 +57,9 @@ class MenuBar final : public Widget {
   auto draw(Screen& screen) -> void override;
   auto on_event(const Event& ev) -> bool override;
 
+  // Bar row plus the open dropdown's rows (which extend below rect()).
+  [[nodiscard]] auto hit_test(int px, int py) const -> bool override;
+
   // Whether a dropdown is currently open.
   [[nodiscard]] auto dropdown_open() const noexcept -> bool {
     return m_open;
@@ -61,6 +73,16 @@ class MenuBar final : public Widget {
  private:
   // Compute the x position and width of each menu title.
   auto layout_menus() const -> std::vector<std::pair<int, int>>;
+
+  // Width of a menu's dropdown given its title width.
+  auto dropdown_width(const Menu& menu, int title_w) const -> int;
+
+  // Screen rect of the open dropdown; {0,0,0,0} when closed. draw() and
+  // hit_test()/on_event() share this so they can never disagree.
+  [[nodiscard]] auto dropdown_rect() const -> Rect;
+
+  auto handle_mouse(const MouseEvent& m) -> bool;
+  auto open_menu(int index) -> void;
 
   std::vector<Menu> m_menus;
   int m_active{0};       // which menu is highlighted/open

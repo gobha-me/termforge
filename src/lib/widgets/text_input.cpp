@@ -93,6 +93,26 @@ auto TextInput::draw(Screen& screen) -> void {
 }
 
 auto TextInput::on_event(const Event& ev) -> bool {
+  // Mouse first: a click focuses the widget, so it must be handled even
+  // (especially) when unfocused.
+  if (const auto* m = std::get_if<MouseEvent>(&ev)) {
+    if (!m->pressed || m->button != 0 || !rect().contains(m->x, m->y))
+      return false;
+    m_focused = true;
+    // Column → byte offset (same byte-per-column approximation the scroll
+    // window uses), clamped and snapped back off UTF-8 continuations.
+    int pos = m_scroll + (m->x - rect().x);
+    pos = std::clamp(pos, 0, static_cast<int>(m_text.size()));
+    while (pos > 0 &&
+           is_utf8_continuation(m_text[static_cast<std::size_t>(pos)]))
+      --pos;
+    m_cursor = pos;
+    ensure_cursor_visible();
+    mark_dirty();
+    if (m_on_click) m_on_click();
+    return true;
+  }
+
   if (!m_focused) return false;
 
   const auto* k = std::get_if<KeyEvent>(&ev);

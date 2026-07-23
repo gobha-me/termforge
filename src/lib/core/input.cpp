@@ -123,6 +123,12 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
         me.pressed = false;
         me.scroll_up = (btn & 0x01) == 0;
         me.scroll_down = (btn & 0x01) == 1;
+      } else if (btn & 32) {
+        // Motion-while-pressed (?1002h drag tracking, bit 5). Report the
+        // position but never as a press — otherwise a drag across a widget
+        // fires its click handler repeatedly.
+        me.button = btn & 0x03;
+        me.pressed = false;
       } else {
         me.button = btn & 0x03;
         me.pressed = (fin == 'M');

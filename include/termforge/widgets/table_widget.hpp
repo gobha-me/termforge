@@ -4,10 +4,11 @@
 //
 // Renders column headers + rows of string data into a Screen. Supports
 // column alignment (left/right/center), auto-width or fixed columns,
-// scrolling for overflow, and optional row highlight.
+// scrolling for overflow, and row selection (click or set_selected).
 //
 // Designed for dashboards: system stats, process lists, log tables.
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -55,6 +56,17 @@ class TableWidget final : public Widget {
   }
   [[nodiscard]] auto scroll_offset() const noexcept -> int { return m_scroll; }
 
+  // Row selection. -1 = no selection (the default — no visual change for
+  // tables that never select). Clicking a data row selects it.
+  auto set_selected(int row) -> void;
+  [[nodiscard]] auto selected() const noexcept -> int { return m_selected; }
+
+  // Callback when a row is selected by click: (row index, row cells).
+  auto on_select(
+      std::function<void(int, const std::vector<std::string>&)> cb) -> void {
+    m_on_select = std::move(cb);
+  }
+
  private:
   // Compute effective column widths (auto-size if width==0).
   auto compute_widths() const -> std::vector<int>;
@@ -67,10 +79,15 @@ class TableWidget final : public Widget {
   std::vector<Column> m_columns;
   std::vector<std::vector<std::string>> m_rows;
   int m_scroll{0};
+  int m_selected{-1};
 
   Rgb m_row_fg{0xE0, 0xE0, 0xF0};
   Rgb m_row_bg{0x0A, 0x0A, 0x14};
   Rgb m_alt_bg{0x10, 0x10, 0x1C};  // alternating row background
+  Rgb m_selected_fg{0x0A, 0x0A, 0x14};
+  Rgb m_selected_bg{0x40, 0x80, 0xFF};
+
+  std::function<void(int, const std::vector<std::string>&)> m_on_select;
 };
 
 }  // namespace termforge
