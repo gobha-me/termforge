@@ -126,8 +126,10 @@ auto TableWidget::on_event(const Event& ev) -> bool {
   if (const auto* k = std::get_if<KeyEvent>(&ev)) {
     if (k->key == Key::Up) { scroll(-1); return true; }
     if (k->key == Key::Down) { scroll(1); return true; }
-    if (k->key == Key::PageUp) { scroll(-(rect().h - 2)); return true; }
-    if (k->key == Key::PageDown) { scroll(rect().h - 2); return true; }
+    // Clamp the page size so tiny heights (h <= 2) still page by one row
+    // in the right direction instead of negating or zeroing the delta.
+    if (k->key == Key::PageUp) { scroll(-std::max(1, rect().h - 2)); return true; }
+    if (k->key == Key::PageDown) { scroll(std::max(1, rect().h - 2)); return true; }
     if (k->key == Key::Home) { m_scroll = 0; mark_dirty(); return true; }
     if (k->key == Key::End) {
       m_scroll = std::max(0, static_cast<int>(m_rows.size()) - (rect().h - 1));

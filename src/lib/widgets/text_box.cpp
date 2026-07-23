@@ -70,6 +70,10 @@ auto TextBox::draw(Screen& screen) -> void {
 
   // The visible window: last h rows, offset up by m_scroll.
   const int total = static_cast<int>(wrapped.size());
+  // Clamp the scroll offset now that the wrapped line count is known —
+  // scroll() can't bound it (content may have changed since).
+  m_scroll = std::clamp(m_scroll, 0, std::max(0, total - r.h));
+  m_follow = (m_scroll == 0);
   const int bottom = total - m_scroll;                  // index one past the last visible
   const int top = std::max(0, bottom - r.h);
 

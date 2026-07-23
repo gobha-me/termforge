@@ -549,3 +549,40 @@ TEST_CASE("MenuBar: Left/Right in dropdown switches menus", "[primitives][menu]"
   REQUIRE(mb.active_menu() == 1);
   REQUIRE(mb.dropdown_open());
 }
+
+TEST_CASE("TextInput: UTF-8 aware backspace removes whole code point",
+          "[primitives][input]") {
+  // Regression: Backspace erased one byte, leaving invalid UTF-8 behind.
+  Screen s{20, 1};
+  TextInput ti;
+  ti.set_geometry({0, 0, 20, 1});
+  ti.set_focused(true);
+
+  Event e_acute = KeyEvent{Key::Char, U'é'};  // é → C3 A9
+  ti.on_event(e_acute);
+  REQUIRE(ti.text() == "\xC3\xA9");
+
+  Event bs = KeyEvent{Key::Backspace};
+  ti.on_event(bs);
+  REQUIRE(ti.text().empty());
+  REQUIRE(ti.cursor_pos() == 0);
+}
+
+TEST_CASE("TextInput: arrows step over multi-byte code points",
+          "[primitives][input]") {
+  Screen s{20, 1};
+  TextInput ti;
+  ti.set_geometry({0, 0, 20, 1});
+  ti.set_focused(true);
+  ti.set_text("a\xC3\xA9z");  // a é z
+
+  Event left = KeyEvent{Key::Left};
+  ti.on_event(left);  // before 'z' → byte 3
+  REQUIRE(ti.cursor_pos() == 3);
+  ti.on_event(left);  // before 'é' → byte 1, not mid-sequence byte 2
+  REQUIRE(ti.cursor_pos() == 1);
+
+  Event del = KeyEvent{Key::Delete};
+  ti.on_event(del);  // deletes the whole é
+  REQUIRE(ti.text() == "az");
+}

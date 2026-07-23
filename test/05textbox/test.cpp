@@ -94,3 +94,26 @@ TEST_CASE("TextBox: scroll indicator appears when scrolled up", "[textbox]") {
   for (int x = 0; x < 20; ++x) row0 += s.at(x, 0).text;
   REQUIRE(row0.find("[more]") != std::string::npos);
 }
+
+TEST_CASE("TextBox: over-scrolling up clamps instead of blanking",
+          "[textbox]") {
+  // Regression: scroll(-N) grew m_scroll without bound; once it exceeded
+  // the wrapped line count the draw window went negative and nothing
+  // rendered.
+  TextBox box;
+  box.set_geometry({0, 0, 20, 10});
+  for (int i = 0; i < 5; ++i) box.append("line " + std::to_string(i));
+
+  box.scroll(-9);  // PageUp with everything already visible
+  box.scroll(-9);
+  Screen s{20, 10};
+  box.draw(s);
+
+  std::string all;
+  for (int y = 0; y < 10; ++y)
+    for (int x = 0; x < 20; ++x) all += s.at(x, y).text;
+  REQUIRE(all.find("line 0") != std::string::npos);
+  REQUIRE(all.find("line 4") != std::string::npos);
+  // Content fits entirely → the clamp lands back at the bottom.
+  REQUIRE(box.at_bottom());
+}
