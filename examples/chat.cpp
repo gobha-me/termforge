@@ -6,6 +6,8 @@
 //   - TextBox::draw() to render the widget
 //   - Keyboard shortcuts (Ctrl+L to clear, arrows to scroll)
 
+#include <format>
+
 #include "termforge/core/app.hpp"
 #include "termforge/widgets/text_box.hpp"
 

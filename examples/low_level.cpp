@@ -9,6 +9,7 @@
 //   - Proper cleanup on exit
 
 #include <chrono>
+#include <format>
 #include <cstdio>
 #include <thread>
 
