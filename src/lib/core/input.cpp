@@ -101,7 +101,9 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
            (std::isdigit(static_cast<unsigned char>(buf[i])) ||
             buf[i] == ';')) {
       if (buf[i] == ';') { ++pi; ++i; continue; }
-      if (pi < 3) params[pi] = params[pi] * 10 + (buf[i] - '0');
+      // Cap accumulation so a hostile digit run can't overflow int (UB).
+      if (pi < 3 && params[pi] < 100000)
+        params[pi] = params[pi] * 10 + (buf[i] - '0');
       ++i;
     }
     if (i >= buf.size()) return 0;  // incomplete
@@ -113,11 +115,18 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
       const int btn = params[0];
       me.x = params[1] - 1;  // SGR is 1-based, we're 0-based
       me.y = params[2] - 1;
-      me.pressed = (fin == 'M');
-      // Decode button + modifiers from the button code.
-      me.button = btn & 0x03;
-      me.scroll_up = (btn & 64) && (btn & 0x01) == 0;
-      me.scroll_down = (btn & 64) && (btn & 0x01) == 1;
+      // Decode button + modifiers from the button code. Wheel events
+      // (bit 6) reuse the low bits for direction — they are not presses
+      // and must not masquerade as button 0/1 clicks.
+      if (btn & 64) {
+        me.button = -1;
+        me.pressed = false;
+        me.scroll_up = (btn & 0x01) == 0;
+        me.scroll_down = (btn & 0x01) == 1;
+      } else {
+        me.button = btn & 0x03;
+        me.pressed = (fin == 'M');
+      }
       m_events.push_back(me);
       return i;
     }
@@ -135,8 +144,8 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
       ++i;
       continue;
     }
-    if (!have_p2) { p1 = p1 * 10 + (buf[i] - '0'); }
-    else { p2 = p2 * 10 + (buf[i] - '0'); }
+    if (!have_p2) { if (p1 < 100000) p1 = p1 * 10 + (buf[i] - '0'); }
+    else { if (p2 < 100000) p2 = p2 * 10 + (buf[i] - '0'); }
     ++i;
   }
   if (i >= buf.size()) return 0;  // incomplete

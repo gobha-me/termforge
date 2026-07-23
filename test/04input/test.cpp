@@ -34,7 +34,8 @@ TEST_CASE("Input: multibyte UTF-8 decodes to a code point", "[input]") {
 
 TEST_CASE("Input: arrow keys via CSI", "[input]") {
   Input in;
-  REQUIRE(first_key(*new std::deque<Event>(in.decode("\033[A"))).key == Key::Up);
+  auto up = in.decode("\033[A");
+  REQUIRE(first_key(up).key == Key::Up);
   auto down = in.decode("\033[B");
   REQUIRE(first_key(down).key == Key::Down);
   auto right = in.decode("\033[C");
@@ -150,4 +151,29 @@ TEST_CASE("Input: SGR mouse scroll down decodes", "[input][mouse]") {
   REQUIRE(m != nullptr);
   REQUIRE(m->scroll_down);
   REQUIRE_FALSE(m->scroll_up);
+}
+
+TEST_CASE("Input: scroll wheel events are not button presses",
+          "[input][mouse]") {
+  // Regression: wheel events kept button = btn & 3 and pressed = true, so
+  // a scroll over a Button widget registered as a left click.
+  Input in;
+  auto ev = in.decode("\033[<64;5;5M");
+  REQUIRE(!ev.empty());
+  auto* m = std::get_if<MouseEvent>(&ev.front());
+  REQUIRE(m != nullptr);
+  REQUIRE(m->scroll_up);
+  REQUIRE_FALSE(m->pressed);
+  REQUIRE(m->button != 0);
+}
+
+TEST_CASE("Input: oversized CSI parameters do not overflow", "[input][mouse]") {
+  // Regression: unbounded p = p * 10 + digit overflowed int (UB) on a
+  // hostile digit run. Parameters are now capped during accumulation.
+  Input in;
+  auto ev = in.decode("\033[<0;99999999999999999999;1M");
+  REQUIRE(!ev.empty());
+  auto* m = std::get_if<MouseEvent>(&ev.front());
+  REQUIRE(m != nullptr);
+  REQUIRE(m->x >= 0);  // clamped garbage, but no UB and non-negative
 }

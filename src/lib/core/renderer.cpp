@@ -1,5 +1,7 @@
 #include "termforge/core/renderer.hpp"
 
+#include <string_view>
+
 namespace termforge {
 
 Renderer::Renderer(TerminalDriver& driver) : m_driver(driver) {}
@@ -25,7 +27,11 @@ auto Renderer::present(const Screen& screen) -> void {
       if (cur.blank()) {
         // Emit a space to clear the cell with its background.
         m_driver.draw_text(x, y, " ", cur.fg, cur.bg);
-      } else if (!cur.text.empty() && cur.text != "\0") {
+      } else if (!cur.text.empty() &&
+                 cur.text != std::string_view("\0", 1)) {
+        // The guard above skips continuation cells of width-2 graphemes,
+        // which hold a single NUL byte (a bare "\0" literal would compare
+        // as an empty C-string and never match).
         m_driver.draw_text(x, y, cur.text, cur.fg, cur.bg);
       }
       // image_id cells are emitted by graphics drivers via draw_image at the
