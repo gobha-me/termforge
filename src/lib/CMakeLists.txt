@@ -5,6 +5,7 @@ add_library(${PROJECT_NAME}_lib STATIC
   core/renderer.cpp
   core/input.cpp
   core/app.cpp
+  widgets/text_box.cpp
   drivers/ansi_rgb_driver.cpp
   drivers/fallback_driver.cpp
   drivers/select_driver.cpp
