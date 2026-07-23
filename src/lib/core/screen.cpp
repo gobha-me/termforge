@@ -116,13 +116,37 @@ auto Screen::sanitize(std::string_view in) -> std::string {
       if (c == '\t') { out += ' '; }  // tab -> space; drop other C0
       continue;
     }
-    if (c >= 0x80 && c <= 0x9F) {
-      // C1 in UTF-8 (0xC2 lead): drop the pair together.
-      if (i > 0 && static_cast<unsigned char>(in[i - 1]) == 0xC2) {
-        if (!out.empty() && out.back() == '\xC2') out.pop_back();
+
+    // Multi-byte UTF-8: pass a *complete, well-formed* sequence through
+    // untouched. Continuation bytes live in 0x80..0xBF (overlapping the C1
+    // range), so we must NOT strip them here — that would mangle valid
+    // glyphs (this is the bug that truncated "█" to its lead byte). Only a
+    // bare/isolated C1 (0xC2 0x80..0x9F two-byte form, i.e. a real control)
+    // is dangerous, and we handle that below.
+    if ((c & 0xE0) == 0xC0 || (c & 0xF0) == 0xE0 || (c & 0xF8) == 0xF0) {
+      const std::size_t len = ((c & 0xE0) == 0xC0) ? 2 : ((c & 0xF0) == 0xE0) ? 3 : 4;
+      if (i + len <= in.size()) {
+        bool valid = true;
+        for (std::size_t k = 1; k < len; ++k)
+          if ((static_cast<unsigned char>(in[i + k]) & 0xC0) != 0x80) { valid = false; break; }
+        if (valid) {
+          // A 2-byte 0xC2 0x80..0x9F is a genuine C1 control — strip it.
+          if (len == 2 && c == 0xC2 &&
+              static_cast<unsigned char>(in[i + 1]) <= 0x9F) {
+            i += 1;  // consume the pair, emit nothing
+            continue;
+          }
+          out.append(in, i, len);  // well-formed glyph: keep whole sequence
+          i += len - 1;
+          continue;
+        }
       }
-      continue;
+      continue;  // malformed lead/truncated sequence: drop the byte
     }
+
+    // Bare continuation byte or stray C1-range byte with no valid lead: drop.
+    if (c >= 0x80 && c <= 0xBF) continue;
+
     out += static_cast<char>(c);
   }
   return out;

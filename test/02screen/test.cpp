@@ -39,6 +39,21 @@ TEST_CASE("Screen: sanitize strips C1 controls including the UTF-8 pair", "[scre
   REQUIRE(Screen::sanitize(in) == "ab");
 }
 
+
+TEST_CASE("Screen: sanitize keeps well-formed multi-byte UTF-8 glyphs", "[screen][failure]") {
+  // Regression: sanitize used to drop continuation bytes in 0x80..0x9F,
+  // truncating the block glyph (E2 96 88) to its lead byte.
+  const std::string block = "\xE2\x96\x88";        // U+2588 full block
+  const std::string eacute = "\xC3\xA9";            // é (2-byte)
+  const std::string party = "\xF0\x9F\x8E\x89";   // U+1F389 (4-byte)
+  REQUIRE(Screen::sanitize(block) == block);
+  REQUIRE(Screen::sanitize(eacute) == eacute);
+  REQUIRE(Screen::sanitize(party) == party);
+  // a genuine isolated C1 control (0xC2 0x85, NEL) is still stripped:
+  REQUIRE(Screen::sanitize(std::string{"a\xC2\x85"} + "b") == "ab");
+  // a malformed/truncated sequence is dropped, not passed through:
+  REQUIRE(Screen::sanitize(std::string{"a\xE2\x96"} + "b") == "ab");
+}
 TEST_CASE("Screen: write_text sanitizes before placing cells", "[screen][security]") {
   Screen s{40, 10};
   s.write_text(0, 0, "hi\033[1Jthere", Rgb{255,255,255}, Rgb{0,0,0});
