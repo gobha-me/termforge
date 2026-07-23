@@ -231,14 +231,44 @@ TEST_CASE("KittyDriver: diacritics present for non-zero row/col", "[drivers][kit
   KittyDriver d;
   std::string out;
   d.set_output(&out);
-  // 3x1 image: 1 row, 3 cols. Cell (0,1) has col=1 → diacritic U+0301.
-  // Cell (0,2) has col=2 → diacritic U+0302.
+  // 3x1 image: 1 row, 3 cols. Per the kitty rowcolumn-diacritics table:
+  // index 0 → U+0305, index 1 → U+030D, index 2 → U+030E.
   Image img{3, 1, {Pixel{255, 0, 0, 255}, Pixel{0, 255, 0, 255},
                    Pixel{0, 0, 255, 255}}};
   REQUIRE(d.draw_image(0, 0, img).has_value());
   d.flush();
 
-  // U+0301 in UTF-8: CC 81. U+0302 in UTF-8: CC 82.
-  REQUIRE(out.find("\xCC\x81") != std::string::npos);  // col 1 diacritic
-  REQUIRE(out.find("\xCC\x82") != std::string::npos);  // col 2 diacritic
+  // Row 0 is explicit on every cell: U+0305 (CC 85).
+  REQUIRE(out.find("\xCC\x85") != std::string::npos);  // row/col 0 diacritic
+  // U+030D in UTF-8: CC 8D. U+030E in UTF-8: CC 8E.
+  REQUIRE(out.find("\xCC\x8D") != std::string::npos);  // col 1 diacritic
+  REQUIRE(out.find("\xCC\x8E") != std::string::npos);  // col 2 diacritic
+  // The old (wrong) contiguous mapping U+0301/U+0302 must be gone.
+  REQUIRE(out.find("\xCC\x81") == std::string::npos);
+  REQUIRE(out.find("\xCC\x82") == std::string::npos);
+}
+
+TEST_CASE("KittyDriver: extended diacritic range for wide images", "[drivers][kitty]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  // 200x1 image: 1 row, 200 cols. Indices past the U+03xx run come from
+  // later entries of the curated rowcolumn-diacritics table.
+  Image img{200, 1, std::vector<Pixel>(200, Pixel{255, 0, 0, 255})};
+  REQUIRE(d.draw_image(0, 0, img).has_value());
+  d.flush();
+
+  // Count placeholder characters — should be 200.
+  int ph_count = 0;
+  std::size_t pos = 0;
+  while ((pos = out.find("\xF4\x8F\xBB\xAE", pos)) != std::string::npos) {
+    ++ph_count;
+    pos += 4;
+  }
+  REQUIRE(ph_count == 200);
+
+  // Index 112 in the spec table is U+081B (UTF-8: E0 A0 9B) and
+  // index 199 is U+20D1 (UTF-8: E2 83 91).
+  REQUIRE(out.find("\xE0\xA0\x9B") != std::string::npos);
+  REQUIRE(out.find("\xE2\x83\x91") != std::string::npos);
 }
