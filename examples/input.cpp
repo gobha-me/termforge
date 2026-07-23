@@ -6,6 +6,7 @@
 //   - Display live input state on screen
 //   - Use std::visit for event dispatch
 
+#include <format>
 #include <string>
 
 #include "termforge/core/app.hpp"

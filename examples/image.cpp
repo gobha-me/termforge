@@ -11,7 +11,8 @@
 //   - TerminalDriver::draw_text() with fg/bg colors
 //   - Which driver tier is active (kitty / ansi_rgb / fallback)
 
-#include <print>
+#include <cstdio>
+#include <format>
 
 #include "termforge/core/image_loader.hpp"
 #include "termforge/core/terminal.hpp"
@@ -22,7 +23,7 @@ auto main() -> int {
   Terminal term;
 
   if (auto res = term.enter_raw(); !res) {
-    std::println(stderr, "Failed to enter raw mode: {}", res.error().message);
+    std::fprintf(stderr, "%s\n", std::format("Failed to enter raw mode: {}", res.error().message).c_str());
     return 1;
   }
 
@@ -30,20 +31,20 @@ auto main() -> int {
 
   auto caps = term.query_capabilities();
   if (!caps) {
-    std::println(stderr, "Capability probe failed: {}", caps.error().message);
+    std::fprintf(stderr, "%s\n", std::format("Capability probe failed: {}", caps.error().message).c_str());
     return 1;
   }
 
   auto driver = term.select_driver();
   if (auto res = driver->init(); !res) {
-    std::println(stderr, "Driver init failed: {}", res.error().message);
+    std::fprintf(stderr, "%s\n", std::format("Driver init failed: {}", res.error().message).c_str());
     return 1;
   }
 
   // Load the sample gradient asset.
   auto img_result = ImageLoader::load("assets/gradient.rgba");
   if (!img_result) {
-    std::println(stderr, "Asset load failed: {}", img_result.error().message);
+    std::fprintf(stderr, "%s\n", std::format("Asset load failed: {}", img_result.error().message).c_str());
     return 1;
   }
   auto& img = *img_result;
