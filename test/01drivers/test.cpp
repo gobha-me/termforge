@@ -5,6 +5,7 @@
 
 #include "termforge/drivers/ansi_rgb_driver.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
+#include "termforge/drivers/kitty_driver.hpp"
 #include "termforge/drivers/terminal_driver.hpp"
 
 using termforge::AnsiRgbDriver;
@@ -12,12 +13,15 @@ using termforge::DriverImpl;
 using termforge::ErrorEvent;
 using termforge::FallbackDriver;
 using termforge::Image;
+using termforge::KittyDriver;
 using termforge::Pixel;
+using termforge::Rgb;
 using termforge::Severity;
 
 // The DriverImpl concept must hold for concrete drivers (compile-time check).
 static_assert(DriverImpl<AnsiRgbDriver>);
 static_assert(DriverImpl<FallbackDriver>);
+static_assert(DriverImpl<KittyDriver>);
 
 namespace {
 
@@ -104,6 +108,89 @@ TEST_CASE("FallbackDriver: empty image warns", "[drivers][failure]") {
 TEST_CASE("Drivers: capabilities reflect their tier", "[drivers]") {
   AnsiRgbDriver ansi;
   FallbackDriver fb;
+  KittyDriver kitty;
   REQUIRE(ansi.capabilities().truecolor);
   REQUIRE_FALSE(fb.capabilities().truecolor);
+  REQUIRE(kitty.capabilities().kitty_graphics);
+  REQUIRE(kitty.capabilities().truecolor);
+}
+
+// ── KittyDriver ─────────────────────────────────────────────────────────────
+
+TEST_CASE("KittyDriver: empty image is a warning event", "[drivers][kitty][failure]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  auto r = d.draw_image(0, 0, Image{});
+  REQUIRE_FALSE(r.has_value());
+  REQUIRE(r.error().severity == Severity::Warning);
+  REQUIRE(r.error().source == "kitty");
+}
+
+TEST_CASE("KittyDriver: draw_image emits APC transmit + place", "[drivers][kitty]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  Image img{1, 1, {Pixel{255, 0, 0, 255}}};
+  REQUIRE(d.draw_image(0, 0, img).has_value());
+  d.flush();
+  // Should contain an APC transmit sequence with our image data.
+  REQUIRE(out.find("\033_G") != std::string::npos);      // APC opener
+  REQUIRE(out.find("a=t") != std::string::npos);          // transmit only
+  REQUIRE(out.find("t=d") != std::string::npos);          // direct medium
+  REQUIRE(out.find("f=32") != std::string::npos);         // RGBA format
+  REQUIRE(out.find("s=1") != std::string::npos);          // width
+  REQUIRE(out.find("v=1") != std::string::npos);          // height
+  REQUIRE(out.find("\033\\") != std::string::npos);       // ST terminator
+  // Should contain a placement command.
+  REQUIRE(out.find("a=p") != std::string::npos);          // place
+}
+
+TEST_CASE("KittyDriver: same image drawn twice reuses image ID (no re-upload)", "[drivers][kitty]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  Image img{2, 1, {Pixel{255, 0, 0, 255}, Pixel{0, 255, 0, 255}}};
+  REQUIRE(d.draw_image(0, 0, img).has_value());
+  d.flush();
+
+  out.clear();
+  REQUIRE(d.draw_image(5, 5, img).has_value());
+  d.flush();
+  // Second draw should NOT contain a transmit (a=t), only a place (a=p).
+  REQUIRE(out.find("a=t") == std::string::npos);
+  REQUIRE(out.find("a=p") != std::string::npos);
+}
+
+TEST_CASE("KittyDriver: large image chunks at 4096 bytes", "[drivers][kitty]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  // 64x64 RGBA = 16384 bytes raw -> ~21848 base64 chars -> 6 chunks at 4096.
+  auto img = make_image(64, 64, Pixel{0xAB, 0xCD, 0xEF, 0xFF});
+  REQUIRE(d.draw_image(0, 0, img).has_value());
+  d.flush();
+  // First chunk has m=1 (more follow); intermediate chunks have m=1;
+  // last chunk has m=0 (final).
+  REQUIRE(out.find("m=1") != std::string::npos);
+  REQUIRE(out.find("m=0") != std::string::npos);
+  // Count APC openers to verify multiple chunks.
+  int apc_count = 0;
+  std::size_t pos = 0;
+  while ((pos = out.find("\033_G", pos)) != std::string::npos) {
+    ++apc_count;
+    pos += 4;
+  }
+  REQUIRE(apc_count > 1);  // multiple chunks
+}
+
+TEST_CASE("KittyDriver: draw_text emits SGR colors", "[drivers][kitty]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  d.draw_text(0, 0, "Hi", Rgb{0xFF, 0x00, 0x00}, Rgb{0x00, 0x00, 0xFF});
+  d.flush();
+  REQUIRE(out.find("38;2;255;0;0") != std::string::npos);   // fg red
+  REQUIRE(out.find("48;2;0;0;255") != std::string::npos);   // bg blue
+  REQUIRE(out.find("Hi") != std::string::npos);
 }
