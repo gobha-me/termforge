@@ -1,0 +1,81 @@
+#pragma once
+
+// TermForge — App: the interactive event loop.
+//
+// App owns the full-screen lifecycle (alt-buffer via Terminal), raw mode, the
+// driver, and the render loop. It ties the pieces together:
+//
+//   Input (bytes -> Events) -> your handler updates state -> Screen ->
+//   Renderer (diff) -> TerminalDriver -> terminal
+//
+// You subclass App (or provide handlers) and implement:
+//   * on_event(Event)  — called for each input/resize/error event
+//   * on_render(Screen&) — draw your UI into the screen each frame
+// The loop runs until quit() is called. Resize events resize the Screen and
+// force a full repaint. The terminal is always restored on exit (RAII + the
+// Terminal destructor), even on exception.
+
+#include <memory>
+
+#include "termforge/core/input.hpp"
+#include "termforge/core/renderer.hpp"
+#include "termforge/core/screen.hpp"
+#include "termforge/core/terminal.hpp"
+#include "termforge/drivers/terminal_driver.hpp"
+
+namespace termforge {
+
+class App {
+ public:
+  App();
+  virtual ~App();
+
+  App(const App&) = delete;
+  auto operator=(const App&) = delete;
+
+  // Enter raw mode + alt-screen, run the loop until quit(), restore. Returns
+  // the exit code. Probes capabilities and selects the driver first.
+  auto run() -> int;
+
+  // Signal the loop to exit after the current frame.
+  auto quit() -> void { m_running = false; }
+
+  // ── override points ──
+  // Handle one event (input, resize, error). Default: ESC / Ctrl+C quits.
+  virtual auto on_event(const Event& ev) -> void;
+  // Draw the UI into the screen. Called each frame before present().
+  virtual auto on_render(Screen& screen) -> void = 0;
+
+  // Frame budget hint (ms). The loop renders at most once per this interval.
+  void set_frame_ms(int ms) { m_frame_ms = ms; }
+
+  // Called by the SIGWINCH handler (async-signal context): just sets a flag
+  // the loop consumes next frame. Public so the signal trampoline can reach it.
+  auto request_resize() -> void { m_resize_pending = true; }
+
+  struct Size { int cols; int rows; };
+
+ protected:
+  [[nodiscard]] auto screen() -> Screen& { return *m_screen; }
+  [[nodiscard]] auto driver() -> TerminalDriver& { return *m_driver; }
+  [[nodiscard]] auto terminal() -> Terminal& { return m_term; }
+
+ private:
+  auto setup() -> std::expected<void, ErrorEvent>;
+  auto teardown() -> void;
+  auto pump_input() -> void;
+
+  Terminal m_term;
+  std::unique_ptr<TerminalDriver> m_driver;
+  std::unique_ptr<Screen> m_screen;
+  std::unique_ptr<Renderer> m_renderer;
+  Input m_input;
+  bool m_running{false};
+  bool m_in_screen{false};
+  bool m_resize_pending{false};
+  int m_frame_ms{33};  // ~30fps default
+
+  [[nodiscard]] auto current_size() const -> Size;
+};
+
+}  // namespace termforge

@@ -39,6 +39,23 @@ class Terminal {
   // Select and own the best driver for the probed capabilities.
   auto select_driver() -> std::unique_ptr<TerminalDriver>;
 
+  // ── read modes ──
+  // The capability probe needs a short timeout (a terminal may never reply),
+  // while an event loop wants to block until input arrives. These switch the
+  // tty between the two; they only take effect after enter_raw().
+  auto set_read_timeout(int deciseconds) -> void;  // VMIN=0, VTIME=n (poll)
+  auto set_read_blocking() -> void;                // VMIN=1, VTIME=0 (block)
+
+  // Read available input bytes into `out` (up to its capacity). Returns the
+  // number of bytes read (0 on timeout/none). Use with the read modes above.
+  auto read_input(char* out, int max) -> int;
+
+  // ── screen lifecycle (alt-buffer like a full-screen app) ──
+  // Enter the alternate screen + hide cursor; leave restores the user's
+  // shell screen. RAII-friendly via App guard below, but usable directly.
+  auto enter_screen() -> void;
+  auto leave_screen() -> void;
+
   // True when stdout is a console VT (no graphical terminal attached) — the
   // only case where the optional framebuffer driver is even considered.
   [[nodiscard]] auto is_console_vt() const noexcept -> bool;

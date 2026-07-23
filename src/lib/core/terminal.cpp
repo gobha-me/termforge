@@ -138,6 +138,47 @@ auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
   return caps;
 }
 
+
+// ── read modes ──────────────────────────────────────────────────────────────
+
+auto Terminal::set_read_timeout(int deciseconds) -> void {
+  if (!m_raw) return;
+  termios t{};
+  if (tcgetattr(STDIN_FILENO, &t) != 0) return;
+  t.c_cc[VMIN] = 0;
+  t.c_cc[VTIME] = static_cast<cc_t>(deciseconds < 0 ? 0 : (deciseconds > 255 ? 255 : deciseconds));
+  tcsetattr(STDIN_FILENO, TCSANOW, &t);
+}
+
+auto Terminal::set_read_blocking() -> void {
+  if (!m_raw) return;
+  termios t{};
+  if (tcgetattr(STDIN_FILENO, &t) != 0) return;
+  t.c_cc[VMIN] = 1;
+  t.c_cc[VTIME] = 0;
+  tcsetattr(STDIN_FILENO, TCSANOW, &t);
+}
+
+auto Terminal::read_input(char* out, int max) -> int {
+  if (max <= 0) return 0;
+  const ssize_t n = ::read(STDIN_FILENO, out, static_cast<std::size_t>(max));
+  return n > 0 ? static_cast<int>(n) : 0;
+}
+
+// ── screen lifecycle ────────────────────────────────────────────────────────
+
+namespace {
+void emit(const char* seq) { ::write(STDOUT_FILENO, seq, std::strlen(seq)); }
+}  // namespace
+
+auto Terminal::enter_screen() -> void {
+  emit("\033[?1049h\033[?25l\033[2J\033[H");  // alt-buffer, hide cursor, clear, home
+}
+
+auto Terminal::leave_screen() -> void {
+  emit("\033[0m\033[?25h\033[?1049l");  // reset attrs, show cursor, main screen
+}
+
 auto Terminal::is_console_vt() const noexcept -> bool {
   // A console VT has no $TERM-based emulator and stdout is a tty whose name
   // looks like /dev/ttyN. Heuristic only; framebuffer is always opt-in.
