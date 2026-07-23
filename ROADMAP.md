@@ -36,12 +36,13 @@ completed items.
   Label (5 tests), Button (7), ProgressBar (6), TextInput (10),
   Frame (5), MenuBar (10). 43 tests total.
 
-- [ ] **3.5 — Mouse event routing in App**
-  Enable SGR 1006 mouse mode on terminal enter (ESC[?1006h, ESC[?1002h).
-  Route MouseEvent to the widget whose Rect contains (x,y). Disable on
-  exit. Widgets already handle MouseEvent — the App just needs to
-  enable mouse reporting and route events.
-  Files: `src/lib/core/app.cpp`, `src/lib/core/terminal.cpp`
+- [x] **3.5 — Mouse event routing in App** **DONE**
+  SGR 1006/1002 mouse mode on enter, route_mouse dispatches by
+  `Widget::hit_test` (topmost-first). All interactive widgets handle
+  clicks: MenuBar (titles + dropdown, hit_test covers the open dropdown),
+  TextInput (click-to-focus + cursor placement), TableWidget (row
+  select), Button/ListWidget (already did). Drag motion (bit 32) no
+  longer decodes as a press. Tests: `test/13mouse`.
 
 - [ ] **3.6 — MapWidget** (deferred — needs design doc)
   Tile-based 2D map renderer. Needs pixel regions for kitty path.
@@ -94,10 +95,13 @@ completed items.
 
 - [ ] **6.5 — Coverage push to 95%**
 
-- [ ] **6.6 — Kitty waveform pixel region bug** (logged, deferred)
-  WaveformWidget pixel path renders incorrectly in kitty: left half
-  empty, right half falls back to half-blocks. Cell clearing in
-  render_pixel_regions didn't fully fix it. Non-kitty path works.
+- [x] **6.6 — Kitty waveform pixel region bug** **FIXED (pending kitty
+  verification)** — KittyDriver reworked: classic cursor placement
+  (a=p, C=1, c=/r= cell scaling) is now the default; Unicode
+  placeholders are opt-in (`set_placement_mode`). Each region keeps a
+  stable image id (changed content retransmits under the same id, LRU
+  eviction deletes stale images terminal-side). Repro/verify in real
+  kitty with `tools/kitty_repro.sh`.
 
 ---
 
@@ -105,10 +109,10 @@ completed items.
 
 1. ~~Epic 1 (Image Pipeline)~~ **DONE**
 2. ~~Epic 2 (KittyDriver)~~ **DONE** (core + placeholders)
-3. ~~Epic 3 (Widgets)~~ **MOSTLY DONE** (3.5 mouse routing + 3.6 MapWidget remain)
-4. **Epic 3.5 (Mouse routing)** — small, high value ← NEXT
+3. ~~Epic 3 (Widgets)~~ **MOSTLY DONE** (3.6 MapWidget remains)
+4. ~~Epic 3.5 (Mouse routing)~~ **DONE**
 5. **Epic 6.1 (CI)** — cheap, catches regressions
-6. **Epic 6.6 (Kitty waveform bug)** — debug pixel region rendering
+6. ~~Epic 6.6 (Kitty waveform bug)~~ **FIXED** (verify in real kitty)
 7. **Epic 3.6 (MapWidget)** — design doc first
 8. **Epic 5 (Sixel)** — kitty + half-blocks bracket the matrix
 9. **Epic 6.2-6.5 (Polish)** — as time allows

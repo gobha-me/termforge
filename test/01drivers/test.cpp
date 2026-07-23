@@ -129,6 +129,7 @@ TEST_CASE("KittyDriver: empty image is a warning event", "[drivers][kitty][failu
 
 TEST_CASE("KittyDriver: draw_image emits APC transmit + virtual placement + placeholders", "[drivers][kitty]") {
   KittyDriver d;
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
   std::string out;
   d.set_output(&out);
   Image img{1, 1, {Pixel{255, 0, 0, 255}}};
@@ -150,8 +151,9 @@ TEST_CASE("KittyDriver: draw_image emits APC transmit + virtual placement + plac
   REQUIRE(out.find("\xF4\x8F\xBB\xAE") != std::string::npos);
 }
 
-TEST_CASE("KittyDriver: same image drawn twice reuses image ID (no re-upload)", "[drivers][kitty]") {
+TEST_CASE("KittyDriver: unchanged region does not re-upload", "[drivers][kitty]") {
   KittyDriver d;
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
   std::string out;
   d.set_output(&out);
   Image img{2, 1, {Pixel{255, 0, 0, 255}, Pixel{0, 255, 0, 255}}};
@@ -159,12 +161,100 @@ TEST_CASE("KittyDriver: same image drawn twice reuses image ID (no re-upload)", 
   d.flush();
 
   out.clear();
-  REQUIRE(d.draw_image(5, 5, img).has_value());
+  REQUIRE(d.draw_image(0, 0, img).has_value());
   d.flush();
-  // Second draw should NOT contain a transmit (a=t), only placeholder cells.
+  // Same region, same content: no transmit (a=t), no new placement (a=p) —
+  // only the placeholder cells are re-emitted.
   REQUIRE(out.find("a=t") == std::string::npos);
-  // Should still emit placeholder cells at the new position.
+  REQUIRE(out.find("a=p") == std::string::npos);
   REQUIRE(out.find("\xF4\x8F\xBB\xAE") != std::string::npos);
+}
+
+TEST_CASE("KittyDriver: classic placement is the default", "[drivers][kitty]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  REQUIRE(d.placement_mode() == KittyDriver::PlacementMode::Classic);
+  Image img{2, 2, {Pixel{255, 0, 0, 255}, Pixel{0, 255, 0, 255},
+                   Pixel{0, 0, 255, 255}, Pixel{255, 255, 0, 255}}};
+  REQUIRE(d.draw_image(3, 4, img).has_value());
+  d.flush();
+  // Transmit + cursor-positioned placement scaled to the cell grid.
+  REQUIRE(out.find("a=t") != std::string::npos);
+  REQUIRE(out.find("\033[5;4H") != std::string::npos);  // cursor to (3,4) 1-based
+  REQUIRE(out.find("a=p") != std::string::npos);
+  REQUIRE(out.find("C=1") != std::string::npos);
+  REQUIRE(out.find("c=2") != std::string::npos);
+  REQUIRE(out.find("r=2") != std::string::npos);
+  // No virtual placement, no placeholder cells.
+  REQUIRE(out.find("U=1") == std::string::npos);
+  REQUIRE(out.find("\xF4\x8F\xBB\xAE") == std::string::npos);
+
+  out.clear();
+  REQUIRE(d.draw_image(3, 4, img).has_value());
+  d.flush();
+  // Unchanged frame: nothing at all to emit.
+  REQUIRE(out.find("\033_G") == std::string::npos);
+}
+
+TEST_CASE("KittyDriver: changed content retransmits under the same image id",
+          "[drivers][kitty]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  Image red{1, 1, {Pixel{255, 0, 0, 255}}};
+  Image green{1, 1, {Pixel{0, 255, 0, 255}}};
+  REQUIRE(d.draw_image(0, 0, red).has_value());
+  d.flush();
+  REQUIRE(out.find("i=1") != std::string::npos);
+
+  out.clear();
+  REQUIRE(d.draw_image(0, 0, green).has_value());
+  d.flush();
+  // New pixels, same region: retransmit with the SAME id, then recreate
+  // the classic placement (kitty replaces the data but does not refresh
+  // an existing classic placement). No second image id.
+  REQUIRE(out.find("a=t") != std::string::npos);
+  REQUIRE(out.find("i=1") != std::string::npos);
+  REQUIRE(out.find("i=2") == std::string::npos);
+  REQUIRE(out.find("a=d,d=i,i=1,p=1") != std::string::npos);
+  REQUIRE(out.find("a=p") != std::string::npos);
+}
+
+TEST_CASE("KittyDriver: stale regions are LRU-evicted terminal-side",
+          "[drivers][kitty]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  Image img{1, 1, {Pixel{255, 0, 0, 255}}};
+  // 16 slots is the cap; the 17th distinct region evicts one (a=d,d=I
+  // frees the image data and its placements).
+  for (int i = 0; i < 17; ++i) {
+    REQUIRE(d.draw_image(i, 0, img).has_value());
+    d.flush();  // advance the LRU clock between regions
+  }
+  REQUIRE(out.find("a=d,d=I,i=1") != std::string::npos);
+  // The evicted id is recycled for the new region (ids stay one byte for
+  // the 38;5 placeholder encoding) — no id 17 is ever allocated.
+  REQUIRE(out.find("i=17") == std::string::npos);
+}
+
+TEST_CASE("KittyDriver: oversized image is cropped to the placeholder limit",
+          "[drivers][kitty][failure]") {
+  KittyDriver d;
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  std::string out;
+  d.set_output(&out);
+  Image img{300, 1, std::vector<Pixel>(300, Pixel{255, 0, 0, 255})};
+  auto r = d.draw_image(0, 0, img);
+  d.flush();
+  // Cropped to 297 cells and surfaced as a warning (no silent downgrade).
+  REQUIRE_FALSE(r.has_value());
+  REQUIRE(r.error().severity == Severity::Warning);
+  REQUIRE(out.find("s=297") != std::string::npos);
+  REQUIRE(out.find("c=297") != std::string::npos);
+  // The warning fires once, not every frame.
+  REQUIRE(d.draw_image(0, 0, img).has_value());
 }
 
 TEST_CASE("KittyDriver: large image chunks at 4096 bytes", "[drivers][kitty]") {
@@ -202,6 +292,7 @@ TEST_CASE("KittyDriver: draw_text emits SGR colors", "[drivers][kitty]") {
 
 TEST_CASE("KittyDriver: placeholder grid for 2x2 image", "[drivers][kitty]") {
   KittyDriver d;
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
   std::string out;
   d.set_output(&out);
   // 2x2 image → 2 rows × 2 cols of placeholder cells.
@@ -223,12 +314,18 @@ TEST_CASE("KittyDriver: placeholder grid for 2x2 image", "[drivers][kitty]") {
   REQUIRE(out.find("c=2") != std::string::npos);
   REQUIRE(out.find("r=2") != std::string::npos);
 
+  // Placeholder cells carry the image id as a 256-color foreground —
+  // kitty ignores the 24-bit form (observed: accepted, never rendered).
+  REQUIRE(out.find("\033[38;5;1m") != std::string::npos);
+  REQUIRE(out.find("38;2;0;0;1") == std::string::npos);
+
   // SGR reset after the grid.
   REQUIRE(out.find("\033[0m") != std::string::npos);
 }
 
 TEST_CASE("KittyDriver: diacritics present for non-zero row/col", "[drivers][kitty]") {
   KittyDriver d;
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
   std::string out;
   d.set_output(&out);
   // 3x1 image: 1 row, 3 cols. Per the kitty rowcolumn-diacritics table:
@@ -250,6 +347,7 @@ TEST_CASE("KittyDriver: diacritics present for non-zero row/col", "[drivers][kit
 
 TEST_CASE("KittyDriver: extended diacritic range for wide images", "[drivers][kitty]") {
   KittyDriver d;
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
   std::string out;
   d.set_output(&out);
   // 200x1 image: 1 row, 200 cols. Indices past the U+03xx run come from

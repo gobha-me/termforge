@@ -127,9 +127,29 @@ frame regardless. This is intentional: pixel content typically changes
 every frame (animated waveform, scrolling map), so diffing would waste
 time without saving I/O.
 
-For static pixel content (a loaded image that doesn't change), the
-KittyDriver's content-hash cache already prevents re-upload — the
-`draw_image` call reuses the server-side image ID.
+The KittyDriver keeps one stable server-side image ID per screen region:
+unchanged content (hash match) is not re-uploaded, changed content is
+retransmitted under the same ID (the terminal replaces the stored data;
+in classic mode the placement is then recreated, since kitty does not
+refresh an existing classic placement on retransmit), and regions that
+stop being drawn are LRU-evicted (`a=d,d=I`) so animation never
+accumulates images terminal-side. Evicted IDs are recycled, keeping IDs
+one byte — required by the placeholder path's `38;5;<id>` encoding.
+
+## Placement Modes
+
+`KittyDriver` places images one of two ways (`set_placement_mode`):
+
+- **Classic** (default) — a cursor-positioned placement (`a=p`, `C=1`)
+  scaled to the region's cell grid. The simpler half of the protocol,
+  implemented by every kitty-graphics terminal (kitty, ghostty, wezterm,
+  konsole).
+- **UnicodePlaceholders** — a virtual placement (`U=1`) plus `U+10EEEE`
+  text cells carrying row/column diacritics. Survives tmux pane
+  operations, but needs terminal placeholder support (kitty ≥ 0.28) and,
+  under tmux, APC passthrough that TermForge does not emit yet. Limited
+  to 297×297 cells by the diacritic table (larger images are cropped and
+  surfaced as a `Warning` event).
 
 ## Example: WaveformWidget
 
