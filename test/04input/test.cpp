@@ -73,6 +73,29 @@ TEST_CASE("Input: malformed/truncated escape doesn't wedge the parser", "[input]
   REQUIRE(ev2.size() <= 1);
 }
 
+
+TEST_CASE("Input: a lone ESC decodes as Escape (quit key)", "[input][failure]") {
+  // Regression: ESC alone previously waited forever for a second byte that
+  // never comes, so ESC-to-quit never fired. A trailing lone ESC must decode.
+  Input in;
+  auto ev = in.decode("\x1B");
+  REQUIRE(!ev.empty());
+  REQUIRE(first_key(ev).key == Key::Escape);
+}
+
+TEST_CASE("Input: escape sequences still decode (not mistaken for lone ESC)", "[input]") {
+  Input in;
+  auto up = in.decode("\x1B[A");
+  REQUIRE(first_key(up).key == Key::Up);
+  auto down = in.decode("\x1B[B");
+  REQUIRE(first_key(down).key == Key::Down);
+  // split across feeds: ESC then [A in a second feed completes the sequence
+  Input in2;
+  in2.feed("\x1B");
+  auto ev2 = in2.poll();  // lone ESC flushed as Escape
+  REQUIRE(!ev2.empty());
+}
+
 TEST_CASE("Input: resize event is pushed", "[input]") {
   Input in;
   in.push_resize(120, 40);

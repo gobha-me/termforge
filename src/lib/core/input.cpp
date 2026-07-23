@@ -6,12 +6,23 @@
 namespace termforge {
 
 auto Input::feed(std::string_view bytes) -> void {
-  std::string buf{bytes};
+  m_pending += bytes;
   std::size_t off = 0;
-  while (off < buf.size()) {
-    const std::size_t used = decode_one(std::string_view{buf}.substr(off));
-    if (used == 0) break;  // incomplete sequence; wait for more bytes
+  while (off < m_pending.size()) {
+    const std::size_t used = decode_one(std::string_view{m_pending}.substr(off));
+    if (used == 0) break;  // incomplete sequence; keep it in m_pending
     off += used;
+  }
+  m_pending.erase(0, off);
+
+  // A lone trailing ESC is a real Escape keypress, not the start of a
+  // sequence — in raw mode no more bytes are coming until the next keypress.
+  // (The 100ms read timeout in the App loop is the natural ESC-vs-sequence
+  // boundary.) If instead bytes follow within the same read, decode_one's
+  // CSI/Alt handling already consumed them above.
+  if (m_pending.size() == 1 && m_pending[0] == '\x1B') {
+    m_events.push_back(KeyEvent{Key::Escape});
+    m_pending.clear();
   }
 }
 

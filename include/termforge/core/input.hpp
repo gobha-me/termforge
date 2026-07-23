@@ -36,6 +36,7 @@ class Input {
 
  private:
   std::deque<Event> m_events;
+  std::string m_pending;  // incomplete sequence carried across feed() calls
 
   // Decode one unit from the front of `buf`; returns bytes consumed (0 =
   // need more data). Appends any resulting event(s) to m_events.
