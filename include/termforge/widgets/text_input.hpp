@@ -39,12 +39,8 @@ class TextInput final : public Widget {
     mark_dirty();
   }
 
-  // Focus state (parent app's focus model).
-  auto set_focused(bool focused) -> void {
-    m_focused = focused;
-    mark_dirty();
-  }
-  [[nodiscard]] auto focused() const noexcept -> bool { return m_focused; }
+  // Focus state is inherited from Widget (set_focused/focused/focusable) — the
+  // parent app's FocusRing drives it. A click also focuses (see on_event).
 
   // Callback when text changes.
   auto on_change(std::function<void(const std::string&)> cb) -> void {
@@ -69,7 +65,6 @@ class TextInput final : public Widget {
   std::string m_placeholder;
   int m_cursor{0};   // byte offset into m_text
   int m_scroll{0};   // byte offset of the leftmost visible column
-  bool m_focused{false};
 
   Rgb m_fg{0xE0, 0xE0, 0xF0};
   Rgb m_bg{0x0A, 0x0A, 0x14};

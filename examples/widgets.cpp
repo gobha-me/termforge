@@ -22,6 +22,7 @@
 
 #include "termforge/core/app.hpp"
 #include "termforge/widgets/button.hpp"
+#include "termforge/widgets/focus_ring.hpp"
 #include "termforge/widgets/frame.hpp"
 #include "termforge/widgets/label.hpp"
 #include "termforge/widgets/list_widget.hpp"
@@ -31,9 +32,6 @@
 #include "termforge/widgets/waveform_widget.hpp"
 
 using namespace termforge;
-
-// Focus targets in tab order.
-enum Focus { kMenu = 0, kInput, kBtnOk, kBtnCancel, kList, kFocusCount };
 
 class WidgetsDemo final : public App {
  public:
@@ -76,29 +74,34 @@ class WidgetsDemo final : public App {
     m_input.on_change([this](const std::string& t) {
       set_status(std::format("Input: \"{}\"", t));
     });
-    // A click focuses the input itself; keep the app's focus model in sync.
-    m_input.on_click([this] {
-      m_focus = kInput;
-      update_focus();
-    });
 
     // Progress.
     m_progress.set_label("Loading...");
+
+    // Focus order. Same order as route_mouse below so a click and a Tab agree
+    // on which widget is "topmost"; the ring owns focus and Tab-cycling, and a
+    // click on any member moves focus to it (focus_at). Input takes initial
+    // focus (the first focusable member added).
+    m_ring.add(&m_input);
+    m_ring.add(&m_btn_ok);
+    m_ring.add(&m_btn_cancel);
+    m_ring.add(&m_list);
+    m_ring.add(&m_menu);
 
     set_status("Tab to cycle focus | ESC to quit");
   }
 
   auto on_event(const Event& ev) -> void override {
-    // Mouse events: route to the widget under the cursor. The menu is
-    // listed last (= topmost) so its open dropdown wins over the widgets
-    // it overlays. A press outside the menu closes the dropdown first,
-    // then still routes to whatever was clicked.
+    // Mouse events: a press moves focus to the widget under the cursor
+    // (focus_at) and routes the click. The menu is listed last (= topmost) in
+    // both the ring and route_mouse so its open dropdown wins over the widgets
+    // it overlays. A press outside the menu closes the dropdown first.
     if (const auto* m = std::get_if<MouseEvent>(&ev)) {
       if (m->pressed && m_menu.dropdown_open() && !m_menu.hit_test(m->x, m->y))
         m_menu.close_dropdown();
-      if (route_mouse(*m, {&m_input, &m_btn_ok, &m_btn_cancel, &m_list,
-                           &m_menu}))
-        return;
+      if (m->pressed) m_ring.focus_at(m->x, m->y);
+      route_mouse(*m, {&m_input, &m_btn_ok, &m_btn_cancel, &m_list, &m_menu});
+      return;
     }
 
     // Menu dropdown consumes all keys when open.
@@ -106,31 +109,9 @@ class WidgetsDemo final : public App {
       if (m_menu.on_event(ev)) return;
     }
 
-    // Route to focused widget.
-    bool consumed = false;
-    switch (m_focus) {
-      case kMenu: consumed = m_menu.on_event(ev); break;
-      case kInput: consumed = m_input.on_event(ev); break;
-      case kBtnOk: consumed = m_btn_ok.on_event(ev); break;
-      case kBtnCancel: consumed = m_btn_cancel.on_event(ev); break;
-      case kList: consumed = m_list.on_event(ev); break;
-      default: break;
-    }
-
-    // Tab cycles forward, Shift+Tab cycles reverse.
-    if (!consumed) {
-      if (const auto* k = std::get_if<KeyEvent>(&ev)) {
-        if (k->key == Key::Tab) {
-          if (k->shift) {
-            m_focus = (m_focus - 1 + kFocusCount) % kFocusCount;
-          } else {
-            m_focus = (m_focus + 1) % kFocusCount;
-          }
-          update_focus();
-          return;
-        }
-      }
-    }
+    // The ring delivers the key to the focused widget and cycles on Tab /
+    // Shift+Tab.
+    if (m_ring.handle_key(ev)) return;
 
     App::on_event(ev);
   }
@@ -206,8 +187,7 @@ class WidgetsDemo final : public App {
     m_status.draw(screen);
 
     // Focus indicator in title.
-    static const char* names[] = {"Menu", "Input", "OK", "Cancel", "List"};
-    screen.write_text(W - 18, 0, std::format(" Focus: {:6}", names[m_focus]),
+    screen.write_text(W - 18, 0, std::format(" Focus: {:6}", focus_name()),
                       Rgb{0x60, 0x60, 0x80}, Rgb{0x20, 0x20, 0x40});
 
     // Menu bar drawn LAST so the dropdown overlays all other content
@@ -221,10 +201,15 @@ class WidgetsDemo final : public App {
  private:
   auto set_status(std::string msg) -> void { m_status_text = std::move(msg); }
 
-  auto update_focus() -> void {
-    m_input.set_focused(m_focus == kInput);
-    m_btn_ok.set_focused(m_focus == kBtnOk);
-    m_btn_cancel.set_focused(m_focus == kBtnCancel);
+  // Name of the currently-focused widget, for the title indicator.
+  [[nodiscard]] auto focus_name() const -> const char* {
+    const Widget* c = m_ring.current();
+    if (c == &m_input) return "Input";
+    if (c == &m_btn_ok) return "OK";
+    if (c == &m_btn_cancel) return "Cancel";
+    if (c == &m_list) return "List";
+    if (c == &m_menu) return "Menu";
+    return "-";
   }
 
   MenuBar m_menu;
@@ -235,9 +220,9 @@ class WidgetsDemo final : public App {
   ProgressBar m_progress;
   ListWidget m_list;
   WaveformWidget m_wave;
+  FocusRing m_ring;
 
   std::string m_status_text;
-  int m_focus{0};
   int m_frame{0};
 };
 
