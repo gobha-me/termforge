@@ -10,6 +10,7 @@ set(EXAMPLES
   low_level
   dashboard
   widgets
+  dialogs
 )
 
 foreach(EXAMPLE ${EXAMPLES})

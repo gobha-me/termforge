@@ -36,7 +36,10 @@ Landed and verified:
 - **Widgets** — `Widget` base (with pixel-region support), TextBox scrollback,
   TableWidget, ListWidget, WaveformWidget, and the primitives Label, Button,
   ProgressBar, TextInput, Frame, MenuBar. Mouse event routing via
-  `Widget::hit_test` (topmost-first).
+  `Widget::hit_test` (topmost-first); `FocusRing` owns the Tab order.
+- **Modal dialogs** — an overlay stack in `App` that draws last and captures
+  all input, plus `MessageDialog` / `ConfirmDialog` / `PromptDialog` that size
+  and center themselves. See `docs/modal-overlays.md`.
 
 Deferred per the roadmap: `SixelDriver` (Epic 5), MapWidget + game example,
 SIMD waveform rasterization, framebuffer driver.

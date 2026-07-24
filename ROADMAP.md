@@ -10,9 +10,10 @@ completed items.
 >
 > **2026-07-24 — widget-gap wave.** A follow-on review filed **#17–#28**
 > (FocusRing, modal dialogs, form controls, styled spans, etc.). **#17
-> (FocusRing)** is landed (v0.0.5) — the Layer-1 focus owner that unblocks
-> dialogs #18 → FilePicker #23 and forms #19, and resolves #12 item 5. Next:
-> #18 (dialogs), #19 (form controls).
+> (FocusRing)** is landed (v0.0.5) — the Layer-1 focus owner that resolves #12
+> item 5 — and **#18 (modal overlay stack + Message/Confirm/Prompt dialogs)**
+> is landed (v0.0.6, see docs/modal-overlays.md). Both structural primitives
+> are now in place. Next: #19 (form controls), #23 (FilePicker, unblocked).
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
