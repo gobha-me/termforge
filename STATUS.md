@@ -7,14 +7,15 @@ which holds standing conventions, not state).
 ## Where we are (2026-07-24)
 
 **Core framework, KittyDriver, and the full widget system are landed and
-tested.** 220 test cases across 15 suites; gcc 13/14 + clang 19/20 green in
-CI; ASan/UBSan clean via the (now-fixed) sanitizer toolchains.
+tested.** 238 test cases across 16 suites; gcc 14 + clang 20 green with
+`-Werror`; ASan/UBSan clean via the (now-fixed) sanitizer toolchains.
 
-**First tagged release: `v0.0.1`** (annotated tag + GitHub pre-release, pushed
-2026-07-24). It captures the core + drivers + widgets + audit fixes #3–#9, #14,
-#15. `version.cmake` derives `VERSION` from `git describe --tags`, so the build
-now reports `0.0.1`. Release convention: annotated `vX.Y.Z` tag pushed to
-origin + a matching `gh release --prerelease` while pre-1.0.
+**Latest release: `v0.0.2`** (annotated tag + GitHub pre-release, 2026-07-24) —
+adds audit fix #13 (terminal/input robustness) on top of `v0.0.1`, which
+captured the core + drivers + widgets + audit fixes #3–#9, #14, #15.
+`version.cmake` derives `VERSION` from `git describe --tags`, so the build now
+reports `0.0.2`. Release convention: annotated `vX.Y.Z` tag pushed to origin +
+a matching `gh release --prerelease` while pre-1.0.
 
 Working end to end:
 - `Terminal` — raw-mode RAII, capability probe (kitty/sixel/truecolor),
@@ -56,23 +57,39 @@ through. Landed so far, each with regression tests:
   swallows CSI private-marker device reports (`ESC[?…c`, DA2, DECRPM) whole,
   so a late probe reply can't explode into spurious keystrokes. Pure classifiers
   in `detail/probe.hpp`, covered offline by `test/15probe`.
+- **#13** — terminal/input robustness (v0.0.2). Raw mode arms an
+  async-signal-safe restore path (`detail/tty_restore.hpp`): SIGTERM/SIGHUP +
+  crash signals + `atexit` leave the alt-screen and restore cooked termios,
+  then re-raise — `terminal.hpp`'s "a crash can't wedge the terminal" is now
+  real. `read_input`/probe use the same `tty_fd` termios is applied to (no more
+  hardcoded STDIN). SS3 (`ESC O …`) decodes arrows/Home/End/F1–F4 (Home no
+  longer types "H"); CSI `;<mod>` and SGR mouse mod-bits populate key/mouse
+  ctrl/alt/shift. Bracketed paste (mode 2004) surfaces as one `PasteEvent`
+  (an embedded ESC can't fake Escape). `emit()` retries EINTR/short writes and
+  no-ops on a non-tty stdout. New `test/16signals` (fork+pipe, no tty needed) +
+  expanded `test/04input`.
 
 Still open: #10 (display-width / wide cells), #11 (dirty/clear contract),
-#12 (widget bundle), #13 (terminal/input robustness), #16 (forge-top demo
-epic, the dogfooding harness).
+#12 (widget bundle), #16 (forge-top demo epic, the dogfooding harness).
 
 ## Next session — start here
 
-Remaining audit bugs are #10–#13, then epic #16. Two orderings to reconcile
-before picking: numeric order points at **#10** next, while co-agent Kimi K3's
-task list orders them **#12 → #13 → #11 → #10**. #10 (display width) is the
-big cross-cutting one (byte length used as column width across every widget);
-#12 is a bundle of smaller, independent widget bugs. Before starting, run
-`venice memory tasks` and `git log origin/main..main` / `git status` — Kimi
-lands on local main and can be mid-flight or unpushed; coordinate via the
-issue tracker (see the `kimi-k3-coagent` memory) so two agents don't take the
-same bug. #8's manual kitty check (single `_Gi=31` probe, no stray startup
-chars) is still owed by the user.
+Remaining audit bugs are **#10, #11, #12**, then epic #16 (#13 landed in
+v0.0.2). The natural next pick is one of the widget-family bugs; note **#12 is
+the top of co-agent Kimi K3's pending list**, so to avoid collision either take
+it explicitly (and claim it on the tracker) or start from the other end (#10,
+the big cross-cutting display-width refactor — byte length used as column width
+across every widget). #11 (dirty/clear contract) is intertwined with #10's
+continuation cells. Before starting, run `venice memory tasks` and
+`git log origin/main..main` / `git status` — Kimi lands on local main and can
+be mid-flight or unpushed; coordinate via the issue tracker (see the
+`kimi-k3-coagent` memory) so two agents don't take the same bug.
+
+**Owed manual checks (sandbox has no tty):** #13 needs a real-terminal pass —
+`kill <pid>` should restore the terminal (cooked mode, cursor shown, main
+screen, mouse off), and Home/End, Ctrl+Arrow, and a paste should behave in
+kitty. #8's manual kitty check (single `_Gi=31` probe, no stray startup chars)
+is also still owed.
 
 ## How to verify
 
