@@ -31,11 +31,11 @@ file is the tactical version.
 
 ## Protocol priority (driver selection)
 
-1. KittyDriver (flagship; Unicode placeholders for tmux are first-class)
-2. SixelDriver (legacy fallback)
+1. KittyDriver (flagship; Unicode placeholders for tmux are first-class) — **done**
+2. SixelDriver (legacy fallback) — not yet implemented
 3. AnsiRgbDriver (truecolor half-blocks, universal floor) — **done**
 4. FallbackDriver (plain ASCII) — **done**
-5. FramebufferDriver (optional, console-VT/embedded only)
+5. FramebufferDriver (optional, console-VT/embedded only) — cut
 
 ## Testing philosophy
 

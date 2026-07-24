@@ -4,44 +4,54 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-07-23)
+## Where we are (2026-07-24)
 
-**Phase 1 (core framework): DONE.** All core components landed and tested:
+**Core framework, KittyDriver, and the full widget system are landed and
+tested.** 203 test cases across 14 suites; gcc 13/14 + clang 19/20 green in
+CI; ASan/UBSan clean via the (now-fixed) sanitizer toolchains.
+
+Working end to end:
 - `Terminal` — raw-mode RAII, capability probe (kitty/sixel/truecolor),
-  read-mode API (blocking vs poll), alt-screen lifecycle.
-- Drivers: `AnsiRgbDriver` (half-block truecolor, SGR coalescing in both
-  text AND image paths), `FallbackDriver` (ASCII luminance).
-- `Screen` (cell grid + sanitize boundary), `Renderer` (diff-render with
-  color pass-through), `Input` (escape state machine, UTF-8), `App` (event
-  loop with SIGWINCH resize).
-- Color text pipeline: Cell fg/bg → Renderer → AnsiRgbDriver SGR emission
-  with cross-call run coalescing. (Fixed 2026-07-23 — was completely
-  unimplemented; draw_text took no color params.)
+  read-mode API, alt-screen lifecycle.
+- Drivers — `KittyDriver` (base64/APC, classic + Unicode-placeholder
+  placement, per-region image IDs with LRU eviction), `AnsiRgbDriver`
+  (half-block truecolor, SGR coalescing), `FallbackDriver` (ASCII).
+- `Screen` (grid + sanitize boundary), `Renderer` (diff + color), `Input`
+  (escape state machine, hardened UTF-8, SGR mouse), `App` (loop, SIGWINCH
+  resize, pixel-region plumbing).
+- Widgets — TextBox, TableWidget, ListWidget, WaveformWidget, Label, Button,
+  ProgressBar, TextInput, Frame, MenuBar; mouse routing via hit_test.
+- Examples — dashboard, widgets, image, chat, input, colors, low_level, hello.
 
-**Phase 2 (widgets): STARTED.** `Widget` base + `TextBox` scrollback done —
-append/wrap/follow/scroll/resize, validated live (chat-style demo).
+## 2026-07-24: implementation-audit fix wave
 
-## Real bugs found via real-terminal testing (fixed + regression tests)
-- Sanitizer mangled valid multi-byte UTF-8 (dropped continuation bytes) —
-  truncated block glyphs; broke draw + diff-erase. Fixed (UTF-8-aware).
-- ESC-to-quit didn't fire (lone ESC waited forever). Fixed (pending buffer +
-  lone-ESC flush).
-- Odd-height images dropped last row (found by a one-shot subagent review).
-- Color text completely dropped by Renderer (no SGR emission in draw_text).
-  Fixed 2026-07-23: extended TerminalDriver::draw_text with fg/bg params,
-  AnsiRgbDriver emits SGR with run coalescing, 4 new color tests.
+A full audit (2026-07-23, filed as GitHub issues #3–#16) is being worked
+through. Landed so far, each with regression tests:
 
-## Roadmap (see ROADMAP.md for full epic/issue breakdown)
-1. ~~Epic 1: Image Pipeline~~ **DONE** — ImageLoader, tests, sample asset.
-2. **Epic 2: KittyDriver** — flagship. Kitty terminal available. **NEXT.**
-3. **Epic 3: Widget Completion** — TableWidget, ListWidget, WaveformWidget,
-   MapWidget, mouse routing.
-4. **Epic 4: Examples** — dashboard.cpp, game.cpp.
-5. **Epic 5: SixelDriver** — legacy fallback, deferred until Kitty stable.
-6. **Epic 6: Hardening** — CI, SIMD, docs, coverage.
+- **#3** — input pump now drains the tty fd before committing a held lone ESC;
+  a 256-byte read could split a mouse-drag report on an ESC byte and fabricate
+  an Escape (quit) mid-drag.
+- **#4** — resize flag cleared before measuring (a mid-handling SIGWINCH was
+  erased); `g_active` is now atomic.
+- **#5** — copy-before-invoke for MenuBar keyboard Enter and List/Table
+  `on_select` (callbacks that rebuild the widget's own storage no longer run
+  on freed memory).
+- **#14** — sanitizer toolchain files actually apply `-fsanitize` (the
+  `find_library`/`ASAN_FOUND` gate never fired); `.gitignore` anchored
+  (`/build*/`); build is warning-clean and CI enforces `-Werror`.
+- **#9** — sanitize/Input now reject overlong UTF-8 (incl. overlong ESC) and
+  surrogate encodings via a shared RFC 3629 validator; the input decoder
+  resynchronizes after a bad lead instead of swallowing the next keypress.
 
-**CUT:** FramebufferDriver (no target use case), AIForge (separate project).
+Still open: #6/#7 (kitty placement GC + LRU thrash), #8 (probe hardening),
+#10 (display-width / wide cells), #11 (dirty/clear contract), #12 (widget
+bundle), #13 (terminal/input robustness), #15 (docs — this file is part of
+it), #16 (forge-top demo epic, the dogfooding harness).
 
 ## How to verify
-gcc 14 + clang 20, `cmake -B build && cmake --build build && ctest --test-dir build`
-(and the clang toolchain variant). Terminal changes need real-hardware checks.
+
+gcc 13/14 + clang 19/20:
+`cmake -B build && cmake --build build && ctest --test-dir build`
+(and the clang toolchain variant). Terminal-protocol changes also need
+real-hardware checks against Kitty/Ghostty/WezTerm/xterm (the agent can't see
+a terminal) — use `tools/kitty_repro.sh` for the kitty path.

@@ -3,6 +3,11 @@
 Derived from the gameplan and the 2026-07-23 roadmap discussion. Prune
 completed items.
 
+> **2026-07-24 — implementation audit.** A full audit filed GitHub issues
+> **#3–#16** (bugs #3–#14, stale docs #15, forge-top demo epic #16). The fix
+> wave is in progress; #3/#4/#5/#9/#14 are landed. See STATUS.md and the issue
+> tracker for live state.
+
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
 **Done:**
@@ -22,7 +27,7 @@ completed items.
 
 - [x] **3.1 — TableWidget** ✅
   Columns, alignment, auto-width, scrolling, set_cell/set_row, alternating
-  backgrounds. 8 tests.
+  backgrounds. 12 tests.
 
 - [x] **3.2 — ListWidget** ✅
   Selection highlight, keyboard nav, mouse click, Enter callback,
@@ -34,7 +39,7 @@ completed items.
 
 - [x] **3.4 — Primitive widgets** ✅
   Label (5 tests), Button (7), ProgressBar (6), TextInput (10),
-  Frame (5), MenuBar (10). 43 tests total.
+  Frame (5), MenuBar (11). 44 tests total.
 
 - [x] **3.5 — Mouse event routing in App** **DONE**
   SGR 1006/1002 mouse mode on enter, route_mouse dispatches by
@@ -81,8 +86,11 @@ completed items.
 
 ## Epic 6: Hardening & Polish
 
-- [ ] **6.1 — CI workflow (GitHub Actions)**
-  Ubuntu LTS + Fedora, GCC + Clang, ASan/UBSan jobs.
+- [x] **6.1 — CI workflow (GitHub Actions)** ✅ **DONE**
+  GCC 13/14 + Clang 19/20 on Ubuntu, Fedora job, ASan/UBSan job. Warning
+  rot is now gated by `-Werror` on the GCC/Clang jobs; the ASan job routes
+  through `cmake/toolchain/address.cmake` (fixed 2026-07-24 — the toolchain
+  files previously never applied the sanitizer flags).
   Files: `.github/workflows/build.yml`
 
 - [ ] **6.2 — SIMD waveform rasterization**
@@ -111,8 +119,10 @@ completed items.
 2. ~~Epic 2 (KittyDriver)~~ **DONE** (core + placeholders)
 3. ~~Epic 3 (Widgets)~~ **MOSTLY DONE** (3.6 MapWidget remains)
 4. ~~Epic 3.5 (Mouse routing)~~ **DONE**
-5. **Epic 6.1 (CI)** — cheap, catches regressions
+5. ~~Epic 6.1 (CI)~~ **DONE** (GCC/Clang/Fedora/ASan, `-Werror`)
 6. ~~Epic 6.6 (Kitty waveform bug)~~ **FIXED** (verify in real kitty)
-7. **Epic 3.6 (MapWidget)** — design doc first
-8. **Epic 5 (Sixel)** — kitty + half-blocks bracket the matrix
-9. **Epic 6.2-6.5 (Polish)** — as time allows
+7. **Audit fix wave (issues #3–#16)** — in progress 2026-07-24; #3/#4/#5/#9/#14 landed, kitty placement GC (#6/#7), probe hardening (#8), display-width (#10), widget bundle (#12), terminal robustness (#13) next
+8. **Epic 3.6 (MapWidget)** — design doc first
+9. **forge-top demo (issue #16)** — btop-style dogfooding harness, all tiers
+10. **Epic 5 (Sixel)** — kitty + half-blocks bracket the matrix
+11. **Epic 6.2-6.5 (Polish)** — as time allows
