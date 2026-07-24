@@ -182,14 +182,22 @@ TEST_CASE("TextInput: click past end clamps to text size", "[mouse][input]") {
   REQUIRE(ti.cursor_pos() == 3);
 }
 
-TEST_CASE("TextInput: click mid-code-point snaps to boundary",
+TEST_CASE("TextInput: click maps display column to code-point boundary",
           "[mouse][input]") {
   TextInput ti;
   ti.set_geometry({0, 0, 10, 1});
-  ti.set_text("h\xC3\xA9llo");  // "héllo": é is bytes 1-2
-  Event ev = press(2, 0);       // lands on the continuation byte
-  ti.on_event(ev);
-  REQUIRE(ti.cursor_pos() == 1);
+  // "héllo": each glyph is one display column — h@0 é@1 l@2 l@3 o@4 — but é is
+  // two bytes, so column and byte offset diverge. The cursor must land on the
+  // grapheme boundary under the clicked column, not at the byte with that index.
+  ti.set_text("h\xC3\xA9llo");
+  SECTION("click on é (column 1) → é's byte offset") {
+    ti.on_event(press(1, 0));
+    REQUIRE(ti.cursor_pos() == 1);  // byte offset of é
+  }
+  SECTION("click on the first l (column 2) → past é") {
+    ti.on_event(press(2, 0));
+    REQUIRE(ti.cursor_pos() == 3);  // h(1 byte) + é(2 bytes)
+  }
 }
 
 TEST_CASE("TextInput: click fires on_click", "[mouse][input]") {

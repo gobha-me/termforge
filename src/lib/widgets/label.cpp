@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "detail/width.hpp"
+
 namespace termforge {
 
 auto Label::draw(Screen& screen) -> void {
@@ -16,8 +18,8 @@ auto Label::draw(Screen& screen) -> void {
     for (int x = 0; x < r.w; ++x)
       screen.write_text(r.x + x, r.y + y, " ", m_fg, m_bg);
 
-  // Compute text start position based on alignment.
-  const int text_len = static_cast<int>(m_text.size());
+  // Compute text start position based on alignment (by display columns).
+  const int text_len = detail::display_width(m_text);
   int start_x = r.x;
   if (m_align == Align::Center) {
     start_x = r.x + std::max(0, (r.w - text_len) / 2);
@@ -28,9 +30,7 @@ auto Label::draw(Screen& screen) -> void {
   // Write text on the first row (clipped to widget width).
   const int max_w = r.x + r.w - start_x;
   if (max_w > 0 && !m_text.empty()) {
-    const int write_w = std::min(text_len, max_w);
-    screen.write_text(start_x, r.y,
-                      m_text.substr(0, static_cast<std::size_t>(write_w)),
+    screen.write_text(start_x, r.y, detail::truncate_to_width(m_text, max_w),
                       m_fg, m_bg);
   }
 

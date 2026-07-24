@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "detail/width.hpp"
+
 namespace termforge {
 
 auto Button::draw(Screen& screen) -> void {
@@ -26,17 +28,15 @@ auto Button::draw(Screen& screen) -> void {
     for (int x = 0; x < r.w; ++x)
       screen.write_text(r.x + x, r.y + y, " ", fg, bg);
 
-  // Center the label.
-  const int text_len = static_cast<int>(m_label.size());
+  // Center the label (by display columns, not bytes).
+  const int text_len = detail::display_width(m_label);
   const int start_x = r.x + std::max(0, (r.w - text_len) / 2);
   const int start_y = r.y + r.h / 2;
 
   const int max_w = r.x + r.w - start_x;
   if (max_w > 0 && !m_label.empty()) {
-    const int write_w = std::min(text_len, max_w);
     screen.write_text(start_x, start_y,
-                      m_label.substr(0, static_cast<std::size_t>(write_w)),
-                      fg, bg);
+                      detail::truncate_to_width(m_label, max_w), fg, bg);
   }
 
   // Reset pressed state after one frame of visual feedback.

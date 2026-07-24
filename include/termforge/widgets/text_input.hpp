@@ -68,7 +68,7 @@ class TextInput final : public Widget {
   std::string m_text;
   std::string m_placeholder;
   int m_cursor{0};   // byte offset into m_text
-  int m_scroll{0};   // horizontal scroll offset (chars from left)
+  int m_scroll{0};   // byte offset of the leftmost visible column
   bool m_focused{false};
 
   Rgb m_fg{0xE0, 0xE0, 0xF0};

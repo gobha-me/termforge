@@ -2,6 +2,9 @@
 
 #include <algorithm>
 
+#include "detail/utf8.hpp"
+#include "detail/width.hpp"
+
 namespace termforge {
 
 auto TextBox::append(std::string line) -> void {
@@ -47,15 +50,21 @@ auto TextBox::on_event(const Event& ev) -> bool {
 auto TextBox::wrap_into(std::vector<std::string>& out, const std::string& line, int width) -> void {
   if (width <= 0) { out.push_back(line); return; }
   if (line.empty()) { out.emplace_back(); return; }
+  const std::string_view sv{line};
   std::size_t start = 0;
-  while (start < line.size()) {
-    // take up to `width` bytes, but don't split a UTF-8 sequence
-    std::size_t end = std::min(start + static_cast<std::size_t>(width), line.size());
-    while (end > start && end < line.size() &&
-           (static_cast<unsigned char>(line[end]) & 0xC0) == 0x80) --end;
-    if (end == start) end = std::min(start + static_cast<std::size_t>(width), line.size());
-    out.push_back(line.substr(start, end - start));
-    start = end;
+  while (start < sv.size()) {
+    // Take as many whole graphemes as fit in `width` display columns (never
+    // splitting a code point or straddling a wide glyph).
+    std::size_t take = detail::truncate_to_width(sv.substr(start), width).size();
+    if (take == 0) {
+      // A single wide glyph won't fit a 1-column width: force one code point so
+      // the loop makes progress rather than spinning.
+      char32_t cp = 0;
+      std::size_t len = 0;
+      take = detail::utf8_decode(sv.substr(start), cp, len) ? len : 1;
+    }
+    out.push_back(line.substr(start, take));
+    start += take;
   }
 }
 

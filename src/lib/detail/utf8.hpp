@@ -85,4 +85,31 @@ struct ByteRange {
   return cp <= 0x10FFFF && !(cp >= 0xD800 && cp <= 0xDFFF);
 }
 
+// Decode the single well-formed UTF-8 sequence at the front of `in` into its
+// scalar value `cp` and byte length `len` (1–4). Returns false (cp/len unset)
+// for the same inputs `utf8_validate` rejects: malformed, overlong, surrogate,
+// out of range, or truncated. Built on `utf8_validate` so the two agree on
+// exactly which sequences are legal; used to walk code points when the value
+// (not just the boundary) is needed — e.g. display-width measurement.
+[[nodiscard]] constexpr auto utf8_decode(std::string_view in, char32_t& cp,
+                                         std::size_t& len) noexcept -> bool {
+  std::size_t n = 0;
+  if (!utf8_validate(in, n)) return false;
+  const auto b0 = static_cast<unsigned char>(in[0]);
+  char32_t acc = 0;
+  if (n == 1) {
+    acc = b0;
+  } else {
+    // Lead byte contributes (7-n) low bits; each continuation byte 6 bits.
+    const unsigned lead_mask = (0x7Fu >> n);
+    acc = static_cast<char32_t>(b0 & lead_mask);
+    for (std::size_t k = 1; k < n; ++k)
+      acc = (acc << 6) |
+            static_cast<char32_t>(static_cast<unsigned char>(in[k]) & 0x3F);
+  }
+  cp = acc;
+  len = n;
+  return true;
+}
+
 }  // namespace termforge::detail

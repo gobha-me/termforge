@@ -94,6 +94,47 @@ TEST_CASE("Screen: write_text clips at the right edge", "[screen][failure]") {
   REQUIRE(s.at(4, 0).text == "b");
 }
 
+TEST_CASE("Screen: write_text emits continuation cells for wide glyphs",
+          "[screen][width]") {
+  // #10: a width-2 glyph (CJK) occupies two terminal columns — the glyph in
+  // cell cx and a "\0" continuation cell in cx+1 — and advances the column
+  // cursor by two, so the grid stays in sync with the physical terminal.
+  Screen s{10, 2};
+  const std::string shi = "\xE4\xB8\x96";   // 世 U+4E16 (width 2)
+  const std::string jie = "\xE7\x95\x8C";   // 界 U+4E16 (width 2)
+  const int cols = s.write_text(0, 0, shi + jie, Rgb{}, Rgb{});
+  REQUIRE(cols == 4);                        // two glyphs × two columns
+  REQUIRE(s.at(0, 0).text == shi);
+  REQUIRE(s.at(1, 0).text == std::string("\0", 1));  // continuation cell
+  REQUIRE(s.at(2, 0).text == jie);
+  REQUIRE(s.at(3, 0).text == std::string("\0", 1));
+  // The continuation cell is not "blank" (renderer must skip, not clear it).
+  REQUIRE_FALSE(s.at(1, 0).text.empty());
+}
+
+TEST_CASE("Screen: write_text pads rather than splitting a wide glyph at the edge",
+          "[screen][width][failure]") {
+  // A width-2 glyph can't straddle the last column: it must not write a lone
+  // continuation cell past the edge. One column left → pad with a space.
+  Screen s{3, 1};
+  const std::string shi = "\xE4\xB8\x96";   // 世
+  const int cols = s.write_text(2, 0, shi, Rgb{}, Rgb{});  // only col 2 free
+  REQUIRE(cols == 1);
+  REQUIRE(s.at(2, 0).text == " ");          // padded, not half a glyph
+}
+
+TEST_CASE("Screen: write_text folds a combining mark onto its base cell",
+          "[screen][width]") {
+  // #10: zero-width combining marks join the preceding grapheme's cell instead
+  // of consuming a column of their own.
+  Screen s{10, 1};
+  const std::string base_accent = "a\xCC\x81";  // 'a' + combining acute U+0301
+  const int cols = s.write_text(0, 0, base_accent, Rgb{}, Rgb{});
+  REQUIRE(cols == 1);                            // one display column
+  REQUIRE(s.at(0, 0).text == base_accent);       // both code points in one cell
+  REQUIRE(s.at(1, 0).blank());
+}
+
 TEST_CASE("Screen: out-of-bounds access is safe (no corruption)", "[screen][failure]") {
   Screen s{10, 10};
   // Writes out of bounds must not corrupt in-bounds cells or crash.

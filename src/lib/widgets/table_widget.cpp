@@ -1,6 +1,9 @@
 #include "termforge/widgets/table_widget.hpp"
 
 #include <algorithm>
+#include <string_view>
+
+#include "detail/width.hpp"
 
 namespace termforge {
 
@@ -54,11 +57,11 @@ auto TableWidget::compute_widths() const -> std::vector<int> {
     if (m_columns[c].width > 0) {
       widths[c] = m_columns[c].width;
     } else {
-      // Auto-size: max of header + all cell widths.
-      int w = static_cast<int>(m_columns[c].header.size());
+      // Auto-size: max of header + all cell display widths (columns).
+      int w = detail::display_width(m_columns[c].header);
       for (const auto& row : m_rows) {
         if (c < row.size())
-          w = std::max(w, static_cast<int>(row[c].size()));
+          w = std::max(w, detail::display_width(row[c]));
       }
       widths[c] = w;
     }
@@ -70,7 +73,9 @@ auto TableWidget::render_cell(Screen& screen, int x, int y, int w,
                               const std::string& text, Align align, Rgb fg,
                               Rgb bg) -> void {
   if (w <= 0) return;
-  const int text_len = static_cast<int>(text.size());
+  // Clip to the column width by display columns, then align the shown portion.
+  const std::string_view shown = detail::truncate_to_width(text, w);
+  const int text_len = detail::display_width(shown);
   int start = 0;
   if (align == Align::Right) {
     start = std::max(0, w - text_len);
@@ -82,10 +87,9 @@ auto TableWidget::render_cell(Screen& screen, int x, int y, int w,
   for (int i = 0; i < w; ++i)
     screen.write_text(x + i, y, " ", fg, bg);
 
-  // Write text (clipped to column width).
-  const int write_w = std::min(text_len, w);
-  if (write_w > 0)
-    screen.write_text(x + start, y, text.substr(0, static_cast<std::size_t>(write_w)), fg, bg);
+  // Write text (already clipped to column width).
+  if (!shown.empty())
+    screen.write_text(x + start, y, shown, fg, bg);
 }
 
 auto TableWidget::draw(Screen& screen) -> void {

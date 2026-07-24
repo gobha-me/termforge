@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "detail/width.hpp"
+
 namespace termforge {
 
 auto ListWidget::set_items(std::vector<std::string> items) -> void {
@@ -75,13 +77,10 @@ auto ListWidget::draw(Screen& screen) -> void {
     for (int x = 0; x < r.w; ++x)
       screen.write_text(r.x + x, y, " ", fg, bg);
 
-    // Write the item text (clipped to widget width).
+    // Write the item text (clipped to widget width, by display columns).
     const int max_w = r.w - 1;  // leave 1 char margin
     if (!text.empty()) {
-      const int write_w =
-          std::min(static_cast<int>(text.size()), max_w);
-      screen.write_text(r.x, y, text.substr(0, static_cast<std::size_t>(write_w)),
-                        fg, bg);
+      screen.write_text(r.x, y, detail::truncate_to_width(text, max_w), fg, bg);
     }
   }
 

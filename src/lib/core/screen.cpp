@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "detail/utf8.hpp"
+#include "detail/width.hpp"
 
 namespace termforge {
 
@@ -48,28 +49,59 @@ auto Screen::clear(const Cell& fill) -> void {
 auto Screen::write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg) -> int {
   if (y < 0 || y >= m_rows || x >= m_cols) return 0;
   const std::string clean = sanitize(text);
-  int cx = x < 0 ? 0 : x;
+  const std::string_view sv{clean};
+  const int start_x = x < 0 ? 0 : x;
+  int cx = start_x;
   int written = 0;
-  // Walk grapheme-ish: emit byte runs. A full grapheme splitter is overkill
-  // here; we place the sanitized string into consecutive cells as bytes,
-  // letting the renderer/driver handle wide glyphs at flush time. For ASCII
-  // (the common case) this is exactly one cell per char.
-  for (std::size_t i = 0; i < clean.size() && cx < m_cols; ++i) {
-    const auto byte = static_cast<unsigned char>(clean[i]);
-    // Skip UTF-8 continuation bytes as standalone cells; group with lead.
-    std::size_t len = 1;
-    if ((byte & 0x80) == 0) len = 1;
-    else if ((byte & 0xE0) == 0xC0) len = 2;
-    else if ((byte & 0xF0) == 0xE0) len = 3;
-    else if ((byte & 0xF8) == 0xF0) len = 4;
-    if (i + len > clean.size()) len = clean.size() - i;
+  // Place one grapheme per cell, advancing the column cursor by the glyph's
+  // *display width* (not its byte count). A width-2 glyph (CJK/emoji) occupies
+  // two columns: the glyph goes in cell cx and a "\0" continuation cell in
+  // cx+1, which the renderer skips because the terminal cursor already moved
+  // two columns. Combining/zero-width marks fold onto the preceding grapheme.
+  // Returns the number of columns advanced (clipped at the right edge).
+  int base_cx = -1;  // column of the most recent base glyph, for combining marks
+  std::size_t i = 0;
+  while (i < sv.size() && cx < m_cols) {
+    char32_t cp = 0;
+    std::size_t len = 0;
+    if (!detail::utf8_decode(sv.substr(i), cp, len)) {
+      ++i;  // sanitize() emits only well-formed UTF-8; skip a stray byte
+      continue;
+    }
+    const int w = detail::char_width(cp);
+    if (w == 0) {
+      // Combining / zero-width: append to the base grapheme so it renders as
+      // one cell. Drop it if there is no base on this row yet.
+      if (base_cx >= 0) at(base_cx, y).text.append(sv, i, len);
+      i += len;
+      continue;
+    }
+    if (w == 2 && cx + 1 >= m_cols) {
+      // A wide glyph would straddle the right edge: pad with a space and stop.
+      Cell& cell = at(cx, y);
+      cell.text = " ";
+      cell.fg = fg;
+      cell.bg = bg;
+      ++cx;
+      ++written;
+      break;
+    }
     Cell& cell = at(cx, y);
-    cell.text.assign(clean, i, len);
+    cell.text.assign(sv, i, len);
     cell.fg = fg;
     cell.bg = bg;
-    i += len - 1;
+    base_cx = cx;
     ++cx;
     ++written;
+    if (w == 2) {
+      Cell& cont = at(cx, y);
+      cont.text.assign(1, '\0');  // width-2 continuation cell (renderer skips)
+      cont.fg = fg;
+      cont.bg = bg;
+      ++cx;
+      ++written;
+    }
+    i += len;
   }
   return written;
 }

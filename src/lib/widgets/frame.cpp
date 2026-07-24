@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "detail/width.hpp"
+
 namespace termforge {
 
 auto Frame::content_rect() const noexcept -> Rect {
@@ -40,13 +42,11 @@ auto Frame::draw(Screen& screen) -> void {
 
   // Title in the top border: "┤ Title ├" style.
   if (!m_title.empty()) {
-    const int title_len = static_cast<int>(m_title.size());
     const int max_title = r.w - 4;  // leave room for corners + padding
     if (max_title > 0) {
-      const int write_w = std::min(title_len, max_title);
       const int start_x = r.x + 2;  // after "┌ "
       screen.write_text(start_x, r.y,
-                        m_title.substr(0, static_cast<std::size_t>(write_w)),
+                        detail::truncate_to_width(m_title, max_title),
                         m_border_fg, m_bg);
     }
   }

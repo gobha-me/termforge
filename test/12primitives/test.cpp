@@ -586,3 +586,38 @@ TEST_CASE("TextInput: arrows step over multi-byte code points",
   ti.on_event(del);  // deletes the whole é
   REQUIRE(ti.text() == "az");
 }
+
+namespace {
+// The inverted cursor cell is painted with the cursor background (0xE0,0xE0,
+// 0xF0); ordinary cells keep the field background (0x0A,0x0A,0x14).
+auto is_cursor_cell(const termforge::Cell& c) -> bool {
+  return c.bg.r == 0xE0 && c.bg.g == 0xE0 && c.bg.b == 0xF0;
+}
+}  // namespace
+
+TEST_CASE("TextInput: cursor column tracks display width, not byte length",
+          "[primitives][input][width]") {
+  Screen s{20, 1};
+  TextInput ti;
+  ti.set_geometry({0, 0, 20, 1});
+  ti.set_focused(true);
+  ti.set_text("h\xC3\xA9llo");  // héllo: 5 columns but 6 bytes; cursor at end
+  ti.draw(s);
+  // The cursor sits at column 5 (the display width), not column 6 (byte len).
+  REQUIRE(is_cursor_cell(s.at(5, 0)));
+  REQUIRE_FALSE(is_cursor_cell(s.at(6, 0)));
+}
+
+TEST_CASE("TextInput: cursor sits just past a wide glyph",
+          "[primitives][input][width]") {
+  Screen s{20, 1};
+  TextInput ti;
+  ti.set_geometry({0, 0, 20, 1});
+  ti.set_focused(true);
+  ti.set_text("\xE4\xB8\x96");  // 世 (width 2); cursor at end
+  ti.draw(s);
+  // 世 occupies columns 0-1 (glyph + continuation cell); cursor at column 2.
+  REQUIRE(s.at(0, 0).text == "\xE4\xB8\x96");
+  REQUIRE(s.at(1, 0).text == std::string("\0", 1));
+  REQUIRE(is_cursor_cell(s.at(2, 0)));
+}

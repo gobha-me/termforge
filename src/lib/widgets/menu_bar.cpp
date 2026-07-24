@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "detail/width.hpp"
+
 namespace termforge {
 
 auto MenuBar::set_menus(std::vector<Menu> menus) -> void {
@@ -27,7 +29,7 @@ auto MenuBar::layout_menus() const -> std::vector<std::pair<int, int>> {
   std::vector<std::pair<int, int>> out;
   int x = rect().x;
   for (const auto& menu : m_menus) {
-    const int w = static_cast<int>(menu.title.size()) + 2;  // padding
+    const int w = detail::display_width(menu.title) + 2;  // padding (columns)
     out.emplace_back(x, w);
     x += w + 1;  // gap between menus
   }
@@ -37,7 +39,7 @@ auto MenuBar::layout_menus() const -> std::vector<std::pair<int, int>> {
 auto MenuBar::dropdown_width(const Menu& menu, int title_w) const -> int {
   int w = title_w;
   for (const auto& item : menu.items)
-    w = std::max(w, static_cast<int>(item.label.size()) + 4);
+    w = std::max(w, detail::display_width(item.label) + 4);
   return w;
 }
 

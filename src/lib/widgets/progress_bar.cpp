@@ -1,6 +1,9 @@
 #include "termforge/widgets/progress_bar.hpp"
 
 #include <algorithm>
+#include <string_view>
+
+#include "detail/width.hpp"
 
 namespace termforge {
 
@@ -51,11 +54,12 @@ auto ProgressBar::draw(Screen& screen) -> void {
 
   // Label overlay (centered, on its own background patch).
   if (!m_label.empty()) {
-    const int text_len = static_cast<int>(m_label.size());
+    const int text_len = detail::display_width(m_label);
     const int start_x = r.x + std::max(0, (r.w - text_len) / 2);
     const int max_w = r.x + r.w - start_x;
     if (max_w > 0) {
-      const int write_w = std::min(text_len, max_w);
+      const std::string_view shown = detail::truncate_to_width(m_label, max_w);
+      const int write_w = detail::display_width(shown);
       // Fill a solid background patch behind the label text (with 1-char
       // padding on each side) so the bar animation doesn't cut through.
       for (int i = -1; i <= write_w; ++i) {
@@ -63,9 +67,7 @@ auto ProgressBar::draw(Screen& screen) -> void {
         if (px >= r.x && px < r.x + r.w)
           screen.write_text(px, y, " ", m_label_fg, m_label_bg);
       }
-      screen.write_text(start_x, y,
-                        m_label.substr(0, static_cast<std::size_t>(write_w)),
-                        m_label_fg, m_label_bg);
+      screen.write_text(start_x, y, shown, m_label_fg, m_label_bg);
     }
   }
 

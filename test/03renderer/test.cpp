@@ -118,6 +118,30 @@ TEST_CASE("Renderer: color change between cells emits new SGR", "[renderer][colo
   REQUIRE(out.find("38;2;0;0;255") != std::string::npos);  // blue fg for B
 }
 
+TEST_CASE("Renderer: wide glyph round-trips without over-painting its continuation",
+          "[renderer][width]") {
+  // #10: a width-2 glyph occupies cell cx (the glyph) and cx+1 (a "\0"
+  // continuation). The renderer must draw the glyph once and SKIP the
+  // continuation cell — the terminal cursor already advanced two columns —
+  // rather than clearing it with a space over the glyph's right half.
+  FallbackDriver d;
+  std::string out;
+  d.set_output(&out);
+  Renderer r(d);
+  Screen s{4, 1};
+  const std::string shi = "\xE4\xB8\x96";  // 世 (width 2) at cols 0-1
+  s.write_text(0, 0, shi, Rgb{}, Rgb{});
+  r.present(s);
+  REQUIRE(out.find(shi) != std::string::npos);          // glyph emitted
+  REQUIRE(out.find('\0') == std::string::npos);          // no NUL leaked out
+
+  // A second identical present emits nothing: the wide glyph + continuation
+  // diff against the cached frame cleanly (no per-frame flicker).
+  out.clear();
+  r.present(s);
+  REQUIRE(out.empty());
+}
+
 TEST_CASE("Renderer: blank cells emit space with background color", "[renderer][color]") {
   AnsiRgbDriver d;
   std::string out;

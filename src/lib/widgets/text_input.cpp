@@ -1,8 +1,10 @@
 #include "termforge/widgets/text_input.hpp"
 
 #include <algorithm>
+#include <string_view>
 
 #include "detail/utf8.hpp"
+#include "detail/width.hpp"
 
 namespace termforge {
 
@@ -35,7 +37,15 @@ auto TextInput::ensure_cursor_visible() -> void {
   const int visible = rect().w;
   if (visible <= 0) return;
   if (m_cursor < m_scroll) m_scroll = m_cursor;
-  if (m_cursor >= m_scroll + visible) m_scroll = m_cursor - visible + 1;
+  // Column of the cursor relative to the scroll origin (display columns, not
+  // bytes). Advance the window one grapheme at a time until it fits.
+  const auto cursor_col = [&] {
+    return detail::display_width(std::string_view{m_text}.substr(
+        static_cast<std::size_t>(m_scroll),
+        static_cast<std::size_t>(m_cursor - m_scroll)));
+  };
+  while (m_scroll < m_cursor && cursor_col() >= visible)
+    m_scroll = utf8_next(m_text, m_scroll);
   m_scroll = std::max(0, m_scroll);
   // Never leave the window start mid-code-point.
   while (m_scroll > 0 &&
@@ -57,28 +67,26 @@ auto TextInput::draw(Screen& screen) -> void {
     screen.write_text(r.x + x, y, " ", m_fg, m_bg);
 
   if (m_text.empty() && !m_placeholder.empty() && !m_focused) {
-    // Draw placeholder text.
-    const int max_w = std::min(static_cast<int>(m_placeholder.size()), r.w);
-    screen.write_text(r.x, y,
-                      m_placeholder.substr(0, static_cast<std::size_t>(max_w)),
+    // Draw placeholder text (clipped to r.w display columns).
+    screen.write_text(r.x, y, detail::truncate_to_width(m_placeholder, r.w),
                       m_placeholder_fg, m_bg);
     clear_dirty();
     return;
   }
 
-  // Draw visible text (scrolled window).
-  const int visible_chars = std::min(static_cast<int>(m_text.size()) - m_scroll,
-                                     r.w);
-  if (visible_chars > 0) {
-    screen.write_text(r.x, y,
-                      m_text.substr(static_cast<std::size_t>(m_scroll),
-                                    static_cast<std::size_t>(visible_chars)),
-                      m_fg, m_bg);
+  // Draw visible text (scrolled window, clipped to r.w display columns).
+  const std::string_view shown = detail::truncate_to_width(
+      std::string_view{m_text}.substr(static_cast<std::size_t>(m_scroll)), r.w);
+  if (!shown.empty()) {
+    screen.write_text(r.x, y, shown, m_fg, m_bg);
   }
 
   // Draw cursor (inverted cell) when focused.
   if (m_focused) {
-    const int cx = m_cursor - m_scroll;
+    // Cursor screen column = display width of the text between scroll and cursor.
+    const int cx = detail::display_width(std::string_view{m_text}.substr(
+        static_cast<std::size_t>(m_scroll),
+        static_cast<std::size_t>(m_cursor - m_scroll)));
     if (cx >= 0 && cx < r.w) {
       // Get the full code point under the cursor (or space if at end).
       const std::string under =
@@ -101,13 +109,25 @@ auto TextInput::on_event(const Event& ev) -> bool {
     if (!m->pressed || m->button != 0 || !rect().contains(m->x, m->y))
       return false;
     m_focused = true;
-    // Column → byte offset (same byte-per-column approximation the scroll
-    // window uses), clamped and snapped back off UTF-8 continuations.
-    int pos = m_scroll + (m->x - rect().x);
-    pos = std::clamp(pos, 0, static_cast<int>(m_text.size()));
-    while (pos > 0 &&
-           is_utf8_continuation(m_text[static_cast<std::size_t>(pos)]))
-      --pos;
+    // Column → byte offset: walk graphemes from the scroll origin, summing
+    // display width, until the next glyph would pass the clicked column. Lands
+    // the cursor on the grapheme boundary at or before the click.
+    const int target_col = m->x - rect().x;
+    const int size = static_cast<int>(m_text.size());
+    int pos = m_scroll;
+    int col = 0;
+    while (pos < size) {
+      char32_t cp = 0;
+      std::size_t len = 0;
+      if (!detail::utf8_decode(
+              std::string_view{m_text}.substr(static_cast<std::size_t>(pos)),
+              cp, len))
+        break;
+      const int cw = detail::char_width(cp);
+      if (col + cw > target_col) break;
+      col += cw;
+      pos += static_cast<int>(len);
+    }
     m_cursor = pos;
     ensure_cursor_visible();
     mark_dirty();
