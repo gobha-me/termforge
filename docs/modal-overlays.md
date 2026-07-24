@@ -78,14 +78,32 @@ between the pump and `on_event`, and every event goes through it:
 | mouse, inside `hit_test` | `on_event` | top overlay only |
 | mouse, outside | `on_event` | swallowed (press may dismiss, opt-in) |
 | resize, error | `on_event` | `on_event` |
+| Ctrl+C | `on_event` | `on_event` |
 
 Resize and error are deliberately never captured. The app still owns the
 layout of the widgets underneath — it must re-lay them out or the dialog is
 centered over a stale frame — and silently eating an `ErrorEvent` would break
 the "degradation is an event" contract in AGENTS.md.
 
-The overlay's return value is **ignored**. Capture is total: a key the dialog
-declines must not fall through, or we are back to Escape quitting the app.
+Ctrl+C is the break-glass. Raw mode turned it from a signal into an ordinary
+key, so if an overlay could swallow it, an app whose dialog has no wired close
+path — or an app that pushed a plain `Widget`, which has no concept of closing
+at all — could only be killed from another terminal. No dialog wants Ctrl+C.
+
+Every *other* declined key is dropped. Capture is total: an overlay's return
+value is ignored, because a key that fell through would reach
+`App::on_event`'s default and quit on the Escape that was meant to cancel.
+
+**A dialog is not dismissed before it has been drawn.** A dialog sizes itself
+from the `Screen`, which it only sees in `draw()`, so one pushed mid-dispatch
+still has a zero `rect()` and every point is "outside" it. `dismiss_on_click_outside`
+therefore ignores presses until the overlay has a real rect.
+
+**The pass leaves no trace.** A backdrop is destructive and the `Screen`
+persists across frames, so `render_overlays` snapshots what it is about to
+damage and `run()` restores it after `present`. Without that, a cell the app
+does not repaint every frame gets halved again on each one — black within a
+few frames, and still black after the dialog closes.
 
 **Re-entrancy.** `pop_overlay()` from inside an overlay's own handler is the
 normal case, not an edge case, so it is safe by construction: `dispatch_event`
@@ -104,6 +122,13 @@ push_overlay(m_confirm);
 A dialog fires its result **after** closing, so a callback that raises a
 follow-up dialog leaves that one on top instead of having it popped along with
 its parent.
+
+A result fires at most once **per showing**, and a showing begins at `draw()`.
+That is not arbitrary: a dialog that reported a result closed and was popped,
+so the next frame that draws it is necessarily a new push. Latching forever
+instead would make an app that holds its dialogs as members — the documented
+way to hold them — get exactly one use out of each, and then a modal that
+swallows every key and cannot be dismissed.
 
 ## Interaction with pixel regions
 
@@ -141,7 +166,13 @@ to a per-region intersection test is worth doing if a real app hits it.
 - **Pop before you destroy.** Non-owning storage buys re-entrancy safety at
   the price of a lifetime rule. It bites in one specific place: an app that
   rebuilds its widgets on a resize — which still reaches `on_event` while
-  modal, by design — must not destroy a pushed dialog.
+  modal, by design — must not destroy a pushed dialog. For the same reason
+  `Dialog` deletes its copy and move operations: it holds `Widget*` to its own
+  members and callbacks that capture `this`, so a copy would leave every one
+  of them pointing at the original.
+- **The backdrop costs a Screen-sized snapshot per frame while modal.** That
+  is the price of making the pass non-destructive, and it is only paid when an
+  overlay with a backdrop is actually up.
 - **The stack is a stack, not a set.** Pushing the same widget twice needs two
   pops. Cheap to detect, but "dumb vector" is easier to reason about than a
   container with opinions.
