@@ -91,9 +91,12 @@ TEST_CASE("Input: escape sequences still decode (not mistaken for lone ESC)", "[
   REQUIRE(first_key(up).key == Key::Up);
   auto down = in.decode("\x1B[B");
   REQUIRE(first_key(down).key == Key::Down);
-  // split across feeds: ESC then [A in a second feed completes the sequence
+  // split across feeds: a held ESC is committed by flush() — the caller's
+  // "fd drained" boundary signal (see input.hpp) — not by feed() alone,
+  // which cannot know whether the sequence continues in the kernel buffer.
   Input in2;
   in2.feed("\x1B");
+  in2.flush();
   auto ev2 = in2.poll();  // lone ESC flushed as Escape
   REQUIRE(!ev2.empty());
 }

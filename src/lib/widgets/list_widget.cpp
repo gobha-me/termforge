@@ -118,8 +118,12 @@ auto ListWidget::on_event(const Event& ev) -> bool {
       return true;
     }
     if (k->key == Key::Enter) {
-      if (m_on_select && m_selected >= 0)
-        m_on_select(m_selected, m_items[static_cast<std::size_t>(m_selected)]);
+      if (m_on_select && m_selected >= 0) {
+        // Copy the item: the callback may call set_items()/clear(),
+        // invalidating a reference into our own storage mid-call.
+        const std::string item = m_items[static_cast<std::size_t>(m_selected)];
+        m_on_select(m_selected, item);
+      }
       return true;
     }
   }
@@ -137,9 +141,11 @@ auto ListWidget::on_event(const Event& ev) -> bool {
       const int clicked = m_scroll + (m->y - rect().y);
       if (clicked >= 0 && clicked < static_cast<int>(m_items.size())) {
         set_selected(clicked);
-        if (m_on_select)
-          m_on_select(clicked,
-                      m_items[static_cast<std::size_t>(clicked)]);
+        if (m_on_select) {
+          // Copy the item: the callback may mutate the item list.
+          const std::string item = m_items[static_cast<std::size_t>(clicked)];
+          m_on_select(clicked, item);
+        }
       }
       return true;
     }

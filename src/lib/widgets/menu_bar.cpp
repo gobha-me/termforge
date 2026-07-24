@@ -218,9 +218,12 @@ auto MenuBar::on_event(const Event& ev) -> bool {
     }
     if (k->key == Key::Enter) {
       if (m_selected >= 0 && m_selected < item_count) {
-        auto& item = menu.items[static_cast<std::size_t>(m_selected)];
+        // Copy the action before closing, exactly like the mouse path:
+        // the action may call set_menus()/add_menu(), and a vector
+        // reallocation would destroy the std::function mid-call.
+        auto action = menu.items[static_cast<std::size_t>(m_selected)].action;
         close_dropdown();
-        if (item.action) item.action();
+        if (action) action();
       }
       return true;
     }

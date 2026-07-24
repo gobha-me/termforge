@@ -156,8 +156,12 @@ auto TableWidget::on_event(const Event& ev) -> bool {
       if (clicked >= 0 && clicked < static_cast<int>(m_rows.size())) {
         m_selected = clicked;
         mark_dirty();
-        if (m_on_select)
-          m_on_select(clicked, m_rows[static_cast<std::size_t>(clicked)]);
+        if (m_on_select) {
+          // Copy the row: the callback may call clear_rows()/add_row(),
+          // invalidating a reference into our own storage mid-call.
+          const auto row = m_rows[static_cast<std::size_t>(clicked)];
+          m_on_select(clicked, row);
+        }
       }
       return true;  // any click inside the table is consumed
     }

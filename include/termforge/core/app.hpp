@@ -55,6 +55,21 @@ class App {
   // the loop consumes next frame. Public so the signal trampoline can reach it.
   auto request_resize() -> void { m_resize_pending = true; }
 
+  // Test hooks: drive the input pump with the sequence of read() chunks a
+  // single drain would produce, then the one end-of-drain flush. Models
+  // pump_input() exactly: every chunk the fd yields is fed, and only after
+  // the fd reports "nothing left" is the lone-ESC boundary applied.
+  auto test_pump(std::initializer_list<std::string_view> chunks) -> void {
+    for (auto chunk : chunks)
+      if (!chunk.empty()) m_input.feed(chunk);
+    m_input.flush();
+    for (auto& ev : m_input.poll()) on_event(ev);
+  }
+  auto test_take_resize() -> bool {
+    const bool was = m_resize_pending.exchange(false);
+    return was;
+  }
+
   struct Size { int cols; int rows; };
 
  protected:

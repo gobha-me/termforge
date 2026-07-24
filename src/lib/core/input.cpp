@@ -6,6 +6,12 @@
 namespace termforge {
 
 auto Input::feed(std::string_view bytes) -> void {
+  // Bytes arriving prove a held ESC was the start of a sequence, not a
+  // keypress: put it back at the head so the combined bytes decode as one.
+  if (m_esc_pending && !bytes.empty()) {
+    m_pending.insert(0, 1, '\x1B');
+    m_esc_pending = false;
+  }
   m_pending += bytes;
   std::size_t off = 0;
   while (off < m_pending.size()) {
@@ -15,14 +21,27 @@ auto Input::feed(std::string_view bytes) -> void {
   }
   m_pending.erase(0, off);
 
-  // A lone trailing ESC is a real Escape keypress, not the start of a
-  // sequence — in raw mode no more bytes are coming until the next keypress.
-  // (The 100ms read timeout in the App loop is the natural ESC-vs-sequence
-  // boundary.) If instead bytes follow within the same read, decode_one's
-  // CSI/Alt handling already consumed them above.
+  // Hold a lone trailing ESC: it is either a real Escape keypress or the
+  // first byte of a split sequence. Deciding requires the caller's
+  // boundary signal — feed() alone cannot tell whether more bytes are
+  // already waiting in the kernel buffer (a fixed-size read() can split a
+  // sequence exactly on an ESC byte, and the next read() returns
+  // immediately, with no timeout). Only flush() — invoked once the caller
+  // has drained the fd — commits the Escape interpretation.
   if (m_pending.size() == 1 && m_pending[0] == '\x1B') {
-    m_events.push_back(KeyEvent{Key::Escape});
     m_pending.clear();
+    m_esc_pending = true;
+  }
+}
+
+auto Input::flush() -> void {
+  flush_esc();
+}
+
+auto Input::flush_esc() -> void {
+  if (m_esc_pending) {
+    m_events.push_back(KeyEvent{Key::Escape});
+    m_esc_pending = false;
   }
 }
 
@@ -32,6 +51,7 @@ auto Input::poll() -> std::deque<Event> {
 
 auto Input::decode(std::string_view bytes) -> std::deque<Event> {
   feed(bytes);
+  flush();  // convenience: the fed string is the complete input
   return poll();
 }
 

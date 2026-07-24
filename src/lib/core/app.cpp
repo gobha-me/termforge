@@ -1,5 +1,6 @@
 #include "termforge/core/app.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -14,9 +15,13 @@ namespace termforge {
 // Track the active app for SIGWINCH -> resize push. Single-app assumption for
 // now (one TUI per process); a registry is overkill at this layer.
 namespace {
-App* g_active = nullptr;
+// Plain pointer store is async-signal-safe; relaxed because we only need the
+// write to be indivisible, not ordered. (A non-atomic App* read+written from
+// a signal handler would be a data race.)
+std::atomic<App*> g_active{nullptr};
 void on_winch(int) {
-  if (g_active != nullptr) g_active->request_resize();
+  if (auto* app = g_active.load(std::memory_order_relaxed); app != nullptr)
+    app->request_resize();
 }
 }  // namespace
 
@@ -24,7 +29,8 @@ App::App() = default;
 
 App::~App() {
   teardown();
-  if (g_active == this) g_active = nullptr;
+  App* expected = this;
+  g_active.compare_exchange_strong(expected, nullptr, std::memory_order_relaxed);
 }
 
 auto App::setup() -> std::expected<void, ErrorEvent> {
@@ -41,7 +47,7 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
 
   m_term.enter_screen();
   m_in_screen = true;
-  g_active = this;
+  g_active.store(this, std::memory_order_relaxed);
   std::signal(SIGWINCH, on_winch);
   m_term.set_read_timeout(1);  // 100ms poll so the loop can also tick/render
   return {};
@@ -63,10 +69,14 @@ auto App::run() -> int {
   m_running = true;
   while (m_running) {
     if (m_resize_pending) {
+      // Clear *before* measuring: a SIGWINCH landing between the ioctl and
+      // the store would otherwise be erased by it, leaving the screen at a
+      // stale size until the next resize. Clear-then-measure re-arms the
+      // next iteration instead.
+      m_resize_pending.store(false);
       const auto size = current_size();
       m_screen->resize(size.cols, size.rows);
       m_renderer->invalidate();
-      m_resize_pending = false;
       on_event(ResizeEvent{size.cols, size.rows});
     }
     pump_input();
@@ -82,10 +92,23 @@ auto App::run() -> int {
 }
 
 auto App::pump_input() -> void {
+  // Drain the fd completely before the lone-ESC heuristic may fire. During
+  // an SGR mouse drag the terminal emits reports faster than 256 bytes per
+  // frame; a single read() can then end exactly on an ESC byte while the
+  // rest of the sequence sits in the kernel buffer — the next read()
+  // returns immediately, so no timeout ever separates them. Feeding that
+  // fragment as "complete" fabricates an Escape keypress (and the default
+  // handler quits the app mid-drag). Loop until read() reports nothing
+  // left, and only then let Input commit a held ESC.
   char buf[256];
-  const int n = m_term.read_input(buf, sizeof(buf));
-  if (n <= 0) return;  // timeout — no input this frame
-  m_input.feed(std::string_view{buf, static_cast<std::size_t>(n)});
+  bool any = false;
+  while (true) {
+    const int n = m_term.read_input(buf, sizeof(buf));
+    if (n <= 0) break;  // drained (or first-read timeout: no input)
+    m_input.feed(std::string_view{buf, static_cast<std::size_t>(n)});
+    any = true;
+  }
+  if (any) m_input.flush();
   for (auto& ev : m_input.poll()) on_event(ev);
 }
 
