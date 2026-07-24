@@ -195,3 +195,72 @@ TEST_CASE("Input: oversized CSI parameters do not overflow", "[input][mouse]") {
   REQUIRE(m != nullptr);
   REQUIRE(m->x >= 0);  // clamped garbage, but no UB and non-negative
 }
+
+TEST_CASE("Input: invalid UTF-8 resynchronizes instead of swallowing keys",
+          "[input][security]") {
+  // A stray lead byte whose "length" would consume a following real keypress
+  // must not eat it. 0xC3 expects one continuation; 'A' is not one.
+  Input in;
+  auto ev = in.decode("\xC3" "A");
+  REQUIRE(ev.size() == 2);
+  const auto* bad = std::get_if<KeyEvent>(&ev[0]);
+  REQUIRE(bad != nullptr);
+  REQUIRE(bad->key == Key::Char);
+  REQUIRE(bad->ch == 0xFFFD);  // replacement char for the bad lead
+  const auto* a = std::get_if<KeyEvent>(&ev[1]);
+  REQUIRE(a != nullptr);
+  REQUIRE(a->key == Key::Char);
+  REQUIRE(a->ch == U'A');  // the following keypress survives
+}
+
+TEST_CASE("Input: a bad lead doesn't eat a following ESC sequence",
+          "[input][security]") {
+  // 0xF0 expects three continuations; a following ESC must not be consumed
+  // as one. The arrow key after the stray byte must decode.
+  Input in;
+  auto ev = in.decode("\xF0\x1B[A");
+  bool saw_replacement = false;
+  bool saw_up = false;
+  for (const auto& e : ev) {
+    if (const auto* k = std::get_if<KeyEvent>(&e)) {
+      if (k->key == Key::Char && k->ch == 0xFFFD) saw_replacement = true;
+      if (k->key == Key::Up) saw_up = true;
+    }
+  }
+  REQUIRE(saw_replacement);
+  REQUIRE(saw_up);
+}
+
+TEST_CASE("Input: invalid lead bytes are rejected, not passed as chars",
+          "[input][security]") {
+  Input in;
+  for (const char* bad : {"\xF8", "\xF9", "\xFC", "\xFE", "\xFF"}) {
+    auto ev = in.decode(std::string{bad});
+    REQUIRE(ev.size() == 1);
+    const auto* k = std::get_if<KeyEvent>(&ev.front());
+    REQUIRE(k != nullptr);
+    REQUIRE(k->ch == 0xFFFD);  // never a raw invalid byte
+  }
+}
+
+TEST_CASE("Input: incomplete multibyte at end of stream waits then flushes",
+          "[input][failure]") {
+  // A genuine split glyph across two reads completes normally.
+  Input in;
+  in.feed("\xC3");           // é lead, continuation not yet arrived
+  in.feed("\xA9");           // completes U+00E9
+  auto ev = in.poll();
+  REQUIRE(ev.size() == 1);
+  REQUIRE(std::get_if<KeyEvent>(&ev.front())->ch == 0xE9);
+}
+
+TEST_CASE("Input: valid multibyte still decodes after hardening",
+          "[input]") {
+  Input in;
+  auto ev = in.decode("h\xC3\xA9llo \xE4\xB8\xAD \xF0\x9F\x8E\x89");
+  std::u32string got;
+  for (const auto& e : ev)
+    if (const auto* k = std::get_if<KeyEvent>(&e)) got += k->ch;
+  REQUIRE(got == U"h\xE9llo \x4E2D \x1F389");
+}
+

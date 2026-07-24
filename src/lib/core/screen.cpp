@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "detail/utf8.hpp"
+
 namespace termforge {
 
 Screen::Screen(int cols, int rows)
@@ -118,30 +120,28 @@ auto Screen::sanitize(std::string_view in) -> std::string {
     }
 
     // Multi-byte UTF-8: pass a *complete, well-formed* sequence through
-    // untouched. Continuation bytes live in 0x80..0xBF (overlapping the C1
-    // range), so we must NOT strip them here — that would mangle valid
-    // glyphs (this is the bug that truncated "█" to its lead byte). Only a
-    // bare/isolated C1 (0xC2 0x80..0x9F two-byte form, i.e. a real control)
-    // is dangerous, and we handle that below.
+    // untouched. "Well-formed" is the RFC 3629 sense — correct continuation
+    // structure AND a legal code point. Overlong forms (e.g. 0xC0 0x9B =
+    // overlong ESC, 0xE0 0x80 0x9B) are structurally plausible yet decode to
+    // C0/C1 controls on a lenient terminal — precisely the injection this
+    // function exists to stop — and UTF-16 surrogate encodings are invalid.
+    // Continuation bytes live in 0x80..0xBF (overlapping the C1 range), so we
+    // must NOT strip them here; only a genuine C1 control is dangerous, and
+    // we handle that below.
     if ((c & 0xE0) == 0xC0 || (c & 0xF0) == 0xE0 || (c & 0xF8) == 0xF0) {
-      const std::size_t len = ((c & 0xE0) == 0xC0) ? 2 : ((c & 0xF0) == 0xE0) ? 3 : 4;
-      if (i + len <= in.size()) {
-        bool valid = true;
-        for (std::size_t k = 1; k < len; ++k)
-          if ((static_cast<unsigned char>(in[i + k]) & 0xC0) != 0x80) { valid = false; break; }
-        if (valid) {
-          // A 2-byte 0xC2 0x80..0x9F is a genuine C1 control — strip it.
-          if (len == 2 && c == 0xC2 &&
-              static_cast<unsigned char>(in[i + 1]) <= 0x9F) {
-            i += 1;  // consume the pair, emit nothing
-            continue;
-          }
-          out.append(in, i, len);  // well-formed glyph: keep whole sequence
-          i += len - 1;
+      std::size_t len = 0;
+      if (detail::utf8_validate(in.substr(i), len)) {
+        // A 2-byte 0xC2 0x80..0x9F is a genuine C1 control — strip it.
+        if (len == 2 && c == 0xC2 &&
+            static_cast<unsigned char>(in[i + 1]) <= 0x9F) {
+          i += 1;  // consume the pair, emit nothing
           continue;
         }
+        out.append(in, i, len);  // well-formed glyph: keep whole sequence
+        i += len - 1;
+        continue;
       }
-      continue;  // malformed lead/truncated sequence: drop the byte
+      continue;  // overlong / surrogate / out-of-range / truncated: drop it
     }
 
     // Bare continuation byte or stray C1-range byte with no valid lead: drop.

@@ -54,6 +54,29 @@ TEST_CASE("Screen: sanitize keeps well-formed multi-byte UTF-8 glyphs", "[screen
   // a malformed/truncated sequence is dropped, not passed through:
   REQUIRE(Screen::sanitize(std::string{"a\xE2\x96"} + "b") == "ab");
 }
+
+TEST_CASE("Screen: sanitize rejects overlong UTF-8 and surrogates", "[screen][security]") {
+  // Overlong encodings are structurally valid (right continuation bits) but
+  // decode to control characters on a lenient terminal — exactly the
+  // injection this function must stop. 0xC0 0x9B is an overlong ESC (0x1B).
+  REQUIRE(Screen::sanitize(std::string{"a\xC0\x9B"} + "b") == "ab");   // overlong ESC
+  REQUIRE(Screen::sanitize(std::string{"a\xC1\xBF"} + "b") == "ab");   // overlong DEL
+  REQUIRE(Screen::sanitize(std::string{"a\xE0\x80\x9B"} + "b") == "ab"); // overlong ESC (3B)
+  REQUIRE(Screen::sanitize(std::string{"a\xE0\x9F\xBF"} + "b") == "ab"); // overlong (3B)
+  REQUIRE(Screen::sanitize(std::string{"a\xF0\x80\x80\x9B"} + "b") == "ab"); // overlong (4B)
+  // Overlong C1 controls (the 2-byte form of a genuine C1) must also go.
+  REQUIRE(Screen::sanitize(std::string{"a\xC0\x85"} + "b") == "ab");   // overlong NEL
+  // UTF-16 surrogate encodings are invalid UTF-8.
+  REQUIRE(Screen::sanitize(std::string{"a\xED\xA0\x80"} + "b") == "ab"); // U+D800
+  REQUIRE(Screen::sanitize(std::string{"a\xED\xBF\xBF"} + "b") == "ab"); // U+DFFF
+  // Above U+10FFFF is out of range.
+  REQUIRE(Screen::sanitize(std::string{"a\xF4\x90\x80\x80"} + "b") == "ab"); // U+110000
+  REQUIRE(Screen::sanitize(std::string{"a\xF5\x80\x80\x80"} + "b") == "ab"); // invalid lead
+  // Valid boundary code points still pass: U+10FFFF (F4 8F BF BF) and the
+  // last non-surrogate BMP char U+D7FF (ED 9F BF).
+  REQUIRE(Screen::sanitize(std::string{"\xF4\x8F\xBF\xBF"}) == "\xF4\x8F\xBF\xBF");
+  REQUIRE(Screen::sanitize(std::string{"\xED\x9F\xBF"}) == "\xED\x9F\xBF");
+}
 TEST_CASE("Screen: write_text sanitizes before placing cells", "[screen][security]") {
   Screen s{40, 10};
   s.write_text(0, 0, "hi\033[1Jthere", Rgb{255,255,255}, Rgb{0,0,0});

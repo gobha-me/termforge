@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "detail/utf8.hpp"
+
 namespace termforge {
 
 namespace {
@@ -144,8 +146,10 @@ auto TextInput::on_event(const Event& ev) -> bool {
                                             m_cursor));
       changed = true;
     }
-  } else if (k->key == Key::Char && k->ch >= 0x20 && k->ch != 0x7F) {
-    // Insert printable character (UTF-8 encode if > ASCII).
+  } else if (k->key == Key::Char && k->ch >= 0x20 && k->ch != 0x7F &&
+             detail::utf8_encodable(k->ch)) {
+    // Insert printable character (UTF-8 encode if > ASCII). The encodability
+    // guard rejects surrogates and > U+10FFFF, which have no valid UTF-8.
     if (k->ch < 0x80) {
       m_text.insert(static_cast<std::size_t>(m_cursor), 1,
                     static_cast<char>(k->ch));

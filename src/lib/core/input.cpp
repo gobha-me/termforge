@@ -3,6 +3,8 @@
 #include <cctype>
 #include <utility>
 
+#include "detail/utf8.hpp"
+
 namespace termforge {
 
 auto Input::feed(std::string_view bytes) -> void {
@@ -92,13 +94,28 @@ auto Input::decode_one(std::string_view buf) -> std::size_t {
   }
 
   // ── UTF-8 (ASCII fast path + multibyte) ──
-  std::size_t len = 1;
-  if ((c & 0x80) == 0) len = 1;
-  else if ((c & 0xE0) == 0xC0) len = 2;
-  else if ((c & 0xF0) == 0xE0) len = 3;
-  else if ((c & 0xF8) == 0xF0) len = 4;
-  if (buf.size() < len) return 0;  // incomplete multibyte
-  // Decode code point.
+  // Validate, don't trust the lead byte's length hint: a stray lead followed
+  // by an unrelated byte would otherwise swallow that byte (a real keypress,
+  // or the ESC starting the next sequence). On any malformation emit a lone
+  // replacement char and resynchronize by consuming only the lead byte, so
+  // the following bytes decode independently.
+  std::size_t len = 0;
+  if (!detail::utf8_validate(buf, len)) {
+    // Truncated-but-promising: a plausible lead whose bytes simply haven't
+    // arrived yet. Wait for more (returns 0) rather than mis-decoding.
+    const std::size_t want = detail::utf8_seq_len(c);
+    if (want > 1 && buf.size() < want) {
+      // Only wait if the bytes present so far could still be the head of a
+      // valid sequence; an already-illegal second byte can't be rescued.
+      bool plausible = buf.size() < 2 ||
+          ([&] { const auto [lo, hi] = detail::utf8_second_byte_range(c);
+                 const auto s = static_cast<unsigned char>(buf[1]);
+                 return s >= lo && s <= hi; }());
+      if (plausible) return 0;
+    }
+    m_events.push_back(KeyEvent{Key::Char, U'\uFFFD'});
+    return 1;  // resync: drop just this byte, re-examine the rest
+  }
   char32_t cp = 0;
   if (len == 1) cp = c;
   else if (len == 2) cp = ((c & 0x1F) << 6) | (buf[1] & 0x3F);
