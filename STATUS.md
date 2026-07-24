@@ -7,8 +7,14 @@ which holds standing conventions, not state).
 ## Where we are (2026-07-24)
 
 **Core framework, KittyDriver, and the full widget system are landed and
-tested.** 203 test cases across 14 suites; gcc 13/14 + clang 19/20 green in
+tested.** 220 test cases across 15 suites; gcc 13/14 + clang 19/20 green in
 CI; ASan/UBSan clean via the (now-fixed) sanitizer toolchains.
+
+**First tagged release: `v0.0.1`** (annotated tag + GitHub pre-release, pushed
+2026-07-24). It captures the core + drivers + widgets + audit fixes #3–#9, #14,
+#15. `version.cmake` derives `VERSION` from `git describe --tags`, so the build
+now reports `0.0.1`. Release convention: annotated `vX.Y.Z` tag pushed to
+origin + a matching `gh release --prerelease` while pre-1.0.
 
 Working end to end:
 - `Terminal` — raw-mode RAII, capability probe (kitty/sixel/truecolor),
@@ -54,6 +60,19 @@ through. Landed so far, each with regression tests:
 Still open: #10 (display-width / wide cells), #11 (dirty/clear contract),
 #12 (widget bundle), #13 (terminal/input robustness), #16 (forge-top demo
 epic, the dogfooding harness).
+
+## Next session — start here
+
+Remaining audit bugs are #10–#13, then epic #16. Two orderings to reconcile
+before picking: numeric order points at **#10** next, while co-agent Kimi K3's
+task list orders them **#12 → #13 → #11 → #10**. #10 (display width) is the
+big cross-cutting one (byte length used as column width across every widget);
+#12 is a bundle of smaller, independent widget bugs. Before starting, run
+`venice memory tasks` and `git log origin/main..main` / `git status` — Kimi
+lands on local main and can be mid-flight or unpushed; coordinate via the
+issue tracker (see the `kimi-k3-coagent` memory) so two agents don't take the
+same bug. #8's manual kitty check (single `_Gi=31` probe, no stray startup
+chars) is still owed by the user.
 
 ## How to verify
 
