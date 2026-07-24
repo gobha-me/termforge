@@ -10,11 +10,12 @@ which holds standing conventions, not state).
 tested.** 17 suites; gcc 14 + clang 20 green with `-Werror`; ASan/UBSan clean
 via the (now-fixed) sanitizer toolchains.
 
-**Latest release: `v0.0.3`** (annotated tag + GitHub pre-release, 2026-07-24) —
-adds audit fix #10 (display-width / wide cells) on top of `v0.0.2` (#13,
-terminal/input robustness), which built on `v0.0.1` (core + drivers + widgets +
-audit fixes #3–#9, #14, #15). `version.cmake` derives `VERSION` from
-`git describe --tags`, so the build now reports `0.0.3`. Release convention:
+**Latest release: `v0.0.4`** (annotated tag + GitHub pre-release, 2026-07-24) —
+adds audit fix #11 (dirty/clear contract — immediate-mode full-rect repaint) on
+top of `v0.0.3` (#10, display-width / wide cells), `v0.0.2` (#13,
+terminal/input robustness), and `v0.0.1` (core + drivers + widgets + audit
+fixes #3–#9, #14, #15). `version.cmake` derives `VERSION` from
+`git describe --tags`, so the build now reports `0.0.4`. Release convention:
 annotated `vX.Y.Z` tag pushed to origin + a matching `gh release --prerelease`
 while pre-1.0.
 
@@ -71,6 +72,26 @@ through. Landed so far, each with regression tests:
   instead of `string::size()`, and TextInput's cursor column, scroll window, and
   click→byte mapping are display-column-correct (navigation stays byte-based).
   New `test/17width`; `02screen`/`03renderer`/`12primitives`/`13mouse` extended.
+- **#11** — dirty()/clear-every-frame contract (v0.0.4). Resolved the
+  contradiction (widget.hpp advertised both "draw() every frame" *and* a
+  `dirty()` skip that nothing read) to one **immediate-mode, full-rect-repaint**
+  contract: every `draw()` fully repaints its whole `rect()` and blanks what it
+  doesn't cover, so a widget is correct with or without an app-level
+  `screen.clear()` (no stale trails). New `Screen::fill_rect` blanks a clamped
+  sub-rect to colored blank cells (clears stale glyph / wide-glyph continuation /
+  image_id) and replaces the hand-rolled fill loops. Every widget now blanks its
+  rect first: **TextBox** (was blanking nothing — `clear()` used to leave text
+  on screen), **TableWidget** (column gaps + rows vacated by
+  `clear_rows()`/scroll), **WaveformWidget** (right columns + empty series; no
+  longer early-returns before blanking), **TextInput** (rows other than the
+  input row when `h>1`), ProgressBar, MenuBar; Label/Button/ListWidget refactored
+  onto `fill_rect`. **ProgressBar** now stays dirty while indeterminate (the old
+  `mark_dirty()`+unconditional `clear_dirty()` self-negated the animation).
+  **MenuBar** clips overflowing titles to the bar's right edge (they were visible
+  but dead to clicks). `dirty()` redefined as an advisory hint (framework never
+  skips `draw()`). Two documented exceptions: Frame (border only) and MenuBar's
+  dropdown (draws below rect, matched by `hit_test`). New `Screen::fill_rect`
+  tests in `test/02screen`; #11 stale-trail regressions in `test/14audit`.
 - **#13** — terminal/input robustness (v0.0.2). Raw mode arms an
   async-signal-safe restore path (`detail/tty_restore.hpp`): SIGTERM/SIGHUP +
   crash signals + `atexit` leave the alt-screen and restore cooked termios,
@@ -83,21 +104,21 @@ through. Landed so far, each with regression tests:
   no-ops on a non-tty stdout. New `test/16signals` (fork+pipe, no tty needed) +
   expanded `test/04input`.
 
-Still open: #11 (dirty/clear contract), #12 (widget bundle), #16 (forge-top
-demo epic, the dogfooding harness).
+Still open: #12 (widget bundle), #16 (forge-top demo epic, the dogfooding
+harness).
 
 ## Next session — start here
 
-Remaining audit bugs are **#11, #12**, then epic #16 (#10 landed in v0.0.3, #13
-in v0.0.2). **#11 (dirty/clear contract) is the natural next pick now that #10
-landed** — it is intertwined with #10's continuation cells (the "blank the whole
-rect every draw vs. honor `dirty()`" decision, ProgressBar's self-negating
-animation, MenuBar clip-to-rect). Note **#12 is the top of co-agent Kimi K3's
-pending list**, so if you take #12 instead, claim it on the tracker first.
-Before starting, run `venice memory tasks` and `git log origin/main..main` /
-`git status` — Kimi lands on local main and can be mid-flight or unpushed;
-coordinate via the issue tracker (see the `kimi-k3-coagent` memory) so two
-agents don't take the same bug.
+Remaining audit bug is **#12** (widget bundle — right/middle-click gating gaps,
+empty-menu keyboard trap, stale Table selection after `clear_rows`, focus-guard
+inconsistency), then epic #16 (#10 landed in v0.0.3, #11 in v0.0.4, #13 in
+v0.0.2). **#12 is the top of co-agent Kimi K3's pending list**, so claim it on
+the tracker first (or coordinate) before starting. Before starting, run
+`venice memory tasks` and `git log origin/main..main` / `git status` — Kimi
+lands on local main and can be mid-flight or unpushed; coordinate via the issue
+tracker (see the `kimi-k3-coagent` memory) so two agents don't take the same
+bug. If #12 is taken, epic **#16 (forge-top demo)** is the next substantial
+piece.
 
 **Owed manual checks (sandbox has no tty):** #13 needs a real-terminal pass —
 `kill <pid>` should restore the terminal (cooked mode, cursor shown, main

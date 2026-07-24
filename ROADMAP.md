@@ -121,7 +121,7 @@ completed items.
 4. ~~Epic 3.5 (Mouse routing)~~ **DONE**
 5. ~~Epic 6.1 (CI)~~ **DONE** (GCC/Clang/Fedora/ASan, `-Werror`)
 6. ~~Epic 6.6 (Kitty waveform bug)~~ **FIXED** (verify in real kitty)
-7. **Audit fix wave (issues #3–#16)** — in progress 2026-07-24; #3/#4/#5/#9/#14 landed, kitty placement GC (#6/#7), probe hardening (#8), terminal robustness (#13, v0.0.2), display-width + wide cells (#10, v0.0.3) landed; dirty/clear contract (#11) and widget bundle (#12) next
+7. **Audit fix wave (issues #3–#16)** — in progress 2026-07-24; #3/#4/#5/#9/#14 landed, kitty placement GC (#6/#7), probe hardening (#8), terminal robustness (#13, v0.0.2), display-width + wide cells (#10, v0.0.3), dirty/clear contract (#11, v0.0.4) landed; widget bundle (#12) next
 8. **Epic 3.6 (MapWidget)** — design doc first
 9. **forge-top demo (issue #16)** — btop-style dogfooding harness, all tiers
 10. **Epic 5 (Sixel)** — kitty + half-blocks bracket the matrix
