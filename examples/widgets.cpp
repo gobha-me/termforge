@@ -1,21 +1,28 @@
 // TermForge example: widgets
 //
 // Showcases all primitive widgets in a single app. Demonstrates the focus
-// model (Tab cycles through widgets), MenuBar navigation, and live updates.
+// model (Tab cycles through widgets), MenuBar navigation, live updates, and the
+// five border families (Border menu).
 //
 // Layout:
-//   ┌─ TermForge Widgets ──────────────────────────────────────┐
-//   │ File  Edit  View                          [MenuBar]      │
-//   ├─ Left Frame ──────────┬─ Right Frame ───────────────────┤
-//   │ Label                 │ ListWidget                      │
-//   │ TextInput             │  item 1                         │
-//   │ [Button] [Button]     │  item 2                         │
-//   │ ProgressBar           │  ...                            │
-//   ├─ Waveform ──────────────────────────────────────────────┤
-//   │ (sine wave)                                             │
-//   └─ Status bar ────────────────────────────────────────────┘
+//   File  Edit  View  Border                        [MenuBar]
+//   ┌┤ Controls ├───────────┐┌┤ ListWidget ├───────────────────┐
+//   │ Label                 ││  item 1                         │
+//   │ TextInput             ││  item 2                         │
+//   │ [Button] [Button]     ││  ...                            │
+//   │ ProgressBar           ││                                 │
+//   └───────────────────────┘└─────────────────────────────────┘
+//   ┌┤ Signal ├──────────────────────────────────────────────────┐
+//   │ (sine wave)                                                │
+//   └────────────────────────────────────────────────────────────┘
+//   Status bar
 //
 // Keyboard: Tab cycles focus, ESC quits.
+//
+// The Border menu is also the answer to "how do I style a whole app?": there is
+// no global default style — the app holds one BorderStyle and hands it to each
+// frame (see set_border below). Border > ASCII is what an app on the
+// FallbackDriver tier wants.
 
 #include <cmath>
 #include <format>
@@ -50,6 +57,15 @@ class WidgetsDemo final : public App {
                      {{"Zoom In", [this] { set_status("View > Zoom In"); }},
                       {"Zoom Out", [this] { set_status("View > Zoom Out"); }},
                       {"Reset", [this] { set_status("View > Reset"); }}}});
+    m_menu.add_menu(
+        {"Border",
+         {{"Single", [this] { set_border(BorderStyle::Single, "Single"); }},
+          {"Double", [this] { set_border(BorderStyle::Double, "Double"); }},
+          {"Rounded", [this] { set_border(BorderStyle::Rounded, "Rounded"); }},
+          {"Heavy", [this] { set_border(BorderStyle::Heavy, "Heavy"); }},
+          {"ASCII", [this] {
+             set_border(BorderStyle::Ascii, "ASCII (bare-TTY tier)");
+           }}}});
 
     // Buttons.
     m_btn_ok.set_label("[ OK ]");
@@ -138,7 +154,7 @@ class WidgetsDemo final : public App {
     const int right_w = W - left_w;
 
     // Left frame.
-    m_left_frame.set_title(" Controls ");
+    m_left_frame.set_title("Controls");
     m_left_frame.set_geometry({0, menu_h, left_w, content_h});
     m_left_frame.draw(screen);
     const auto li = m_left_frame.content_rect();
@@ -166,14 +182,14 @@ class WidgetsDemo final : public App {
     m_progress.draw(screen);
 
     // Right frame.
-    m_right_frame.set_title(" ListWidget ");
+    m_right_frame.set_title("ListWidget");
     m_right_frame.set_geometry({left_w, menu_h, right_w, content_h});
     m_right_frame.draw(screen);
     m_list.set_geometry(m_right_frame.content_rect());
     m_list.draw(screen);
 
     // Waveform (full width).
-    m_wave_frame.set_title(" Signal ");
+    m_wave_frame.set_title("Signal");
     m_wave_frame.set_geometry({0, menu_h + content_h, W, wave_h + 1});
     m_wave_frame.draw(screen);
     m_wave.set_geometry(m_wave_frame.content_rect());
@@ -200,6 +216,16 @@ class WidgetsDemo final : public App {
 
  private:
   auto set_status(std::string msg) -> void { m_status_text = std::move(msg); }
+
+  // One style, applied to every frame the app owns. There is no global default
+  // in the library on purpose (widgets/glyphs.hpp) — this three-line helper is
+  // what "style the whole app" looks like instead.
+  auto set_border(BorderStyle style, const char* name) -> void {
+    m_left_frame.set_style(style);
+    m_right_frame.set_style(style);
+    m_wave_frame.set_style(style);
+    set_status(std::format("Border: {}", name));
+  }
 
   // Name of the currently-focused widget, for the title indicator.
   [[nodiscard]] auto focus_name() const -> const char* {

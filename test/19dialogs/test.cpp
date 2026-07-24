@@ -27,6 +27,7 @@
 
 using termforge::App;
 using termforge::Backdrop;
+using termforge::BorderStyle;
 using termforge::Cell;
 using termforge::ConfirmDialog;
 using termforge::Dialog;
@@ -452,11 +453,12 @@ TEST_CASE("Dialog: sizes to its content and centers on the screen",
   d.layout(80, 24);
 
   const Rect g = d.rect();
-  // Title needs display_width("Title") + 2 = 7 inner columns (Frame reserves
-  // w-4 for it), which beats the 5-column body.
-  REQUIRE(g.w == 9);
+  // Title needs Frame::title_inner_cols(display_width("Title")) = 9 inner
+  // columns (the ┤ ├ delimiters and their spaces cost 4), which beats the
+  // 5-column body.
+  REQUIRE(g.w == 11);
   REQUIRE(g.h == 3);
-  REQUIRE(g.x == (80 - 9) / 2);
+  REQUIRE(g.x == (80 - 11) / 2);
   REQUIRE(g.y == (24 - 3) / 2);
 }
 
@@ -466,7 +468,55 @@ TEST_CASE("Dialog: a wide-glyph title is measured in columns, not bytes",
   // times too wide.
   BareDialog d{"日本語"};  // 3 glyphs, 6 columns, 9 bytes
   d.layout(80, 24);
-  REQUIRE(d.rect().w == 6 + 2 + 2);
+  REQUIRE(d.rect().w == 6 + 4 + 2);  // title + title chrome + border
+}
+
+TEST_CASE("Dialog: set_border_style reaches the frame it owns",
+          "[dialog][glyphs]") {
+  // The Frame is a private member, so without the forwarder no dialog could
+  // ever be ASCII — the tier that needs it most (#20).
+  Screen screen{40, 12};
+  BareDialog d{"T"};
+  d.set_text("body");
+  d.set_border_style(BorderStyle::Ascii);
+  REQUIRE(d.border_style() == BorderStyle::Ascii);
+  d.draw(screen);
+
+  const Rect g = d.rect();
+  REQUIRE(screen.at(g.x, g.y).text == "+");
+  REQUIRE(screen.at(g.x + g.w - 1, g.y + g.h - 1).text == "+");
+  REQUIRE(screen.at(g.x + 1, g.y).text == "|");  // title delimiter
+  REQUIRE(screen.at(g.x, g.y + 1).text == "|");
+  // Nothing multi-byte anywhere on the border ring.
+  for (int x = g.x; x < g.x + g.w; ++x) {
+    for (const unsigned char c : screen.at(x, g.y).text) REQUIRE(c < 0x80);
+    for (const unsigned char c : screen.at(x, g.y + g.h - 1).text)
+      REQUIRE(c < 0x80);
+  }
+}
+
+TEST_CASE("Dialog: its size does not depend on the border style", "[dialog]") {
+  // Every border family's glyphs are one column wide, which is what lets
+  // Dialog size itself through Frame::title_inner_cols() without knowing the
+  // style. If that ever stops being true, this is the test that says so.
+  Rect first{};
+  bool have_first = false;
+  for (const auto style :
+       {BorderStyle::Single, BorderStyle::Double, BorderStyle::Rounded,
+        BorderStyle::Heavy, BorderStyle::Ascii}) {
+    BareDialog d{"Title"};
+    d.set_text("some body text");
+    d.set_border_style(style);
+    d.layout(80, 24);
+    if (!have_first) {
+      first = d.rect();
+      have_first = true;
+    }
+    REQUIRE(d.rect().x == first.x);
+    REQUIRE(d.rect().y == first.y);
+    REQUIRE(d.rect().w == first.w);
+    REQUIRE(d.rect().h == first.h);
+  }
 }
 
 TEST_CASE("Dialog: body text wraps to max_width and grows the height",
@@ -953,7 +1003,8 @@ TEST_CASE("Dialog: controls never spill past the bottom border",
 
   const Rect g = d.rect();
   REQUIRE(g.y + g.h <= 7);
-  // The bottom border row is still a border: no button text on it.
+  // The bottom border row is still a border: no button text on it. Single is
+  // the default border family (#20), which is what makes "─" the expectation.
   for (int x = g.x + 1; x < g.x + g.w - 1; ++x)
     REQUIRE(screen.at(x, g.y + g.h - 1).text == "─");
   // And nothing was painted below the dialog.

@@ -1,18 +1,27 @@
-// Primitive widget tests: Label, Button, ProgressBar, TextInput.
+// Primitive widget tests: Label, Button, ProgressBar, TextInput, Frame,
+// MenuBar, and the border glyph sets Frame draws with.
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <string>
+
+#include "detail/width.hpp"
 #include "termforge/core/screen.hpp"
 #include "termforge/widgets/button.hpp"
 #include "termforge/widgets/frame.hpp"
+#include "termforge/widgets/glyphs.hpp"
 #include "termforge/widgets/label.hpp"
 #include "termforge/widgets/menu_bar.hpp"
 #include "termforge/widgets/progress_bar.hpp"
 #include "termforge/widgets/text_input.hpp"
 
+using termforge::BorderGlyphs;
+using termforge::border_glyphs;
+using termforge::BorderStyle;
 using termforge::Button;
 using termforge::Event;
 using termforge::Frame;
+using termforge::is_ascii;
 using termforge::Key;
 using termforge::KeyEvent;
 using termforge::Label;
@@ -24,6 +33,35 @@ using termforge::ProgressBar;
 using termforge::Rgb;
 using termforge::Screen;
 using termforge::TextInput;
+
+namespace {
+
+// Every cell of a widget's border ring, as one string: the top row, the bottom
+// row, and the two side columns between them. Deliberately not the interior —
+// Frame is the documented exception that paints only its ring.
+auto border_ring(const Screen& s, termforge::Rect r) -> std::string {
+  std::string out;
+  for (int x = r.x; x < r.x + r.w; ++x) {
+    out += s.at(x, r.y).text;
+    out += s.at(x, r.y + r.h - 1).text;
+  }
+  for (int y = r.y + 1; y < r.y + r.h - 1; ++y) {
+    out += s.at(r.x, y).text;
+    out += s.at(r.x + r.w - 1, y).text;
+  }
+  return out;
+}
+
+auto all_seven_bit(std::string_view s) -> bool {
+  for (const unsigned char c : s)
+    if (c >= 0x80) return false;
+  return true;
+}
+
+// The continuation cell the renderer writes after a width-2 glyph.
+const std::string kWide{"\0", 1};
+
+}  // namespace
 
 // ── Label ───────────────────────────────────────────────────────────────────
 
@@ -389,12 +427,185 @@ TEST_CASE("Frame: draws horizontal and vertical edges", "[primitives][frame]") {
 }
 
 TEST_CASE("Frame: title in top border", "[primitives][frame]") {
+  // Delimited: "┌┤ Settings ├─────┐" (#20). The delimiters and the space each
+  // side are Frame::kTitleChromeCols columns of chrome around the title.
   Screen s{20, 5};
   Frame f{"Settings"};
   f.set_geometry({0, 0, 20, 5});
   f.draw(s);
-  REQUIRE(s.at(2, 0).text == "S");
-  REQUIRE(s.at(3, 0).text == "e");
+  REQUIRE(s.at(1, 0).text == "┤");
+  REQUIRE(s.at(2, 0).text == " ");
+  REQUIRE(s.at(3, 0).text == "S");
+  REQUIRE(s.at(10, 0).text == "s");
+  REQUIRE(s.at(11, 0).text == " ");
+  REQUIRE(s.at(12, 0).text == "├");
+  REQUIRE(s.at(13, 0).text == "─");  // border resumes after the title
+  REQUIRE(s.at(19, 0).text == "┐");
+}
+
+TEST_CASE("Frame: Double style draws double glyphs", "[primitives][frame]") {
+  Screen s{12, 4};
+  Frame f{"Hi"};
+  f.set_style(BorderStyle::Double);
+  f.set_geometry({0, 0, 12, 4});
+  f.draw(s);
+  REQUIRE(s.at(0, 0).text == "╔");
+  REQUIRE(s.at(11, 0).text == "╗");
+  REQUIRE(s.at(0, 3).text == "╚");
+  REQUIRE(s.at(11, 3).text == "╝");
+  REQUIRE(s.at(5, 3).text == "═");
+  REQUIRE(s.at(0, 1).text == "║");
+  REQUIRE(s.at(11, 2).text == "║");
+  // Matching-weight tees around the title.
+  REQUIRE(s.at(1, 0).text == "╣");
+  REQUIRE(s.at(6, 0).text == "╠");
+  REQUIRE(s.at(7, 0).text == "═");
+}
+
+TEST_CASE("Frame: Rounded style keeps light edges and tees",
+          "[primitives][frame]") {
+  // Unicode has no rounded T-junctions; the light tees join ─ cleanly.
+  Screen s{12, 4};
+  Frame f{"Hi"};
+  f.set_style(BorderStyle::Rounded);
+  f.set_geometry({0, 0, 12, 4});
+  f.draw(s);
+  REQUIRE(s.at(0, 0).text == "╭");
+  REQUIRE(s.at(11, 0).text == "╮");
+  REQUIRE(s.at(0, 3).text == "╰");
+  REQUIRE(s.at(11, 3).text == "╯");
+  REQUIRE(s.at(5, 3).text == "─");
+  REQUIRE(s.at(0, 1).text == "│");
+  REQUIRE(s.at(1, 0).text == "┤");
+  REQUIRE(s.at(6, 0).text == "├");
+}
+
+TEST_CASE("Frame: Heavy style draws heavy glyphs", "[primitives][frame]") {
+  Screen s{12, 4};
+  Frame f{"Hi"};
+  f.set_style(BorderStyle::Heavy);
+  f.set_geometry({0, 0, 12, 4});
+  f.draw(s);
+  REQUIRE(s.at(0, 0).text == "┏");
+  REQUIRE(s.at(11, 0).text == "┓");
+  REQUIRE(s.at(0, 3).text == "┗");
+  REQUIRE(s.at(11, 3).text == "┛");
+  REQUIRE(s.at(5, 3).text == "━");
+  REQUIRE(s.at(0, 1).text == "┃");
+  REQUIRE(s.at(1, 0).text == "┫");
+  REQUIRE(s.at(6, 0).text == "┣");
+}
+
+TEST_CASE("Frame: Ascii style draws only 7-bit glyphs",
+          "[primitives][frame][failure]") {
+  // The whole point of the Ascii family: a bare TTY whose font has no box
+  // drawing (the FallbackDriver tier, issue #16) must still get a readable
+  // frame. Drivers emit text verbatim, so if a single multi-byte glyph leaks
+  // into the ring here, that terminal shows mojibake.
+  Screen s{12, 4};
+  Frame f{"Hi"};
+  f.set_style(BorderStyle::Ascii);
+  f.set_geometry({0, 0, 12, 4});
+  f.draw(s);
+  REQUIRE(s.at(0, 0).text == "+");
+  REQUIRE(s.at(11, 0).text == "+");
+  REQUIRE(s.at(0, 3).text == "+");
+  REQUIRE(s.at(11, 3).text == "+");
+  REQUIRE(s.at(5, 3).text == "-");
+  REQUIRE(s.at(0, 1).text == "|");
+  REQUIRE(s.at(1, 0).text == "|");  // title delimiters too
+  REQUIRE(s.at(6, 0).text == "|");
+  REQUIRE(all_seven_bit(border_ring(s, f.rect())));
+}
+
+TEST_CASE("Frame: a narrow frame truncates the title inside its delimiters",
+          "[primitives][frame]") {
+  // Budget is r.w - 2 - kTitleChromeCols = 2, so "abc" -> "ab" and the closing
+  // delimiter still lands before the corner.
+  Screen s{8, 3};
+  Frame f{"abc"};
+  f.set_geometry({0, 0, 8, 3});
+  f.draw(s);
+  REQUIRE(s.at(3, 0).text == "a");
+  REQUIRE(s.at(4, 0).text == "b");
+  REQUIRE(s.at(5, 0).text == " ");
+  REQUIRE(s.at(6, 0).text == "├");
+  REQUIRE(s.at(7, 0).text == "┐");
+}
+
+TEST_CASE("Frame: one column of budget still renders a delimited title",
+          "[primitives][frame]") {
+  Screen s{7, 3};
+  Frame f{"abc"};
+  f.set_geometry({0, 0, 7, 3});
+  f.draw(s);
+  REQUIRE(s.at(1, 0).text == "┤");
+  REQUIRE(s.at(3, 0).text == "a");
+  REQUIRE(s.at(5, 0).text == "├");
+  REQUIRE(s.at(6, 0).text == "┐");
+}
+
+TEST_CASE("Frame: a frame too narrow for one title column drops the title",
+          "[primitives][frame][failure]") {
+  // A bare "┤ ├" is noise, so the title goes rather than degrading into
+  // delimiters with nothing between them.
+  Screen s{6, 3};
+  Frame f{"abc"};
+  f.set_geometry({0, 0, 6, 3});
+  f.draw(s);
+  for (int x = 1; x <= 4; ++x) REQUIRE(s.at(x, 0).text == "─");
+  REQUIRE(s.at(0, 0).text == "┌");
+  REQUIRE(s.at(5, 0).text == "┐");
+}
+
+TEST_CASE("Frame: the title never overwrites the corners",
+          "[primitives][frame][failure]") {
+  // The load-bearing invariant: the title block is at most r.w - 2 columns, so
+  // it cannot reach the corner at r.x + r.w - 1 at any width.
+  for (int w = 2; w <= 14; ++w) {
+    Screen s{16, 3};
+    Frame f{"LongTitle"};
+    f.set_geometry({0, 0, w, 3});
+    f.draw(s);
+    REQUIRE(s.at(0, 0).text == "┌");
+    REQUIRE(s.at(w - 1, 0).text == "┐");
+    REQUIRE(s.at(0, 2).text == "└");
+    REQUIRE(s.at(w - 1, 2).text == "┘");
+  }
+}
+
+TEST_CASE("Frame: a wide-glyph title is not split by truncation",
+          "[primitives][frame][width]") {
+  // Budget 5 fits 日本 (4 columns); 語 would make 6. Because the title block is
+  // written as one string, the closing delimiter follows the title's *real*
+  // display width — a fixed right-hand position would leave a gap here.
+  Screen s{11, 3};
+  Frame f{"日本語"};
+  f.set_geometry({0, 0, 11, 3});
+  f.draw(s);
+  REQUIRE(s.at(1, 0).text == "┤");
+  REQUIRE(s.at(3, 0).text == "日");
+  REQUIRE(s.at(4, 0).text == kWide);
+  REQUIRE(s.at(5, 0).text == "本");
+  REQUIRE(s.at(6, 0).text == kWide);
+  REQUIRE(s.at(7, 0).text == " ");
+  REQUIRE(s.at(8, 0).text == "├");
+  REQUIRE(s.at(9, 0).text == "─");
+  REQUIRE(s.at(10, 0).text == "┐");
+}
+
+TEST_CASE("Frame: a shorter title leaves no stale glyphs",
+          "[primitives][frame][failure]") {
+  // The border row is repainted before the title, so shortening a title must
+  // not leave the tail of the old one behind (the #11 stale-trail class).
+  Screen s{20, 3};
+  Frame f{"LongTitle"};
+  f.set_geometry({0, 0, 20, 3});
+  f.draw(s);
+  f.set_title("Hi");
+  f.draw(s);
+  REQUIRE(s.at(6, 0).text == "├");
+  for (int x = 7; x <= 18; ++x) REQUIRE(s.at(x, 0).text == "─");
 }
 
 TEST_CASE("Frame: content_rect is inside border", "[primitives][frame]") {
@@ -407,11 +618,92 @@ TEST_CASE("Frame: content_rect is inside border", "[primitives][frame]") {
   REQUIRE(inner.h == 8);
 }
 
+TEST_CASE("Frame: content_rect clamps to zero instead of going negative",
+          "[primitives][frame][failure]") {
+  // A caller that loops to inner.w must get 0, not -1. x/y still point one cell
+  // in: clamping them to rect()'s origin would falsely claim the border cell.
+  Frame f;
+
+  f.set_geometry({0, 0, 1, 1});
+  REQUIRE(f.content_rect().w == 0);
+  REQUIRE(f.content_rect().h == 0);
+  REQUIRE(f.content_rect().x == 1);
+  REQUIRE(f.content_rect().y == 1);
+
+  f.set_geometry({0, 0, 2, 2});
+  REQUIRE(f.content_rect().w == 0);
+  REQUIRE(f.content_rect().h == 0);
+
+  f.set_geometry({0, 0, 0, 0});
+  REQUIRE(f.content_rect().w == 0);
+  REQUIRE(f.content_rect().h == 0);
+
+  f.set_geometry({5, 5, 3, 5});
+  REQUIRE(f.content_rect().x == 6);
+  REQUIRE(f.content_rect().y == 6);
+  REQUIRE(f.content_rect().w == 1);
+  REQUIRE(f.content_rect().h == 3);
+}
+
+TEST_CASE("Frame: set_style marks it dirty and round-trips",
+          "[primitives][frame]") {
+  Screen s{10, 3};
+  Frame f;
+  f.set_geometry({0, 0, 10, 3});
+  REQUIRE(f.style() == BorderStyle::Single);
+  f.draw(s);
+  REQUIRE_FALSE(f.dirty());
+  f.set_style(BorderStyle::Heavy);
+  REQUIRE(f.dirty());
+  REQUIRE(f.style() == BorderStyle::Heavy);
+}
+
 TEST_CASE("Frame: too-small rect doesn't crash", "[primitives][frame][failure]") {
   Screen s{5, 5};
   Frame f{"X"};
   f.set_geometry({0, 0, 1, 1});
   f.draw(s);
+  REQUIRE(f.content_rect().w == 0);
+  REQUIRE(f.content_rect().h == 0);
+}
+
+TEST_CASE("Frame: a frame wider than the screen writes nothing out of bounds",
+          "[primitives][frame][failure]") {
+  // The title is now one multi-glyph write_text; it must clip at the right edge
+  // like any other text.
+  Screen s{6, 3};
+  Frame f{"Settings"};
+  f.set_geometry({0, 0, 20, 3});
+  f.draw(s);
+  REQUIRE(s.cols() == 6);
+  REQUIRE(s.rows() == 3);
+  REQUIRE(s.at(0, 0).text == "┌");
+  REQUIRE(s.at(1, 0).text == "┤");
+}
+
+// ── border glyph sets ───────────────────────────────────────────────────────
+
+TEST_CASE("border_glyphs: every style is one column wide and Ascii is 7-bit",
+          "[primitives][glyphs]") {
+  // Frame's title arithmetic and Dialog's sizing both assume single-column
+  // glyphs in every family. A future wide glyph would silently break both;
+  // this fires instead.
+  for (const auto style :
+       {BorderStyle::Single, BorderStyle::Double, BorderStyle::Rounded,
+        BorderStyle::Heavy, BorderStyle::Ascii}) {
+    const BorderGlyphs g = border_glyphs(style);
+    for (const auto glyph : {g.tl, g.tr, g.bl, g.br, g.hz, g.vt, g.title_left,
+                             g.title_right}) {
+      REQUIRE(termforge::detail::display_width(glyph) == 1);
+      REQUIRE_FALSE(glyph.empty());
+    }
+    REQUIRE(is_ascii(style) == (style == BorderStyle::Ascii));
+  }
+
+  const BorderGlyphs a = border_glyphs(BorderStyle::Ascii);
+  for (const auto glyph :
+       {a.tl, a.tr, a.bl, a.br, a.hz, a.vt, a.title_left, a.title_right})
+    REQUIRE(all_seven_bit(glyph));
 }
 
 // ── MenuBar ─────────────────────────────────────────────────────────────────
