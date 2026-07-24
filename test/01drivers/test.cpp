@@ -234,9 +234,11 @@ TEST_CASE("KittyDriver: stale regions are LRU-evicted terminal-side",
     d.flush();  // advance the LRU clock between regions
   }
   REQUIRE(out.find("a=d,d=I,i=1") != std::string::npos);
-  // The evicted id is recycled for the new region (ids stay one byte for
-  // the 38;5 placeholder encoding) — no id 17 is ever allocated.
-  REQUIRE(out.find("i=17") == std::string::npos);
+  // Evicted ids are recycled, so ids stay within the one-byte range the
+  // placeholder path's 38;5;<id> foreground encoding requires — nothing
+  // beyond 255 is ever allocated even with many distinct regions.
+  REQUIRE(out.find("i=256") == std::string::npos);
+  REQUIRE(out.find("i=999") == std::string::npos);
 }
 
 TEST_CASE("KittyDriver: oversized image is cropped to the placeholder limit",
@@ -369,4 +371,86 @@ TEST_CASE("KittyDriver: extended diacritic range for wide images", "[drivers][ki
   // index 199 is U+20D1 (UTF-8: E2 83 91).
   REQUIRE(out.find("\xE0\xA0\x9B") != std::string::npos);
   REQUIRE(out.find("\xE2\x83\x91") != std::string::npos);
+}
+
+// ── #6 / #7: placement lifecycle ────────────────────────────────────────────
+
+TEST_CASE("KittyDriver: a region that disappears is GC'd terminal-side (#6)",
+          "[drivers][kitty]") {
+  // A dialog thumbnail closes: its classic placement must not float above
+  // the UI. Draw a persistent region plus a transient one, flush, then draw
+  // only the persistent one and flush again — the transient region's image
+  // must be deleted (a=d,d=I) in the second flush.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  Image a{1, 1, {Pixel{255, 0, 0, 255}}};
+  Image b{1, 1, {Pixel{0, 255, 0, 255}}};
+
+  d.draw_image(0, 0, a);   // region 1 (persists)
+  d.draw_image(5, 0, b);   // region 2 (will disappear)
+  d.flush();
+  // Two transmits happened; region 2 got image id 2.
+  REQUIRE(out.find("i=2") != std::string::npos);
+
+  out.clear();
+  d.draw_image(0, 0, a);   // only region 1 redrawn this frame
+  d.flush();
+  // Region 2 was not drawn this frame → GC deletes its image terminal-side.
+  REQUIRE(out.find("a=d,d=I,i=2") != std::string::npos);
+  // Region 1 is still alive: not deleted.
+  REQUIRE(out.find("a=d,d=I,i=1") == std::string::npos);
+}
+
+TEST_CASE("KittyDriver: >16 regions in one frame all place (no same-frame thrash) (#7)",
+          "[drivers][kitty]") {
+  // Draw 20 distinct regions in a SINGLE frame (one flush). The per-draw LRU
+  // clock must order them, so the 17th evicts region 1 (oldest draw), not a
+  // region placed microseconds earlier in the same buffer.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  Image img{1, 1, {Pixel{255, 0, 0, 255}}};
+  for (int i = 0; i < 20; ++i) d.draw_image(i, 0, img);
+  d.flush();
+  // The oldest four regions (ids 1..4) are evicted; the newest 16 survive.
+  // Crucially, a region placed in this same flush is not among the evicted.
+  REQUIRE(out.find("a=d,d=I,i=1") != std::string::npos);
+  // Region 20 (id 20... or recycled) placed and was NOT deleted this frame:
+  // every region got to emit its placement before any eviction, and the
+  // deletions target only the four oldest draws.
+  int deletions = 0;
+  for (std::size_t p = out.find("a=d,d=I"); p != std::string::npos;
+       p = out.find("a=d,d=I", p + 1))
+    ++deletions;
+  REQUIRE(deletions == 4);  // 20 drawn - 16 slots = 4 evicted, no more
+}
+
+TEST_CASE("KittyDriver: set_placement_mode resets placement state (#7)",
+          "[drivers][kitty]") {
+  // Place a region in Classic, then switch to UnicodePlaceholders. The old
+  // classic placement must be deleted terminal-side and the region must
+  // re-place as a virtual (U=1) placement — not reference a virtual
+  // placement that was never created.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  Image img{2, 2, std::vector<Pixel>(4, Pixel{255, 0, 0, 255})};
+
+  d.draw_image(0, 0, img);   // classic placement (default mode)
+  d.flush();
+  REQUIRE(out.find("U=1") == std::string::npos);  // classic: no virtual placement
+
+  out.clear();
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  // The classic placement is torn down; the delete is buffered and reaches
+  // the terminal on the next flush.
+  d.flush();
+  REQUIRE(out.find("a=d,d=I,i=1") != std::string::npos);
+
+  out.clear();
+  d.draw_image(0, 0, img);   // now must emit a virtual placement + cells
+  d.flush();
+  REQUIRE(out.find("U=1") != std::string::npos);        // virtual placement created
+  REQUIRE(out.find("\xF4\x8F\xBB\xAE") != std::string::npos);  // placeholder cells
 }

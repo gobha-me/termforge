@@ -51,8 +51,12 @@ class KittyDriver final : public TerminalDriver {
   auto flush() -> void override;
   [[nodiscard]] auto capabilities() const noexcept -> Capabilities override;
 
-  // How images are placed (see file comment). Default: Classic.
-  void set_placement_mode(PlacementMode mode) { m_mode = mode; }
+  // How images are placed (see file comment). Default: Classic. Switching
+  // modes resets every region's placement state (classic placements are
+  // deleted terminal-side) so the new mode re-places cleanly — otherwise a
+  // region placed in Classic keeps placed=true and the placeholder path
+  // would reference a virtual placement that was never created.
+  void set_placement_mode(PlacementMode mode);
   [[nodiscard]] auto placement_mode() const noexcept -> PlacementMode {
     return m_mode;
   }
@@ -72,7 +76,7 @@ class KittyDriver final : public TerminalDriver {
     std::uint32_t image_id{0};
     std::uint32_t placement_id{0};
     std::uint64_t content_hash{0};  // 0 = nothing transmitted yet
-    std::uint64_t last_used{0};     // frame counter (bumped in flush)
+    std::uint64_t last_used{0};     // per-draw LRU clock (strictly increasing)
     bool placed{false};             // placement command already emitted
   };
 
@@ -96,6 +100,11 @@ class KittyDriver final : public TerminalDriver {
   // Delete one region's image (and its placements) from terminal memory.
   auto delete_image(std::uint32_t image_id) -> void;
 
+  // Per-frame GC (called from flush): delete terminal-side and drop every
+  // region not drawn during the frame just rendered, so a disappeared
+  // region's classic placement can't linger above the text grid.
+  auto gc_regions() -> void;
+
   // Delete all transmitted images from terminal memory.
   auto delete_all() -> void;
 
@@ -116,7 +125,18 @@ class KittyDriver final : public TerminalDriver {
   PlacementMode m_mode{PlacementMode::Classic};
   std::uint32_t m_next_image_id{1};
   std::uint32_t m_next_placement_id{1};
+  // Monotonic per-draw clock for LRU eviction. This is NOT the frame
+  // counter: every draw_image bumps it, so slots drawn within one flush get
+  // distinct timestamps and a 17th region evicts the genuinely-oldest draw
+  // rather than a same-frame sibling (which would place+delete it
+  // atomically in one buffer and never show it).
+  std::uint64_t m_clock{0};
+  // Frame counter, bumped in flush().
   std::uint64_t m_frame{0};
+  // Value of m_clock at the end of the previous flush. A region whose
+  // last_used is at or below this was not drawn during the frame just
+  // rendered, so gc_regions() deletes it terminal-side and drops the slot.
+  std::uint64_t m_frame_start_clock{0};
   // Region key (packed x,y,w,h) -> slot. Bounded: LRU-evicted past
   // kMaxRegionSlots, freeing the terminal-side image data too.
   std::unordered_map<std::uint64_t, RegionSlot> m_regions;

@@ -182,6 +182,10 @@ auto KittyDriver::region_slot(std::uint64_t key) -> RegionSlot& {
 
   RegionSlot slot;
   if (m_regions.size() >= kMaxRegionSlots) {
+    // Evict the least-recently-drawn region. last_used is a per-draw clock,
+    // so regions drawn earlier in this same flush are genuinely older than
+    // the new one — evicting them is correct, not the same-frame thrash a
+    // frame-granularity clock produced (see issue #7).
     auto lru = m_regions.begin();
     for (auto it = m_regions.begin(); it != m_regions.end(); ++it)
       if (it->second.last_used < lru->second.last_used) lru = it;
@@ -230,7 +234,7 @@ auto KittyDriver::draw_image(int x, int y, const Image& image)
     slot.content_hash = hash;
     content_changed = true;
   }
-  slot.last_used = m_frame;
+  slot.last_used = ++m_clock;  // per-draw: strictly increasing within a frame
 
   if (m_mode == PlacementMode::Classic) {
     // kitty does NOT refresh an existing classic placement when the image
@@ -264,6 +268,15 @@ auto KittyDriver::draw_image(int x, int y, const Image& image)
 }
 
 void KittyDriver::flush() {
+  // Per-frame region GC: any slot still tracked but not drawn this frame
+  // has disappeared from the UI (a closed dialog, a removed widget). A
+  // classic placement would otherwise float above the text grid
+  // indefinitely — kitty draws classic placements at z=0, above text, so
+  // the cell diff cannot paint over them. Delete it terminal-side and drop
+  // the slot. This runs *before* emitting m_buf so the deletions land in
+  // the same flush as the frame that removed the region.
+  gc_regions();
+
   if (m_sink != nullptr) {
     *m_sink += m_buf;
   } else {
@@ -271,7 +284,44 @@ void KittyDriver::flush() {
     std::fflush(stdout);
   }
   m_buf.clear();
-  ++m_frame;  // LRU clock for region-slot eviction
+  ++m_frame;  // advance the frame window used by gc_regions()
+}
+
+void KittyDriver::set_placement_mode(PlacementMode mode) {
+  if (mode == m_mode) return;
+  // A slot placed in Classic has placed=true but no virtual placement.
+  // Switching to UnicodePlaceholders would then emit placeholder cells
+  // referencing a placement that was never created (nothing renders, and
+  // the old classic placement stays on screen — see issue #7). Delete any
+  // classic placements terminal-side and force every region to re-place
+  // under the new mode on its next draw.
+  if (m_mode == PlacementMode::Classic) {
+    for (const auto& [key, slot] : m_regions)
+      if (slot.placed) delete_image(slot.image_id);
+  }
+  for (auto& [key, slot] : m_regions) {
+    slot.placed = false;
+    slot.content_hash = 0;  // force retransmit under the new placement
+  }
+  m_mode = mode;
+}
+
+auto KittyDriver::gc_regions() -> void {
+  // last_used is stamped with the per-draw clock; m_frame counts flushes.
+  // A region drawn this frame has a last_used newer than the clock value at
+  // the previous flush's end; track that boundary so we can tell "drawn this
+  // frame" from "stale".
+  for (auto it = m_regions.begin(); it != m_regions.end();) {
+    if (it->second.last_used <= m_frame_start_clock) {
+      delete_image(it->second.image_id);
+      it = m_regions.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  // Regions drawn from here on get higher stamps; anything still at or below
+  // this point at the next flush was not drawn this frame.
+  m_frame_start_clock = m_clock;
 }
 
 // ── Kitty APC protocol ──────────────────────────────────────────────────────
