@@ -35,10 +35,11 @@ App::~App() {
 
 auto App::setup() -> std::expected<void, ErrorEvent> {
   if (auto r = m_term.enter_raw(); !r) return r;
-  if (auto r = m_term.query_capabilities(); !r) {
-    // Probe failure isn't fatal — degrade. Select driver on empty caps.
-  }
-  m_driver = m_term.select_driver();
+  // Probe once, then select the driver from that single result. A probe
+  // failure isn't fatal: degrade to the fallback driver on empty caps.
+  Capabilities caps;
+  if (auto r = m_term.query_capabilities(); r) caps = *r;
+  m_driver = m_term.select_driver(caps);
   if (auto r = m_driver->init(); !r) return r;
 
   const auto size = current_size();

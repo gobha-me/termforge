@@ -36,8 +36,10 @@ class Terminal {
   // failure degrades to the fallback driver rather than aborting.
   auto query_capabilities() -> std::expected<Capabilities, ErrorEvent>;
 
-  // Select and own the best driver for the probed capabilities.
-  auto select_driver() -> std::unique_ptr<TerminalDriver>;
+  // Construct the best driver for already-probed capabilities. Probe once
+  // (query_capabilities) and pass the result in; this does not probe again.
+  auto select_driver(const Capabilities& caps)
+      -> std::unique_ptr<TerminalDriver>;
 
   // ── read modes ──
   // The capability probe needs a short timeout (a terminal may never reply),

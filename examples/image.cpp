@@ -6,7 +6,7 @@
 //
 // Shows:
 //   - ImageLoader::load() with error handling
-//   - Terminal::query_capabilities() and select_driver()
+//   - Terminal::query_capabilities() and select_driver(caps)
 //   - TerminalDriver::draw_image() (degrades gracefully)
 //   - TerminalDriver::draw_text() with fg/bg colors
 //   - Which driver tier is active (kitty / ansi_rgb / fallback)
@@ -35,7 +35,7 @@ auto main() -> int {
     return 1;
   }
 
-  auto driver = term.select_driver();
+  auto driver = term.select_driver(*caps);
   if (auto res = driver->init(); !res) {
     std::fprintf(stderr, "%s\n", std::format("Driver init failed: {}", res.error().message).c_str());
     return 1;

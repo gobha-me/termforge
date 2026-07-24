@@ -9,6 +9,9 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 
+#include "detail/probe.hpp"
+#include "drivers/select_driver.hpp"
+
 namespace termforge {
 
 struct Terminal::Impl {
@@ -71,7 +74,11 @@ auto Terminal::enter_raw() -> std::expected<void, ErrorEvent> {
 
 namespace {
 
-// Read available bytes for up to `timeout_ms`, returning what arrived.
+// Read the probe reply for up to `timeout_ms`, returning what arrived. Stops
+// early the instant a complete DA1 report lands: the kitty graphics reply (if
+// any) always precedes DA1, so once DA1 is in hand the terminal has answered
+// everything we asked and there is nothing left to wait for. A terminal that
+// never replies still bounds its cost at `timeout_ms`.
 auto read_available(int fd, int timeout_ms) -> std::string {
   std::string out;
   char buf[256];
@@ -86,6 +93,7 @@ auto read_available(int fd, int timeout_ms) -> std::string {
       const ssize_t n = ::read(fd, buf, sizeof(buf));
       if (n > 0) out.append(buf, static_cast<std::size_t>(n));
     }
+    if (detail::probe_da1_complete(out)) break;  // reply is complete
   }
   return out;
 }
@@ -123,19 +131,13 @@ auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
 
   const std::string reply = read_available(in_fd, 150);
 
-  // Kitty: a graphics response references our image id (i=31) and arrives
-  // before the DA1 primary response ("\033[?...c").
-  const auto gpos = reply.find("_G");
-  const auto dapos = reply.find("\033[?");
-  if (gpos != std::string::npos && reply.find("i=31") != std::string::npos) {
-    if (dapos == std::string::npos || gpos < dapos) caps.kitty_graphics = true;
-  }
+  // Kitty: an APC graphics response echoing our probe id (i=31) with an OK
+  // status, arriving before the DA1 primary reply. An error status ("i=31;E…")
+  // means the terminal answered "no" and must not select the KittyDriver.
+  if (detail::probe_kitty_ok(reply)) caps.kitty_graphics = true;
 
-  // Sixel: DA1 attributes list contains ";4;" or ends ";4c".
-  if (reply.find(";4;") != std::string::npos || reply.find(";4c") != std::string::npos ||
-      reply.find("[?4;") != std::string::npos || reply.find("[?4c") != std::string::npos) {
-    caps.sixel = true;
-  }
+  // Sixel: advertised in the DA1 attribute list (attribute "4").
+  if (detail::probe_sixel(reply)) caps.sixel = true;
 
   // Truecolor via env corroboration.
   if (env_has("COLORTERM", "truecolor") || env_has("COLORTERM", "24bit")) {
@@ -198,11 +200,12 @@ auto Terminal::is_console_vt() const noexcept -> bool {
   return false;
 }
 
-auto Terminal::select_driver() -> std::unique_ptr<TerminalDriver> {
-  // Declared in the driver-selection unit to avoid pulling every driver into
-  // this TU. See src/lib/drivers/select_driver.cpp.
-  extern auto select_driver_impl(Terminal&) -> std::unique_ptr<TerminalDriver>;
-  return select_driver_impl(*this);
+auto Terminal::select_driver(const Capabilities& caps)
+    -> std::unique_ptr<TerminalDriver> {
+  // Pure caps -> driver mapping, defined in the driver-selection TU to avoid
+  // pulling every driver header into this one. The caller probes once (see
+  // App::setup) and passes the result in — no second probe here.
+  return select_driver_for(caps);
 }
 
 }  // namespace termforge

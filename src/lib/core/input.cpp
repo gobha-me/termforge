@@ -176,6 +176,27 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
     // Not a mouse event despite '<' marker — fall through to generic CSI.
   }
 
+  // CSI private-marker device reports: '?', '>', '=' introduce terminal
+  // *replies* (DA1 "ESC[?...c", DA2 "ESC[>...c", DECRPM "ESC[?...$y", …),
+  // never keypresses. A probe answer arriving late — after the capability
+  // window closed — reaches Input; it must be swallowed whole, not exploded
+  // into a Key::Unknown plus a run of Char events for its digits. Consume the
+  // parameter/intermediate bytes (0x20–0x3F) through the final byte
+  // (0x40–0x7E) and emit nothing.
+  if (buf.size() >= 3 && (buf[2] == '?' || buf[2] == '>' || buf[2] == '=')) {
+    std::size_t i = 3;
+    while (i < buf.size()) {
+      const auto b = static_cast<unsigned char>(buf[i]);
+      if (b >= 0x40 && b <= 0x7E) return i + 1;  // final byte: drop the report
+      if (b >= 0x20 && b <= 0x3F) { ++i; continue; }  // param / intermediate
+      // A byte outside the CSI body (e.g. an ESC starting the next sequence):
+      // the report was truncated. Drop just "ESC[<marker>" and resync on the
+      // rest rather than swallowing an unrelated sequence.
+      return 3;
+    }
+    return 0;  // no final byte yet — wait for the rest of the report
+  }
+
   // Generic CSI: params (0-9;) + final byte.
   std::size_t i = 2;
   int p1 = 0, p2 = 0;

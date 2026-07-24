@@ -37,8 +37,8 @@ auto main() -> int {
   }
   auto caps = *caps_result;
 
-  // Select best driver
-  auto driver = term.select_driver();
+  // Select best driver from the single probe result above (no second probe).
+  auto driver = term.select_driver(caps);
   if (auto res = driver->init(); !res) {
     std::fprintf(stderr, "Driver init failed: %s\n", res.error().message.c_str());
     return 1;

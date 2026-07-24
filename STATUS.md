@@ -42,11 +42,18 @@ through. Landed so far, each with regression tests:
 - **#9** — sanitize/Input now reject overlong UTF-8 (incl. overlong ESC) and
   surrogate encodings via a shared RFC 3629 validator; the input decoder
   resynchronizes after a bad lead instead of swallowing the next keypress.
+- **#8** — capability probe now runs **once** (the result flows from
+  `query_capabilities` into `select_driver(caps)`; `select_driver_for` is a
+  pure caps→driver map). `read_available` early-exits on the DA1 terminator
+  instead of burning a fixed 150ms. Kitty support requires a `;OK` status, so
+  an error reply (`i=31;E…`) no longer selects the KittyDriver. `parse_csi`
+  swallows CSI private-marker device reports (`ESC[?…c`, DA2, DECRPM) whole,
+  so a late probe reply can't explode into spurious keystrokes. Pure classifiers
+  in `detail/probe.hpp`, covered offline by `test/15probe`.
 
-Still open: #6/#7 (kitty placement GC + LRU thrash), #8 (probe hardening),
-#10 (display-width / wide cells), #11 (dirty/clear contract), #12 (widget
-bundle), #13 (terminal/input robustness), #15 (docs — this file is part of
-it), #16 (forge-top demo epic, the dogfooding harness).
+Still open: #10 (display-width / wide cells), #11 (dirty/clear contract),
+#12 (widget bundle), #13 (terminal/input robustness), #16 (forge-top demo
+epic, the dogfooding harness).
 
 ## How to verify
 
