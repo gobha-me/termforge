@@ -78,7 +78,6 @@ class DashboardApp final : public App {
     // Simulate live data.
     const float t = static_cast<float>(m_frame) * 0.05f;
     const float sine = std::sin(t) * 0.5f + 0.5f;         // 0..1
-    const float noise = std::sin(t * 3.7f) * 0.2f + 0.5f;  // faster wobble
     m_wave.push(sine);
 
     const int cpu = 20 + static_cast<int>(sine * 60.0f);

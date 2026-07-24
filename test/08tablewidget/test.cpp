@@ -16,7 +16,8 @@ using termforge::TableWidget;
 
 namespace {
 
-auto make_table(int w = 40, int h = 10) -> std::pair<Screen, TableWidget> {
+[[maybe_unused]] auto make_table(int w = 40, int h = 10)
+    -> std::pair<Screen, TableWidget> {
   Screen s{w, h};
   TableWidget t;
   t.set_geometry({0, 0, w, h});
@@ -151,8 +152,7 @@ TEST_CASE("TableWidget: set_cell updates a single value", "[tablewidget]") {
   t.set_cell(0, 1, "47%");
   t.draw(s);
   // The updated value should be visible in the cell after the header.
-  // "cpu" is at (0,1), "47%" starts after the gap.
-  const auto widths = std::string("cpu").size();  // auto-width: max of "Name"=4, "cpu"=3 → 4
+  // "cpu" is at (0,1); "47%" starts after the auto-width gap.
   REQUIRE(s.at(0, 1).text == "c");
 }
 

@@ -1,5 +1,8 @@
-*build*
-Testing*
+# Build trees: anchored to the root, directories only. The old `*build*`
+# matched any file with "build" in its name anywhere (e.g.
+# docs/building-test.md), silently never committing it.
+/build*/
+/Testing*/
 include/version.hpp
 
 # Prerequisites

@@ -51,7 +51,7 @@ class Widget {
   // Provide pixel data for a region. Called only when the active driver
   // supports images AND the region was declared via pixel_regions().
   // Return nullopt to fall back to cells for this frame.
-  virtual auto draw_pixels(Rect region) -> std::optional<Image> {
+  virtual auto draw_pixels(Rect /*region*/) -> std::optional<Image> {
     return std::nullopt;
   }
 

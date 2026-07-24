@@ -95,6 +95,14 @@ auto env_has(const char* name, const char* needle) -> bool {
   return v != nullptr && std::string{v}.find(needle) != std::string::npos;
 }
 
+// Fire-and-forget escape emission: a short write to a tty either lands or it
+// doesn't, and there's nothing actionable on failure at this layer. Cast to
+// void to acknowledge the (warn_unused_result) return value deliberately.
+void emit(const char* seq) {
+  const ssize_t n = ::write(STDOUT_FILENO, seq, std::strlen(seq));
+  (void)n;
+}
+
 }  // namespace
 
 auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
@@ -110,8 +118,8 @@ auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
   //    i=31 is an arbitrary image id for the probe; a=q asks for support.
   const char* kitty_query = "\033_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\033\\";
   const char* da1 = "\033[c";
-  ::write(STDOUT_FILENO, kitty_query, std::strlen(kitty_query));
-  ::write(STDOUT_FILENO, da1, std::strlen(da1));
+  emit(kitty_query);
+  emit(da1);
 
   const std::string reply = read_available(in_fd, 150);
 
@@ -170,10 +178,6 @@ auto Terminal::read_input(char* out, int max) -> int {
 }
 
 // ── screen lifecycle ────────────────────────────────────────────────────────
-
-namespace {
-void emit(const char* seq) { ::write(STDOUT_FILENO, seq, std::strlen(seq)); }
-}  // namespace
 
 auto Terminal::enter_screen() -> void {
   // alt-buffer, hide cursor, clear, home, SGR mouse (1006), button-event
