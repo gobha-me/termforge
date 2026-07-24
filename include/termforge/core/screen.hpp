@@ -48,6 +48,12 @@ class Screen {
   // Fill the whole grid with a cell (default: blank).
   auto clear(const Cell& fill = Cell{}) -> void;
 
+  // Blank a sub-rectangle to a colored blank cell (empty text, fg/bg, no image),
+  // clamped to the grid. This is how a widget repaints its whole rect() each
+  // frame (see widget.hpp): it clears any prior glyph, wide-glyph continuation
+  // cell, or stale image_id in the region. Negative/oversized rects are clipped.
+  auto fill_rect(int x, int y, int w, int h, Rgb fg, Rgb bg) -> void;
+
   // Write sanitized text starting at (x,y). Control characters and ESC are
   // stripped here — the sanitization boundary — so drivers can emit cells
   // verbatim. Returns the number of cells written (clipped at the right edge).

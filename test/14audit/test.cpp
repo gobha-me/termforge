@@ -6,10 +6,15 @@
 
 #include "termforge/core/app.hpp"
 #include "termforge/core/input.hpp"
+#include "termforge/core/screen.hpp"
 #include "termforge/core/types.hpp"
 #include "termforge/widgets/list_widget.hpp"
 #include "termforge/widgets/menu_bar.hpp"
+#include "termforge/widgets/progress_bar.hpp"
 #include "termforge/widgets/table_widget.hpp"
+#include "termforge/widgets/text_box.hpp"
+#include "termforge/widgets/text_input.hpp"
+#include "termforge/widgets/waveform_widget.hpp"
 
 using namespace termforge;
 
@@ -169,4 +174,140 @@ TEST_CASE("TableWidget: on_select may clear and repopulate rows",
   REQUIRE(table.on_event(Event{click}));
   REQUIRE(calls == 1);
   REQUIRE(first_cell == "a");
+}
+
+// ---- #11: dirty()/clear-every-frame contract — widgets own their whole rect ----
+//
+// Each widget must fully repaint (and blank) its rect() every frame, so it is
+// correct with no app-level screen.clear() between frames. These render onto a
+// persistent Screen WITHOUT clearing it — the failure shape the old code left:
+// stale trails from a prior frame's (or a neighbor's) content.
+
+namespace {
+
+// Paint a rect with a marker glyph to simulate leftover content from a prior
+// frame, so a widget that fails to blank its rect would leave the marker behind.
+auto seed(Screen& s, Rect r, const char* mark) -> void {
+  for (int y = r.y; y < r.y + r.h; ++y)
+    for (int x = r.x; x < r.x + r.w; ++x)
+      s.write_text(x, y, mark, Rgb{}, Rgb{});
+}
+
+}  // namespace
+
+TEST_CASE("TextBox: clear() leaves no stale text on the next draw",
+          "[widgets][textbox][regression][dirty]") {
+  Screen s{20, 5};
+  TextBox tb;
+  tb.set_geometry({0, 0, 20, 5});
+  tb.append("line one");
+  tb.append("line two");
+  tb.draw(s);
+  REQUIRE(s.at(0, 0).text == "l");  // "line one" is on screen (top-aligned)
+
+  // Clear the content and redraw WITHOUT s.clear() in between.
+  tb.clear();
+  tb.draw(s);
+
+  for (int y = 0; y < s.rows(); ++y)
+    for (int x = 0; x < s.cols(); ++x)
+      REQUIRE(s.at(x, y).blank());  // no leftover characters anywhere
+}
+
+TEST_CASE("TableWidget: shrinking rows leaves no stale rows or column gaps",
+          "[widgets][table][regression][dirty]") {
+  Screen s{30, 6};
+  TableWidget t;
+  t.set_geometry({0, 0, 30, 6});
+  t.set_columns({Column{.header = "A"}, Column{.header = "B"}});
+  for (int i = 0; i < 5; ++i) t.add_row({"xxxx", "yyyy"});
+  t.draw(s);
+
+  // Collapse to one row and redraw without clearing the screen.
+  t.clear_rows();
+  t.add_row({"a", "b"});
+  t.draw(s);
+
+  // Data rows are rect rows 1..5; only row 1 has content now. Rows 2..5 (the
+  // rows vacated by clear_rows) must be fully blank — no stale "xxxx"/"yyyy".
+  for (int y = 2; y < 6; ++y)
+    for (int x = 0; x < 30; ++x)
+      REQUIRE(s.at(x, y).blank());
+}
+
+TEST_CASE("WaveformWidget: blanks columns with no sample and an empty series",
+          "[widgets][waveform][regression][dirty]") {
+  Screen s{20, 4};
+  WaveformWidget w;
+  const Rect r{0, 0, 20, 4};
+  w.set_geometry(r);
+
+  // Fewer samples than columns: the right-hand columns must be blanked even
+  // though no bar is drawn there.
+  seed(s, r, "#");
+  w.push(0.5f);
+  w.push(0.9f);
+  w.push(0.1f);
+  w.draw(s);
+  for (int x = 3; x < 20; ++x)          // columns beyond the 3 samples
+    for (int y = 0; y < 4; ++y)
+      REQUIRE(s.at(x, y).text != "#");  // marker gone → blanked
+
+  // An empty series must still blank the whole rect (old code early-returned
+  // before painting, leaving stale content).
+  Screen s2{10, 3};
+  WaveformWidget w2;
+  const Rect r2{0, 0, 10, 3};
+  w2.set_geometry(r2);
+  seed(s2, r2, "#");
+  w2.draw(s2);
+  for (int y = 0; y < 3; ++y)
+    for (int x = 0; x < 10; ++x)
+      REQUIRE(s2.at(x, y).blank());
+}
+
+TEST_CASE("TextInput: a tall rect blanks rows other than the input row",
+          "[widgets][textinput][regression][dirty]") {
+  Screen s{20, 3};
+  TextInput ti;
+  const Rect r{0, 0, 20, 3};  // h = 3; input renders on the middle row (1)
+  ti.set_geometry(r);
+  seed(s, r, "#");
+  ti.draw(s);
+  for (int x = 0; x < 20; ++x) {
+    REQUIRE(s.at(x, 0).text != "#");  // row above the input row blanked
+    REQUIRE(s.at(x, 2).text != "#");  // row below the input row blanked
+  }
+}
+
+TEST_CASE("ProgressBar: an indeterminate bar stays dirty; a determinate one settles",
+          "[widgets][progressbar][regression][dirty]") {
+  Screen s{20, 1};
+  ProgressBar pb;
+  pb.set_geometry({0, 0, 20, 1});
+
+  pb.set_indeterminate(true);
+  pb.draw(s);
+  REQUIRE(pb.dirty());  // animating → content differs next frame
+  pb.draw(s);
+  REQUIRE(pb.dirty());  // and the frame after that (the self-negation bug)
+
+  pb.set_value(0.5f);   // switches to determinate
+  pb.draw(s);
+  REQUIRE_FALSE(pb.dirty());  // settled once painted
+}
+
+TEST_CASE("MenuBar: an overflowing title is clipped to the bar's right edge",
+          "[widgets][menubar][regression][clip]") {
+  Screen s{12, 3};
+  MenuBar bar;
+  bar.set_geometry({0, 0, 8, 1});  // bar occupies cols 0..7
+  bar.set_menus({Menu{"VeryLongTitle", {{"x", nullptr}}}});
+  bar.draw(s);
+
+  REQUIRE(s.at(1, 0).text == "V");  // title still renders inside the bar
+  // Nothing may be painted past the bar's right edge (cols 8..11), where it
+  // would be visible but dead to clicks (gated by rect().contains).
+  for (int x = 8; x < 12; ++x)
+    REQUIRE(s.at(x, 0).blank());
 }

@@ -23,10 +23,8 @@ auto Button::draw(Screen& screen) -> void {
     bg = m_focused_bg;
   }
 
-  // Fill background.
-  for (int y = 0; y < r.h; ++y)
-    for (int x = 0; x < r.w; ++x)
-      screen.write_text(r.x + x, r.y + y, " ", fg, bg);
+  // Own the whole rect (immediate-mode contract, see widget.hpp).
+  screen.fill_rect(r.x, r.y, r.w, r.h, fg, bg);
 
   // Center the label (by display columns, not bytes).
   const int text_len = detail::display_width(m_label);

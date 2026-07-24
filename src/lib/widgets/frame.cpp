@@ -18,6 +18,10 @@ auto Frame::draw(Screen& screen) -> void {
     return;
   }
 
+  // Frame is a deliberate exception to "own your whole rect" (see widget.hpp):
+  // it paints only its border ring. The interior belongs to the child widgets
+  // placed in content_rect(), so blanking it here would wipe them.
+
   // Box-drawing characters.
   const auto tl = "┌", tr = "┐", bl = "└", br = "┘";
   const auto hz = "─", vt = "│";

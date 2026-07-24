@@ -63,8 +63,7 @@ auto ListWidget::draw(Screen& screen) -> void {
 
     if (idx >= static_cast<int>(m_items.size())) {
       // Blank remaining rows.
-      for (int x = 0; x < r.w; ++x)
-        screen.write_text(r.x + x, y, " ", m_fg, m_bg);
+      screen.fill_rect(r.x, y, r.w, 1, m_fg, m_bg);
       continue;
     }
 
@@ -74,8 +73,7 @@ auto ListWidget::draw(Screen& screen) -> void {
     const auto& text = m_items[static_cast<std::size_t>(idx)];
 
     // Fill the row background.
-    for (int x = 0; x < r.w; ++x)
-      screen.write_text(r.x + x, y, " ", fg, bg);
+    screen.fill_rect(r.x, y, r.w, 1, fg, bg);
 
     // Write the item text (clipped to widget width, by display columns).
     const int max_w = r.w - 1;  // leave 1 char margin

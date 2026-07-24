@@ -45,7 +45,11 @@ class App {
   // ── override points ──
   // Handle one event (input, resize, error). Default: ESC / Ctrl+C quits.
   virtual auto on_event(const Event& ev) -> void;
-  // Draw the UI into the screen. Called each frame before present().
+  // Draw the UI into the screen. Called every frame before present(); the loop
+  // itself does NOT clear the Screen. Each widget fully repaints (and blanks)
+  // its own rect() (see widget.hpp), so the app only needs to clear regions not
+  // covered by any widget — screen.clear() at the top of on_render is the
+  // simplest way to own the whole background.
   virtual auto on_render(Screen& screen) -> void = 0;
 
   // Frame budget hint (ms). The loop renders at most once per this interval.

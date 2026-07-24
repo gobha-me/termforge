@@ -61,7 +61,17 @@ auto compute_range(const std::deque<float>& samples, bool auto_range,
 
 auto WaveformWidget::draw(Screen& screen) -> void {
   const Rect r = rect();
-  if (r.w <= 0 || r.h <= 0 || m_samples.empty()) {
+  if (r.w <= 0 || r.h <= 0) {
+    clear_dirty();
+    return;
+  }
+
+  // Own the whole rect: blank it every frame so an emptied waveform, or one
+  // with fewer samples than columns, leaves no stale bars (immediate-mode
+  // contract, see widget.hpp). Blank first, then bail if there's nothing to
+  // plot (compute_range needs a non-empty deque).
+  screen.fill_rect(r.x, r.y, r.w, r.h, m_fg, m_bg);
+  if (m_samples.empty()) {
     clear_dirty();
     return;
   }

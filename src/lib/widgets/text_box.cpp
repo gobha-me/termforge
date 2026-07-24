@@ -72,6 +72,11 @@ auto TextBox::draw(Screen& screen) -> void {
   const Rect r = rect();
   if (r.w <= 0 || r.h <= 0) { clear_dirty(); return; }
 
+  const Rgb fg{0xE0, 0xE0, 0xF0};
+  // Own the whole rect: blank it every frame so clear()/scroll/shrink can't
+  // leave stale text behind (immediate-mode contract, see widget.hpp).
+  screen.fill_rect(r.x, r.y, r.w, r.h, fg, {});
+
   // Build the wrapped view of all lines.
   std::vector<std::string> wrapped;
   wrapped.reserve(m_lines.size());
@@ -86,7 +91,6 @@ auto TextBox::draw(Screen& screen) -> void {
   const int bottom = total - m_scroll;                  // index one past the last visible
   const int top = std::max(0, bottom - r.h);
 
-  const Rgb fg{0xE0, 0xE0, 0xF0};
   for (int row = 0; row < r.h; ++row) {
     const int idx = top + row;
     if (idx < bottom && idx < total) {

@@ -99,6 +99,11 @@ auto TableWidget::draw(Screen& screen) -> void {
     return;
   }
 
+  // Own the whole rect: blank it every frame so the 1-col gaps between columns
+  // and rows vacated by clear_rows()/scroll can't leave stale content behind
+  // (immediate-mode contract, see widget.hpp).
+  screen.fill_rect(r.x, r.y, r.w, r.h, m_row_fg, m_row_bg);
+
   const auto widths = compute_widths();
 
   // Draw header row.

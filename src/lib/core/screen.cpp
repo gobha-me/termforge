@@ -46,6 +46,18 @@ auto Screen::clear(const Cell& fill) -> void {
   std::fill(m_cells.begin(), m_cells.end(), fill);
 }
 
+auto Screen::fill_rect(int x, int y, int w, int h, Rgb fg, Rgb bg) -> void {
+  if (w <= 0 || h <= 0) return;
+  const int x0 = std::max(0, x);
+  const int y0 = std::max(0, y);
+  const int x1 = std::min(m_cols, x + w);
+  const int y1 = std::min(m_rows, y + h);
+  const Cell fill{"", fg, bg};  // blank colored cell (image_id defaults to -1)
+  for (int yy = y0; yy < y1; ++yy)
+    for (int xx = x0; xx < x1; ++xx)
+      m_cells[static_cast<std::size_t>(yy) * m_cols + xx] = fill;
+}
+
 auto Screen::write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg) -> int {
   if (y < 0 || y >= m_rows || x >= m_cols) return 0;
   const std::string clean = sanitize(text);

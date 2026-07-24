@@ -75,11 +75,14 @@ auto MenuBar::draw(Screen& screen) -> void {
     return;
   }
 
-  // Fill the bar background.
-  for (int x = 0; x < r.w; ++x)
-    screen.write_text(r.x + x, r.y, " ", m_fg, m_bg);
+  // Own the whole rect: blank the bar (row 0) and any extra rows.
+  screen.fill_rect(r.x, r.y, r.w, r.h, m_fg, m_bg);
 
-  // Draw menu titles.
+  // Draw menu titles, clipped to the bar's right edge so an overflowing title
+  // can't paint past rect() (where it would be visible but dead to clicks,
+  // which are gated by rect().contains). The dropdown is the one deliberate
+  // exception — it draws below rect(), matched by hit_test().
+  const int right = r.x + r.w;
   const auto layout = layout_menus();
   for (std::size_t i = 0; i < m_menus.size(); ++i) {
     const bool is_active = (static_cast<int>(i) == m_active);
@@ -87,11 +90,15 @@ auto MenuBar::draw(Screen& screen) -> void {
     const auto& bg = is_active ? m_active_bg : m_bg;
     const auto& [mx, mw] = layout[i];
 
-    // Fill the title background.
-    for (int x = 0; x < mw; ++x)
+    // Fill the title background, clipped to the right edge.
+    for (int x = 0; x < mw && mx + x < right; ++x)
       screen.write_text(mx + x, r.y, " ", fg, bg);
 
-    screen.write_text(mx + 1, r.y, m_menus[i].title, fg, bg);
+    // Title text (1-col padding), clipped to the columns left before the edge.
+    if (const int avail = right - (mx + 1); avail > 0)
+      screen.write_text(mx + 1, r.y,
+                        detail::truncate_to_width(m_menus[i].title, avail), fg,
+                        bg);
   }
 
   // Draw dropdown if open. Geometry comes from dropdown_rect() so drawing

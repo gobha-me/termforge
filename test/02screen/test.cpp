@@ -145,6 +145,51 @@ TEST_CASE("Screen: out-of-bounds access is safe (no corruption)", "[screen][fail
   REQUIRE(s.at(-1, -1).text.empty());  // OOB read returns a safe blank
 }
 
+TEST_CASE("Screen: fill_rect blanks a sub-rect and clamps to the grid",
+          "[screen][fill_rect]") {
+  // #11: widgets own their whole rect via fill_rect. It sets blank colored
+  // cells inside the rect, clears any prior glyph/continuation, and leaves
+  // cells outside the rect untouched.
+  Screen s{10, 6};
+  // Seed content inside and outside the target rect.
+  s.write_text(0, 0, "outside", Rgb{}, Rgb{});          // row 0 (above rect)
+  s.write_text(2, 2, "junk", Rgb{}, Rgb{});             // inside rect
+  const std::string shi = "\xE4\xB8\x96";               // 世 (width 2)
+  s.write_text(3, 3, shi, Rgb{}, Rgb{});                // wide glyph inside rect
+
+  const Rgb bg{0x11, 0x22, 0x33};
+  s.fill_rect(2, 2, 4, 3, Rgb{0xAA, 0xBB, 0xCC}, bg);   // cols 2..5, rows 2..4
+
+  // Every cell in the rect is now a blank cell carrying the fill bg.
+  for (int y = 2; y <= 4; ++y)
+    for (int x = 2; x <= 5; ++x) {
+      REQUIRE(s.at(x, y).blank());                       // no glyph, no image
+      REQUIRE(s.at(x, y).bg == bg);
+    }
+  // The wide-glyph continuation cell that sat at (4,3) is gone too.
+  REQUIRE(s.at(4, 3).blank());
+  // Cells outside the rect are untouched.
+  REQUIRE(s.at(0, 0).text == "o");                       // row above
+  REQUIRE(s.at(6, 2).blank());                           // col to the right (was already blank)
+}
+
+TEST_CASE("Screen: fill_rect clips negative and oversized rects safely",
+          "[screen][fill_rect][failure]") {
+  Screen s{5, 4};
+  s.at(0, 0).text = "keep";
+  // A rect starting off the top-left and extending past the grid must clip,
+  // not corrupt memory or wrap.
+  s.fill_rect(-3, -3, 100, 100, Rgb{}, Rgb{0x09, 0x09, 0x09});
+  REQUIRE(s.at(0, 0).blank());                 // (0,0) is inside the clipped fill
+  REQUIRE(s.at(0, 0).bg == Rgb{0x09, 0x09, 0x09});
+  REQUIRE(s.at(4, 3).bg == Rgb{0x09, 0x09, 0x09});
+  // Degenerate sizes are no-ops.
+  s.at(1, 1).text = "z";
+  s.fill_rect(1, 1, 0, 5, Rgb{}, Rgb{});
+  s.fill_rect(1, 1, 5, -2, Rgb{}, Rgb{});
+  REQUIRE(s.at(1, 1).text == "z");
+}
+
 TEST_CASE("Screen: resize preserves top-left content", "[screen]") {
   Screen s{10, 10};
   s.at(2, 3).text = "k";

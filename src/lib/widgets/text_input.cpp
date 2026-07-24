@@ -60,11 +60,11 @@ auto TextInput::draw(Screen& screen) -> void {
     return;
   }
 
-  const int y = r.y + r.h / 2;
+  // Own the whole rect: blank every row (not just the input row) so a tall
+  // rect leaves no stale cells (immediate-mode contract, see widget.hpp).
+  screen.fill_rect(r.x, r.y, r.w, r.h, m_fg, m_bg);
 
-  // Fill background.
-  for (int x = 0; x < r.w; ++x)
-    screen.write_text(r.x + x, y, " ", m_fg, m_bg);
+  const int y = r.y + r.h / 2;
 
   if (m_text.empty() && !m_placeholder.empty() && !m_focused) {
     // Draw placeholder text (clipped to r.w display columns).

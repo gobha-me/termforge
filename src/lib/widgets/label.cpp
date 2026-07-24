@@ -13,10 +13,8 @@ auto Label::draw(Screen& screen) -> void {
     return;
   }
 
-  // Fill background.
-  for (int y = 0; y < r.h; ++y)
-    for (int x = 0; x < r.w; ++x)
-      screen.write_text(r.x + x, r.y + y, " ", m_fg, m_bg);
+  // Own the whole rect (immediate-mode contract, see widget.hpp).
+  screen.fill_rect(r.x, r.y, r.w, r.h, m_fg, m_bg);
 
   // Compute text start position based on alignment (by display columns).
   const int text_len = detail::display_width(m_text);

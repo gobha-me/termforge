@@ -26,6 +26,10 @@ auto ProgressBar::draw(Screen& screen) -> void {
     return;
   }
 
+  // Own the whole rect: blank it so rows other than the middle stay clean on a
+  // tall bar (immediate-mode contract, see widget.hpp).
+  screen.fill_rect(r.x, r.y, r.w, r.h, m_empty_fg, m_bg);
+
   const int y = r.y + r.h / 2;  // draw on middle row
 
   if (m_indeterminate) {
@@ -42,7 +46,6 @@ auto ProgressBar::draw(Screen& screen) -> void {
                         in_pulse ? m_fill_fg : m_empty_fg, m_bg);
     }
     ++m_pulse;
-    mark_dirty();  // keep animating
   } else {
     // Determinate: filled portion + empty portion.
     const int filled = static_cast<int>(m_value * static_cast<float>(r.w));
@@ -71,7 +74,10 @@ auto ProgressBar::draw(Screen& screen) -> void {
     }
   }
 
-  clear_dirty();
+  // An indeterminate bar animates every frame, so its content genuinely
+  // differs next frame — it stays dirty. A determinate bar is settled once
+  // painted (set_value() re-marks it dirty on change).
+  if (!m_indeterminate) clear_dirty();
 }
 
 }  // namespace termforge
