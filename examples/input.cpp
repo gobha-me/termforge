@@ -67,6 +67,11 @@ class InputApp final : public App {
     else m_mouse_btn = std::format("{} {}", m.pressed ? "press" : "release", m.button);
   }
 
+  auto handle(const PasteEvent& p) -> void {
+    m_last_key = std::format("paste ({} bytes)", p.text.size());
+    m_modifiers = "";
+  }
+
   auto handle(const ResizeEvent& r) -> void {
     m_last_key = std::format("resize to {}x{}", r.cols, r.rows);
     m_modifiers = "";
@@ -94,6 +99,10 @@ class InputApp final : public App {
       case Key::End: return "End";
       case Key::PageUp: return "PageUp";
       case Key::PageDown: return "PageDown";
+      case Key::F1: return "F1";
+      case Key::F2: return "F2";
+      case Key::F3: return "F3";
+      case Key::F4: return "F4";
     }
     return "?";
   }

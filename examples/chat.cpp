@@ -82,6 +82,10 @@ class ChatApp final : public App {
     }
   }
 
+  auto handle(const PasteEvent& p) -> void {
+    m_textbox.append(std::format("[pasted {} chars]", p.text.size()));
+  }
+
   auto handle(const ResizeEvent&) -> void {
     // TextBox will be repositioned in on_render
   }

@@ -10,6 +10,7 @@
 #include <sys/ioctl.h>
 
 #include "detail/probe.hpp"
+#include "detail/tty_restore.hpp"
 #include "drivers/select_driver.hpp"
 
 namespace termforge {
@@ -22,6 +23,12 @@ struct Terminal::Impl {
   // set on, and applying them to a different fd than the one being read
   // silently breaks read timeouts when stdin/stdout aren't the same tty.
   int tty_fd{isatty(STDIN_FILENO) != 0 ? STDIN_FILENO : STDOUT_FILENO};
+  // The fd escape sequences are written to. Prefer stdout, but if it's been
+  // redirected to a file/pipe, fall back to a tty stdin (a tty is read/write,
+  // so probe queries and screen escapes still reach the emulator); -1 means
+  // neither stream is a tty and we must not write control bytes anywhere.
+  int out_fd{isatty(STDOUT_FILENO) != 0 ? STDOUT_FILENO
+                                        : (isatty(STDIN_FILENO) != 0 ? STDIN_FILENO : -1)};
 };
 
 Terminal::Terminal() : m_impl(std::make_unique<Impl>()) {}
@@ -30,6 +37,13 @@ Terminal::~Terminal() {
     tcsetattr(m_impl->tty_fd, TCSAFLUSH, &m_impl->saved);
     m_raw = false;
   }
+  // Disarm the signal-restore path: this Terminal's saved state is gone, so a
+  // later fatal signal must not tcsetattr() with it. Return the handlers we
+  // installed to their default disposition.
+  auto& rs = detail::restore_state();
+  rs.armed = 0;
+  rs.in_screen = 0;
+  detail::uninstall_fatal_handlers();
 }
 
 auto Terminal::enter_raw() -> std::expected<void, ErrorEvent> {
@@ -57,6 +71,19 @@ auto Terminal::enter_raw() -> std::expected<void, ErrorEvent> {
                                       std::string{"tcsetattr: "} + std::strerror(errno)}};
   }
   m_raw = true;
+
+  // Arm the async-signal-safe restore path now that cooked-mode termios is
+  // captured: SIGTERM/SIGHUP or a crash bypasses the destructor, so the handler
+  // needs the saved termios + the tty fds to put the terminal back. atexit()
+  // covers exit(); the local-static init guarantees a single registration.
+  auto& rs = detail::restore_state();
+  rs.saved = m_impl->saved;
+  rs.tty_fd = m_impl->tty_fd;
+  rs.out_fd = m_impl->out_fd;
+  rs.armed = 1;
+  detail::install_fatal_handlers();
+  [[maybe_unused]] static const int atexit_once =
+      std::atexit(detail::restore_terminal);
   return {};
 }
 
@@ -103,12 +130,25 @@ auto env_has(const char* name, const char* needle) -> bool {
   return v != nullptr && std::string{v}.find(needle) != std::string::npos;
 }
 
-// Fire-and-forget escape emission: a short write to a tty either lands or it
-// doesn't, and there's nothing actionable on failure at this layer. Cast to
-// void to acknowledge the (warn_unused_result) return value deliberately.
-void emit(const char* seq) {
-  const ssize_t n = ::write(STDOUT_FILENO, seq, std::strlen(seq));
-  (void)n;
+// Escape emission to the terminal's output fd. No-op when `fd` is < 0 (neither
+// stream is a tty — writing control bytes into a redirected file/pipe would
+// corrupt it). Retries EINTR and short writes so a multi-byte escape sequence
+// can't be truncated into a state-corrupting fragment.
+void emit(int fd, const char* seq) {
+  if (fd < 0) return;
+  const char* p = seq;
+  std::size_t left = std::strlen(seq);
+  while (left > 0) {
+    const ssize_t n = ::write(fd, p, left);
+    if (n > 0) {
+      p += n;
+      left -= static_cast<std::size_t>(n);
+    } else if (n < 0 && errno == EINTR) {
+      continue;
+    } else {
+      break;  // EAGAIN / closed fd: nothing actionable at this layer
+    }
+  }
 }
 
 }  // namespace
@@ -120,14 +160,14 @@ auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
     if (auto r = enter_raw(); !r) return std::unexpected{r.error()};
   }
 
-  const int in_fd = STDIN_FILENO;
+  const int in_fd = m_impl->tty_fd;
 
   // 1. Kitty graphics query, then DA1. Write both, then read.
   //    i=31 is an arbitrary image id for the probe; a=q asks for support.
   const char* kitty_query = "\033_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\033\\";
   const char* da1 = "\033[c";
-  emit(kitty_query);
-  emit(da1);
+  emit(m_impl->out_fd, kitty_query);
+  emit(m_impl->out_fd, da1);
 
   const std::string reply = read_available(in_fd, 150);
 
@@ -175,7 +215,9 @@ auto Terminal::set_read_blocking() -> void {
 
 auto Terminal::read_input(char* out, int max) -> int {
   if (max <= 0) return 0;
-  const ssize_t n = ::read(STDIN_FILENO, out, static_cast<std::size_t>(max));
+  // Read the fd termios was applied to — hardcoding STDIN would block forever
+  // when stdin is a pipe and the tty is stdout (VMIN/VTIME set on the wrong fd).
+  const ssize_t n = ::read(m_impl->tty_fd, out, static_cast<std::size_t>(max));
   return n > 0 ? static_cast<int>(n) : 0;
 }
 
@@ -183,13 +225,20 @@ auto Terminal::read_input(char* out, int max) -> int {
 
 auto Terminal::enter_screen() -> void {
   // alt-buffer, hide cursor, clear, home, SGR mouse (1006), button-event
-  // mouse tracking (1002: report press/release + scroll).
-  emit("\033[?1049h\033[?25l\033[2J\033[H\033[?1006h\033[?1002h");
+  // mouse tracking (1002: report press/release + scroll), bracketed paste
+  // (2004: bracket pasted text so an embedded ESC can't fake an Escape key).
+  emit(m_impl->out_fd,
+       "\033[?1049h\033[?25l\033[2J\033[H\033[?1006h\033[?1002h\033[?2004h");
+  // Arm the escape half of the signal-restore path (termios half is armed in
+  // enter_raw). Now a fatal signal will also leave the alt-screen + mouse/paste.
+  detail::restore_state().in_screen = 1;
 }
 
 auto Terminal::leave_screen() -> void {
-  // Disable mouse tracking, reset attrs, show cursor, main screen.
-  emit("\033[?1002l\033[?1006l\033[0m\033[?25h\033[?1049l");
+  // Undo enter_screen in reverse: disable paste/mouse tracking, reset attrs,
+  // show cursor, main screen. Byte-for-byte the detail::kLeaveSequence constant.
+  detail::restore_state().in_screen = 0;
+  emit(m_impl->out_fd, std::string{detail::kLeaveSequence}.c_str());
 }
 
 auto Terminal::is_console_vt() const noexcept -> bool {

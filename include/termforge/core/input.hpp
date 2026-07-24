@@ -3,9 +3,11 @@
 // TermForge — Input: keyboard, mouse, and resize event parsing.
 //
 // Reads raw bytes from the terminal (raw mode) and decodes them into Event
-// variants: plain UTF-8 chars, CSI escape sequences (arrows, Home/End,
-// PageUp/Down, Delete), SGR mouse (1006), and resize (pushed on SIGWINCH).
-// Bracketed paste is surfaced as text events with a paste marker.
+// variants: plain UTF-8 chars, CSI + SS3 escape sequences (arrows, Home/End,
+// PageUp/Down, Delete, F1–F4, with modifiers), SGR mouse (1006, with
+// modifiers), and resize (pushed on SIGWINCH). A bracketed paste (mode 2004)
+// is surfaced as a single PasteEvent — an ESC inside the paste can't fabricate
+// an Escape keypress.
 //
 // The parser is a small state machine fed bytes; it's testable offline by
 // feeding byte strings and reading the resulting events.
@@ -53,12 +55,16 @@ class Input {
   std::deque<Event> m_events;
   std::string m_pending;     // incomplete sequence carried across feed() calls
   bool m_esc_pending{false};  // held lone ESC awaiting the flush() boundary
+  bool m_in_paste{false};     // inside a bracketed paste (ESC[200~ .. ESC[201~)
+  std::string m_paste_buf;    // paste body accumulated until the close bracket
 
   // Decode one unit from the front of `buf`; returns bytes consumed (0 =
   // need more data). Appends any resulting event(s) to m_events.
   auto decode_one(std::string_view buf) -> std::size_t;
 
   auto parse_csi(std::string_view buf) -> std::size_t;  // after ESC [
+  auto parse_ss3(std::string_view buf) -> std::size_t;  // after ESC O
+  auto consume_paste(std::string_view buf) -> std::size_t;  // inside a paste
   auto flush_esc() -> void;  // held lone ESC -> Escape keypress
 };
 

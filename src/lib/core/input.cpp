@@ -7,6 +7,56 @@
 
 namespace termforge {
 
+namespace {
+
+// Map a CSI/SS3 letter final byte to a Key. Shared by the ESC[ and ESC O
+// paths: arrows and Home/End are identical in both, and P/Q/R/S are F1–F4
+// (SS3 in normal mode, or CSI "1;<mod>P" with modifiers). Returns Key::Unknown
+// for finals this helper doesn't own ('Z' Shift-Tab, '~' number family).
+auto map_final_key(char fin) -> Key {
+  switch (fin) {
+    case 'A': return Key::Up;
+    case 'B': return Key::Down;
+    case 'C': return Key::Right;
+    case 'D': return Key::Left;
+    case 'H': return Key::Home;
+    case 'F': return Key::End;
+    case 'P': return Key::F1;
+    case 'Q': return Key::F2;
+    case 'R': return Key::F3;
+    case 'S': return Key::F4;
+    default:  return Key::Unknown;
+  }
+}
+
+// Map the CSI "~" number family (ESC[<n>~) to a Key.
+auto map_tilde_key(int n) -> Key {
+  switch (n) {
+    case 3:  return Key::Delete;
+    case 5:  return Key::PageUp;
+    case 6:  return Key::PageDown;
+    case 1:  case 7: return Key::Home;
+    case 4:  case 8: return Key::End;
+    case 11: return Key::F1;
+    case 12: return Key::F2;
+    case 13: return Key::F3;
+    case 14: return Key::F4;
+    default: return Key::Unknown;
+  }
+}
+
+// Apply an xterm modifier parameter (1 + bitmask: 1=shift, 2=alt, 4=ctrl) to a
+// key event. The parameter is the second CSI/SS3 param — the 5 in ESC[1;5C.
+void apply_key_mods(KeyEvent& ev, int mod_param) {
+  const int m = mod_param - 1;
+  if (m <= 0) return;
+  ev.shift = (m & 1) != 0;
+  ev.alt   = (m & 2) != 0;
+  ev.ctrl  = (m & 4) != 0;
+}
+
+}  // namespace
+
 auto Input::feed(std::string_view bytes) -> void {
   // Bytes arriving prove a held ESC was the start of a sequence, not a
   // keypress: put it back at the head so the combined bytes decode as one.
@@ -30,7 +80,9 @@ auto Input::feed(std::string_view bytes) -> void {
   // sequence exactly on an ESC byte, and the next read() returns
   // immediately, with no timeout). Only flush() — invoked once the caller
   // has drained the fd — commits the Escape interpretation.
-  if (m_pending.size() == 1 && m_pending[0] == '\x1B') {
+  // (Not while a bracketed paste is open: a trailing ESC there is either the
+  // start of the ESC[201~ terminator or a literal pasted ESC, never a keypress.)
+  if (!m_in_paste && m_pending.size() == 1 && m_pending[0] == '\x1B') {
     m_pending.clear();
     m_esc_pending = true;
   }
@@ -63,12 +115,18 @@ auto Input::push_resize(int cols, int rows) -> void {
 
 auto Input::decode_one(std::string_view buf) -> std::size_t {
   if (buf.empty()) return 0;
+
+  // In a bracketed paste every byte is literal content until the ESC[201~
+  // terminator — including ESC bytes, which must not decode as keypresses.
+  if (m_in_paste) return consume_paste(buf);
+
   const auto c = static_cast<unsigned char>(buf[0]);
 
   // ── escape sequences ──
   if (c == 0x1B) {
     if (buf.size() < 2) return 0;  // need more
     if (buf[1] == '[') return parse_csi(buf);
+    if (buf[1] == 'O') return parse_ss3(buf);  // SS3: app-cursor keys, F1–F4
     // Alt+char: ESC followed by a printable char.
     if (buf[1] >= 0x20 && buf[1] < 0x7F) {
       m_events.push_back(KeyEvent{Key::Char, static_cast<char32_t>(buf[1]), false, true, false});
@@ -152,7 +210,12 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
       const int btn = params[0];
       me.x = params[1] - 1;  // SGR is 1-based, we're 0-based
       me.y = params[2] - 1;
-      // Decode button + modifiers from the button code. Wheel events
+      // Keyboard modifiers ride in the button code (shift=4, meta/alt=8,
+      // ctrl=16), independent of the button/wheel/motion bits below.
+      me.shift = (btn & 4) != 0;
+      me.alt   = (btn & 8) != 0;
+      me.ctrl  = (btn & 16) != 0;
+      // Decode button + wheel/motion from the button code. Wheel events
       // (bit 6) reuse the low bits for direction — they are not presses
       // and must not masquerade as button 0/1 clicks.
       if (btn & 64) {
@@ -216,22 +279,26 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
   const char fin = buf[i];
   ++i;
 
+  // Letter finals shared with SS3 (arrows, Home/End, F1–F4). A modifier rides
+  // in the second param: ESC[1;5C = Ctrl+Right, ESC[1;2A = Shift+Up.
+  if (const Key k = map_final_key(fin); k != Key::Unknown) {
+    KeyEvent ev{k};
+    if (have_p2) apply_key_mods(ev, p2);
+    m_events.push_back(ev);
+    return i;
+  }
   switch (fin) {
-    case 'A': m_events.push_back(KeyEvent{Key::Up}); break;
-    case 'B': m_events.push_back(KeyEvent{Key::Down}); break;
-    case 'C': m_events.push_back(KeyEvent{Key::Right}); break;
-    case 'D': m_events.push_back(KeyEvent{Key::Left}); break;
-    case 'H': m_events.push_back(KeyEvent{Key::Home}); break;
-    case 'F': m_events.push_back(KeyEvent{Key::End}); break;
     case 'Z': m_events.push_back(KeyEvent{Key::Tab, 0, false, false, true}); break;
     case '~':
-      switch (p1) {
-        case 3: m_events.push_back(KeyEvent{Key::Delete}); break;
-        case 5: m_events.push_back(KeyEvent{Key::PageUp}); break;
-        case 6: m_events.push_back(KeyEvent{Key::PageDown}); break;
-        case 1: case 7: m_events.push_back(KeyEvent{Key::Home}); break;
-        case 4: case 8: m_events.push_back(KeyEvent{Key::End}); break;
-        default: m_events.push_back(KeyEvent{Key::Unknown}); break;
+      // Bracketed-paste brackets: ESC[200~ opens (content streams until the
+      // ESC[201~ close, handled by consume_paste); a stray close with no open
+      // paste is swallowed. Otherwise it's the numbered key family.
+      if (p1 == 200) { m_in_paste = true; break; }
+      if (p1 == 201) break;
+      {
+        KeyEvent ev{map_tilde_key(p1)};
+        if (have_p2) apply_key_mods(ev, p2);
+        m_events.push_back(ev);
       }
       break;
     default:
@@ -239,6 +306,64 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
       break;
   }
   return i;
+}
+
+auto Input::parse_ss3(std::string_view buf) -> std::size_t {
+  // buf starts with ESC O (SS3). Application-cursor-keys mode and F1–F4:
+  //   ESC O A/B/C/D -> arrows,  ESC O H/F -> Home/End,  ESC O P/Q/R/S -> F1–F4.
+  // Some terminals encode modifiers as ESC O 1 ; <mod> <final> (like CSI).
+  if (buf.size() < 3) return 0;  // need the final byte
+  std::size_t i = 2;
+  int p1 = 0, p2 = 0;
+  bool have_p2 = false;
+  while (i < buf.size() &&
+         (std::isdigit(static_cast<unsigned char>(buf[i])) || buf[i] == ';')) {
+    if (buf[i] == ';') { have_p2 = true; ++i; continue; }
+    if (!have_p2) { if (p1 < 100000) p1 = p1 * 10 + (buf[i] - '0'); }
+    else { if (p2 < 100000) p2 = p2 * 10 + (buf[i] - '0'); }
+    ++i;
+  }
+  if (i >= buf.size()) return 0;  // params but no final byte yet
+  const char fin = buf[i];
+  ++i;
+  const Key k = map_final_key(fin);
+  if (k == Key::Unknown) return i;  // unrecognized SS3: consume, don't leak
+  KeyEvent ev{k};
+  if (have_p2) apply_key_mods(ev, p2);
+  m_events.push_back(ev);
+  return i;
+}
+
+auto Input::consume_paste(std::string_view buf) -> std::size_t {
+  // Called only while m_in_paste. Buffer bytes verbatim into m_paste_buf until
+  // the ESC[201~ terminator, then emit one PasteEvent. The terminator may split
+  // across feed() calls, and the pasted content itself may contain raw ESC
+  // bytes — so a leading ESC is disambiguated against the terminator rather
+  // than assumed to be it.
+  static constexpr std::string_view kEnd = "\033[201~";
+  const std::size_t esc = buf.find('\033');
+  if (esc == std::string_view::npos) {  // no ESC: all paste body
+    m_paste_buf.append(buf.data(), buf.size());
+    return buf.size();
+  }
+  if (esc > 0) {  // body up to the ESC is literal; re-examine from the ESC
+    m_paste_buf.append(buf.data(), esc);
+    return esc;
+  }
+  // buf starts with ESC — terminator, a split terminator, or a literal ESC.
+  if (buf.size() < kEnd.size()) {
+    if (kEnd.substr(0, buf.size()) == buf) return 0;  // partial terminator: wait
+    m_paste_buf.push_back('\033');  // not a terminator prefix: literal ESC
+    return 1;
+  }
+  if (buf.substr(0, kEnd.size()) == kEnd) {  // close bracket
+    m_events.push_back(PasteEvent{std::move(m_paste_buf)});
+    m_paste_buf.clear();
+    m_in_paste = false;
+    return kEnd.size();
+  }
+  m_paste_buf.push_back('\033');  // ESC that isn't the terminator: literal
+  return 1;
 }
 
 }  // namespace termforge

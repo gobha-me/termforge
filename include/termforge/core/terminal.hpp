@@ -2,11 +2,14 @@
 
 // TermForge — Terminal: raw-mode lifecycle + capability probing.
 //
-// Raw mode is RAII: enter() sets termios, the destructor restores it, so a
-// crash or early exit can't wedge the user's terminal. Capability detection
-// queries the *terminal* (escape-sequence responses), never the display
-// server — $WAYLAND_DISPLAY/$DISPLAY say nothing about what the attached
-// emulator can render.
+// Raw mode is RAII: enter_raw() sets termios, the destructor restores it. A
+// crash or early exit can't wedge the user's terminal because entering raw mode
+// also arms an async-signal-safe restore path (see detail/tty_restore.hpp):
+// SIGTERM/SIGHUP and hard crashes (SIGSEGV, …) that bypass destructors still
+// leave the alt-screen and restore cooked mode, then re-raise. Capability
+// detection queries the *terminal* (escape-sequence responses), never the
+// display server — $WAYLAND_DISPLAY/$DISPLAY say nothing about what the
+// attached emulator can render.
 
 #include <expected>
 #include <memory>
