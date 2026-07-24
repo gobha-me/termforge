@@ -29,6 +29,15 @@ auto Dialog::set_max_width(int cols) -> void {
   mark_dirty();
 }
 
+auto Dialog::set_border_style(BorderStyle style) -> void {
+  m_frame.set_style(style);
+  mark_dirty();
+}
+
+auto Dialog::border_style() const noexcept -> BorderStyle {
+  return m_frame.style();
+}
+
 auto Dialog::on_close(std::function<void()> cb) -> void {
   m_on_close = std::move(cb);
 }
@@ -69,10 +78,14 @@ auto Dialog::layout(int screen_cols, int screen_rows) -> void {
   m_lines.clear();
   if (!m_text.empty()) m_lines = detail::wrap_to_width(m_text, inner_max);
 
-  // Widest thing we have to show. Frame reserves w-4 for the title (two for
-  // the corners, two for the leading padding), so a title of width t needs an
-  // inner width of t+2 to render untruncated.
-  int content_w = m_title.empty() ? 0 : detail::display_width(m_title) + 2;
+  // Widest thing we have to show. The frame's title chrome (the "┤ ├"
+  // delimiters and the space each side) costs columns beyond the title itself,
+  // so ask Frame for the number rather than repeating it here — the two
+  // drifting apart is the audit finding #20 fixed one layer down. The answer is
+  // style-independent: every border family's glyphs are one column wide.
+  int content_w = m_title.empty()
+                      ? 0
+                      : Frame::title_inner_cols(detail::display_width(m_title));
   for (const auto& line : m_lines)
     content_w = std::max(content_w, detail::display_width(line));
   content_w = std::max(content_w, content_cols());
@@ -98,13 +111,14 @@ auto Dialog::layout(int screen_cols, int screen_rows) -> void {
   // control row is pushed up rather than allowed to spill past the bottom
   // border — content drawn outside rect() would land on the app underneath,
   // outside the overlay, which the immediate-mode contract forbids.
+  // content_rect() is clamped to zero, never negative (#20), so inner.w/h are
+  // safe to use directly.
   const Rect inner = m_frame.content_rect();
   const int avail = std::max(0, inner.h - body - spacer);
   const int control_rows = std::min(extra, avail);
   const int control_top =
       std::min(body + spacer, std::max(0, inner.h - control_rows));
-  m_content_area = Rect{inner.x, inner.y + control_top, std::max(0, inner.w),
-                        control_rows};
+  m_content_area = Rect{inner.x, inner.y + control_top, inner.w, control_rows};
   layout_content(m_content_area);
 }
 

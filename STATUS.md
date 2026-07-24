@@ -7,16 +7,17 @@ which holds standing conventions, not state).
 ## Where we are (2026-07-24)
 
 **Core framework, KittyDriver, and the full widget system are landed and
-tested.** 19 suites; gcc 14 + clang 20 green with `-Werror`; ASan/UBSan clean
-via the (now-fixed) sanitizer toolchains.
+tested.** 19 suites, 355 cases, 2060 assertions; gcc 14 + clang 20 green with
+`-Werror`; ASan/UBSan clean via the (now-fixed) sanitizer toolchains.
 
-**Latest release: `v0.0.6`** (annotated tag + GitHub pre-release, 2026-07-24) —
-adds the **modal overlay stack + standard dialogs** (#18) on top of `v0.0.5`
-(#17, FocusRing), `v0.0.4` (#11, dirty/clear contract), `v0.0.3` (#10,
-display-width / wide cells), `v0.0.2` (#13, terminal/input robustness), and
-`v0.0.1` (core + drivers + widgets + audit fixes #3–#9, #14, #15).
+**Latest release: `v0.0.7`** (annotated tag + GitHub pre-release, 2026-07-24) —
+adds **border styles + the delimited frame title** (#20) on top of `v0.0.6`
+(#18, modal overlays + dialogs), `v0.0.5` (#17, FocusRing), `v0.0.4` (#11,
+dirty/clear contract), `v0.0.3` (#10, display-width / wide cells), `v0.0.2`
+(#13, terminal/input robustness), and `v0.0.1` (core + drivers + widgets +
+audit fixes #3–#9, #14, #15).
 `version.cmake` derives `VERSION` from `git describe --tags`, so the build now
-reports `0.0.6`. Release convention: annotated `vX.Y.Z` tag pushed to origin +
+reports `0.0.7`. Release convention: annotated `vX.Y.Z` tag pushed to origin +
 a matching `gh release --prerelease` while pre-1.0.
 
 Working end to end:
@@ -31,13 +32,48 @@ Working end to end:
 - Widgets — TextBox, TableWidget, ListWidget, WaveformWidget, Label, Button,
   ProgressBar, TextInput, Frame, MenuBar; mouse routing via hit_test;
   `FocusRing` owns Tab-order + keyboard focus; `Dialog` + Message/Confirm/Prompt
-  on the modal overlay stack (see below).
+  on the modal overlay stack (see below); `widgets/glyphs.hpp` is the one place
+  border/line glyphs are chosen (5 families incl. ASCII).
 - Examples — dashboard, widgets, dialogs, image, chat, input, colors,
   low_level, hello.
 
 ## 2026-07-24: widget-gap wave (post-audit)
 
 The 2026-07-24 widget-gap review filed the next feature wave (#17–#28). Landed:
+
+- **#20** — border styles + the promised title delimiters (v0.0.7).
+  New **public** `include/termforge/widgets/glyphs.hpp` is the single glyph
+  source the rest of the wave extends: `BorderStyle`
+  (`Single`/`Double`/`Rounded`/`Heavy`/`Ascii`), a `BorderGlyphs` table of
+  `string_view`s, `constexpr border_glyphs()` (a `switch` with **no `default:`**,
+  so `-Wswitch` + CI's `-Werror` catches a new style instead of aliasing it), and
+  `is_ascii()` — the only bit #19's `(•)`/`(*)` and #21's `█`/`#` actually need.
+  `Frame::set_style()`; `Dialog::set_border_style()` forwards to the `Frame` it
+  owns privately (without it **no dialog could ever be ASCII**, the tier that
+  needs it most). **`Ascii` is the whole point**: drivers emit text verbatim and
+  `FallbackDriver`'s luminance ramp is images-only, so a bare TTY gets a readable
+  frame only if the *widget* picks ASCII — there is no `Capabilities` bit for
+  "can render box drawing", so #16 must wire this from its own `--driver` flag.
+  The title now renders as promised (`┌┤ Title ├───┐`) as **one** `write_text`,
+  so a wide-glyph truncation can't leave a gap before `├`
+  (`truncate_to_width` stops a column short rather than split a width-2 glyph);
+  it is dropped rather than degraded to a bare `┤ ├` below one column of budget,
+  and provably never reaches a corner (tested at every width 2..14). Chrome cost
+  lives in `Frame::kTitleChromeCols`/`title_inner_cols()` and `Dialog` *asks* for
+  it instead of repeating the number — duplicating it is exactly the
+  comment-vs-formula drift this issue fixed. `content_rect()` clamps to zero
+  instead of returning negative w/h (audit finding), which also retires a
+  defensive `std::max(0, inner.w)` in `dialog.cpp`. Dialogs grew 2 columns for
+  the chrome (`19dialogs` width assertions updated); dialog **size is
+  style-independent** because every family's glyphs are one column wide — pinned
+  by a test, since Frame's arithmetic rests on it. `examples/widgets.cpp` has a
+  `Border` menu applying one style to all three frames (there is deliberately no
+  global default; that helper *is* the "style the whole app" answer), and
+  `examples/dialogs.cpp` shows a `Double` and an `Ascii` dialog. Deliberately
+  **not** migrated: `ProgressBar`'s `█`/`─` and `WaveformWidget`'s `█`/`▀`/`▄`
+  are content glyphs needing a different table, and half-blocks have no honest
+  ASCII equivalent — so an app on `Border > ASCII` today still gets half-blocks
+  from those two (visible in the pty snapshot). #21 is when to revisit.
 
 - **#18** — modal overlay stack + standard dialogs (v0.0.6, PR #30).
   `App::push_overlay(Widget&, OverlayOptions)` / `pop_overlay()`: overlays draw
@@ -157,19 +193,24 @@ through. Landed so far, each with regression tests:
   expanded `test/04input`.
 
 Still open: #12 (widget bundle, Kimi's — item 5 now handled by #17), the
-widget-gap wave (#18–#28), and #16 (forge-top demo epic, the dogfooding harness).
+widget-gap wave (#19, #21–#28), and #16 (forge-top demo epic, the dogfooding
+harness).
 
 ## Next session — start here
 
-With #18 landed, the widget-gap wave has both of its structural primitives (the
-focus ring and the overlay stack), so the rest is composition:
+With #17/#18/#20 landed, the widget-gap wave has all three of its shared pieces
+(the focus ring, the overlay stack, and the glyph source), so the rest is
+composition:
 - **#19** (form controls: Checkbox/RadioGroup/Select) — builds on the ring, and
-  is what makes `PromptDialog`-shaped dialogs worth generalizing.
+  is what makes `PromptDialog`-shaped dialogs worth generalizing. **Add its
+  glyph table to `widgets/glyphs.hpp` and key the ASCII variants off
+  `is_ascii()`** — do not hardcode literals per widget, and do not introduce a
+  second style enum (#20 put it where #19 can reach it, which is what #19's own
+  issue text asks for). Same for #21's scrollbar thumb.
 - **#23** (FilePickerDialog) — now unblocked; it is `Dialog` + `ListWidget` +
   the overlay stack, and is the first real test of whether the `Dialog` base
   carries a content-heavy subclass or needs a scrollable-content hook.
-- **#20/#21/#22** (frame border styles, shared scrollbar, TabBar) — small,
-  independent.
+- **#21/#22** (shared scrollbar, TabBar) — small, independent.
 - **#16** (forge-top demo) — the larger dogfooding epic; now has focus,
   dialogs, and modality to build on.
 
@@ -187,7 +228,14 @@ items 1–4 and 6. Before starting anything, run `venice memory tasks` and
 mid-flight or unpushed; coordinate via the issue tracker (see the
 `kimi-k3-coagent` memory) so two agents don't collide.
 
-**Owed manual checks (sandbox has no tty):** **#18**'s cell behavior was driven
+**Owed manual checks (sandbox has no tty):** **#20**'s five border families were
+driven end to end in a pty (all five render, ASCII emits only 7-bit bytes on the
+ring, the delimited title renders as `+| Controls |----+` / `╔╣ Controls ╠══╗`)
+— what is owed is a **real-terminal** pass, because double/heavy/rounded box
+drawing is exactly what a sparse font lacks: `build/examples/termforge_example_widgets`
+→ `Border` menu, all five. `Ascii` also wants a bare-TTY/`FallbackDriver` pass
+(and note the waveform/progress bar still emit half-blocks there — deferred, see
+above). **#18**'s cell behavior was driven
 end to end in a pty (dialog opens centered, Y/N and Escape work, the backdrop
 emits exactly half-value colors under the truecolor driver, the dialog leaves
 no trail when popped) — what is still owed is the **kitty image path**: with an

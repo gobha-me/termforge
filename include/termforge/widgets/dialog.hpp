@@ -39,6 +39,7 @@
 #include "termforge/core/types.hpp"
 #include "termforge/widgets/focus_ring.hpp"
 #include "termforge/widgets/frame.hpp"
+#include "termforge/widgets/glyphs.hpp"
 #include "termforge/widgets/widget.hpp"
 
 namespace termforge {
@@ -73,6 +74,15 @@ class Dialog : public Widget {
   // dialog may be narrower if its content is; it is always clamped to the
   // screen. Default 48 — wide enough for a sentence, narrow enough to read.
   auto set_max_width(int cols) -> void;
+
+  // Border family for the dialog's frame (default Single). Called
+  // set_border_style, not set_style, because a dialog has more than a border to
+  // style; it forwards to the Frame the dialog owns privately, which is
+  // otherwise unreachable — without this no dialog could ever be ASCII, which
+  // is the tier that needs it most (widgets/glyphs.hpp). The dialog's *size*
+  // does not depend on the style: every family's glyphs are one column wide.
+  auto set_border_style(BorderStyle style) -> void;
+  [[nodiscard]] auto border_style() const noexcept -> BorderStyle;
 
   // Fired when the dialog is finished. The app wires this to pop_overlay().
   auto on_close(std::function<void()> cb) -> void;

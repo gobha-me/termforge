@@ -11,9 +11,13 @@ completed items.
 > **2026-07-24 — widget-gap wave.** A follow-on review filed **#17–#28**
 > (FocusRing, modal dialogs, form controls, styled spans, etc.). **#17
 > (FocusRing)** is landed (v0.0.5) — the Layer-1 focus owner that resolves #12
-> item 5 — and **#18 (modal overlay stack + Message/Confirm/Prompt dialogs)**
-> is landed (v0.0.6, see docs/modal-overlays.md). Both structural primitives
-> are now in place. Next: #19 (form controls), #23 (FilePicker, unblocked).
+> item 5 — **#18 (modal overlay stack + Message/Confirm/Prompt dialogs)** is
+> landed (v0.0.6, see docs/modal-overlays.md), and **#20 (border styles + the
+> delimited frame title)** is landed (v0.0.7): `include/termforge/widgets/glyphs.hpp`
+> is now the **single glyph source** — `BorderStyle` (Single/Double/Rounded/
+> Heavy/Ascii) + `is_ascii()` — and #19/#21 must add their tables there rather
+> than hardcoding glyphs per widget. All three shared pieces are now in place.
+> Next: #19 (form controls), #23 (FilePicker, unblocked).
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
@@ -46,7 +50,8 @@ completed items.
 
 - [x] **3.4 — Primitive widgets** ✅
   Label (5 tests), Button (7), ProgressBar (6), TextInput (10),
-  Frame (5), MenuBar (11). 44 tests total.
+  Frame (17, incl. the five border styles and the delimited title — #20),
+  MenuBar (11), border glyph sets (1). 57 tests total.
 
 - [x] **3.5 — Mouse event routing in App** **DONE**
   SGR 1006/1002 mouse mode on enter, route_mouse dispatches by

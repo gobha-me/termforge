@@ -11,14 +11,18 @@
 // not the app's, for as long as it is on the stack.
 //
 // Layout:
-//   ┌─ TermForge Dialogs ─────────────────────────────────────┐
+//   ┌┤ TermForge Dialogs ├────────────────────────────────────┐
 //   │ [ Message ]  [ Confirm ]  [ Prompt ]                    │
 //   │                                                         │
-//   │ last result: ...                    ┌─ Confirm ──────┐  │
-//   │                                     │ Delete file?   │  │
-//   │                                     │  [ Yes ] [ No ]│  │
-//   │                                     └────────────────┘  │
+//   │ last result: ...                  ╔╣ Confirm ╠════════╗ │
+//   │                                   ║ Delete file?      ║ │
+//   │                                   ║      [ Yes ] [ No ]║ │
+//   │                                   ╚════════════════════╝ │
 //   └─────────────────────────────────────────────────────────┘
+//
+// The confirm dialog uses BorderStyle::Double and the prompt BorderStyle::Ascii
+// to show that a dialog's border family is settable even though the Frame is a
+// private member (see set_border_style in the constructor).
 //
 // Keyboard: Tab cycles focus, Enter/Space activates, ESC quits (or cancels
 // the dialog, when one is open). Inside a confirm: Y/N are hotkeys.
@@ -64,6 +68,12 @@ class DialogsDemo final : public App {
     });
     m_prompt.on_cancel([this] { m_status.set_text("prompt: cancelled"); });
     m_prompt.set_placeholder("untitled.txt");
+
+    // A dialog's border is stylable even though it owns its Frame privately.
+    // Ascii is the one that matters: on the FallbackDriver tier a box-drawing
+    // border is mojibake, and a modal is the worst place for that.
+    m_confirm.set_border_style(BorderStyle::Double);
+    m_prompt.set_border_style(BorderStyle::Ascii);
 
     m_status.set_text("last result: (nothing yet)");
   }
