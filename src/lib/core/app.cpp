@@ -49,7 +49,10 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
   m_in_screen = true;
   g_active.store(this, std::memory_order_relaxed);
   std::signal(SIGWINCH, on_winch);
-  m_term.set_read_timeout(1);  // 100ms poll so the loop can also tick/render
+  // pump_input() manages the read timeout per-phase (zero-timeout drain,
+  // grace read only while an ESC is held). Start at the loop's idle poll
+  // rate so the very first frame behaves like the rest.
+  m_term.set_read_timeout(1);
   return {};
 }
 
@@ -92,23 +95,54 @@ auto App::run() -> int {
 }
 
 auto App::pump_input() -> void {
-  // Drain the fd completely before the lone-ESC heuristic may fire. During
-  // an SGR mouse drag the terminal emits reports faster than 256 bytes per
-  // frame; a single read() can then end exactly on an ESC byte while the
-  // rest of the sequence sits in the kernel buffer — the next read()
-  // returns immediately, so no timeout ever separates them. Feeding that
-  // fragment as "complete" fabricates an Escape keypress (and the default
-  // handler quits the app mid-drag). Loop until read() reports nothing
-  // left, and only then let Input commit a held ESC.
+  // Shape the reads so a frame never stalls and a drag never wedges:
+  //   * the *first* read carries the frame's idle tick (up to 100ms), so an
+  //     idle app still wakes ~10x/s to re-render (dashboards, clocks);
+  //   * every *drain* read after it is zero-timeout, so once input is
+  //     flowing we empty the fd without blocking — during a sustained SGR
+  //     drag these return instantly and the loop keeps rendering;
+  //   * a held lone ESC pays at most one short grace read for the rest of
+  //     its sequence, then we move on rather than re-blocking.
   char buf[256];
-  bool any = false;
-  while (true) {
-    const int n = m_term.read_input(buf, sizeof(buf));
-    if (n <= 0) break;  // drained (or first-read timeout: no input)
+
+  // First read: the idle-tick wait (and, mid-drag, an immediate return).
+  m_term.set_read_timeout(1);
+  int n = m_term.read_input(buf, sizeof(buf));
+  const bool had_input = (n > 0);
+  if (had_input)
     m_input.feed(std::string_view{buf, static_cast<std::size_t>(n)});
-    any = true;
+
+  // Drain everything already queued, never blocking.
+  while (true) {
+    m_term.set_read_timeout(0);
+    n = m_term.read_input(buf, sizeof(buf));
+    if (n <= 0) break;
+    m_input.feed(std::string_view{buf, static_cast<std::size_t>(n)});
   }
-  if (any) m_input.flush();
+
+  if (m_input.esc_pending()) {
+    // A lone ESC is held. Give the terminal a short grace window to deliver
+    // the rest of the sequence, then drain whatever arrived without
+    // blocking. If nothing arrives the ESC is a genuine keypress and
+    // flush() below commits it.
+    m_term.set_read_timeout(1);
+    n = m_term.read_input(buf, sizeof(buf));
+    if (n > 0) {
+      m_input.feed(std::string_view{buf, static_cast<std::size_t>(n)});
+      while (true) {
+        m_term.set_read_timeout(0);
+        n = m_term.read_input(buf, sizeof(buf));
+        if (n <= 0) break;
+        m_input.feed(std::string_view{buf, static_cast<std::size_t>(n)});
+      }
+    }
+  }
+
+  // Only flush at a true input boundary. A frame that produced no input at
+  // all (a pure idle tick) must not commit a held ESC — the grace window
+  // for it is the next frame's first read.
+  if (had_input) m_input.flush();
+  m_term.set_read_timeout(1);  // restore the idle-tick rate for next frame
   for (auto& ev : m_input.poll()) on_event(ev);
 }
 

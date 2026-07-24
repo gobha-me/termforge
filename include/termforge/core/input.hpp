@@ -36,6 +36,13 @@ class Input {
   // Pop the next decoded event, or nullptr-variant if none pending.
   [[nodiscard]] auto poll() -> std::deque<Event>;
 
+  // True while a lone ESC is held awaiting the flush() boundary. The event
+  // loop uses this to decide whether it must pay a grace read (giving a
+  // split sequence's remainder a chance to arrive) before committing the
+  // Escape interpretation — when no ESC is held there is nothing to grace,
+  // and the loop can return without any timed read at all.
+  [[nodiscard]] auto esc_pending() const noexcept -> bool { return m_esc_pending; }
+
   // Convenience: feed and drain in one call (used by tests and simple loops).
   auto decode(std::string_view bytes) -> std::deque<Event>;
 
