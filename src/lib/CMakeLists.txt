@@ -17,6 +17,7 @@ add_library(${PROJECT_NAME}_lib STATIC
   widgets/text_input.cpp
   widgets/frame.cpp
   widgets/menu_bar.cpp
+  widgets/focus_ring.cpp
   drivers/ansi_rgb_driver.cpp
   drivers/fallback_driver.cpp
   drivers/kitty_driver.cpp

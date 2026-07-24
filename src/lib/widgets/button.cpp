@@ -18,7 +18,7 @@ auto Button::draw(Screen& screen) -> void {
   if (m_pressed) {
     fg = m_pressed_fg;
     bg = m_pressed_bg;
-  } else if (m_focused) {
+  } else if (focused()) {
     fg = m_focused_fg;
     bg = m_focused_bg;
   }

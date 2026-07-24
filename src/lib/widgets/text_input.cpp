@@ -66,7 +66,7 @@ auto TextInput::draw(Screen& screen) -> void {
 
   const int y = r.y + r.h / 2;
 
-  if (m_text.empty() && !m_placeholder.empty() && !m_focused) {
+  if (m_text.empty() && !m_placeholder.empty() && !focused()) {
     // Draw placeholder text (clipped to r.w display columns).
     screen.write_text(r.x, y, detail::truncate_to_width(m_placeholder, r.w),
                       m_placeholder_fg, m_bg);
@@ -82,7 +82,7 @@ auto TextInput::draw(Screen& screen) -> void {
   }
 
   // Draw cursor (inverted cell) when focused.
-  if (m_focused) {
+  if (focused()) {
     // Cursor screen column = display width of the text between scroll and cursor.
     const int cx = detail::display_width(std::string_view{m_text}.substr(
         static_cast<std::size_t>(m_scroll),
@@ -108,7 +108,7 @@ auto TextInput::on_event(const Event& ev) -> bool {
   if (const auto* m = std::get_if<MouseEvent>(&ev)) {
     if (!m->pressed || m->button != 0 || !rect().contains(m->x, m->y))
       return false;
-    m_focused = true;
+    set_focused(true);
     // Column → byte offset: walk graphemes from the scroll origin, summing
     // display width, until the next glyph would pass the clicked column. Lands
     // the cursor on the grapheme boundary at or before the click.
@@ -135,7 +135,7 @@ auto TextInput::on_event(const Event& ev) -> bool {
     return true;
   }
 
-  if (!m_focused) return false;
+  if (!focused()) return false;
 
   const auto* k = std::get_if<KeyEvent>(&ev);
   if (!k) return false;

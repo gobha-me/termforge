@@ -90,12 +90,31 @@ class Widget {
   [[nodiscard]] auto dirty() const noexcept -> bool { return m_dirty; }
   auto mark_dirty() -> void { m_dirty = true; }
 
+  // ── focus ────────────────────────────────────────────────────────────
+  // A FocusRing (or the app) is the gatekeeper: it routes keys ONLY to the
+  // focused widget, so a widget acts on any key it is *given* — self-guarding
+  // on focus is not required, and broadcasting keys to every widget is not the
+  // model (see focus_ring.hpp). set_focused is the visual hook (a focused
+  // widget renders a highlight); focused() is what draw() reads. focusable()
+  // lets a ring skip a member that is temporarily not a focus target (a future
+  // disabled/hidden state overrides it). Override set_focused only to react to
+  // the transition (e.g. scroll a cursor into view); most widgets just read
+  // focused() in draw().
+  virtual auto set_focused(bool focused) -> void {
+    if (m_focused == focused) return;
+    m_focused = focused;
+    mark_dirty();
+  }
+  [[nodiscard]] auto focused() const noexcept -> bool { return m_focused; }
+  [[nodiscard]] virtual auto focusable() const -> bool { return true; }
+
  protected:
   auto clear_dirty() -> void { m_dirty = false; }
 
  private:
   Rect m_rect;
   bool m_dirty{true};
+  bool m_focused{false};
 };
 
 }  // namespace termforge

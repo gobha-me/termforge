@@ -29,12 +29,8 @@ class Button final : public Widget {
     return m_label;
   }
 
-  // Focus state (managed by the parent app's focus model).
-  auto set_focused(bool focused) -> void {
-    m_focused = focused;
-    mark_dirty();
-  }
-  [[nodiscard]] auto focused() const noexcept -> bool { return m_focused; }
+  // Focus state is inherited from Widget (set_focused/focused/focusable) — the
+  // parent app's FocusRing drives it; draw() reads focused() for its highlight.
 
   // Callback fired on activation (Enter/Space/click).
   auto on_activate(std::function<void()> cb) -> void {
@@ -46,7 +42,6 @@ class Button final : public Widget {
 
  private:
   std::string m_label;
-  bool m_focused{false};
   bool m_pressed{false};  // visual feedback on activation frame
 
   Rgb m_fg{0xE0, 0xE0, 0xF0};

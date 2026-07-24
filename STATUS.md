@@ -7,15 +7,15 @@ which holds standing conventions, not state).
 ## Where we are (2026-07-24)
 
 **Core framework, KittyDriver, and the full widget system are landed and
-tested.** 17 suites; gcc 14 + clang 20 green with `-Werror`; ASan/UBSan clean
+tested.** 18 suites; gcc 14 + clang 20 green with `-Werror`; ASan/UBSan clean
 via the (now-fixed) sanitizer toolchains.
 
-**Latest release: `v0.0.4`** (annotated tag + GitHub pre-release, 2026-07-24) —
-adds audit fix #11 (dirty/clear contract — immediate-mode full-rect repaint) on
-top of `v0.0.3` (#10, display-width / wide cells), `v0.0.2` (#13,
-terminal/input robustness), and `v0.0.1` (core + drivers + widgets + audit
+**Latest release: `v0.0.5`** (annotated tag + GitHub pre-release, 2026-07-24) —
+adds the **FocusRing** (#17, first of the widget-gap wave) on top of `v0.0.4`
+(#11, dirty/clear contract), `v0.0.3` (#10, display-width / wide cells), `v0.0.2`
+(#13, terminal/input robustness), and `v0.0.1` (core + drivers + widgets + audit
 fixes #3–#9, #14, #15). `version.cmake` derives `VERSION` from
-`git describe --tags`, so the build now reports `0.0.4`. Release convention:
+`git describe --tags`, so the build now reports `0.0.5`. Release convention:
 annotated `vX.Y.Z` tag pushed to origin + a matching `gh release --prerelease`
 while pre-1.0.
 
@@ -29,8 +29,26 @@ Working end to end:
   (escape state machine, hardened UTF-8, SGR mouse), `App` (loop, SIGWINCH
   resize, pixel-region plumbing).
 - Widgets — TextBox, TableWidget, ListWidget, WaveformWidget, Label, Button,
-  ProgressBar, TextInput, Frame, MenuBar; mouse routing via hit_test.
+  ProgressBar, TextInput, Frame, MenuBar; mouse routing via hit_test;
+  `FocusRing` owns Tab-order + keyboard focus (see below).
 - Examples — dashboard, widgets, image, chat, input, colors, low_level, hello.
+
+## 2026-07-24: widget-gap wave (post-audit)
+
+The 2026-07-24 widget-gap review filed the next feature wave (#17–#28). Landed:
+
+- **#17** — `FocusRing` (v0.0.5). Focus now has an owner. The `Widget` base
+  carries the focus flag (`set_focused`/`focused()`/`focusable()`) with a
+  documented convention: **the ring is the keyboard gatekeeper** — it routes keys
+  only to the focused member and cycles on Tab/Shift+Tab, so widgets act on any
+  key they are *given* (broadcasting is not the model). This is the structural
+  resolution of #12 item 5 (Button/TextInput unified onto the base flag; no
+  per-widget self-guard patch needed). `focus_at(x,y)` moves focus on a click.
+  `examples/widgets.cpp` rewritten on it (−15 lines, no hand-rolled Tab switch).
+  New `test/18focus` (18 cases); `12primitives`/`13mouse` unchanged and green.
+  Standalone controller (`include/termforge/widgets/focus_ring.hpp`); baking one
+  into `App` base is a possible follow-up. Unblocks dialogs **#18** → FilePicker
+  **#23** and clean forms **#19**.
 
 ## 2026-07-24: implementation-audit fix wave
 
@@ -104,27 +122,32 @@ through. Landed so far, each with regression tests:
   no-ops on a non-tty stdout. New `test/16signals` (fork+pipe, no tty needed) +
   expanded `test/04input`.
 
-Still open: #12 (widget bundle), #16 (forge-top demo epic, the dogfooding
-harness).
+Still open: #12 (widget bundle, Kimi's — item 5 now handled by #17), the
+widget-gap wave (#18–#28), and #16 (forge-top demo epic, the dogfooding harness).
 
 ## Next session — start here
 
-Remaining audit bug is **#12** (widget bundle — right/middle-click gating gaps,
-empty-menu keyboard trap, stale Table selection after `clear_rows`, focus-guard
-inconsistency), then epic #16 (#10 landed in v0.0.3, #11 in v0.0.4, #13 in
-v0.0.2). **#12 is the top of co-agent Kimi K3's pending list**, so claim it on
-the tracker first (or coordinate) before starting. Before starting, run
-`venice memory tasks` and `git log origin/main..main` / `git status` — Kimi
-lands on local main and can be mid-flight or unpushed; coordinate via the issue
-tracker (see the `kimi-k3-coagent` memory) so two agents don't take the same
-bug. If #12 is taken, epic **#16 (forge-top demo)** is the next substantial
-piece.
+With #17 landed, **#18 (modal overlay stack + standard dialogs)** is the natural
+next step — it was blocked on the focus ring for Tab-between-buttons and now
+unblocks FilePicker #23. Two other tracks are open:
+- **#19** (form controls: Checkbox/RadioGroup/Select) — also builds on the ring.
+- **#16** (forge-top demo) — the larger dogfooding epic; now cleaner since it can
+  use `FocusRing` instead of hand-rolling focus.
 
-**Owed manual checks (sandbox has no tty):** #13 needs a real-terminal pass —
-`kill <pid>` should restore the terminal (cooked mode, cursor shown, main
-screen, mouse off), and Home/End, Ctrl+Arrow, and a paste should behave in
-kitty. #8's manual kitty check (single `_Gi=31` probe, no stray startup chars)
-is also still owed.
+**#12 stays reserved for co-agent Kimi K3** — but **item 5 (focus-guard
+inconsistency) is resolved by #17** (noted on the #12 tracker thread); Kimi keeps
+items 1–4 and 6. Before starting anything, run `venice memory tasks` and
+`git log origin/main..main` / `git status` — Kimi lands on local main and can be
+mid-flight or unpushed; coordinate via the issue tracker (see the
+`kimi-k3-coagent` memory) so two agents don't collide.
+
+**Owed manual checks (sandbox has no tty):** **#17** needs a real-terminal pass in
+kitty — Tab / Shift+Tab cycle focus visibly, a click moves focus, and the focused
+Button/TextInput highlight correctly (`build/termforge_example_widgets`). #13
+still needs its pass — `kill <pid>` should restore the terminal (cooked mode,
+cursor shown, main screen, mouse off), and Home/End, Ctrl+Arrow, and a paste
+should behave. #8's manual kitty check (single `_Gi=31` probe, no stray startup
+chars) is also still owed.
 
 ## How to verify
 

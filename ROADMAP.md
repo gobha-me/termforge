@@ -7,6 +7,12 @@ completed items.
 > **#3–#16** (bugs #3–#14, stale docs #15, forge-top demo epic #16). The fix
 > wave is in progress; #3/#4/#5/#9/#14 are landed. See STATUS.md and the issue
 > tracker for live state.
+>
+> **2026-07-24 — widget-gap wave.** A follow-on review filed **#17–#28**
+> (FocusRing, modal dialogs, form controls, styled spans, etc.). **#17
+> (FocusRing)** is landed (v0.0.5) — the Layer-1 focus owner that unblocks
+> dialogs #18 → FilePicker #23 and forms #19, and resolves #12 item 5. Next:
+> #18 (dialogs), #19 (form controls).
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
