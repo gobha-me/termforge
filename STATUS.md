@@ -7,17 +7,17 @@ which holds standing conventions, not state).
 ## Where we are (2026-07-24)
 
 **Core framework, KittyDriver, and the full widget system are landed and
-tested.** 18 suites; gcc 14 + clang 20 green with `-Werror`; ASan/UBSan clean
+tested.** 19 suites; gcc 14 + clang 20 green with `-Werror`; ASan/UBSan clean
 via the (now-fixed) sanitizer toolchains.
 
-**Latest release: `v0.0.5`** (annotated tag + GitHub pre-release, 2026-07-24) —
-adds the **FocusRing** (#17, first of the widget-gap wave) on top of `v0.0.4`
-(#11, dirty/clear contract), `v0.0.3` (#10, display-width / wide cells), `v0.0.2`
-(#13, terminal/input robustness), and `v0.0.1` (core + drivers + widgets + audit
-fixes #3–#9, #14, #15). `version.cmake` derives `VERSION` from
-`git describe --tags`, so the build now reports `0.0.5`. Release convention:
-annotated `vX.Y.Z` tag pushed to origin + a matching `gh release --prerelease`
-while pre-1.0.
+**Latest release: `v0.0.6`** (annotated tag + GitHub pre-release, 2026-07-24) —
+adds the **modal overlay stack + standard dialogs** (#18) on top of `v0.0.5`
+(#17, FocusRing), `v0.0.4` (#11, dirty/clear contract), `v0.0.3` (#10,
+display-width / wide cells), `v0.0.2` (#13, terminal/input robustness), and
+`v0.0.1` (core + drivers + widgets + audit fixes #3–#9, #14, #15).
+`version.cmake` derives `VERSION` from `git describe --tags`, so the build now
+reports `0.0.6`. Release convention: annotated `vX.Y.Z` tag pushed to origin +
+a matching `gh release --prerelease` while pre-1.0.
 
 Working end to end:
 - `Terminal` — raw-mode RAII, capability probe (kitty/sixel/truecolor),
@@ -30,12 +30,46 @@ Working end to end:
   resize, pixel-region plumbing).
 - Widgets — TextBox, TableWidget, ListWidget, WaveformWidget, Label, Button,
   ProgressBar, TextInput, Frame, MenuBar; mouse routing via hit_test;
-  `FocusRing` owns Tab-order + keyboard focus (see below).
-- Examples — dashboard, widgets, image, chat, input, colors, low_level, hello.
+  `FocusRing` owns Tab-order + keyboard focus; `Dialog` + Message/Confirm/Prompt
+  on the modal overlay stack (see below).
+- Examples — dashboard, widgets, dialogs, image, chat, input, colors,
+  low_level, hello.
 
 ## 2026-07-24: widget-gap wave (post-audit)
 
 The 2026-07-24 widget-gap review filed the next feature wave (#17–#28). Landed:
+
+- **#18** — modal overlay stack + standard dialogs (v0.0.6, PR #30).
+  `App::push_overlay(Widget&, OverlayOptions)` / `pop_overlay()`: overlays draw
+  after `on_render` and capture ALL input. Capture needed a **non-virtual
+  funnel** — `pump_input` called the *virtual* `on_event` directly, so a
+  subclass falling through to `App::on_event` would `quit()` on the Escape
+  meant to cancel the dialog. New `App::dispatch_event` is now the single
+  funnel (all 3 call sites rewired); `ResizeEvent`/`ErrorEvent` deliberately
+  still reach `on_event`, everything else goes only to the top overlay, and a
+  mouse press outside is swallowed (`dismiss_on_click_outside` opts in).
+  Backdrop is per-overlay: `None` / `Dim` (halve each channel — exact,
+  testable, no alpha guessing) / `Fill`. Storage is **non-owning**, which is
+  what makes `pop_overlay()` safe from inside a dialog's own button callback.
+  One real hazard closed: pixel-region images flush *after* the cell diff and
+  their collection blanks cells, so `render_pixel_regions` no-ops while modal
+  and only the top overlay may collect regions. Widgets: `Dialog` base (Frame +
+  FocusRing + children, auto-size by `display_width`, re-centered every frame
+  from the Screen) and `MessageDialog`/`ConfirmDialog`/`PromptDialog`; they
+  close via `on_close` wired by the app, so `widgets/` never includes
+  `core/app.hpp`. Result fires *after* the close, at most once **per showing**
+  — the latch clears on the next `draw()`, because a dialog that reported a
+  result was popped, so being drawn again means it was pushed again (a
+  permanent latch made a re-shown dialog an undismissable modal). Ctrl+C is
+  the one key an overlay cannot swallow: raw mode makes it an ordinary key, so
+  total capture would otherwise make a mis-wired dialog unkillable. The
+  backdrop is snapshotted and restored after `present`, so the overlay pass
+  leaves no trace in the persistent Screen. New
+  `test/19dialogs` (61 cases), `examples/dialogs.cpp`,
+  `docs/modal-overlays.md`, and `detail/wrap.hpp` (the wrap extracted from
+  `TextBox::wrap_into`, behavior unchanged). Unblocks FilePicker **#23**.
+  Deliberately untouched: `Button`'s any-mouse-button activation (#12 item 1,
+  Kimi's) — contained at the dialog boundary, which routes only `button == 0`.
 
 - **#17** — `FocusRing` (v0.0.5). Focus now has an owner. The `Widget` base
   carries the focus flag (`set_focused`/`focused()`/`focusable()`) with a
@@ -127,12 +161,24 @@ widget-gap wave (#18–#28), and #16 (forge-top demo epic, the dogfooding harnes
 
 ## Next session — start here
 
-With #17 landed, **#18 (modal overlay stack + standard dialogs)** is the natural
-next step — it was blocked on the focus ring for Tab-between-buttons and now
-unblocks FilePicker #23. Two other tracks are open:
-- **#19** (form controls: Checkbox/RadioGroup/Select) — also builds on the ring.
-- **#16** (forge-top demo) — the larger dogfooding epic; now cleaner since it can
-  use `FocusRing` instead of hand-rolling focus.
+With #18 landed, the widget-gap wave has both of its structural primitives (the
+focus ring and the overlay stack), so the rest is composition:
+- **#19** (form controls: Checkbox/RadioGroup/Select) — builds on the ring, and
+  is what makes `PromptDialog`-shaped dialogs worth generalizing.
+- **#23** (FilePickerDialog) — now unblocked; it is `Dialog` + `ListWidget` +
+  the overlay stack, and is the first real test of whether the `Dialog` base
+  carries a content-heavy subclass or needs a scrollable-content hook.
+- **#20/#21/#22** (frame border styles, shared scrollbar, TabBar) — small,
+  independent.
+- **#16** (forge-top demo) — the larger dogfooding epic; now has focus,
+  dialogs, and modality to build on.
+
+Two follow-ups this work surfaced but did not fix (neither is filed yet):
+- `Button::on_event` invokes `m_on_activate` **without copying it first**
+  (`button.cpp:51,61`), unlike MenuBar/List/Table. Harmless today because
+  overlays are non-owning, but it is the same class of bug as #5.
+- `Dialog` re-derives its layout on every `draw()`. Fine at these sizes; if a
+  content-heavy dialog (#23) makes it hot, cache on a geometry/content change.
 
 **#12 stays reserved for co-agent Kimi K3** — but **item 5 (focus-guard
 inconsistency) is resolved by #17** (noted on the #12 tracker thread); Kimi keeps
@@ -141,8 +187,13 @@ items 1–4 and 6. Before starting anything, run `venice memory tasks` and
 mid-flight or unpushed; coordinate via the issue tracker (see the
 `kimi-k3-coagent` memory) so two agents don't collide.
 
-**Owed manual checks (sandbox has no tty):** **#17** needs a real-terminal pass in
-kitty — Tab / Shift+Tab cycle focus visibly, a click moves focus, and the focused
+**Owed manual checks (sandbox has no tty):** **#18**'s cell behavior was driven
+end to end in a pty (dialog opens centered, Y/N and Escape work, the backdrop
+emits exactly half-value colors under the truecolor driver, the dialog leaves
+no trail when popped) — what is still owed is the **kitty image path**: with an
+image widget on screen, opening a dialog must hide the image rather than let it
+punch through the modal (`render_pixel_regions` no-ops while modal). **#17** needs
+a real-terminal pass in kitty — Tab / Shift+Tab cycle focus visibly, a click moves focus, and the focused
 Button/TextInput highlight correctly (`build/termforge_example_widgets`). #13
 still needs its pass — `kill <pid>` should restore the terminal (cooked mode,
 cursor shown, main screen, mouse off), and Home/End, Ctrl+Arrow, and a paste

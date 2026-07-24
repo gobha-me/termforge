@@ -3,9 +3,11 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <cstdio>
 #include <initializer_list>
 #include <thread>
+#include <variant>
 
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -81,12 +83,14 @@ auto App::run() -> int {
       const auto size = current_size();
       m_screen->resize(size.cols, size.rows);
       m_renderer->invalidate();
-      on_event(ResizeEvent{size.cols, size.rows});
+      dispatch_event(ResizeEvent{size.cols, size.rows});
     }
     pump_input();
     m_pixel_regions.clear();
     on_render(*m_screen);
+    render_overlays(*m_screen);
     m_renderer->present(*m_screen);
+    restore_backdrop(*m_screen);  // the overlay pass leaves no trace behind
     flush_pixel_regions();
     if (m_frame_ms > 0)
       std::this_thread::sleep_for(std::chrono::milliseconds(m_frame_ms));
@@ -144,13 +148,151 @@ auto App::pump_input() -> void {
   // for it is the next frame's first read.
   if (had_input) m_input.flush();
   m_term.set_read_timeout(1);  // restore the idle-tick rate for next frame
-  for (auto& ev : m_input.poll()) on_event(ev);
+  for (auto& ev : m_input.poll()) dispatch_event(ev);
 }
 
 auto App::on_event(const Event& ev) -> void {
   // Default behavior: ESC or Ctrl+C quits. Subclasses override for real input.
   if (const auto* k = std::get_if<KeyEvent>(&ev)) {
     if (k->key == Key::Escape || (k->ctrl && (k->ch == 'c' || k->ch == 'C'))) quit();
+  }
+}
+
+auto App::push_overlay(Widget& w, OverlayOptions opts) -> void {
+  m_overlays.push_back(OverlayEntry{&w, opts});
+}
+
+auto App::pop_overlay() -> void {
+  if (!m_overlays.empty()) m_overlays.pop_back();
+}
+
+auto App::clear_overlays() -> void { m_overlays.clear(); }
+
+auto App::dispatch_event(const Event& ev) -> void {
+  // Resize and error never get captured — the app underneath still owns its
+  // layout, and a degradation notice must not be swallowed by a dialog.
+  if (std::holds_alternative<ResizeEvent>(ev) ||
+      std::holds_alternative<ErrorEvent>(ev)) {
+    on_event(ev);
+    return;
+  }
+  // Ctrl+C is the break-glass. Raw mode turned it from a signal into an
+  // ordinary key, so if an overlay could swallow it, an app whose dialog has
+  // no wired close path would be unkillable from its own terminal. No dialog
+  // wants Ctrl+C, and the alternative is telling users to find another shell.
+  if (const auto* k = std::get_if<KeyEvent>(&ev)) {
+    if (k->ctrl && (k->ch == U'c' || k->ch == U'C')) {
+      on_event(ev);
+      return;
+    }
+  }
+  if (m_overlays.empty()) {
+    on_event(ev);
+    return;
+  }
+
+  // Copy out of the vector before dispatching: the handler may push or pop
+  // (a dialog button that closes itself), which reallocates m_overlays. A
+  // reference or back() re-read after the call would dangle.
+  Widget* top = m_overlays.back().widget;
+  const OverlayOptions opts = m_overlays.back().opts;
+
+  if (const auto* m = std::get_if<MouseEvent>(&ev)) {
+    if (top->hit_test(m->x, m->y)) {
+      top->on_event(ev);
+      return;
+    }
+    // Outside the overlay: swallowed either way. Only a press dismisses —
+    // drag motion and wheel scroll must not close a dialog under the cursor.
+    // An overlay with no geometry yet has not been drawn (a dialog sizes
+    // itself from the Screen in draw()), and every point is "outside" it, so
+    // dismissing now would pop it before it was ever visible.
+    const Rect r = top->rect();
+    const bool laid_out = r.w > 0 && r.h > 0;
+    if (m->pressed && opts.dismiss_on_click_outside && laid_out) pop_overlay();
+    return;
+  }
+
+  top->on_event(ev);  // key / paste — result ignored, capture is total
+}
+
+auto App::render_overlays(Screen& screen) -> void {
+  m_backdrop_backup.clear();
+  if (m_overlays.empty()) return;
+
+  // Walk a snapshot: an overlay's draw() may legally push or pop (a toast
+  // that expires as it renders), and mutating the vector mid-walk would
+  // otherwise skip whichever entry shifted into the current index. A push
+  // during draw simply lands on the next frame.
+  const std::vector<OverlayEntry> stack = m_overlays;
+  for (const OverlayEntry& entry : stack) {
+    if (entry.widget == nullptr) continue;
+
+    switch (entry.opts.backdrop) {
+      case Backdrop::Fill:
+        save_backdrop(screen);
+        screen.fill_rect(0, 0, screen.cols(), screen.rows(), Cell{}.fg,
+                         Cell{}.bg);
+        break;
+      case Backdrop::Dim:
+        save_backdrop(screen);
+        dim_screen(screen);
+        break;
+      case Backdrop::None:
+        break;
+    }
+    entry.widget->draw(screen);
+  }
+
+  // Only the topmost overlay may put pixels on screen: its images flush last
+  // and so land above everything. Anything below it is cells-only.
+  if (!m_overlays.empty() && m_overlays.back().widget != nullptr)
+    collect_pixel_regions(*m_overlays.back().widget);
+}
+
+auto App::save_backdrop(const Screen& screen) -> void {
+  // Snapshot once per frame, before the first backdrop touches anything.
+  // A backdrop is destructive — Dim halves every channel, Fill blanks every
+  // cell — and the Screen persists across frames, so without this the damage
+  // compounds: a cell the app does not repaint every frame gets halved again
+  // and again until it is black, and stays that way after the dialog closes.
+  if (!m_backdrop_backup.empty()) return;
+  m_backdrop_backup.reserve(
+      static_cast<std::size_t>(screen.cols()) *
+      static_cast<std::size_t>(screen.rows() > 0 ? screen.rows() : 0));
+  for (int y = 0; y < screen.rows(); ++y)
+    for (int x = 0; x < screen.cols(); ++x)
+      m_backdrop_backup.push_back(screen.at(x, y));
+}
+
+auto App::restore_backdrop(Screen& screen) -> void {
+  // Put the frame back the way the app left it, now that the dimmed/filled
+  // version is on the wire. The overlay pass is then non-destructive: what
+  // on_render sees next frame is exactly what it drew last frame.
+  if (m_backdrop_backup.empty()) return;
+  std::size_t i = 0;
+  for (int y = 0; y < screen.rows(); ++y) {
+    for (int x = 0; x < screen.cols(); ++x) {
+      if (i >= m_backdrop_backup.size()) break;  // resized mid-frame
+      screen.at(x, y) = m_backdrop_backup[i++];
+    }
+  }
+  m_backdrop_backup.clear();
+}
+
+auto App::dim_screen(Screen& screen) -> void {
+  // Halve each channel. Cheap, exact, and diff-friendly: the Renderer still
+  // emits only the cells that actually changed.
+  for (int y = 0; y < screen.rows(); ++y) {
+    for (int x = 0; x < screen.cols(); ++x) {
+      Cell& c = screen.at(x, y);
+      c.fg = Rgb{static_cast<std::uint8_t>(c.fg.r / 2),
+                 static_cast<std::uint8_t>(c.fg.g / 2),
+                 static_cast<std::uint8_t>(c.fg.b / 2)};
+      c.bg = Rgb{static_cast<std::uint8_t>(c.bg.r / 2),
+                 static_cast<std::uint8_t>(c.bg.g / 2),
+                 static_cast<std::uint8_t>(c.bg.b / 2)};
+    }
   }
 }
 
@@ -167,6 +309,14 @@ auto App::route_mouse(const MouseEvent& ev,
 }
 
 auto App::render_pixel_regions(Widget& widget) -> void {
+  // Modal: skip the app's images entirely. They would be emitted after the
+  // cell diff and paint over the dialog, and collecting them also blanks the
+  // cells they cover — punching a hole in the backdrop.
+  if (!m_overlays.empty()) return;
+  collect_pixel_regions(widget);
+}
+
+auto App::collect_pixel_regions(Widget& widget) -> void {
   if (!m_driver || !m_driver->capabilities().kitty_graphics) return;
 
   for (const auto& region : widget.pixel_regions()) {
