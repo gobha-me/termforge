@@ -11,6 +11,7 @@ set(EXAMPLES
   dashboard
   widgets
   dialogs
+  forms
 )
 
 foreach(EXAMPLE ${EXAMPLES})

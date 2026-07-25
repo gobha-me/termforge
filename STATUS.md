@@ -4,20 +4,23 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-07-24)
+## Where we are (2026-07-25)
 
 **Core framework, KittyDriver, and the full widget system are landed and
-tested.** 19 suites, 355 cases, 2060 assertions; gcc 14 + clang 20 green with
-`-Werror`; ASan/UBSan clean via the (now-fixed) sanitizer toolchains.
+tested.** 20 suites, 412 cases, 2882 assertions; gcc 14 + clang 20 green with
+`-Werror`; ASan/UBSan clean via the (now-fixed) sanitizer toolchains. (Note:
+`ctest` reports 22 *tests* — 20 suites plus the `startup`/`shutdown` fixtures.
+Earlier commit messages in this branch say "22 suites"; 20 is the real number.)
 
-**Latest release: `v0.0.7`** (annotated tag + GitHub pre-release, 2026-07-24) —
-adds **border styles + the delimited frame title** (#20) on top of `v0.0.6`
-(#18, modal overlays + dialogs), `v0.0.5` (#17, FocusRing), `v0.0.4` (#11,
-dirty/clear contract), `v0.0.3` (#10, display-width / wide cells), `v0.0.2`
-(#13, terminal/input robustness), and `v0.0.1` (core + drivers + widgets +
-audit fixes #3–#9, #14, #15).
+**Latest release: `v0.0.8`** (annotated tag + GitHub pre-release, 2026-07-25) —
+adds the **form controls** (#19: Checkbox, RadioGroup, Select) and the **#32**
+callback-copy fix, on top of `v0.0.7` (#20, border styles + delimited title),
+`v0.0.6` (#18, modal overlays + dialogs), `v0.0.5` (#17, FocusRing), `v0.0.4`
+(#11, dirty/clear contract), `v0.0.3` (#10, display-width / wide cells),
+`v0.0.2` (#13, terminal/input robustness), and `v0.0.1` (core + drivers +
+widgets + audit fixes #3–#9, #14, #15).
 `version.cmake` derives `VERSION` from `git describe --tags`, so the build now
-reports `0.0.7`. Release convention: annotated `vX.Y.Z` tag pushed to origin +
+reports `0.0.8`. Release convention: annotated `vX.Y.Z` tag pushed to origin +
 a matching `gh release --prerelease` while pre-1.0.
 
 Working end to end:
@@ -32,14 +35,82 @@ Working end to end:
 - Widgets — TextBox, TableWidget, ListWidget, WaveformWidget, Label, Button,
   ProgressBar, TextInput, Frame, MenuBar; mouse routing via hit_test;
   `FocusRing` owns Tab-order + keyboard focus; `Dialog` + Message/Confirm/Prompt
-  on the modal overlay stack (see below); `widgets/glyphs.hpp` is the one place
-  border/line glyphs are chosen (5 families incl. ASCII).
-- Examples — dashboard, widgets, dialogs, image, chat, input, colors,
+  on the modal overlay stack (see below); `Checkbox`/`RadioGroup`/`Select` for
+  booleans and choice-of-N; `widgets/glyphs.hpp` is the one place border/line
+  *and* mark glyphs are chosen (5 families incl. ASCII).
+- Examples — dashboard, widgets, dialogs, forms, image, chat, input, colors,
   low_level, hello.
 
 ## 2026-07-24: widget-gap wave (post-audit)
 
 The 2026-07-24 widget-gap review filed the next feature wave (#17–#28). Landed:
+
+- **#19** — form controls: Checkbox, RadioGroup, Select (v0.0.8), plus **#32**
+  (the callback-copy bug class) in the same cut.
+
+  **`MarkGlyphs` has two rows, not five.** It sits in `glyphs.hpp` on the same
+  `BorderStyle` enum, as that header's own extension note asked. Unlike borders
+  — where each family is a genuinely different set of box-drawing characters —
+  the only thing that varies for a mark is whether it may leave 7-bit ASCII;
+  the brackets and the checkbox `x` are ASCII in every family. Five
+  near-identical rows would be the duplicate-and-drift #20 existed to kill. It
+  is a **fall-through switch**, not `is_ascii(style) ? a : b`, so a newly added
+  style is still a compile error under `-Wswitch` + CI's `-Werror`. A test pins
+  the four Unicode families to one table so diverging Heavy has to be
+  deliberate. `•` U+2022 and `▾` U+25BE are UAX #11 *Ambiguous*, but so is the
+  whole Box Drawing block the four Unicode border families already use — the
+  existing bet, not a new one, with `Ascii` as the escape hatch.
+
+  **RadioGroup: the selection IS the cursor.** No second "highlighted but not
+  chosen" index, because a radio group has no commit key to promote one with —
+  a second index would invent an interaction the control does not have. The
+  cost is that `on_change` fires per arrow keypress; what keeps that honest is
+  that the selection **clamps rather than wraps** and a move landing where it
+  already was **consumes the key without firing**. One tab stop for the whole
+  group; `focusable()` is false when empty (a tab stop on an invisible widget
+  is a dead stop and an invisible keyboard trap — the shape of #12 item 2). It
+  scrolls like ListWidget, or options the arrows can reach would be invisible
+  and unclickable. **Enter and Space are declined** so a form's submit works.
+  The **wheel is ignored** (unlike ListWidget's ±3): a stray scroll must not
+  mutate a value the user is not looking at.
+
+  **Select diverges from MenuBar in exactly two ways, both because it lives
+  INSIDE the FocusRing** where MenuBar sits outside it and is pre-routed by the
+  app. (1) **Tab while open closes the list and is then DECLINED**, so
+  `FocusRing::handle_key` cycles on the same press — one keystroke to leave.
+  MenuBar consumes every key while open; a Select doing that leaves a user who
+  opened it by accident with a dead Tab key. Every *other* unhandled key while
+  open is still consumed (mini-modal). (2) The dropdown is **exactly
+  `rect().w`**, not grown to the longest option — a popup wider than its own
+  control reads as broken. `set_focused(false)` closes it, which covers
+  Tab-out, `focus()`, and clicks on other ring members via `focus_at`; two
+  cases stay the parent's job and are spelled out with code in `select.hpp`.
+  Escape while **closed** is declined so a Select in a Dialog does not eat the
+  cancel.
+
+  Caught by the exact-string render assertions: `draw()` took a `string_view`
+  from `truncate_to_width()` over the temporary `selected_text()` returns by
+  value, rendering the value as garbage. Held in a named local now. Prefer
+  exact-row expectations over "contains" for this reason.
+
+  New `test/20formcontrols` (53 cases): Checkbox 12, RadioGroup 17, Select 21,
+  MarkGlyphs 3. Every "declined" case is driven through a **real FocusRing**
+  rather than asserting a bare return value, since the bug it guards against is
+  "the ring stopped cycling". `examples/forms.cpp` wires all three into one
+  ring; **F1 cycles the style across the frame AND every control**, which is
+  both the ASCII-tier demo and the "style the whole app" answer.
+
+  **#32** fixed at **seven** sites, not the four the issue lists — it misses
+  `list_widget.cpp:122`/`:144` and `table_widget.cpp:172`, which copy the
+  selected *item* but still invoke `m_on_select` on the member (the item copy
+  protects the argument, not the `std::function`). `text_input.cpp:205` needed
+  *two* copies: its `on_change` passed a `const&` into its own `m_text`, so a
+  callback calling `set_text()` mutated the string it was reading. The four new
+  `[uaf]` cases in `test/14audit` each capture a **by-value canary** and read it
+  after replacing their own slot — an earlier draft captured only by reference
+  and passed happily against the unfixed code, because references point at the
+  still-live enclosing stack frame. Verified by reverting each fix: Button
+  segfaults, TextInput trips UBSan.
 
 - **#20** — border styles + the promised title delimiters (v0.0.7).
   New **public** `include/termforge/widgets/glyphs.hpp` is the single glyph
@@ -192,34 +263,40 @@ through. Landed so far, each with regression tests:
   no-ops on a non-tty stdout. New `test/16signals` (fork+pipe, no tty needed) +
   expanded `test/04input`.
 
-Still open: #12 (widget bundle, Kimi's — item 5 now handled by #17), the
-widget-gap wave (#19, #21–#28), and #16 (forge-top demo epic, the dogfooding
+Still open: #12 (widget bundle, Kimi's — item 5 now handled by #17), the rest of
+the widget-gap wave (#21–#28), and #16 (forge-top demo epic, the dogfooding
 harness).
 
 ## Next session — start here
 
-With #17/#18/#20 landed, the widget-gap wave has all three of its shared pieces
-(the focus ring, the overlay stack, and the glyph source), so the rest is
-composition:
-- **#19** (form controls: Checkbox/RadioGroup/Select) — builds on the ring, and
-  is what makes `PromptDialog`-shaped dialogs worth generalizing. **Add its
-  glyph table to `widgets/glyphs.hpp` and key the ASCII variants off
-  `is_ascii()`** — do not hardcode literals per widget, and do not introduce a
-  second style enum (#20 put it where #19 can reach it, which is what #19's own
-  issue text asks for). Same for #21's scrollbar thumb.
-- **#23** (FilePickerDialog) — now unblocked; it is `Dialog` + `ListWidget` +
-  the overlay stack, and is the first real test of whether the `Dialog` base
-  carries a content-heavy subclass or needs a scrollable-content hook.
-- **#21/#22** (shared scrollbar, TabBar) — small, independent.
+With #17/#18/#19/#20 landed, the widget-gap wave has all three shared pieces
+(the focus ring, the overlay stack, the glyph source) **and** the form controls,
+so the rest is composition:
+- **#23** (FilePickerDialog) — the obvious next one: `Dialog` + `ListWidget` +
+  the overlay stack, and the first real test of whether the `Dialog` base
+  carries a content-heavy subclass or needs a scrollable-content hook. #19's
+  `Select` is the closest precedent for the "who closes the popup" question.
+- **#21** (shared scrollbar) — small, and it is the issue that decides whether
+  `ProgressBar`'s `█`/`─` and `WaveformWidget`'s half-blocks join `glyphs.hpp`.
+  **Add its table to `glyphs.hpp` keyed off the same `BorderStyle`** — the
+  `MarkGlyphs` fall-through switch is the shape to copy. It also gives
+  ListWidget's undocumented right-margin column an actual job.
+- **#22** (TabBar) — small, independent.
 - **#16** (forge-top demo) — the larger dogfooding epic; now has focus,
-  dialogs, and modality to build on.
+  dialogs, modality, and form controls to build on.
 
-Two follow-ups this work surfaced but did not fix (neither is filed yet):
-- `Button::on_event` invokes `m_on_activate` **without copying it first**
-  (`button.cpp:51,61`), unlike MenuBar/List/Table. Harmless today because
-  overlays are non-owning, but it is the same class of bug as #5.
+Follow-ups this work surfaced but did not fix:
+- **Escape cannot reach a `Select` inside a `Dialog`.** `dialog.cpp:160-166`
+  intercepts Escape before its ring, so Escape cancels the dialog rather than
+  closing an open dropdown. It degrades safely (Tab, click-away and focus loss
+  all still close it), but the fix is for `Dialog` to offer the focused child
+  first refusal on Escape. **Filed as #33.**
 - `Dialog` re-derives its layout on every `draw()`. Fine at these sizes; if a
   content-heavy dialog (#23) makes it hot, cache on a geometry/content change.
+- `Select`'s dropdown has no height cap and does not scroll, so a long list
+  opened near the bottom draws rows that are clipped and unreachable. This is
+  MenuBar's shipped behavior; #21 is where to revisit it rather than growing a
+  second dropdown implementation.
 
 **#12 stays reserved for co-agent Kimi K3** — but **item 5 (focus-guard
 inconsistency) is resolved by #17** (noted on the #12 tracker thread); Kimi keeps
@@ -228,7 +305,18 @@ items 1–4 and 6. Before starting anything, run `venice memory tasks` and
 mid-flight or unpushed; coordinate via the issue tracker (see the
 `kimi-k3-coagent` memory) so two agents don't collide.
 
-**Owed manual checks (sandbox has no tty):** **#20**'s five border families were
+**Owed manual checks (sandbox has no tty):** **#19**'s three controls were driven
+end to end in a pty (`examples/forms.cpp`): Space toggles a checkbox, arrows move
+the radio and fire, the Select opens below its box / commits / reopens, Tab while
+open both closes it and moves focus in one press leaving no trail, and F1 cycles
+all five families with `Ascii` emitting **zero** bytes ≥ 0x80 (`(*)` and `v`).
+What is owed is a **real-terminal** pass on the one thing a pty cannot answer:
+**do `•` U+2022 and `▾` U+25BE actually occupy one column** in the user's kitty?
+They are UAX #11 *Ambiguous*, so a terminal configured ambiguous-as-wide shifts
+the Select box and the radio rows by a column — run
+`build/examples/termforge_example_forms` and check the `]` still lands where the
+frame expects. `Ascii` (F1 ×4) also wants a bare-TTY/`FallbackDriver` pass.
+**#20**'s five border families were
 driven end to end in a pty (all five render, ASCII emits only 7-bit bytes on the
 ring, the delimited title renders as `+| Controls |----+` / `╔╣ Controls ╠══╗`)
 — what is owed is a **real-terminal** pass, because double/heavy/rounded box
