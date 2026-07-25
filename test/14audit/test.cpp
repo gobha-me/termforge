@@ -8,6 +8,7 @@
 #include "termforge/core/input.hpp"
 #include "termforge/core/screen.hpp"
 #include "termforge/core/types.hpp"
+#include "termforge/widgets/button.hpp"
 #include "termforge/widgets/list_widget.hpp"
 #include "termforge/widgets/menu_bar.hpp"
 #include "termforge/widgets/progress_bar.hpp"
@@ -174,6 +175,127 @@ TEST_CASE("TableWidget: on_select may clear and repopulate rows",
   REQUIRE(table.on_event(Event{click}));
   REQUIRE(calls == 1);
   REQUIRE(first_cell == "a");
+}
+
+// ---- #32: a callback may destroy the std::function it is running inside ----
+//
+// The #5 cases above copy the *argument* out of widget storage. These pin the
+// other half: the std::function itself is copied before invocation, so a
+// handler that reassigns or clears its own slot does not run off freed memory.
+//
+// Each callback below carries a by-value `canary` — storage that lives INSIDE
+// the closure object — and reads it *after* replacing its own slot. That read
+// is what makes these real tests: reassigning the widget's std::function
+// destroys the closure being executed, so touching a by-value capture
+// afterwards is a heap-use-after-free. Capturing only by reference would not
+// detect anything, because references point at the enclosing stack frame,
+// which is still alive. ASan is the detector; run these in build-asan.
+
+namespace {
+
+// Big enough to defeat std::function's small-object optimization and to make
+// the freed region unmistakable to ASan.
+using Canary = std::vector<int>;
+constexpr int kCanaryLen = 64;
+constexpr int kCanaryVal = 0x5A;
+
+}  // namespace
+
+TEST_CASE("Button: on_activate may replace its own handler",
+          "[widgets][button][uaf]") {
+  Button b;
+  b.set_geometry({0, 0, 10, 1});
+  int first = 0;
+  int second = 0;
+  b.on_activate([&, canary = Canary(kCanaryLen, kCanaryVal)] {
+    b.on_activate([&] { ++second; });  // destroys the closure we are inside
+    ++first;
+    REQUIRE(canary.back() == kCanaryVal);  // read-after-free without the copy
+  });
+
+  Event enter = KeyEvent{Key::Enter};
+  REQUIRE(b.on_event(enter));
+  REQUIRE(first == 1);
+  REQUIRE(second == 0);  // the replacement must not run on this press
+
+  REQUIRE(b.on_event(enter));
+  REQUIRE(first == 1);
+  REQUIRE(second == 1);
+}
+
+TEST_CASE("Button: on_activate may clear its own handler",
+          "[widgets][button][uaf][failure]") {
+  Button b;
+  b.set_geometry({0, 0, 10, 1});
+  int calls = 0;
+  b.on_activate([&, canary = Canary(kCanaryLen, kCanaryVal)] {
+    b.on_activate(nullptr);  // one-shot: disarm from inside the shot
+    ++calls;
+    REQUIRE(canary.back() == kCanaryVal);
+  });
+
+  MouseEvent click;
+  click.x = 1;
+  click.y = 0;
+  click.button = 0;
+  click.pressed = true;
+  REQUIRE(b.on_event(Event{click}));
+  REQUIRE(calls == 1);
+  REQUIRE(b.on_event(Event{click}));  // still consumed, now inert
+  REQUIRE(calls == 1);
+}
+
+TEST_CASE("TextInput: on_change may call set_text mid-callback",
+          "[widgets][input][uaf]") {
+  // Two failures in one: on_change's argument used to be a const& into m_text,
+  // so set_text() mutated the string the callback was reading; and the
+  // callback replaces its own slot, freeing the closure it runs inside.
+  TextInput in;
+  in.set_geometry({0, 0, 20, 1});
+  in.set_focused(true);
+  int calls = 0;
+  std::string seen;
+  in.on_change([&, canary = Canary(kCanaryLen, kCanaryVal)](
+                   const std::string& text) {
+    in.set_text("clobbered");        // reallocates m_text under the argument
+    in.on_change(nullptr);           // destroys the closure we are inside
+    ++calls;
+    seen = text;                     // read the arg after both mutations
+    REQUIRE(canary.back() == kCanaryVal);
+  });
+
+  KeyEvent k;
+  k.key = Key::Char;
+  k.ch = U'a';
+  REQUIRE(in.on_event(Event{k}));
+  REQUIRE(calls == 1);
+  REQUIRE(seen == "a");  // what the user typed, not the clobbered value
+  REQUIRE(in.text() == "clobbered");
+}
+
+TEST_CASE("TextInput: on_click may replace its own handler",
+          "[widgets][input][uaf]") {
+  TextInput in;
+  in.set_geometry({0, 0, 20, 1});
+  in.set_text("hello");
+  int first = 0;
+  int second = 0;
+  in.on_click([&, canary = Canary(kCanaryLen, kCanaryVal)] {
+    in.on_click([&] { ++second; });
+    ++first;
+    REQUIRE(canary.back() == kCanaryVal);
+  });
+
+  MouseEvent click;
+  click.x = 2;
+  click.y = 0;
+  click.button = 0;
+  click.pressed = true;
+  REQUIRE(in.on_event(Event{click}));
+  REQUIRE(first == 1);
+  REQUIRE(second == 0);
+  REQUIRE(in.on_event(Event{click}));
+  REQUIRE(second == 1);
 }
 
 // ---- #11: dirty()/clear-every-frame contract — widgets own their whole rect ----
