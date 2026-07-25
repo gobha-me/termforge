@@ -15,9 +15,12 @@ completed items.
 > landed (v0.0.6, see docs/modal-overlays.md), and **#20 (border styles + the
 > delimited frame title)** is landed (v0.0.7): `include/termforge/widgets/glyphs.hpp`
 > is now the **single glyph source** — `BorderStyle` (Single/Double/Rounded/
-> Heavy/Ascii) + `is_ascii()` — and #19/#21 must add their tables there rather
-> than hardcoding glyphs per widget. All three shared pieces are now in place.
-> Next: #19 (form controls), #23 (FilePicker, unblocked).
+> Heavy/Ascii) + `is_ascii()` — and #21 must add its table there rather
+> than hardcoding glyphs per widget. **#19 (form controls: Checkbox,
+> RadioGroup, Select)** is landed (v0.0.8) and added the second table
+> (`MarkGlyphs`) on that same enum, along with **#32** (the callback-copy bug
+> class from #5, fixed at all seven sites). Next: #23 (FilePicker, unblocked —
+> Dialog + ListWidget + the overlay stack), then #21/#22 (scrollbar, TabBar).
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
@@ -53,6 +56,12 @@ completed items.
   Frame (17, incl. the five border styles and the delimited title — #20),
   MenuBar (11), border glyph sets (1). 57 tests total.
 
+- [x] **3.7 — Form controls (#19)** ✅
+  Checkbox (12 tests), RadioGroup (17), Select (21), the `MarkGlyphs` table
+  (3). 53 tests in `test/20formcontrols`. One tab stop per group; the Select
+  closes on focus loss and closes-then-declines Tab; every control keys its
+  ASCII variant off the same `BorderStyle` the frames use.
+
 - [x] **3.5 — Mouse event routing in App** **DONE**
   SGR 1006/1002 mouse mode on enter, route_mouse dispatches by
   `Widget::hit_test` (topmost-first). All interactive widgets handle
@@ -75,6 +84,14 @@ completed items.
 - [x] **4.3 — widgets.cpp** ✅
   All primitives in one app: MenuBar, Label, TextInput, Button,
   ProgressBar, ListWidget, Frame, WaveformWidget. Focus model.
+
+- [x] **4.4 — dialogs.cpp** ✅
+  The modal overlay stack and the three standard dialogs (#18).
+
+- [x] **4.5 — forms.cpp** ✅
+  Checkbox + RadioGroup + Select + Buttons in one FocusRing (#19). F1
+  cycles the style across the frame *and* every control — the ASCII-tier
+  demo, and the "how do I style a whole app" answer.
 
 - [ ] **4.2 — game.cpp** (blocked on MapWidget)
 

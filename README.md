@@ -17,7 +17,7 @@ for tests.
 ## Status
 
 Core framework, KittyDriver, the widget system, and mouse routing are all
-landed and tested (355 test cases across 19 suites, gcc 13/14 + clang 19/20
+landed and tested (412 test cases across 20 suites, gcc 13/14 + clang 19/20
 green in CI, ASan/UBSan clean).
 
 Landed and verified:
@@ -37,9 +37,15 @@ Landed and verified:
   TableWidget, ListWidget, WaveformWidget, and the primitives Label, Button,
   ProgressBar, TextInput, Frame, MenuBar. Mouse event routing via
   `Widget::hit_test` (topmost-first); `FocusRing` owns the Tab order.
-  `widgets/glyphs.hpp` is the single place line glyphs are chosen — five border
-  families (`Single`/`Double`/`Rounded`/`Heavy`/`Ascii`), so an app on the
-  bare-TTY tier switches every frame to 7-bit ASCII with one enum.
+- **Form controls** — `Checkbox`, `RadioGroup` (one tab stop for the whole
+  group, arrows move the selection) and `Select` (a dropdown that closes on
+  focus loss, and closes-then-declines Tab so one press both dismisses it and
+  moves on). See `examples/forms.cpp`.
+- **Glyph families** — `widgets/glyphs.hpp` is the single place line and mark
+  glyphs are chosen: five border families (`Single`/`Double`/`Rounded`/
+  `Heavy`/`Ascii`) and the matching form-control marks, so an app on the
+  bare-TTY tier switches every frame *and* every control to 7-bit ASCII with
+  one enum.
 - **Modal dialogs** — an overlay stack in `App` that draws last and captures
   all input, plus `MessageDialog` / `ConfirmDialog` / `PromptDialog` that size
   and center themselves. See `docs/modal-overlays.md`.
