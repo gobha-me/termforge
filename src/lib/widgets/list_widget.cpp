@@ -116,10 +116,13 @@ auto ListWidget::on_event(const Event& ev) -> bool {
     }
     if (k->key == Key::Enter) {
       if (m_on_select && m_selected >= 0) {
-        // Copy the item: the callback may call set_items()/clear(),
-        // invalidating a reference into our own storage mid-call.
+        // Copy the item AND the callback: the callback may call
+        // set_items()/clear(), invalidating a reference into our own storage
+        // mid-call, and it may call on_select() to replace the std::function
+        // it is running inside (#32).
         const std::string item = m_items[static_cast<std::size_t>(m_selected)];
-        m_on_select(m_selected, item);
+        auto cb = m_on_select;
+        cb(m_selected, item);
       }
       return true;
     }
@@ -139,9 +142,10 @@ auto ListWidget::on_event(const Event& ev) -> bool {
       if (clicked >= 0 && clicked < static_cast<int>(m_items.size())) {
         set_selected(clicked);
         if (m_on_select) {
-          // Copy the item: the callback may mutate the item list.
+          // Copy the item and the callback — see the keyboard path above.
           const std::string item = m_items[static_cast<std::size_t>(clicked)];
-          m_on_select(clicked, item);
+          auto cb = m_on_select;
+          cb(clicked, item);
         }
       }
       return true;

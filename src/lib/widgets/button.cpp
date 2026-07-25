@@ -48,7 +48,11 @@ auto Button::on_event(const Event& ev) -> bool {
         (k->key == Key::Char && k->ch == U' ')) {
       m_pressed = true;
       mark_dirty();
-      if (m_on_activate) m_on_activate();
+      // Copy before invoking: the callback may reassign m_on_activate (or
+      // destroy whatever owns it), and running a std::function that has been
+      // replaced underneath is a use-after-free (issues #5, #32).
+      auto cb = m_on_activate;
+      if (cb) cb();
       return true;
     }
   }
@@ -57,7 +61,9 @@ auto Button::on_event(const Event& ev) -> bool {
     if (m->pressed && rect().contains(m->x, m->y)) {
       m_pressed = true;
       mark_dirty();
-      if (m_on_activate) m_on_activate();
+      // Copy before invoking — see the keyboard path above.
+      auto cb = m_on_activate;
+      if (cb) cb();
       return true;
     }
   }

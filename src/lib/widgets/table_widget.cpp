@@ -166,10 +166,13 @@ auto TableWidget::on_event(const Event& ev) -> bool {
         m_selected = clicked;
         mark_dirty();
         if (m_on_select) {
-          // Copy the row: the callback may call clear_rows()/add_row(),
-          // invalidating a reference into our own storage mid-call.
+          // Copy the row AND the callback: the callback may call
+          // clear_rows()/add_row(), invalidating a reference into our own
+          // storage mid-call, and it may call on_select() to replace the
+          // std::function it is running inside (#32).
           const auto row = m_rows[static_cast<std::size_t>(clicked)];
-          m_on_select(clicked, row);
+          auto cb = m_on_select;
+          cb(clicked, row);
         }
       }
       return true;  // any click inside the table is consumed
