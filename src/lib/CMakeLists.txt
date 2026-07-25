@@ -20,6 +20,7 @@ add_library(${PROJECT_NAME}_lib STATIC
   widgets/focus_ring.cpp
   widgets/dialog.cpp
   widgets/dialogs.cpp
+  widgets/checkbox.cpp
   drivers/ansi_rgb_driver.cpp
   drivers/fallback_driver.cpp
   drivers/kitty_driver.cpp
