@@ -156,6 +156,13 @@ auto Dialog::draw(Screen& screen) -> void {
   clear_dirty();
 }
 
+auto Dialog::hit_test_tree(int px, int py) const -> bool {
+  if (hit_test(px, py)) return true;
+  for (const Widget* child : m_children)
+    if (child != nullptr && child->hit_test(px, py)) return true;
+  return false;
+}
+
 auto Dialog::on_event(const Event& ev) -> bool {
   if (const auto* k = std::get_if<KeyEvent>(&ev)) {
     // The focused child gets first refusal (issue #33): a control with a
@@ -184,7 +191,27 @@ auto Dialog::on_event(const Event& ev) -> bool {
     // here keeps a stray right-click from confirming a dialog without
     // changing Button under anyone's feet.
     if (!activating_press && !wheel) return true;
-    if (activating_press) m_ring.focus_at(m->x, m->y);
+
+    // Pre-route: a child's rect-exceeding hit area wins over z-order (#37).
+    // Select's open dropdown paints below rect() and overlaps the button row
+    // added after it; focus_at and the child loop both walk last-added-first,
+    // so without this a click on a rendered option row would focus and fire
+    // the button UNDERNEATH it (submitting the stale value) after closing
+    // the dropdown uncommitted. The control that owns the pixels gets the
+    // press. Same guard MenuBar's and Select's headers tell embedders to
+    // hand-roll; a dialog's children are private, so it lives here.
+    if (activating_press) {
+      for (Widget* child : m_children) {
+        if (child == nullptr) continue;
+        const Rect cr = child->rect();
+        if (!cr.contains(m->x, m->y) && child->hit_test(m->x, m->y)) {
+          m_ring.focus(child);
+          child->on_event(ev);
+          return true;
+        }
+      }
+      m_ring.focus_at(m->x, m->y);
+    }
     // Topmost-first, matching App::route_mouse: last added wins.
     for (auto it = m_children.rbegin(); it != m_children.rend(); ++it) {
       if ((*it)->hit_test(m->x, m->y)) {

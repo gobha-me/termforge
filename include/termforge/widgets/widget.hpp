@@ -80,6 +80,16 @@ class Widget {
     return m_rect.contains(px, py);
   }
 
+  // Hit-test for this widget AS A TREE ROOT: containers override to include
+  // their children's (possibly rect-exceeding) hit areas, so a router that
+  // gates delivery on one call — App's overlay dispatch — reaches a child
+  // drawn outside the container's rect, e.g. a Select's open dropdown
+  // painted below its Dialog (#37). The base is hit_test(): leaf widgets
+  // and non-container composites need nothing more.
+  [[nodiscard]] virtual auto hit_test_tree(int px, int py) const -> bool {
+    return hit_test(px, py);
+  }
+
   // Advisory: has this widget's visible content changed since the last draw()?
   // The framework does NOT use this to skip draw() (see the immediate-mode note
   // above — draw() runs and fully repaints every frame). It is a hint an app's

@@ -24,10 +24,16 @@
 //
 // Input arrives already filtered: App gives the top overlay every key, so a
 // dialog's Escape is the dialog's Escape (it never reaches App::on_event's
-// default quit). Inside, keys go to the dialog's own FocusRing FIRST, so Tab
-// cycles the controls and cannot escape the modal — and a focused control
-// with a transient sub-state (Select's open dropdown) gets first refusal on
-// Escape before it means "cancel the dialog" (issue #33).
+// default quit). Mouse delivery is gated on hit_test_tree(): the dialog's
+// rect plus its children's hit areas, so a Select's open dropdown painted
+// below the bottom border still takes clicks (issue #37). Inside, keys go to
+// the dialog's own FocusRing FIRST, so Tab cycles the controls and cannot
+// escape the modal — and a focused control with a transient sub-state
+// (Select's open dropdown) gets first refusal on Escape before it means
+// "cancel the dialog" (issue #33). Mouse presses inside are pre-routed to a
+// child whose rect-exceeding hit area owns the point (the same #37 case:
+// a dropdown row overlapping the button row commits the option, not the
+// button underneath).
 //
 // Note the layering rule this inherits from push_overlay: the app owns the
 // dialog object. A callback must not destroy the dialog it was invoked from —
@@ -97,6 +103,12 @@ class Dialog : public Widget {
 
   auto draw(Screen& screen) -> void override;
   auto on_event(const Event& ev) -> bool override;
+
+  // Covers the dialog's rect plus every child's hit area -- including a
+  // Select's open dropdown, which paints below the dialog's bottom border
+  // (#37). App's overlay dispatch gates mouse delivery on this, so without
+  // it those rendered rows are dead or, worse, dialog-dismissing.
+  [[nodiscard]] auto hit_test_tree(int px, int py) const -> bool override;
 
  protected:
   // Register a control: it is drawn by the subclass and, unless tab_stop is

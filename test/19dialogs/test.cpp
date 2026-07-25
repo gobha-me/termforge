@@ -21,6 +21,7 @@
 #include "termforge/core/app.hpp"
 #include "termforge/core/screen.hpp"
 #include "termforge/core/types.hpp"
+#include "termforge/widgets/button.hpp"
 #include "termforge/widgets/dialog.hpp"
 #include "termforge/widgets/dialogs.hpp"
 #include "termforge/widgets/select.hpp"
@@ -29,6 +30,7 @@
 using termforge::App;
 using termforge::Backdrop;
 using termforge::BorderStyle;
+using termforge::Button;
 using termforge::Cell;
 using termforge::ConfirmDialog;
 using termforge::Dialog;
@@ -667,7 +669,7 @@ TEST_CASE("Dialog: a Select in a dialog takes one Escape for its dropdown",
           "[dialog][failure]") {
   // The concrete #33 case: with the dropdown open, Escape closes the LIST;
   // the next Escape cancels the dialog. Previously the first press cancelled
-  // the whole dialog \u2014 the opposite of what the user asked for.
+  // the whole dialog — the opposite of what the user asked for.
   class SelectDialog final : public Dialog {
    public:
     SelectDialog() : Dialog("S"), select{{"one", "two", "three"}} {
@@ -697,6 +699,108 @@ TEST_CASE("Dialog: a Select in a dialog takes one Escape for its dropdown",
 
   REQUIRE(d.on_event(key(Key::Escape)));  // second: the dialog's cancel
   REQUIRE(closes == 1);
+}
+
+TEST_CASE("Dialog: a click on a dropdown row over a button commits the option",
+          "[dialog][mouse][failure]") {
+  // #37 layer 1: the open dropdown overlaps the button row added after it.
+  // focus_at and the child loop both walk last-added-first, so unrouted the
+  // press focused and fired the button UNDER the rendered option (closing
+  // the dropdown uncommitted and submitting the stale value).
+  class OverlapDialog final : public Dialog {
+   public:
+    OverlapDialog() : Dialog("S"), select{{"one", "two", "three"}} {
+      add_child(&select);
+      add_child(&ok);
+    }
+    Select select;
+    Button ok{"OK"};
+
+   protected:
+    [[nodiscard]] auto content_rows() const -> int override { return 1; }
+    [[nodiscard]] auto content_cols() const -> int override { return 12; }
+    auto layout_content(Rect area) -> void override {
+      select.set_geometry(area);
+      // The button renders exactly where the open dropdown's first option
+      // row lands: the overlap the routing has to see through.
+      ok.set_geometry(Rect{area.x, area.y + 1, 6, 1});
+    }
+    auto draw_content(Screen& screen) -> void override {
+      ok.draw(screen);
+      select.draw(screen);
+    }
+  };
+
+  OverlapDialog d;
+  Screen s{40, 12};
+  d.draw(s);  // layout: the select gets a real rect
+
+  int ok_presses = 0;
+  d.ok.on_activate([&] { ++ok_presses; });
+  int picked = -1;
+  d.select.on_change([&](int i, const std::string&) { picked = i; });
+
+  const Rect sr = d.select.rect();
+  REQUIRE(d.on_event(press(sr.x + 1, sr.y)));  // open the dropdown
+  REQUIRE(d.select.dropdown_open());
+
+  REQUIRE(d.on_event(press(sr.x + 1, sr.y + 2)));  // "two", over the OK button
+  REQUIRE(picked == 1);                            // the option committed...
+  REQUIRE(d.select.selected() == 1);
+  REQUIRE(ok_presses == 0);  // ...NOT the button underneath
+  REQUIRE_FALSE(d.select.dropdown_open());
+}
+
+TEST_CASE("App: a dropdown past the dialog rect still takes clicks",
+          "[dialog][mouse][failure]") {
+  // #37 layer 2: the open dropdown paints BELOW the dialog's bottom border.
+  // Gating overlay delivery on the top widget's rect made those rendered
+  // rows dead -- or, with dismiss_on_click_outside, popped the dialog while
+  // the user clicked a visible option. Delivery now uses the overlay tree's
+  // hit test.
+  class TallSelectDialog final : public Dialog {
+   public:
+    TallSelectDialog()
+        : Dialog("S"), select{{"one", "two", "three", "four", "five"}} {
+      add_child(&select);
+    }
+    Select select;
+
+   protected:
+    [[nodiscard]] auto content_rows() const -> int override { return 1; }
+    [[nodiscard]] auto content_cols() const -> int override { return 12; }
+    auto layout_content(Rect area) -> void override {
+      // At the bottom of the inner area, so the 5-row list spills past the
+      // dialog's border when open.
+      select.set_geometry(Rect{area.x, area.y, area.w, 1});
+    }
+    auto draw_content(Screen& screen) -> void override { select.draw(screen); }
+  };
+
+  OverlayProbe app;
+  TallSelectDialog d;
+  int dismisses = 0;
+  d.on_close([&] { ++dismisses; });
+  app.push_overlay(d, OverlayOptions{Backdrop::None, true});
+
+  Screen s{40, 12};
+  app.draw_overlays(s);  // draws the dialog -> it lays out
+
+  const Rect sr = d.select.rect();
+  const Rect dr = d.rect();
+  app.dispatch_event(press(sr.x + 1, sr.y));  // open the dropdown
+  REQUIRE(d.select.dropdown_open());
+
+  // Row "five" renders below the dialog's rect. A left press there must
+  // reach the select, commit the option, and NOT dismiss the dialog.
+  const int row_y = sr.y + 5;  // dropdown row index 4 ("five")
+  REQUIRE(row_y >= dr.y + dr.h);  // the premise: outside the dialog rect
+  int picked = -1;
+  d.select.on_change([&](int i, const std::string&) { picked = i; });
+  app.dispatch_event(press(sr.x + 1, row_y));
+  REQUIRE(picked == 4);
+  REQUIRE(dismisses == 0);   // still on the stack, still closable normally
+  REQUIRE(app.keys_seen() == 0);  // nothing leaked to the app underneath
 }
 
 TEST_CASE("Dialog: Escape with no controls still cancels", "[dialog]") {
