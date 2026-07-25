@@ -23,6 +23,7 @@ add_library(${PROJECT_NAME}_lib STATIC
   widgets/checkbox.cpp
   widgets/radio_group.cpp
   widgets/select.cpp
+  widgets/file_picker_dialog.cpp
   drivers/ansi_rgb_driver.cpp
   drivers/fallback_driver.cpp
   drivers/kitty_driver.cpp

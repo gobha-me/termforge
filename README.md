@@ -48,7 +48,9 @@ Landed and verified:
   one enum.
 - **Modal dialogs** — an overlay stack in `App` that draws last and captures
   all input, plus `MessageDialog` / `ConfirmDialog` / `PromptDialog` that size
-  and center themselves. See `docs/modal-overlays.md`.
+  and center themselves, and `FilePickerDialog`, a modal file browser composed
+  from those pieces (path field + dirs-first listing + OK/Cancel) with
+  permission errors surfaced as a nested dialog. See `docs/modal-overlays.md`.
 
 Deferred per the roadmap: `SixelDriver` (Epic 5), MapWidget + game example,
 SIMD waveform rasterization, framebuffer driver.
