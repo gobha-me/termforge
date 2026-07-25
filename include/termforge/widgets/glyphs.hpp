@@ -21,13 +21,21 @@
 //
 // Every glyph in every set is exactly one terminal column wide (see
 // detail/width.hpp). That is what lets Frame's title arithmetic, and Dialog's
-// sizing which mirrors it, be style-independent; test/12primitives pins it.
+// sizing which mirrors it, be style-independent; test/12primitives pins it for
+// BorderGlyphs and test/20formcontrols pins it for MarkGlyphs.
 //
-// Extension point for the rest of the widget-gap wave: Checkbox/RadioGroup/
-// Select (#19) and the shared scrollbar (#21) need their own tables ([x], (*),
-// v, and │/█ vs |/#). Those belong HERE, keyed off this same enum — in practice
-// they only need the Unicode-vs-ASCII bit, which is what is_ascii() is for. Add
-// tables, not a second enum.
+// #19 landed the second table (MarkGlyphs, below) on this same enum, as the
+// extension note here asked. Its two Unicode marks, • U+2022 and ▾ U+25BE, are
+// UAX #11 *Ambiguous* width — but so is the whole Box Drawing block U+2500-257F
+// that all four Unicode border families already draw with, so they are the
+// existing bet, not a new one: a terminal configured ambiguous-as-wide shifts
+// them either way, and BorderStyle::Ascii is the escape hatch for exactly that.
+// detail/width.hpp measures both as one column.
+//
+// Still an extension point for the shared scrollbar (#21), which needs │/█ vs
+// |/#. That belongs HERE too, keyed off this same enum — in practice it only
+// needs the Unicode-vs-ASCII bit, which is what is_ascii() is for. Add tables,
+// not a second enum.
 //
 // ProgressBar's █/─ and WaveformWidget's █/▀/▄ are deliberately NOT here yet:
 // they are content glyphs, not border glyphs, they need a different table and a
@@ -83,6 +91,53 @@ struct BorderGlyphs {
 // outside 7-bit ASCII? (#19's (•) vs (*), #21's █ vs #.)
 [[nodiscard]] constexpr auto is_ascii(BorderStyle style) noexcept -> bool {
   return style == BorderStyle::Ascii;
+}
+
+// The marks form controls draw with (#19):
+//
+//   [x] Enable      check_open  check_mark  check_close
+//   (•) Dark        radio_open  radio_mark  radio_close
+//   [ ansi-rgb ▾ ]  check_open              check_close  arrow_down
+//
+// There is no field for the *unset* state: it is a space in every family, and
+// a family that wanted a glyph there would add one rather than have four
+// families carry a redundant " ".
+struct MarkGlyphs {
+  std::string_view check_open, check_close;
+  std::string_view check_mark;
+  std::string_view radio_open, radio_close;
+  std::string_view radio_mark;
+  std::string_view arrow_down;
+};
+
+// Two rows, not five. Unlike borders — where each family is a genuinely
+// different set of box-drawing characters — the only thing that varies for a
+// mark is whether it may leave 7-bit ASCII. The brackets and the checkbox "x"
+// are ASCII in every family; they are listed anyway so no widget hardcodes "["
+// and this header stays the single source.
+inline constexpr MarkGlyphs kUnicodeMarks{"[", "]", "x", "(", ")", "•", "▾"};
+inline constexpr MarkGlyphs kAsciiMarks{"[", "]", "x", "(", ")", "*", "v"};
+
+// A fall-through switch rather than `is_ascii(style) ? ascii : unicode`,
+// which reads shorter but drops the -Wswitch tripwire — and rather than five
+// near-identical rows, which is the comment-vs-formula drift #20 existed to
+// kill. This way a newly added style is a compile error here (with CI's
+// -Werror) even though the answer is almost certainly "put it in the Unicode
+// group", and nothing is duplicated.
+[[nodiscard]] constexpr auto mark_glyphs(BorderStyle style) noexcept
+    -> MarkGlyphs {
+  switch (style) {
+    case BorderStyle::Single:
+    case BorderStyle::Double:
+    case BorderStyle::Rounded:
+    case BorderStyle::Heavy:
+      return kUnicodeMarks;
+    case BorderStyle::Ascii:
+      return kAsciiMarks;
+  }
+  // Unreachable: every enumerator returns above. No `default:` on purpose —
+  // same reason as border_glyphs().
+  return kUnicodeMarks;
 }
 
 }  // namespace termforge
