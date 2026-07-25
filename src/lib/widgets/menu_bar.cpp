@@ -210,19 +210,19 @@ auto MenuBar::on_event(const Event& ev) -> bool {
       return true;
     }
     if (k->key == Key::Left) {
+      // Route through open_menu so an EMPTY target menu does not resurrect
+      // an invisible dropdown that swallows every key until Escape (#12).
+      const bool was_open = m_open;
       close_dropdown();
-      m_active = (m_active - 1 + menu_count) % menu_count;
-      m_open = true;
-      m_selected = 0;
-      mark_dirty();
+      open_menu((m_active - 1 + menu_count) % menu_count);
+      if (m_open || was_open) mark_dirty();
       return true;
     }
     if (k->key == Key::Right) {
+      const bool was_open = m_open;
       close_dropdown();
-      m_active = (m_active + 1) % menu_count;
-      m_open = true;
-      m_selected = 0;
-      mark_dirty();
+      open_menu((m_active + 1) % menu_count);
+      if (m_open || was_open) mark_dirty();
       return true;
     }
     if (k->key == Key::Enter) {

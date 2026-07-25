@@ -194,3 +194,23 @@ TEST_CASE("TableWidget: set_row out-of-bounds is a no-op", "[tablewidget][failur
   t.draw(s);
   REQUIRE(s.at(0, 1).text == "x");
 }
+
+TEST_CASE("TableWidget: clear_rows resets the selection (#12)", "[tablewidget][failure]") {
+  Screen s{20, 4};
+  TableWidget t;
+  t.set_geometry({0, 0, 20, 4});
+  t.set_columns({{"N", Align::Left}, {"V", Align::Left}});
+  t.add_row({"a", "1"});
+  t.add_row({"b", "2"});
+  t.set_selected(1);
+  REQUIRE(t.selected() == 1);
+
+  t.clear_rows();
+  REQUIRE(t.selected() == -1);
+
+  // Repopulation must not resurrect a stale highlight: the user never chose
+  // a row of the new content.
+  t.add_row({"c", "3"});
+  t.draw(s);
+  REQUIRE(t.selected() == -1);
+}

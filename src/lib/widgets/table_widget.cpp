@@ -35,6 +35,8 @@ auto TableWidget::set_row(std::size_t row,
 auto TableWidget::clear_rows() -> void {
   m_rows.clear();
   m_scroll = 0;
+  m_selected = -1;  // no rows => no selection; a repopulated table must not
+                    // highlight a row the user never chose (#12)
   mark_dirty();
 }
 

@@ -30,6 +30,9 @@ class TextInput final : public Widget {
     m_text = std::move(text);
     m_cursor = static_cast<int>(m_text.size());
     m_scroll = 0;
+    // Programmatic replace must leave the cursor (at end) inside the visible
+    // window, not hidden past the right edge until the next keypress (#12).
+    ensure_cursor_visible();
     mark_dirty();
   }
 

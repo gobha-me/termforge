@@ -58,7 +58,7 @@ auto Button::on_event(const Event& ev) -> bool {
   }
 
   if (const auto* m = std::get_if<MouseEvent>(&ev)) {
-    if (m->pressed && rect().contains(m->x, m->y)) {
+    if (m->pressed && m->button == 0 && rect().contains(m->x, m->y)) {
       m_pressed = true;
       mark_dirty();
       // Copy before invoking — see the keyboard path above.

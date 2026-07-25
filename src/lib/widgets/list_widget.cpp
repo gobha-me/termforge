@@ -137,7 +137,7 @@ auto ListWidget::on_event(const Event& ev) -> bool {
       set_selected(m_selected + 3);
       return true;
     }
-    if (m->pressed && rect().contains(m->x, m->y)) {
+    if (m->pressed && m->button == 0 && rect().contains(m->x, m->y)) {
       const int clicked = m_scroll + (m->y - rect().y);
       if (clicked >= 0 && clicked < static_cast<int>(m_items.size())) {
         set_selected(clicked);

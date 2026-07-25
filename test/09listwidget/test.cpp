@@ -142,6 +142,24 @@ TEST_CASE("ListWidget: mouse click selects item", "[listwidget]") {
   REQUIRE(l.selected() == 2);
 }
 
+TEST_CASE("ListWidget: right/middle click does not select or fire (#12)", "[listwidget][failure]") {
+  Screen s{20, 5};
+  ListWidget l;
+  l.set_geometry({0, 0, 20, 5});
+  l.set_items({"a", "b", "c"});
+
+  int fired = 0;
+  l.on_select([&](int, const std::string&) { ++fired; });
+
+  // .button precedes .pressed in MouseEvent, so name both.
+  Event right = MouseEvent{.x = 1, .y = 2, .button = 2, .pressed = true};
+  REQUIRE_FALSE(l.on_event(right));
+  Event middle = MouseEvent{.x = 1, .y = 1, .button = 1, .pressed = true};
+  REQUIRE_FALSE(l.on_event(middle));
+  REQUIRE(l.selected() == 0);  // untouched
+  REQUIRE(fired == 0);
+}
+
 TEST_CASE("ListWidget: zero-size rect doesn't crash", "[listwidget][failure]") {
   Screen s{10, 10};
   ListWidget l;

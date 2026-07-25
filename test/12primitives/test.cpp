@@ -188,6 +188,27 @@ TEST_CASE("Button: mouse click outside rect doesn't fire", "[primitives][button]
   REQUIRE_FALSE(fired);
 }
 
+TEST_CASE("Button: right/middle click does not activate (#12)", "[primitives][button][failure]") {
+  Screen s{10, 3};
+  Button b{"Click"};
+  b.set_geometry({0, 0, 10, 3});
+
+  bool fired = false;
+  b.on_activate([&] { fired = true; });
+
+  // .button comes before .pressed in MouseEvent, so name everything past x/y.
+  Event right = MouseEvent{.x = 5, .y = 1, .button = 2, .pressed = true};
+  REQUIRE_FALSE(b.on_event(right));
+  Event middle = MouseEvent{.x = 5, .y = 1, .button = 1, .pressed = true};
+  REQUIRE_FALSE(b.on_event(middle));
+  REQUIRE_FALSE(fired);
+
+  // Left still works.
+  Event left = MouseEvent{.x = 5, .y = 1, .button = 0, .pressed = true};
+  REQUIRE(b.on_event(left));
+  REQUIRE(fired);
+}
+
 // ── ProgressBar ─────────────────────────────────────────────────────────────
 
 TEST_CASE("ProgressBar: 0% renders all empty", "[primitives][progress]") {
@@ -400,6 +421,20 @@ TEST_CASE("TextInput: cursor renders as inverted cell", "[primitives][input]") {
   const auto& cell = s.at(2, 0);
   REQUIRE(cell.fg == Rgb(0x0A, 0x0A, 0x14));  // cursor_fg
   REQUIRE(cell.bg == Rgb(0xE0, 0xE0, 0xF0));  // cursor_bg
+}
+
+TEST_CASE("TextInput: set_text scrolls so the cursor stays visible (#12)", "[primitives][input]") {
+  Screen s{10, 1};
+  TextInput ti;
+  ti.set_geometry({0, 0, 10, 1});
+  ti.set_focused(true);
+
+  // 20 chars in a 10-wide field: cursor at end must remain on screen
+  // immediately after the programmatic replace, not after the next keypress.
+  ti.set_text("0123456789abcdefghij");
+  ti.draw(s);
+  REQUIRE(s.at(9, 0).fg == Rgb(0x0A, 0x0A, 0x14));  // cursor_fg
+  REQUIRE(s.at(9, 0).bg == Rgb(0xE0, 0xE0, 0xF0));  // cursor_bg
 }
 
 // ── Frame ───────────────────────────────────────────────────────────────────
@@ -827,20 +862,38 @@ TEST_CASE("MenuBar: Down/Up navigate dropdown items", "[primitives][menu]") {
   REQUIRE(selected_idx == 1);
 }
 
-TEST_CASE("MenuBar: Left/Right in dropdown switches menus", "[primitives][menu]") {
+TEST_CASE("MenuBar: Left/Right onto an EMPTY menu opens no invisible dropdown (#12)", "[primitives][menu][failure]") {
   MenuBar mb;
-  mb.add_menu({"File", {{"New", {}}}});
-  mb.add_menu({"Edit", {{"Cut", {}}}});
+  bool file_fired = false;
+  mb.add_menu({"File", {{"New", [&] { file_fired = true; }}}});
+  mb.add_menu({"Empty", {}});
   mb.set_geometry({0, 0, 40, 1});
 
   Event enter = KeyEvent{Key::Enter};
   mb.on_event(enter);  // open File
+  REQUIRE(mb.dropdown_open());
 
   Event right = KeyEvent{Key::Right};
-  mb.on_event(right);  // switch to Edit
+  mb.on_event(right);  // land on the empty menu
   REQUIRE(mb.active_menu() == 1);
-  REQUIRE(mb.dropdown_open());
+  REQUIRE_FALSE(mb.dropdown_open());  // no invisible dropdown
+
+  // Keys are NOT trapped: with the dropdown closed, Enter just re-attempts
+  // the (empty) active menu; Right moves on; nothing can fire a phantom item.
+  mb.on_event(enter);
+  REQUIRE_FALSE(mb.dropdown_open());
+  REQUIRE_FALSE(file_fired);
+  mb.on_event(right);  // wraps back to File
+  REQUIRE(mb.active_menu() == 0);
+
+  // And Left onto an empty menu behaves the same from the other side.
+  mb.on_event(enter);  // open File
+  Event left = KeyEvent{Key::Left};
+  mb.on_event(left);  // wrap around onto Empty
+  REQUIRE(mb.active_menu() == 1);
+  REQUIRE_FALSE(mb.dropdown_open());
 }
+
 
 TEST_CASE("TextInput: UTF-8 aware backspace removes whole code point",
           "[primitives][input]") {
