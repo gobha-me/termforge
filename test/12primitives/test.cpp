@@ -437,6 +437,57 @@ TEST_CASE("TextInput: set_text scrolls so the cursor stays visible (#12)", "[pri
   REQUIRE(s.at(9, 0).bg == Rgb(0xE0, 0xE0, 0xF0));  // cursor_bg
 }
 
+TEST_CASE("TextInput: set_text BEFORE first layout still shows the cursor (#40)",
+          "[primitives][input][failure]") {
+  // The #12 fix scrolled inside set_text, which no-ops at rect().w == 0 --
+  // the exact ordering PromptDialog::set_value produces (layout_content runs
+  // on first Dialog::draw). The window is now reconciled in draw(), which
+  // always has geometry.
+  Screen s{10, 1};
+  TextInput ti;
+  ti.set_text("0123456789abcdefghij");  // no geometry yet
+  ti.set_geometry({0, 0, 10, 1});
+  ti.set_focused(true);
+
+  ti.draw(s);
+  REQUIRE(s.at(9, 0).fg == Rgb(0x0A, 0x0A, 0x14));  // cursor visible at col 9
+  REQUIRE(s.at(9, 0).bg == Rgb(0xE0, 0xE0, 0xF0));
+}
+
+TEST_CASE("TextInput: an unfocused pre-filled field head-anchors (#40)",
+          "[primitives][input][failure]") {
+  // With no cursor on screen there is no reason to show the tail; the field
+  // reads from the start like v0.0.7's set_text did.
+  Screen s{10, 1};
+  TextInput ti;
+  ti.set_geometry({0, 0, 10, 1});
+  ti.set_text("0123456789abcdefghij");  // 20 chars in a 10-wide field
+  // deliberately NOT focused
+
+  ti.draw(s);
+  std::string row;
+  for (int x = 0; x < 10; ++x) row += s.at(x, 0).text;
+  REQUIRE(row == "0123456789");
+}
+
+TEST_CASE("TextInput: focusing a pre-filled field reveals the cursor",
+          "[primitives][input]") {
+  // The two anchors hand off cleanly: head-anchored while unfocused, cursor
+  // visible the moment focus arrives -- no keypress required.
+  Screen s{10, 1};
+  TextInput ti;
+  ti.set_geometry({0, 0, 10, 1});
+  ti.set_text("0123456789abcdefghij");
+
+  ti.draw(s);
+  REQUIRE(s.at(0, 0).text == "0");  // head-anchored
+
+  ti.set_focused(true);
+  ti.draw(s);
+  REQUIRE(s.at(9, 0).fg == Rgb(0x0A, 0x0A, 0x14));  // cursor window active
+  REQUIRE(s.at(9, 0).bg == Rgb(0xE0, 0xE0, 0xF0));
+}
+
 // ── Frame ───────────────────────────────────────────────────────────────────
 
 TEST_CASE("Frame: draws border corners", "[primitives][frame]") {

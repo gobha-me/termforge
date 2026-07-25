@@ -60,6 +60,17 @@ auto TextInput::draw(Screen& screen) -> void {
     return;
   }
 
+  // Reconcile the scroll window every frame, focus-aware (#40). Focused: the
+  // cursor must be visible -- this is also where the #12 item-4 guarantee
+  // lives now, since set_text before first layout has no width to clamp
+  // against. Unfocused: head-anchor, so a pre-filled field (a URL, a path)
+  // reads from the start instead of silently showing the tail; the cursor is
+  // not painted then, so nothing is lost by parking the window at 0.
+  if (focused())
+    ensure_cursor_visible();
+  else
+    m_scroll = 0;
+
   // Own the whole rect: blank every row (not just the input row) so a tall
   // rect leaves no stale cells (immediate-mode contract, see widget.hpp).
   screen.fill_rect(r.x, r.y, r.w, r.h, m_fg, m_bg);
