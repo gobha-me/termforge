@@ -38,6 +38,13 @@ include/version.hpp
 *.out
 *.app
 
+# Core dumps. Deliberately crashing a test binary is a normal part of
+# verifying a [uaf] case (revert the fix, confirm it segfaults), and the
+# dump lands in the repo root — a 10MB blob one `git add -A` away from
+# history.
+core
+core.*
+
 # editor
 *.swp
 *.swo
