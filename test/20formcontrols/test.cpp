@@ -13,8 +13,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "detail/width.hpp"
@@ -24,6 +26,7 @@
 #include "termforge/widgets/focus_ring.hpp"
 #include "termforge/widgets/glyphs.hpp"
 #include "termforge/widgets/radio_group.hpp"
+#include "termforge/widgets/select.hpp"
 #include "termforge/widgets/widget.hpp"
 
 using termforge::BorderStyle;
@@ -39,6 +42,7 @@ using termforge::MouseEvent;
 using termforge::RadioGroup;
 using termforge::Rect;
 using termforge::Screen;
+using termforge::Select;
 using termforge::Widget;
 
 namespace {
@@ -675,4 +679,405 @@ TEST_CASE("RadioGroup: on_change may call set_options (drill-down)",
   REQUIRE(calls == 1);
   REQUIRE(g.option_count() == 1);
   REQUIRE(g.selected() == 0);
+}
+
+// ── Select ──────────────────────────────────────────────────────────────────
+
+namespace {
+
+auto make_select(Select& sel, int w = 14) -> void {
+  sel.set_options({"kitty", "ansi-rgb", "fallback"});
+  sel.set_geometry({0, 0, w, 1});
+}
+
+}  // namespace
+
+TEST_CASE("Select: the closed box renders the value between the chrome",
+          "[form][select]") {
+  Screen s{20, 5};
+  Select sel;
+  make_select(sel);
+
+  sel.draw(s);
+  REQUIRE(row_text(s, 0, 0, 14) == "[ kitty    ▾ ]");
+  REQUIRE(s.at(13, 0).text == "]");  // the bracket sits on the last column
+  REQUIRE_FALSE(sel.dropdown_open());
+  // Nothing below the closed box.
+  REQUIRE(s.at(0, 1).blank());
+}
+
+TEST_CASE("Select: the closed box never writes outside its rect",
+          "[form][select][failure]") {
+  // Every width from nothing to comfortable. kChromeCols is 6, so most of
+  // these have no room for the value at all.
+  for (int w = 0; w <= 14; ++w) {
+    Screen s{20, 2};
+    Select sel;
+    sel.set_options({"ansi-rgb"});
+    sel.set_geometry({0, 0, w, 1});
+    sel.draw(s);
+    for (int x = std::max(0, w); x < 20; ++x) REQUIRE(s.at(x, 0).blank());
+  }
+}
+
+TEST_CASE("Select: Enter, Down and Space open the list", "[form][select]") {
+  for (const auto opener : {Key::Enter, Key::Down}) {
+    Select sel;
+    make_select(sel);
+    REQUIRE(sel.on_event(key(opener)));
+    REQUIRE(sel.dropdown_open());
+    REQUIRE(sel.highlighted() == 0);
+  }
+  Select sel;
+  make_select(sel);
+  REQUIRE(sel.on_event(ch(U' ')));
+  REQUIRE(sel.dropdown_open());
+}
+
+TEST_CASE("Select: Escape while closed is declined",
+          "[form][select][failure]") {
+  // A Select inside a Dialog must not eat the dialog's cancel.
+  Select sel;
+  make_select(sel);
+  REQUIRE_FALSE(sel.on_event(key(Key::Escape)));
+}
+
+TEST_CASE("Select: the open list draws below the rect at dropdown_rect",
+          "[form][select]") {
+  Screen s{20, 6};
+  Select sel;
+  make_select(sel);
+  sel.set_selected(1);
+  REQUIRE(sel.on_event(key(Key::Enter)));
+
+  sel.draw(s);
+  REQUIRE(row_text(s, 0, 0, 14) == "[ ansi-rgb ▾ ]");
+  REQUIRE(row_text(s, 1, 0, 9) == " kitty   ");
+  REQUIRE(row_text(s, 2, 0, 9) == " ansi-rgb");
+  REQUIRE(row_text(s, 3, 0, 9) == " fallback");
+  REQUIRE(s.at(0, 4).blank());  // nothing past the last option
+  // The highlight starts on the current selection, not at the top.
+  REQUIRE(sel.highlighted() == 1);
+  REQUIRE_FALSE(s.at(0, 2).bg == s.at(0, 1).bg);
+}
+
+TEST_CASE("Select: hit_test covers the dropdown only while it is open",
+          "[form][select][mouse]") {
+  Select sel;
+  make_select(sel);
+
+  REQUIRE(sel.hit_test(3, 0));
+  REQUIRE_FALSE(sel.hit_test(3, 2));  // closed: the rows below are not ours
+
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(sel.hit_test(3, 2));
+  REQUIRE(sel.hit_test(3, 3));
+  REQUIRE_FALSE(sel.hit_test(3, 4));   // one past the last option
+  REQUIRE_FALSE(sel.hit_test(30, 2));  // right of the dropdown
+}
+
+TEST_CASE("Select: arrows move the highlight without committing",
+          "[form][select]") {
+  Select sel;
+  make_select(sel);
+  int calls = 0;
+  sel.on_change([&](int, const std::string&) { ++calls; });
+
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(sel.on_event(key(Key::Down)));
+  REQUIRE(sel.highlighted() == 1);
+  REQUIRE(sel.selected() == 0);  // not committed
+  REQUIRE(sel.on_event(key(Key::End)));
+  REQUIRE(sel.highlighted() == 2);
+  REQUIRE(sel.on_event(key(Key::Home)));
+  REQUIRE(sel.highlighted() == 0);
+  // Clamps at both ends.
+  REQUIRE(sel.on_event(key(Key::Up)));
+  REQUIRE(sel.highlighted() == 0);
+  REQUIRE(calls == 0);
+  REQUIRE(sel.selected() == 0);
+}
+
+TEST_CASE("Select: Enter commits once, closes, and reports index and text",
+          "[form][select]") {
+  Select sel;
+  make_select(sel);
+  std::vector<std::pair<int, std::string>> seen;
+  sel.on_change([&](int i, const std::string& t) { seen.emplace_back(i, t); });
+
+  REQUIRE(sel.on_event(key(Key::Enter)));  // open
+  REQUIRE(sel.on_event(key(Key::Down)));
+  REQUIRE(sel.on_event(key(Key::Down)));
+  REQUIRE(sel.on_event(key(Key::Enter)));  // commit
+
+  REQUIRE_FALSE(sel.dropdown_open());
+  REQUIRE(sel.selected() == 2);
+  REQUIRE(sel.selected_text() == "fallback");
+  REQUIRE(seen.size() == 1);
+  REQUIRE(seen[0].first == 2);
+  REQUIRE(seen[0].second == "fallback");
+}
+
+TEST_CASE("Select: Escape while open closes without committing",
+          "[form][select][failure]") {
+  Select sel;
+  make_select(sel);
+  int calls = 0;
+  sel.on_change([&](int, const std::string&) { ++calls; });
+
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(sel.on_event(key(Key::Down)));
+  REQUIRE(sel.on_event(key(Key::Escape)));
+  REQUIRE_FALSE(sel.dropdown_open());
+  REQUIRE(sel.selected() == 0);  // unchanged
+  REQUIRE(calls == 0);
+}
+
+TEST_CASE("Select: Tab while open closes the list AND cycles the ring",
+          "[form][select][focus][failure]") {
+  // The headline divergence from MenuBar (which consumes every key while
+  // open). A Select lives inside the ring, so swallowing Tab would leave a
+  // user who opened it by accident with a dead Tab key.
+  Select sel;
+  Probe other;
+  make_select(sel);
+  other.set_geometry({0, 5, 14, 1});
+
+  FocusRing ring;
+  ring.add(&sel);
+  ring.add(&other);
+  REQUIRE(ring.current() == &sel);
+
+  int calls = 0;
+  sel.on_change([&](int, const std::string&) { ++calls; });
+
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(sel.dropdown_open());
+
+  REQUIRE(ring.handle_key(key(Key::Tab)));
+  REQUIRE_FALSE(sel.dropdown_open());  // closed
+  REQUIRE(ring.current() == &other);   // and moved on, in one press
+  REQUIRE(calls == 0);                 // without committing
+}
+
+TEST_CASE("Select: losing focus closes the list", "[form][select][focus]") {
+  Select sel;
+  Probe other;
+  make_select(sel);
+  other.set_geometry({0, 5, 14, 1});
+
+  // Directly.
+  sel.set_focused(true);
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(sel.dropdown_open());
+  sel.set_focused(false);
+  REQUIRE_FALSE(sel.dropdown_open());
+
+  // And through the ring, which is the click-away path: focus_at moves focus
+  // to whatever was clicked, which calls set_focused(false) here.
+  FocusRing ring;
+  ring.add(&sel);
+  ring.add(&other);
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(sel.dropdown_open());
+  REQUIRE(ring.focus_at(3, 5) == &other);
+  REQUIRE_FALSE(sel.dropdown_open());
+}
+
+TEST_CASE("Select: an unhandled key while open is consumed",
+          "[form][select][failure]") {
+  // The open list is a mini-modal: a stray key must not reach the widget
+  // behind it. (Tab and Escape are the two deliberate exits.)
+  Select sel;
+  make_select(sel);
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(sel.on_event(ch(U'q')));
+  REQUIRE(sel.on_event(key(Key::Left)));
+  REQUIRE(sel.dropdown_open());
+}
+
+TEST_CASE("Select: clicking the box toggles, clicking a row commits",
+          "[form][select][mouse]") {
+  Select sel;
+  make_select(sel);
+  std::vector<int> seen;
+  sel.on_change([&](int i, const std::string&) { seen.push_back(i); });
+
+  REQUIRE(sel.on_event(press(3, 0)));
+  REQUIRE(sel.dropdown_open());
+  REQUIRE(sel.on_event(press(3, 0)));  // again → closes
+  REQUIRE_FALSE(sel.dropdown_open());
+
+  REQUIRE(sel.on_event(press(3, 0)));
+  REQUIRE(sel.on_event(press(3, 3)));  // third option
+  REQUIRE_FALSE(sel.dropdown_open());
+  REQUIRE(sel.selected() == 2);
+  REQUIRE(seen == std::vector<int>{2});
+}
+
+TEST_CASE("Select: a non-left press inside the list commits nothing",
+          "[form][select][mouse][failure]") {
+  Select sel;
+  make_select(sel);
+  int calls = 0;
+  sel.on_change([&](int, const std::string&) { ++calls; });
+
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  // Consumed — so it cannot leak to the widget under the dropdown — but inert.
+  REQUIRE(sel.on_event(press(3, 3, 2)));
+  REQUIRE(sel.dropdown_open());
+  REQUIRE(sel.selected() == 0);
+  REQUIRE(calls == 0);
+}
+
+TEST_CASE("Select: hover moves the highlight; the wheel does not commit",
+          "[form][select][mouse]") {
+  Select sel;
+  make_select(sel);
+  int calls = 0;
+  sel.on_change([&](int, const std::string&) { ++calls; });
+  REQUIRE(sel.on_event(key(Key::Enter)));
+
+  MouseEvent hover;
+  hover.x = 3;
+  hover.y = 3;
+  hover.button = -1;
+  REQUIRE(sel.on_event(Event{hover}));
+  REQUIRE(sel.highlighted() == 2);
+
+  REQUIRE(sel.on_event(wheel(3, 3)));  // consumed over the open list
+  REQUIRE(sel.selected() == 0);
+  REQUIRE(calls == 0);
+}
+
+TEST_CASE("Select: an empty Select renders, is focusable, and will not open",
+          "[form][select][failure]") {
+  // Unlike RadioGroup, an empty Select still draws a box, so it is a
+  // legitimate (visible) tab stop — focusable() tracks visibility.
+  Screen s{20, 4};
+  Select sel;
+  sel.set_geometry({0, 0, 14, 1});
+
+  REQUIRE(sel.option_count() == 0);
+  REQUIRE(sel.selected() == -1);
+  REQUIRE(sel.selected_text().empty());
+  REQUIRE(sel.focusable());
+
+  REQUIRE(sel.on_event(key(Key::Enter)));  // consumed
+  REQUIRE_FALSE(sel.dropdown_open());      // but nothing to open
+  REQUIRE(sel.on_event(press(3, 0)));
+  REQUIRE_FALSE(sel.dropdown_open());
+
+  sel.draw(s);
+  REQUIRE(row_text(s, 0, 0, 14) == "[          ▾ ]");
+  REQUIRE(s.at(0, 1).blank());
+}
+
+TEST_CASE("Select: a zero-size rect draws nothing and does not crash",
+          "[form][select][failure]") {
+  Screen s{20, 5};
+  Select sel;
+  sel.set_options({"kitty", "ansi-rgb"});
+
+  sel.set_geometry({0, 0, 0, 0});
+  sel.draw(s);
+  REQUIRE(s.at(0, 0).blank());
+
+  REQUIRE(sel.on_event(key(Key::Enter)));  // open with no geometry
+  sel.draw(s);
+  REQUIRE(s.at(0, 0).blank());
+
+  sel.set_geometry({0, 0, 14, 0});
+  sel.draw(s);
+  REQUIRE(s.at(0, 0).blank());
+}
+
+TEST_CASE("Select: the Ascii style emits only 7-bit glyphs, open and closed",
+          "[form][select][glyphs]") {
+  Screen s{20, 5};
+  Select sel;
+  make_select(sel);
+  sel.set_style(BorderStyle::Ascii);
+
+  sel.draw(s);
+  REQUIRE(row_text(s, 0, 0, 14) == "[ kitty    v ]");
+  REQUIRE(rect_is_ascii(s, {0, 0, 20, 1}));
+
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
+  REQUIRE(rect_is_ascii(s, {0, 0, 20, 5}));
+}
+
+TEST_CASE("Select: a wide value glyph is never split",
+          "[form][select][failure]") {
+  Screen s{20, 1};
+  Select sel;
+  sel.set_options({"日本語"});
+  // 6 chrome + 4 inner: two full-width glyphs fit, the third must not split.
+  sel.set_geometry({0, 0, 10, 1});
+  sel.draw(s);
+  REQUIRE(s.at(2, 0).text == "日");
+  REQUIRE(s.at(3, 0).text == kWide);
+  REQUIRE(s.at(4, 0).text == "本");
+  REQUIRE(s.at(5, 0).text == kWide);
+  REQUIRE(s.at(9, 0).text == "]");  // chrome still lands on the last column
+}
+
+TEST_CASE("Select: the dirty flag round-trips through every setter",
+          "[form][select]") {
+  Screen s{20, 5};
+  Select sel;
+  make_select(sel);
+
+  sel.draw(s);
+  REQUIRE_FALSE(sel.dirty());
+  sel.set_selected(1);
+  REQUIRE(sel.dirty());
+
+  sel.draw(s);
+  REQUIRE_FALSE(sel.dirty());
+  sel.set_style(BorderStyle::Ascii);
+  REQUIRE(sel.dirty());
+  REQUIRE(sel.style() == BorderStyle::Ascii);
+
+  sel.draw(s);
+  REQUIRE_FALSE(sel.dirty());
+  REQUIRE(sel.on_event(key(Key::Enter)));  // opening dirties
+  REQUIRE(sel.dirty());
+
+  sel.draw(s);
+  REQUIRE_FALSE(sel.dirty());
+  sel.close_dropdown();
+  REQUIRE(sel.dirty());
+
+  // Closing an already-closed list changes nothing.
+  sel.draw(s);
+  REQUIRE_FALSE(sel.dirty());
+  sel.close_dropdown();
+  REQUIRE_FALSE(sel.dirty());
+}
+
+TEST_CASE("Select: on_change may call set_options and replace its handler",
+          "[form][select][uaf]") {
+  // Pins that BOTH the option string and the callback were copied out before
+  // the commit fired — the #5 lesson and the #32 lesson in one case.
+  Select sel;
+  make_select(sel);
+  int calls = 0;
+  std::string seen;
+  sel.on_change(
+      [&, canary = std::vector<int>(64, 0x5A)](int, const std::string& text) {
+        sel.set_options({"replaced"});  // reallocates under the argument
+        sel.on_change(nullptr);         // destroys the closure we are inside
+        ++calls;
+        seen = text;                    // read the arg after both mutations
+        REQUIRE(canary.back() == 0x5A);
+      });
+
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(sel.on_event(key(Key::Down)));
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(calls == 1);
+  REQUIRE(seen == "ansi-rgb");  // the option the user picked, not freed memory
+  REQUIRE(sel.option_count() == 1);
 }
