@@ -4,7 +4,7 @@
 //
 //   [x] Enable telemetry        [ ] Wrap long lines
 //
-// Space/Enter or a left click toggles; on_change(bool) fires with the new
+// Space or a left click toggles; on_change(bool) fires with the new
 // state. The mark comes from widgets/glyphs.hpp, so BorderStyle::Ascii turns
 // (•) into (*) and ▾ into v across every control in the app at once — see
 // examples/forms.cpp.
@@ -16,8 +16,9 @@
 // handler.
 //
 // Focus is the whole-rect fg/bg swap Button uses, not a decoration on the mark
-// — one focus idiom across the widget set (see widget.hpp). Keys other than
-// Space/Enter are declined, so Tab reaches the FocusRing and cycles.
+// -- one focus idiom across the widget set (see widget.hpp). Keys other than
+// Space are declined: Tab reaches the FocusRing and cycles, and Enter falls
+// through to Dialog's submit path instead of flipping the value (#39).
 
 #include <functional>
 #include <string>

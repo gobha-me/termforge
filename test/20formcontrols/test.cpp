@@ -176,8 +176,10 @@ TEST_CASE("Checkbox: renders the unchecked and checked marks", "[form][check]") 
   REQUIRE(row_text(s, 0, 0, 10) == "[x] Wrap  ");
 }
 
-TEST_CASE("Checkbox: Space and Enter toggle and fire on_change",
-          "[form][check]") {
+TEST_CASE("Checkbox: Space toggles; Enter is declined for dialog submit",
+          "[form][check][failure]") {
+  // #39: Enter must reach Dialog's submit path (ring first refusal), so a
+  // checkbox declines it like RadioGroup/TextInput do. Space toggles.
   Checkbox c{"Enable"};
   c.set_geometry({0, 0, 14, 1});
   std::vector<bool> seen;
@@ -185,9 +187,9 @@ TEST_CASE("Checkbox: Space and Enter toggle and fire on_change",
 
   REQUIRE(c.on_event(ch(U' ')));
   REQUIRE(c.checked());
-  REQUIRE(c.on_event(key(Key::Enter)));
-  REQUIRE_FALSE(c.checked());
-  REQUIRE(seen == std::vector<bool>{true, false});
+  REQUIRE_FALSE(c.on_event(key(Key::Enter)));
+  REQUIRE(c.checked());  // unchanged -- no silent flip on Enter
+  REQUIRE(seen == std::vector<bool>{true});
 }
 
 TEST_CASE("Checkbox: a left click inside toggles, outside does not",

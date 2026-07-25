@@ -56,12 +56,16 @@ auto Checkbox::draw(Screen& screen) -> void {
 
 auto Checkbox::on_event(const Event& ev) -> bool {
   if (const auto* k = std::get_if<KeyEvent>(&ev)) {
-    if (k->key == Key::Enter || (k->key == Key::Char && k->ch == U' ')) {
+    if (k->key == Key::Char && k->ch == U' ') {
       toggle();
       return true;
     }
-    // Everything else declined — Tab in particular, so FocusRing::handle_key
-    // sees it unconsumed and cycles focus.
+    // Everything else declined -- Tab in particular, so FocusRing::handle_key
+    // sees it unconsumed and cycles focus. Enter is declined for the same
+    // reason RadioGroup and TextInput decline it: a dialog's submit path
+    // (Dialog::on_event -> ring first refusal) only fires once the focused
+    // child declines, so a checkbox that ate Enter would block submit AND
+    // silently flip a value (#39).
     return false;
   }
 
