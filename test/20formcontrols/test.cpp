@@ -930,12 +930,10 @@ TEST_CASE("Select: a non-left press inside the list commits nothing",
   REQUIRE(calls == 0);
 }
 
-TEST_CASE("Select: hover moves the highlight; the wheel does not commit",
+TEST_CASE("Select: hover over the open list moves the highlight",
           "[form][select][mouse]") {
   Select sel;
   make_select(sel);
-  int calls = 0;
-  sel.on_change([&](int, const std::string&) { ++calls; });
   REQUIRE(sel.on_event(key(Key::Enter)));
 
   MouseEvent hover;
@@ -944,10 +942,33 @@ TEST_CASE("Select: hover moves the highlight; the wheel does not commit",
   hover.button = -1;
   REQUIRE(sel.on_event(Event{hover}));
   REQUIRE(sel.highlighted() == 2);
+}
 
-  REQUIRE(sel.on_event(wheel(3, 3)));  // consumed over the open list
+TEST_CASE("Select: the wheel moves nothing, even over the open list",
+          "[form][select][mouse][failure]") {
+  // A wheel report arrives with pressed == false, so it reaches the same
+  // branch a hover does. Checking the wheel second let a scroll drag the
+  // highlight around; this pins that it does not. The highlight must be
+  // asserted, not just the selection — the selection was never at risk.
+  Select sel;
+  make_select(sel);
+  int calls = 0;
+  sel.on_change([&](int, const std::string&) { ++calls; });
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(sel.highlighted() == 0);
+
+  // Over the open list: consumed, so it cannot reach the widget behind, but
+  // it must not move the highlight the way a hover at the same spot would.
+  REQUIRE(sel.on_event(wheel(3, 3)));
+  REQUIRE(sel.highlighted() == 0);
+  REQUIRE(sel.on_event(wheel(3, 3, true)));
+  REQUIRE(sel.highlighted() == 0);
   REQUIRE(sel.selected() == 0);
   REQUIRE(calls == 0);
+
+  // Closed: declined outright, so a parent can scroll its own panel.
+  sel.close_dropdown();
+  REQUIRE_FALSE(sel.on_event(wheel(3, 0)));
 }
 
 TEST_CASE("Select: an empty Select renders, is focusable, and will not open",
