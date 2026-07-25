@@ -932,6 +932,82 @@ TEST_CASE("Select: a non-left press inside the list commits nothing",
   REQUIRE(calls == 0);
 }
 
+TEST_CASE("Select: a non-left press on the CLOSED box is declined",
+          "[form][select][mouse][failure]") {
+  // #36 item 4: the leak-containment rationale only applies while open. A
+  // closed Select declines like every sibling (Button, Checkbox, RadioGroup),
+  // so an app-level right-click handler works over it.
+  Select sel;
+  make_select(sel);
+  REQUIRE_FALSE(sel.on_event(press(3, 0, 2)));
+  REQUIRE_FALSE(sel.on_event(press(3, 0, 1)));
+  REQUIRE_FALSE(sel.dropdown_open());
+}
+
+TEST_CASE("Select: the dropdown anchors below a taller rect",
+          "[form][select][mouse][failure]") {
+  // #36 item 1: anchored at r.y + 1, a h >= 2 control overdraws its own box
+  // line and a click on the visually-first option row satisfies
+  // rect().contains first -- toggling the dropdown closed instead of
+  // committing. Anchored at r.y + r.h the two can never disagree.
+  Screen s{20, 8};
+  Select sel;
+  sel.set_options({"kitty", "ansi-rgb", "fallback"});
+  sel.set_geometry({0, 0, 14, 2});  // box line draws at y + h/2 = 1
+
+  int picked = -1;
+  sel.on_change([&](int i, const std::string&) { picked = i; });
+  REQUIRE(sel.on_event(press(3, 1)));  // open via the rendered box line
+  REQUIRE(sel.dropdown_open());
+
+  sel.draw(s);
+  REQUIRE(row_text(s, 1, 0, 14) == "[ kitty    ▾ ]");   // box intact
+  REQUIRE(row_text(s, 2, 0, 9) == " kitty   ");        // list starts at y+h
+  REQUIRE(sel.hit_test(3, 2));
+  REQUIRE_FALSE(sel.hit_test(3, 5));  // one past the last option
+
+  REQUIRE(sel.on_event(press(3, 3)));  // second option row commits, not toggles
+  REQUIRE(picked == 1);
+  REQUIRE(sel.selected() == 1);
+  REQUIRE_FALSE(sel.dropdown_open());
+}
+
+TEST_CASE("Select: set_selected while open closes the dropdown",
+          "[form][select][failure]") {
+  // #36 item 2: set_options() and clear() close; set_selected() now agrees.
+  // An open dropdown surviving a programmatic re-seed let the next Enter
+  // commit the stale highlight OVER the value the app just set.
+  Select sel;
+  make_select(sel);
+  int calls = 0;
+  sel.on_change([&](int, const std::string&) { ++calls; });
+
+  REQUIRE(sel.on_event(key(Key::Enter)));  // open, highlight on selected=0
+  sel.set_selected(2);
+  REQUIRE(sel.selected() == 2);
+  REQUIRE_FALSE(sel.dropdown_open());
+  REQUIRE(calls == 0);
+}
+
+TEST_CASE("Select: re-committing the current value fires nothing",
+          "[form][select][failure]") {
+  // #36 item 3: the no-op-silence rule RadioGroup::select and
+  // Checkbox::set_checked already follow. Open + Enter without moving still
+  // closes the list, but on_change stays silent.
+  Select sel;
+  make_select(sel);
+  sel.set_selected(1);
+  int calls = 0;
+  sel.on_change([&](int, const std::string&) { ++calls; });
+
+  REQUIRE(sel.on_event(key(Key::Enter)));  // open, highlight starts on 1
+  REQUIRE(sel.highlighted() == 1);
+  REQUIRE(sel.on_event(key(Key::Enter)));  // commit the unchanged value
+  REQUIRE(sel.selected() == 1);
+  REQUIRE_FALSE(sel.dropdown_open());
+  REQUIRE(calls == 0);
+}
+
 TEST_CASE("Select: hover over the open list moves the highlight",
           "[form][select][mouse]") {
   Select sel;

@@ -44,6 +44,10 @@ auto Select::set_selected(int index) -> void {
   } else {
     m_selected = std::clamp(index, 0, static_cast<int>(m_options.size()) - 1);
   }
+  // Match set_options()/clear(): a programmatic set re-seeds the control, so
+  // an open dropdown must not survive with a stale m_highlight that the next
+  // Enter would commit over the value the app just set (#36).
+  close_dropdown();
   mark_dirty();
 }
 
@@ -51,8 +55,9 @@ auto Select::dropdown_rect() const -> Rect {
   if (!m_open || m_options.empty()) return {0, 0, 0, 0};
   const Rect r = rect();
   // Exactly as wide as the control (see the header note), one row per option,
-  // starting on the row below it.
-  return {r.x, r.y + 1, r.w, static_cast<int>(m_options.size())};
+  // starting BELOW the whole rect -- not r.y + 1, which overlaps the box line
+  // draw() centers at r.y + r.h/2 for any h >= 2 (#36 item 1).
+  return {r.x, r.y + r.h, r.w, static_cast<int>(m_options.size())};
 }
 
 auto Select::hit_test(int px, int py) const -> bool {
@@ -89,10 +94,14 @@ auto Select::commit(int index) -> void {
   // on_change() and destroy the std::function it is running inside.
   const std::string item = m_options[static_cast<std::size_t>(index)];
   auto cb = m_on_change;
+  const bool changed = (index != m_selected);
   m_selected = index;
   close_dropdown();
   mark_dirty();
-  if (cb) cb(index, item);
+  // No-change commits stay silent -- the no-op-silence rule RadioGroup::select
+  // and Checkbox::set_checked already follow (#36 item 3). Re-committing the
+  // current value still closes the list, but fires nothing.
+  if (changed && cb) cb(index, item);
 }
 
 auto Select::draw(Screen& screen) -> void {
@@ -181,9 +190,12 @@ auto Select::handle_mouse(const MouseEvent& m) -> bool {
   }
 
   if (m.button != 0) {
-    // Non-left press inside our area: consume so it does not leak to the
-    // widget underneath the dropdown; do nothing.
-    return hit_test(m.x, m.y);
+    // Non-left press: while open, consume inside our area so it cannot leak
+    // to the widget underneath the dropdown. While CLOSED the leak rationale
+    // does not apply and every sibling declines (button.cpp, checkbox.cpp,
+    // radio_group.cpp), so an app-level right-click handler works over a
+    // closed Select too (#36 item 4).
+    return m_open && hit_test(m.x, m.y);
   }
 
   if (rect().contains(m.x, m.y)) {
