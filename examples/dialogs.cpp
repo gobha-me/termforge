@@ -27,11 +27,13 @@
 // Keyboard: Tab cycles focus, Enter/Space activates, ESC quits (or cancels
 // the dialog, when one is open). Inside a confirm: Y/N are hotkeys.
 
+#include <filesystem>
 #include <string>
 
 #include "termforge/core/app.hpp"
 #include "termforge/widgets/button.hpp"
 #include "termforge/widgets/dialogs.hpp"
+#include "termforge/widgets/file_picker_dialog.hpp"
 #include "termforge/widgets/focus_ring.hpp"
 #include "termforge/widgets/frame.hpp"
 #include "termforge/widgets/label.hpp"
@@ -44,20 +46,30 @@ class DialogsDemo final : public App {
     m_btn_message.set_label("[ Message ]");
     m_btn_confirm.set_label("[ Confirm ]");
     m_btn_prompt.set_label("[ Prompt ]");
+    m_btn_open.set_label("[ Open File ]");
 
     m_btn_message.on_activate([this] { show(m_message); });
     m_btn_confirm.on_activate([this] { show(m_confirm); });
     m_btn_prompt.on_activate([this] { show(m_prompt); });
+    m_btn_open.on_activate([this] { show(m_open); });
 
     m_ring.add(&m_btn_message);
     m_ring.add(&m_btn_confirm);
     m_ring.add(&m_btn_prompt);
+    m_ring.add(&m_btn_open);
 
     // Every dialog closes the same way: drop it off the overlay stack. The
     // dialog itself knows nothing about App.
     m_message.on_close([this] { pop_overlay(); });
     m_confirm.on_close([this] { pop_overlay(); });
     m_prompt.on_close([this] { pop_overlay(); });
+    m_open.on_close([this] { pop_overlay(); });
+    // The picker's read errors raise a MessageDialog as a nested overlay on
+    // top of it; that error dialog pops only itself when dismissed.
+    m_open.on_error_overlay([this](Dialog& d) {
+      d.on_close([this] { pop_overlay(); });
+      push_overlay(d);
+    });
 
     m_message.on_ok([this] { m_status.set_text("message: acknowledged"); });
     m_confirm.on_result([this](bool yes) {
@@ -68,6 +80,14 @@ class DialogsDemo final : public App {
     });
     m_prompt.on_cancel([this] { m_status.set_text("prompt: cancelled"); });
     m_prompt.set_placeholder("untitled.txt");
+
+    // The file picker starts in the cwd and reports an optional<path>:
+    // a path on OK/select, nullopt on cancel.
+    m_open.set_start_dir(std::filesystem::current_path());
+    m_open.on_result([this](std::optional<std::filesystem::path> p) {
+      m_status.set_text(p ? "open: " + p->filename().string()
+                          : "open: cancelled");
+    });
 
     // A dialog's border is stylable even though it owns its Frame privately.
     // Ascii is the one that matters: on the FallbackDriver tier a box-drawing
@@ -83,7 +103,7 @@ class DialogsDemo final : public App {
     // everything to the overlay instead. No modal guard needed.
     if (const auto* m = std::get_if<MouseEvent>(&ev)) {
       if (m->pressed) m_ring.focus_at(m->x, m->y);
-      route_mouse(*m, {&m_btn_message, &m_btn_confirm, &m_btn_prompt});
+      route_mouse(*m, {&m_btn_message, &m_btn_confirm, &m_btn_prompt, &m_btn_open});
       return;
     }
     if (m_ring.handle_key(ev)) return;
@@ -99,7 +119,7 @@ class DialogsDemo final : public App {
     const Rect inner = m_frame.content_rect();
 
     int x = inner.x + 1;
-    for (auto* b : {&m_btn_message, &m_btn_confirm, &m_btn_prompt}) {
+    for (auto* b : {&m_btn_message, &m_btn_confirm, &m_btn_prompt, &m_btn_open}) {
       const int bw = static_cast<int>(b->label().size()) + 1;
       b->set_geometry({x, inner.y + 1, bw, 1});
       b->draw(screen);
@@ -117,7 +137,7 @@ class DialogsDemo final : public App {
   auto show(Dialog& dialog) -> void { push_overlay(dialog); }
 
   Frame m_frame{"TermForge Dialogs"};
-  Button m_btn_message, m_btn_confirm, m_btn_prompt;
+  Button m_btn_message, m_btn_confirm, m_btn_prompt, m_btn_open;
   Label m_status;
   FocusRing m_ring;
 
@@ -125,6 +145,7 @@ class DialogsDemo final : public App {
   ConfirmDialog m_confirm{"Confirm", "Delete this file? This cannot be undone.",
                           {}};
   PromptDialog m_prompt{"Prompt", "Name the new file:", {}};
+  FilePickerDialog m_open{"Open File"};
 };
 
 auto main() -> int {
