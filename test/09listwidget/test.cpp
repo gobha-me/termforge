@@ -111,6 +111,24 @@ TEST_CASE("ListWidget: scroll follows selection", "[listwidget]") {
   REQUIRE(found);
 }
 
+TEST_CASE("ListWidget: a height shrink re-clamps the scroll at draw (#41)",
+          "[listwidget][failure]") {
+  // ensure_visible() ran only on selection/content changes; set_geometry is
+  // non-virtual, so a shrink stranded m_scroll and the selected row vanished.
+  Screen s{20, 5};
+  ListWidget l;
+  l.set_geometry({0, 0, 20, 3});
+  l.set_items({"i0", "i1", "i2", "i3", "i4", "i5"});
+  l.set_selected(5);           // scroll = 3, rows 3-5 visible
+  l.set_geometry({0, 0, 20, 2});  // terminal resize: now only 2 rows
+
+  l.draw(s);
+  REQUIRE(s.at(0, 0).text == "i");  // row 4
+  REQUIRE(s.at(0, 1).text == "i");  // row 5 -- the selection, still visible
+  // And specifically: the second visible row IS the selected one.
+  REQUIRE(s.at(1, 1).text == "5");
+}
+
 TEST_CASE("ListWidget: Enter fires on_select callback", "[listwidget]") {
   Screen s{20, 5};
   ListWidget l;

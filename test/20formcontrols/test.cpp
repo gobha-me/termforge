@@ -403,6 +403,24 @@ TEST_CASE("RadioGroup: marks the selected option and only that one",
   REQUIRE(row_text(s, 2, 0, 17) == "(•) High contrast");
 }
 
+TEST_CASE("RadioGroup: a height shrink re-clamps the scroll at draw (#41)",
+          "[form][radio][failure]") {
+  // The exact #41 scenario: 6 options in h=3, End -> scroll=3; a relayout to
+  // h=2 stranded the scroll and the focused group rendered with no mark.
+  Screen s{18, 5};
+  RadioGroup g;
+  g.set_options({"o0", "o1", "o2", "o3", "o4", "o5"});
+  g.set_geometry({0, 0, 18, 3});
+  g.set_focused(true);
+  g.on_event(key(Key::End));
+  REQUIRE(g.selected() == 5);
+
+  g.set_geometry({0, 0, 18, 2});  // shrink: rows 3-4 would show, mark invisible
+  g.draw(s);
+  REQUIRE(row_text(s, 0, 0, 7) == "( ) o4 ");
+  REQUIRE(row_text(s, 1, 0, 7) == "(•) o5 ");
+}
+
 TEST_CASE("RadioGroup: arrows move the selection and fire on_change",
           "[form][radio]") {
   RadioGroup g;

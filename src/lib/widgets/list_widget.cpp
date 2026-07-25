@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "detail/scroll.hpp"
 #include "detail/width.hpp"
 
 namespace termforge {
@@ -43,11 +44,8 @@ auto ListWidget::selected_text() const -> std::string {
 }
 
 auto ListWidget::ensure_visible() -> void {
-  const int visible = rect().h;
-  if (visible <= 0) return;
-  if (m_selected < m_scroll) m_scroll = m_selected;
-  if (m_selected >= m_scroll + visible) m_scroll = m_selected - visible + 1;
-  m_scroll = std::max(0, m_scroll);
+  m_scroll = detail::clamp_scroll(m_scroll, m_selected,
+                                  static_cast<int>(m_items.size()), rect().h);
 }
 
 auto ListWidget::draw(Screen& screen) -> void {
@@ -56,6 +54,12 @@ auto ListWidget::draw(Screen& screen) -> void {
     clear_dirty();
     return;
   }
+
+  // Re-clamp against the CURRENT height: set_geometry is non-virtual and a
+  // shrink strands m_scroll, leaving the selected row off-screen with no
+  // visible focus anywhere (#41). setters keep calling ensure_visible; this
+  // covers the path no setter runs on.
+  ensure_visible();
 
   for (int vr = 0; vr < r.h; ++vr) {
     const int idx = m_scroll + vr;
