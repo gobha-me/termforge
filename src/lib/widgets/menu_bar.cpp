@@ -125,6 +125,13 @@ auto MenuBar::draw(Screen& screen) -> void {
 auto MenuBar::handle_mouse(const MouseEvent& m) -> bool {
   const Rect dr = dropdown_rect();
 
+  // Wheel FIRST. A wheel report arrives with pressed == false
+  // (input.cpp:221-225), so checking it after the hover branch below would
+  // make this unreachable and let a scroll drag the highlight around (#38 --
+  // the same trap 9bb3ad2 fixed in Select). Ignored like RadioGroup's, but
+  // consumed while a dropdown is open so it cannot reach the widget behind.
+  if (m.scroll_up || m.scroll_down) return m_open && hit_test(m.x, m.y);
+
   // Hover over the open dropdown moves the selection highlight.
   if (!m.pressed) {
     if (m_open && dr.contains(m.x, m.y)) {
