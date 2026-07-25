@@ -160,6 +160,13 @@ auto Select::draw(Screen& screen) -> void {
 auto Select::handle_mouse(const MouseEvent& m) -> bool {
   const Rect dr = dropdown_rect();
 
+  // Wheel FIRST. A wheel report arrives with pressed == false
+  // (input.cpp:221-225), so checking it after the hover branch below would
+  // make this unreachable and let a scroll drag the highlight around.
+  // Ignored like RadioGroup's — a stray scroll must not change a form value —
+  // but consumed while the list is open so it cannot reach the widget behind.
+  if (m.scroll_up || m.scroll_down) return m_open && hit_test(m.x, m.y);
+
   // Hover over the open list moves the highlight (MenuBar's behavior).
   if (!m.pressed) {
     if (m_open && dr.contains(m.x, m.y)) {
@@ -172,10 +179,6 @@ auto Select::handle_mouse(const MouseEvent& m) -> bool {
     }
     return false;
   }
-
-  // Wheel: ignored, like RadioGroup — a stray scroll must not change a form
-  // value. Consumed while open so it cannot reach the widget behind the list.
-  if (m.scroll_up || m.scroll_down) return m_open && hit_test(m.x, m.y);
 
   if (m.button != 0) {
     // Non-left press inside our area: consume so it does not leak to the

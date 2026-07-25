@@ -157,9 +157,10 @@ class FormsDemo final : public App {
     m_driver_label.set_colors(Rgb{0x80, 0x80, 0xA0}, Rgb{0x0A, 0x0A, 0x14});
     m_driver_label.set_geometry({c.x + 1, y, 8, 1});
     m_driver_label.draw(screen);
+    // Geometry now, draw at the very end: the open dropdown has to land on top
+    // of the buttons and the status bar below it.
     // width_for() rather than a hardcoded number: the control owns its chrome.
     m_driver.set_geometry({c.x + 10, y, Select::width_for(10), 1});
-    const int driver_y = y;
     y += 2;
 
     m_ok.set_geometry({c.x + 1, y, 10, 1});
@@ -174,7 +175,6 @@ class FormsDemo final : public App {
 
     // The Select is drawn LAST so its open dropdown overlays the buttons and
     // the status bar, matching the routing order in on_event.
-    m_driver.set_geometry({c.x + 10, driver_y, Select::width_for(10), 1});
     m_driver.draw(screen);
   }
 
