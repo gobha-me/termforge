@@ -198,7 +198,14 @@ auto App::dispatch_event(const Event& ev) -> void {
   const OverlayOptions opts = m_overlays.back().opts;
 
   if (const auto* m = std::get_if<MouseEvent>(&ev)) {
-    if (top->hit_test(m->x, m->y)) {
+    // Hit-test the overlay TREE, not the top widget's rect: an overlay (e.g.
+    // a Dialog) may host a child whose interactive area extends past the
+    // overlay's own rect — Select paints its open dropdown below the dialog
+    // and overrides hit_test() to match (#37). Routing by the base rect made
+    // those rendered rows dead, or dialog-dismissing under
+    // dismiss_on_click_outside. Widgets without children report their own
+    // hit_test, so this reduces to the old behavior for them.
+    if (top->hit_test_tree(m->x, m->y)) {
       top->on_event(ev);
       return;
     }

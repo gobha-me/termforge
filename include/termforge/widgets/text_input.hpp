@@ -29,10 +29,11 @@ class TextInput final : public Widget {
   auto set_text(std::string text) -> void {
     m_text = std::move(text);
     m_cursor = static_cast<int>(m_text.size());
-    m_scroll = 0;
-    // Programmatic replace must leave the cursor (at end) inside the visible
-    // window, not hidden past the right edge until the next keypress (#12).
-    ensure_cursor_visible();
+    // No scroll decision here: there is no reliable geometry yet (a dialog
+    // calls set_value before first layout, when rect().w == 0 and any clamp
+    // no-ops) and no focus state to anchor against (#40). draw() reconciles
+    // the window on every frame: focused -> keep the cursor visible,
+    // unfocused -> head-anchor so a pre-filled field reads from the start.
     mark_dirty();
   }
 

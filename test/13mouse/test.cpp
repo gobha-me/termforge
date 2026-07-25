@@ -30,6 +30,16 @@ auto motion(int x, int y) -> Event {
   return MouseEvent{.x = x, .y = y, .button = 0, .pressed = false};
 }
 
+auto wheel(int x, int y, bool up = false) -> Event {
+  MouseEvent e;
+  e.x = x;
+  e.y = y;
+  e.button = -1;
+  e.scroll_up = up;
+  e.scroll_down = !up;
+  return Event{e};
+}
+
 // Layout reminder (layout_menus): title width = strlen + 2, 1-col gap.
 // "File" at x=0 w=6, "Edit" at x=7 w=6.
 auto make_menu(bool& fired) -> MenuBar {
@@ -147,6 +157,29 @@ TEST_CASE("MenuBar: hover moves dropdown selection", "[mouse][menu]") {
   Event enter = termforge::KeyEvent{termforge::Key::Enter};
   mb.on_event(enter);
   REQUIRE(which == 1);
+}
+
+TEST_CASE("MenuBar: wheel over an open dropdown does not drag the selection",
+          "[mouse][menu][failure]") {
+  // #38: a wheel report decodes as pressed == false (input.cpp:221-225), so
+  // without a scroll gate before the hover branch it rewrote m_selected and
+  // the next Enter fired an action the user never pointed at -- the trap
+  // 9bb3ad2 fixed in Select.
+  MenuBar mb;
+  mb.set_geometry({0, 0, 40, 1});
+  int which = -1;
+  mb.add_menu({"File", {{"New", [&] { which = 0; }},
+                        {"Open", [&] { which = 1; }}}});
+  Event open = press(1, 0);
+  mb.on_event(open);
+  REQUIRE(mb.dropdown_open());
+
+  Event tick = wheel(2, 2);  // over "Open": would highlight row 1 ungated
+  REQUIRE(mb.on_event(tick));  // consumed while open, but inert
+
+  Event enter = termforge::KeyEvent{termforge::Key::Enter};
+  mb.on_event(enter);
+  REQUIRE(which == 0);  // selection stayed on "New"
 }
 
 TEST_CASE("MenuBar: click on title with no items does not open",

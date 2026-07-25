@@ -4,9 +4,9 @@
 //
 //   [ ansi-rgb ▾ ]          closed
 //   [ ansi-rgb ▾ ]          open — the list draws BELOW rect()
-//    kitty
-//    ansi-rgb
-//    fallback
+//    kitty                        (anchored at rect().y + rect().h, so a
+//    ansi-rgb                      control taller than one row is not
+//    fallback                      overdrawn — #36 item 1)
 //
 // It reuses MenuBar's dropdown discipline: a single private dropdown_rect()
 // that draw(), hit_test() and on_event() all read, so drawing and hit-testing
@@ -119,7 +119,9 @@ class Select final : public Widget {
   // {0,0,0,0} when closed or empty.
   [[nodiscard]] auto dropdown_rect() const -> Rect;
   auto open_dropdown() -> void;
-  // Selects `index`, closes, and fires on_change.
+  // Selects `index` and closes. Fires on_change only when the value actually
+  // changed — re-committing the current selection stays silent (the
+  // RadioGroup::select / Checkbox::set_checked no-op rule, #36 item 3).
   auto commit(int index) -> void;
   auto handle_mouse(const MouseEvent& m) -> bool;
 

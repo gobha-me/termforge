@@ -4,6 +4,7 @@
 #include <string>
 #include <utility>
 
+#include "detail/scroll.hpp"
 #include "detail/width.hpp"
 
 namespace termforge {
@@ -50,11 +51,9 @@ auto RadioGroup::set_selected(int index) -> void {
 }
 
 auto RadioGroup::ensure_visible() -> void {
-  const int visible = rect().h;
-  if (visible <= 0) return;
-  if (m_selected < m_scroll) m_scroll = m_selected;
-  if (m_selected >= m_scroll + visible) m_scroll = m_selected - visible + 1;
-  m_scroll = std::max(0, m_scroll);
+  m_scroll = detail::clamp_scroll(m_scroll, m_selected,
+                                  static_cast<int>(m_options.size()),
+                                  rect().h);
 }
 
 auto RadioGroup::select(int index) -> void {
@@ -77,6 +76,10 @@ auto RadioGroup::draw(Screen& screen) -> void {
     clear_dirty();
     return;
   }
+
+  // Re-clamp against the CURRENT height (same #41 gap as ListWidget: a
+  // shrink strands m_scroll and the focused group renders with no mark).
+  ensure_visible();
 
   const MarkGlyphs g = mark_glyphs(m_style);
 
