@@ -23,6 +23,7 @@
 #include "termforge/core/types.hpp"
 #include "termforge/widgets/dialog.hpp"
 #include "termforge/widgets/dialogs.hpp"
+#include "termforge/widgets/select.hpp"
 #include "termforge/widgets/widget.hpp"
 
 using termforge::App;
@@ -44,6 +45,7 @@ using termforge::Rect;
 using termforge::ResizeEvent;
 using termforge::Rgb;
 using termforge::Screen;
+using termforge::Select;
 using termforge::Severity;
 using termforge::Widget;
 
@@ -573,6 +575,138 @@ TEST_CASE("Dialog: Escape with no on_close set is consumed, not a crash",
           "[dialog][failure]") {
   BareDialog d{"T"};
   REQUIRE(d.on_event(key(Key::Escape)));
+}
+
+TEST_CASE("Dialog: Escape still cancels when the focused child declines it",
+          "[dialog]") {
+  // The #33 reorder must not strand the cancel key: a dialog whose controls
+  // have no use for Escape (MessageDialog's OK Button declines it) cancels on
+  // the FIRST press, exactly as before.
+  MessageDialog d{"T", "body"};
+  int closes = 0;
+  d.on_close([&] { ++closes; });
+  Screen screen{40, 12};
+  d.draw(screen);  // focus the ring's first member, as a shown dialog would
+
+  REQUIRE(d.on_event(key(Key::Escape)));
+  REQUIRE(closes == 1);
+}
+
+TEST_CASE("Dialog: the focused child gets first refusal on Escape",
+          "[dialog][failure]") {
+  // Issue #33: the dialog used to intercept Escape before its ring, so a
+  // control with a transient sub-state never saw it. This child consumes
+  // every key it is given; the dialog must not cancel out from under it.
+  class GreedyDialog final : public Dialog {
+   public:
+    GreedyDialog() : Dialog("G") { add_child(&child); }
+    CountWidget child;
+
+   protected:
+    [[nodiscard]] auto content_rows() const -> int override { return 1; }
+    [[nodiscard]] auto content_cols() const -> int override { return 6; }
+    auto layout_content(Rect area) -> void override {
+      child.set_geometry(area);
+    }
+    auto draw_content(Screen& screen) -> void override { child.draw(screen); }
+  };
+
+  GreedyDialog d;
+  int closes = 0;
+  d.on_close([&] { ++closes; });
+
+  REQUIRE(d.on_event(key(Key::Escape)));  // consumed by the child
+  REQUIRE(d.child.keys == 1);
+  REQUIRE(closes == 0);  // not cancelled out from under the child
+}
+
+TEST_CASE("Dialog: Escape falls through once the child's sub-state is gone",
+          "[dialog][failure]") {
+  // Same shape, but the child declines after its first Escape \u2014 the pattern
+  // a dismissing control actually follows.
+  class Dismisser final : public Widget {
+   public:
+    auto draw(Screen&) -> void override {}
+    auto on_event(const Event& ev) -> bool override {
+      const auto* k = std::get_if<KeyEvent>(&ev);
+      if (k != nullptr && k->key == Key::Escape && armed) {
+        armed = false;
+        return true;
+      }
+      return false;
+    }
+    bool armed{true};
+  };
+  class DismissDialog final : public Dialog {
+   public:
+    DismissDialog() : Dialog("D") { add_child(&child); }
+    Dismisser child;
+
+   protected:
+    [[nodiscard]] auto content_rows() const -> int override { return 1; }
+    [[nodiscard]] auto content_cols() const -> int override { return 6; }
+    auto layout_content(Rect area) -> void override {
+      child.set_geometry(area);
+    }
+    auto draw_content(Screen& screen) -> void override { child.draw(screen); }
+  };
+
+  DismissDialog d;
+  int closes = 0;
+  d.on_close([&] { ++closes; });
+
+  REQUIRE(d.on_event(key(Key::Escape)));  // disarms the child
+  REQUIRE_FALSE(d.child.armed);
+  REQUIRE(closes == 0);
+
+  REQUIRE(d.on_event(key(Key::Escape)));  // declined -> the dialog's cancel
+  REQUIRE(closes == 1);
+}
+
+TEST_CASE("Dialog: a Select in a dialog takes one Escape for its dropdown",
+          "[dialog][failure]") {
+  // The concrete #33 case: with the dropdown open, Escape closes the LIST;
+  // the next Escape cancels the dialog. Previously the first press cancelled
+  // the whole dialog \u2014 the opposite of what the user asked for.
+  class SelectDialog final : public Dialog {
+   public:
+    SelectDialog() : Dialog("S"), select{{"one", "two", "three"}} {
+      add_child(&select);
+    }
+    Select select;
+
+   protected:
+    [[nodiscard]] auto content_rows() const -> int override { return 1; }
+    [[nodiscard]] auto content_cols() const -> int override { return 12; }
+    auto layout_content(Rect area) -> void override {
+      select.set_geometry(area);
+    }
+    auto draw_content(Screen& screen) -> void override { select.draw(screen); }
+  };
+
+  SelectDialog d;
+  int closes = 0;
+  d.on_close([&] { ++closes; });
+
+  REQUIRE(d.on_event(key(Key::Enter)));  // focused Select opens its dropdown
+  REQUIRE(d.select.dropdown_open());
+
+  REQUIRE(d.on_event(key(Key::Escape)));  // first: closes the list...
+  REQUIRE_FALSE(d.select.dropdown_open());
+  REQUIRE(closes == 0);  // ...NOT the dialog
+
+  REQUIRE(d.on_event(key(Key::Escape)));  // second: the dialog's cancel
+  REQUIRE(closes == 1);
+}
+
+TEST_CASE("Dialog: Escape with no controls still cancels", "[dialog]") {
+  // An empty ring declines everything; the reorder must not change a bare
+  // dialog's cancel.
+  BareDialog d{"T"};
+  int closes = 0;
+  d.on_close([&] { ++closes; });
+  REQUIRE(d.on_event(key(Key::Escape)));
+  REQUIRE(closes == 1);
 }
 
 TEST_CASE("Dialog: a right-click on a control does not activate it",

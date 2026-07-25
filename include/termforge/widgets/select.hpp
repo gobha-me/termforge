@@ -31,10 +31,10 @@
 //     truncate.
 //
 // Escape while CLOSED is declined, so a Select inside a Dialog does not eat the
-// dialog's cancel. (The converse gap is real and unfixed: Dialog intercepts
-// Escape before its ring, so Escape cannot close an open dropdown inside a
-// dialog — it cancels the dialog. Tab, a click elsewhere, and focus loss all
-// still close it, so it degrades safely.)
+// dialog's cancel. The converse half of the hand-off lives in Dialog::on_event
+// (issue #33): the dialog offers every key to its focus ring FIRST, so Escape
+// while OPEN reaches here and closes the dropdown, and only an Escape nobody
+// wanted cancels the dialog. One press to close the list, the next to cancel.
 //
 // Losing focus closes the dropdown (set_focused override). That is what makes
 // click-away work for free: FocusRing::focus_at moves focus on a click, which

@@ -158,11 +158,19 @@ auto Dialog::draw(Screen& screen) -> void {
 
 auto Dialog::on_event(const Event& ev) -> bool {
   if (const auto* k = std::get_if<KeyEvent>(&ev)) {
+    // The focused child gets first refusal (issue #33): a control with a
+    // transient sub-state of its own (Select's open dropdown, an inline
+    // editor) needs Escape to dismiss THAT before it can mean "cancel the
+    // dialog". The uniform ring convention (widgets/focus_ring.hpp) is that a
+    // widget consumes the keys it acts on and declines the rest, so a child
+    // with nothing to dismiss returns false and Escape falls through to the
+    // dialog's own meaning below. Select documents exactly this hand-off.
+    if (m_ring.handle_key(ev)) return true;
     if (k->key == Key::Escape && !k->ctrl && !k->alt) {
       on_escape();
       return true;
     }
-    return m_ring.handle_key(ev);
+    return false;
   }
 
   if (const auto* m = std::get_if<MouseEvent>(&ev)) {

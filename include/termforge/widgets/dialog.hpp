@@ -24,8 +24,10 @@
 //
 // Input arrives already filtered: App gives the top overlay every key, so a
 // dialog's Escape is the dialog's Escape (it never reaches App::on_event's
-// default quit). Inside, keys go to the dialog's own FocusRing, so Tab cycles
-// the controls and cannot escape the modal.
+// default quit). Inside, keys go to the dialog's own FocusRing FIRST, so Tab
+// cycles the controls and cannot escape the modal — and a focused control
+// with a transient sub-state (Select's open dropdown) gets first refusal on
+// Escape before it means "cancel the dialog" (issue #33).
 //
 // Note the layering rule this inherits from push_overlay: the app owns the
 // dialog object. A callback must not destroy the dialog it was invoked from —
