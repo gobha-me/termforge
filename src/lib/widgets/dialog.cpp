@@ -6,6 +6,7 @@
 
 #include "detail/width.hpp"
 #include "detail/wrap.hpp"
+#include "termforge/widgets/select.hpp"
 
 namespace termforge {
 
@@ -158,8 +159,12 @@ auto Dialog::draw(Screen& screen) -> void {
 
 auto Dialog::hit_test_tree(int px, int py) const -> bool {
   if (hit_test(px, py)) return true;
+  // Recursive, not one level: a composite child hosting its own
+  // rect-exceeding descendant (a Select inside a sub-panel) must not
+  // reintroduce #37 one nesting level down (#47 item 4). The base
+  // Widget::hit_test_tree is hit_test(), so leaves cost the same as before.
   for (const Widget* child : m_children)
-    if (child != nullptr && child->hit_test(px, py)) return true;
+    if (child != nullptr && child->hit_test_tree(px, py)) return true;
   return false;
 }
 
@@ -183,14 +188,16 @@ auto Dialog::on_event(const Event& ev) -> bool {
   if (const auto* m = std::get_if<MouseEvent>(&ev)) {
     const bool wheel = m->scroll_up || m->scroll_down;
     const bool activating_press = m->pressed && m->button == 0;
-    // A left press acts, and the wheel is forwarded so a scrollable control
+    const bool motion = !m->pressed && !wheel;
+    // A left press acts, the wheel is forwarded so a scrollable control
     // inside a dialog still works (a wheel event carries pressed == false, so
-    // it cannot activate anything). Everything else is consumed and dropped:
-    // releases, motion, and — deliberately — right/middle presses, which some
+    // it cannot activate anything), and motion is forwarded so an open
+    // dropdown's hover-follows-mouse works (#47 item 2). Everything else is
+    // consumed and dropped: releases, and right/middle presses, which some
     // controls still treat as activation (issue #12 item 1). Containing that
     // here keeps a stray right-click from confirming a dialog without
     // changing Button under anyone's feet.
-    if (!activating_press && !wheel) return true;
+    if (!activating_press && !wheel && !motion) return true;
 
     // Pre-route: a child's rect-exceeding hit area wins over z-order (#37).
     // Select's open dropdown paints below rect() and overlaps the button row
@@ -198,20 +205,21 @@ auto Dialog::on_event(const Event& ev) -> bool {
     // so without this a click on a rendered option row would focus and fire
     // the button UNDERNEATH it (submitting the stale value) after closing
     // the dropdown uncommitted. The control that owns the pixels gets the
-    // press. Same guard MenuBar's and Select's headers tell embedders to
-    // hand-roll; a dialog's children are private, so it lives here.
-    if (activating_press) {
-      for (Widget* child : m_children) {
-        if (child == nullptr) continue;
-        const Rect cr = child->rect();
-        if (!cr.contains(m->x, m->y) && child->hit_test(m->x, m->y)) {
-          m_ring.focus(child);
-          child->on_event(ev);
-          return true;
-        }
+    // event. Not press-only: a wheel over a visible option row would
+    // otherwise scroll the control under the open list (#47 item 1), and
+    // motion must reach it or hover-highlight desyncs from the click
+    // (#47 item 2). Recursive (hit_test_tree) for the same reason as the
+    // overlay gate (#47 item 4).
+    for (Widget* child : m_children) {
+      if (child == nullptr) continue;
+      const Rect cr = child->rect();
+      if (!cr.contains(m->x, m->y) && child->hit_test_tree(m->x, m->y)) {
+        if (activating_press) m_ring.focus(child);
+        child->on_event(ev);
+        return true;
       }
-      m_ring.focus_at(m->x, m->y);
     }
+    if (activating_press) m_ring.focus_at(m->x, m->y);
     // Topmost-first, matching App::route_mouse: last added wins.
     for (auto it = m_children.rbegin(); it != m_children.rend(); ++it) {
       if ((*it)->hit_test(m->x, m->y)) {
@@ -219,7 +227,20 @@ auto Dialog::on_event(const Event& ev) -> bool {
         return true;
       }
     }
-    return true;  // a press on the dialog's own chrome is inert, not a miss
+    // A press on the dialog's own chrome (title bar, border, empty padding)
+    // is inert, not a miss -- except that with a transient sub-state open it
+    // is also the click-away that dismisses it (#47 item 3), matching the
+    // raw-app embedding Select's header documents. Select's own gate declines
+    // a press outside its area, so it never closes itself here.
+    if (activating_press) {
+      for (Widget* child : m_children) {
+        if (auto* sel = dynamic_cast<Select*>(child);
+            sel != nullptr && sel->dropdown_open()) {
+          sel->close_dropdown();
+        }
+      }
+    }
+    return true;
   }
 
   return m_ring.handle_key(ev);  // paste and anything else: the focused child

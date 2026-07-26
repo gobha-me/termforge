@@ -137,6 +137,14 @@ auto wheel(int x, int y) -> Event {
   e.scroll_down = true;
   return Event{e};
 }
+auto motion(int x, int y) -> Event {
+  MouseEvent e;
+  e.x = x;
+  e.y = y;
+  e.button = 0;
+  e.pressed = false;
+  return Event{e};
+}
 
 }  // namespace
 
@@ -931,6 +939,108 @@ TEST_CASE("Dialog: a press on the dialog chrome is consumed and inert",
   const Rect g = d.rect();
   REQUIRE(d.on_event(press(g.x, g.y)));  // the border corner
   REQUIRE_FALSE(fired);
+}
+
+// A dialog hosting a Select whose open dropdown spills below the Select's own
+// rect, plus a later-added scrollable child underneath the dropdown -- the #47
+// shape. Defined once for the residuals it pins.
+class DropdownOverScrollDialog final : public Dialog {
+ public:
+  DropdownOverScrollDialog()
+      : Dialog("S"), select{{"one", "two", "three", "four"}} {
+    add_child(&select);
+    add_child(&under);
+  }
+  Select select;
+  CountWidget under;  // scrollable child the open dropdown overlaps
+
+ protected:
+  [[nodiscard]] auto content_rows() const -> int override { return 3; }
+  [[nodiscard]] auto content_cols() const -> int override { return 12; }
+  auto layout_content(Rect area) -> void override {
+    select.set_geometry(Rect{area.x, area.y, area.w, 1});
+    // Occupies the rows the open dropdown spills onto (last added wins).
+    under.set_geometry(Rect{area.x, area.y + 1, area.w, 2});
+  }
+  auto draw_content(Screen& screen) -> void override {
+    under.draw(screen);
+    select.draw(screen);
+  }
+};
+
+TEST_CASE("Dialog: wheel over an open dropdown routes to the Select, not the widget under it (#47)",
+          "[dialog][mouse][failure]") {
+  // The pre-route gated on left presses only, so a wheel over a visible
+  // option row fell through to the later-added scrollable child and scrolled
+  // it BEHIND the open list -- the leak Select's own wheel gate (#36) exists
+  // to prevent, bypassed because the event never reached the Select.
+  DropdownOverScrollDialog d;
+  Screen s{40, 12};
+  d.draw(s);
+
+  const Rect sr = d.select.rect();
+  REQUIRE(d.on_event(press(sr.x + 1, sr.y)));  // open the dropdown
+  REQUIRE(d.select.dropdown_open());
+
+  const int row_y = sr.y + 2;  // option row "two", over the child underneath
+  REQUIRE(row_y > sr.y);       // the premise: past the Select's own rect
+  REQUIRE(d.under.rect().contains(sr.x + 1, row_y));  // and over the child
+
+  d.under.mice = 0;
+  REQUIRE(d.on_event(wheel(sr.x + 1, row_y)));
+  REQUIRE(d.under.mice == 0);  // the wheel did NOT scroll the child beneath
+}
+
+TEST_CASE("Dialog: hover over an open dropdown moves the Select highlight (#47)",
+          "[dialog][mouse][failure]") {
+  // Motion was consumed-and-dropped by Dialog, so a dialog-hosted Select
+  // never followed the pointer: the highlight stayed keyboard-set while the
+  // click committed the row under the cursor -- a visual desync the
+  // standalone embedding does not have.
+  DropdownOverScrollDialog d;
+  Screen s{40, 12};
+  d.draw(s);
+
+  const Rect sr = d.select.rect();
+  REQUIRE(d.on_event(press(sr.x + 1, sr.y)));  // open, highlight on selected=0
+  REQUIRE(d.select.dropdown_open());
+  REQUIRE(d.select.highlighted() == 0);
+
+  REQUIRE(d.on_event(motion(sr.x + 1, sr.y + 3)));  // hover "three"
+  REQUIRE(d.select.highlighted() == 2);             // follows the pointer
+}
+
+TEST_CASE("Dialog: a chrome click-away closes an open child dropdown (#47)",
+          "[dialog][mouse][failure]") {
+  // Guard 1 in select.hpp (close when a press lands on nothing) was performed
+  // by nobody inside a Dialog: focus_at missed without moving focus, the
+  // child loop missed, and the press was consumed inertly -- the dropdown
+  // stayed open, unlike the raw-app embedding the header documents.
+  DropdownOverScrollDialog d;
+  Screen s{40, 12};
+  d.draw(s);
+
+  const Rect sr = d.select.rect();
+  REQUIRE(d.on_event(press(sr.x + 1, sr.y)));  // open
+  REQUIRE(d.select.dropdown_open());
+
+  const Rect dr = d.rect();
+  REQUIRE(d.on_event(press(dr.x, dr.y)));  // the border corner: no child there
+  REQUIRE_FALSE(d.select.dropdown_open());  // click-away dismissed it
+}
+
+TEST_CASE("Dialog: motion is forwarded to the child under the cursor",
+          "[dialog][mouse]") {
+  // The #47 motion forward must also cover the ordinary (non-rect-exceeding)
+  // path: a motion over a real child reaches it, not just the dropdown.
+  DropdownOverScrollDialog d;
+  Screen s{40, 12};
+  d.draw(s);
+
+  const Rect c = d.under.rect();
+  d.under.mice = 0;
+  REQUIRE(d.on_event(motion(c.x + 1, c.y)));
+  REQUIRE(d.under.mice == 1);
 }
 
 // ── MessageDialog ───────────────────────────────────────────────────────────

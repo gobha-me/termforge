@@ -38,8 +38,10 @@
 //
 // Losing focus closes the dropdown (set_focused override). That is what makes
 // click-away work for free: FocusRing::focus_at moves focus on a click, which
-// calls set_focused(false) here. Two cases remain the parent app's job, the
-// same two MenuBar documents:
+// calls set_focused(false) here. In a raw-app embedding the app performs the
+// two guards below; inside a Dialog both are handled internally now (#37,
+// #47) -- the pre-route hands dropdown events to the Select, and a press on
+// the dialog's own chrome closes any open child dropdown:
 //
 //   // 1. a press that lands on nothing still needs an explicit close
 //   if (m->pressed && sel.dropdown_open() && !sel.hit_test(m->x, m->y))
@@ -49,9 +51,9 @@
 //   if (sel.dropdown_open() && sel.hit_test(m->x, m->y)) { sel.on_event(ev); return; }
 //
 // See examples/forms.cpp for both. Known limit, inherited from MenuBar: the
-// dropdown has no height cap and does not scroll, so a very long list opened
-// near the bottom of the screen draws rows that are clipped and unreachable.
-// #21 (shared scrollbar) is where that gets revisited.
+// dropdown does not scroll, so a very long list opened near the bottom of the
+// screen clamps to the screen bottom (#48 item 3) and the off-screen options
+// are unreachable until #21 (shared scrollbar) revisits the height cap.
 
 #include <cstddef>
 #include <functional>

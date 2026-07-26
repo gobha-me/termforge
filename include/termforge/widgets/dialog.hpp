@@ -30,10 +30,13 @@
 // the dialog's own FocusRing FIRST, so Tab cycles the controls and cannot
 // escape the modal — and a focused control with a transient sub-state
 // (Select's open dropdown) gets first refusal on Escape before it means
-// "cancel the dialog" (issue #33). Mouse presses inside are pre-routed to a
-// child whose rect-exceeding hit area owns the point (the same #37 case:
-// a dropdown row overlapping the button row commits the option, not the
-// button underneath).
+// "cancel the dialog" (issue #33). Mouse events inside are pre-routed to a
+// child whose rect-exceeding hit area owns the point (the same #37 case: a
+// dropdown row overlapping the button row commits the option, not the button
+// underneath) -- for presses, the wheel, and motion alike (#47), so an open
+// dropdown scrolls and hover-highlights instead of the control beneath it. A
+// press that lands on no child (the dialog's chrome) closes any open child
+// dropdown (#47 item 3).
 //
 // Note the layering rule this inherits from push_overlay: the app owns the
 // dialog object. A callback must not destroy the dialog it was invoked from —
