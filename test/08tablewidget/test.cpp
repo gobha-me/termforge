@@ -85,6 +85,27 @@ TEST_CASE("TableWidget: scroll clamps to bounds", "[tablewidget][failure]") {
   REQUIRE(t.scroll_offset() == std::max(0, max_scroll));
 }
 
+TEST_CASE("TableWidget: a height grow re-clamps the scroll at draw (#48)",
+          "[tablewidget][failure]") {
+  // The #41 class in the grow direction: 10 rows at h=4, End parks the
+  // scroll at 7; a relayout to h=12 used to paint rows 7-9 at the top and
+  // leave the rest blank, hiding rows 0-6 until a manual scroll.
+  Screen s{20, 12};
+  TableWidget t;
+  t.set_geometry({0, 0, 20, 4});  // header + 3 visible rows
+  t.set_columns({{"N", Align::Left}});
+  for (int i = 0; i < 10; ++i) t.add_row({std::format("row{}", i)});
+
+  Event end = KeyEvent{Key::End};
+  t.on_event(end);
+  REQUIRE(t.scroll_offset() == 7);
+
+  t.set_geometry({0, 0, 20, 12});  // grow: header + 11 visible rows
+  t.draw(s);
+  REQUIRE(t.scroll_offset() == 0);  // 10 rows fit in 11 visible rows
+  REQUIRE(s.at(3, 1).text == "0");  // row0 is back at the top
+}
+
 TEST_CASE("TableWidget: zero-size rect doesn't crash", "[tablewidget][failure]") {
   Screen s{10, 10};
   TableWidget t;

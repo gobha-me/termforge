@@ -56,8 +56,13 @@ auto Select::dropdown_rect() const -> Rect {
   const Rect r = rect();
   // Exactly as wide as the control (see the header note), one row per option,
   // starting BELOW the whole rect -- not r.y + 1, which overlaps the box line
-  // draw() centers at r.y + r.h/2 for any h >= 2 (#36 item 1).
-  return {r.x, r.y + r.h, r.w, static_cast<int>(m_options.size())};
+  // draw() centers at r.y + r.h/2 for any h >= 2 (#36 item 1). Clamped to the
+  // screen bottom once a frame has painted: rows that would fall off-screen
+  // are unreachable and must not be keyboard-committable (#48 item 3). The
+  // full height-cap/scroll story stays with #21.
+  int h = static_cast<int>(m_options.size());
+  if (m_screen_rows > 0) h = std::min(h, std::max(0, m_screen_rows - (r.y + r.h)));
+  return {r.x, r.y + r.h, r.w, h};
 }
 
 auto Select::hit_test(int px, int py) const -> bool {
@@ -106,6 +111,7 @@ auto Select::commit(int index) -> void {
 
 auto Select::draw(Screen& screen) -> void {
   const Rect r = rect();
+  m_screen_rows = screen.rows();  // dropdown_rect() clamps to this (#48/3)
   if (r.w <= 0 || r.h <= 0) {
     clear_dirty();
     return;
@@ -188,7 +194,6 @@ auto Select::handle_mouse(const MouseEvent& m) -> bool {
     }
     return false;
   }
-
   if (m.button != 0) {
     // Non-left press: while open, consume inside our area so it cannot leak
     // to the widget underneath the dropdown. While CLOSED the leak rationale
@@ -233,6 +238,17 @@ auto Select::on_event(const Event& ev) -> bool {
   }
 
   // ── open ──
+  // Clamp the highlight to what is actually on screen: rows past the screen
+  // bottom are clipped out of the dropdown rect (#48 item 3), so arrows must
+  // not park the highlight on a row the user cannot see and Enter commit it.
+  const int visible = dropdown_rect().h;
+  if (visible <= 0) {
+    // No row fits below the box at all: only dismissal keys still work.
+    if (k->key == Key::Tab) { close_dropdown(); return false; }
+    if (k->key == Key::Escape) { close_dropdown(); return true; }
+    return true;  // still mini-modal: nothing else may leak through
+  }
+  if (m_highlight >= visible) m_highlight = visible - 1;
   if (k->key == Key::Tab) {
     // Close and DECLINE, so FocusRing::handle_key cycles on the same press.
     // See the divergence from MenuBar in the header.
@@ -247,7 +263,7 @@ auto Select::on_event(const Event& ev) -> bool {
     commit(m_highlight);
     return true;
   }
-  const int last = static_cast<int>(m_options.size()) - 1;
+  const int last = std::max(0, visible - 1);  // clamped row count, not option count
   if (k->key == Key::Up) {
     m_highlight = std::max(0, m_highlight - 1);
     mark_dirty();

@@ -22,6 +22,7 @@
 #include "termforge/core/screen.hpp"
 #include "termforge/core/types.hpp"
 #include "termforge/widgets/button.hpp"
+#include "termforge/widgets/checkbox.hpp"
 #include "termforge/widgets/dialog.hpp"
 #include "termforge/widgets/dialogs.hpp"
 #include "termforge/widgets/select.hpp"
@@ -32,6 +33,7 @@ using termforge::Backdrop;
 using termforge::BorderStyle;
 using termforge::Button;
 using termforge::Cell;
+using termforge::Checkbox;
 using termforge::ConfirmDialog;
 using termforge::Dialog;
 using termforge::ErrorEvent;
@@ -801,6 +803,69 @@ TEST_CASE("App: a dropdown past the dialog rect still takes clicks",
   REQUIRE(picked == 4);
   REQUIRE(dismisses == 0);   // still on the stack, still closable normally
   REQUIRE(app.keys_seen() == 0);  // nothing leaked to the app underneath
+}
+
+TEST_CASE("Dialog: Enter with a focused Checkbox still submits the form (#39)",
+          "[dialog][failure]") {
+  // The end-to-end pin #39 was actually about: a Checkbox declines Enter
+  // (Space-only), so the key falls through the ring to the dialog's submit
+  // path. Nothing else in the suite puts a Checkbox in a dialog -- a future
+  // Dialog::on_event reorder could break checkbox-in-form submit with every
+  // test green.
+  class FormDialog final : public Dialog {
+   public:
+    FormDialog() : Dialog("F") {
+      add_child(&agree);
+      add_child(&ok);
+      ok.on_activate([this] { submit(); });
+    }
+    Checkbox agree{"I agree"};
+    Button ok{"[ OK ]"};
+    [[nodiscard]] auto focused_widget() -> Widget* { return ring().current(); }
+
+    // The form's submit path: Enter that no control wanted resolves the
+    // dialog (the PromptDialog/ConfirmDialog pattern, #12's class).
+    auto on_event(const Event& ev) -> bool override {
+      if (Dialog::on_event(ev)) return true;
+      if (const auto* k = std::get_if<KeyEvent>(&ev))
+        if (k->key == Key::Enter) { submit(); return true; }
+      return false;
+    }
+
+   protected:
+    [[nodiscard]] auto content_rows() const -> int override { return 3; }
+    [[nodiscard]] auto content_cols() const -> int override { return 12; }
+    auto layout_content(Rect area) -> void override {
+      agree.set_geometry(Rect{area.x, area.y, area.w, 1});
+      ok.set_geometry(Rect{area.x, area.y + 2, 6, 1});
+    }
+    auto draw_content(Screen& screen) -> void override {
+      agree.draw(screen);
+      ok.draw(screen);
+    }
+
+   private:
+    auto submit() -> void {
+      if (begin_result()) close();
+    }
+  };
+
+  FormDialog d;
+  Screen s{40, 12};
+  d.draw(s);  // layout; the first-added child (Checkbox) starts focused
+  int closes = 0;
+  d.on_close([&] { ++closes; });
+
+  REQUIRE(d.focused_widget() == &d.agree);  // first-added starts focused
+  REQUIRE(d.on_event(key(Key::Enter)));  // Checkbox declines -> submit path
+  REQUIRE(closes == 1);
+  REQUIRE_FALSE(d.agree.checked());  // Enter must NOT have toggled it either
+
+  // ...and Space still toggles instead of submitting.
+  FormDialog d2;
+  d2.draw(s);
+  REQUIRE(d2.on_event(ch(U' ')));
+  REQUIRE(d2.agree.checked());
 }
 
 TEST_CASE("Dialog: Escape with no controls still cancels", "[dialog]") {

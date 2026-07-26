@@ -182,6 +182,24 @@ TEST_CASE("MenuBar: wheel over an open dropdown does not drag the selection",
   REQUIRE(which == 0);  // selection stayed on "New"
 }
 
+TEST_CASE("MenuBar: a non-left press on the CLOSED bar is declined (#48)",
+          "[mouse][menu][failure]") {
+  // The #38 wheel gate cited the #36 consistency rule but didn't port it to
+  // non-left presses: a right-click over a closed bar was consumed dead while
+  // every sibling (Button, Checkbox, RadioGroup, closed Select) declines, so
+  // an app-level right-click handler could never fire over the bar row.
+  bool fired = false;
+  auto mb = make_menu(fired);
+  MouseEvent right{.x = 1, .y = 0, .button = 2, .pressed = true};
+  REQUIRE_FALSE(mb.on_event(Event{right}));
+  REQUIRE_FALSE(mb.dropdown_open());
+
+  // While open, the same press is still consumed (leak containment).
+  mb.on_event(press(1, 0));
+  REQUIRE(mb.dropdown_open());
+  REQUIRE(mb.on_event(Event{right}));
+}
+
 TEST_CASE("MenuBar: click on title with no items does not open",
           "[mouse][menu]") {
   MenuBar mb;

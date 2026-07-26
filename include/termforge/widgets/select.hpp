@@ -116,7 +116,10 @@ class Select final : public Widget {
 
  private:
   // The single geometry source draw(), hit_test() and on_event() share;
-  // {0,0,0,0} when closed or empty.
+  // {0,0,0,0} when closed or empty. Height is clamped to the screen bottom
+  // (from the last draw) so off-screen rows are neither painted NOR
+  // keyboard-committable (#48 item 3); the full height-cap/scroll story is
+  // #21's.
   [[nodiscard]] auto dropdown_rect() const -> Rect;
   auto open_dropdown() -> void;
   // Selects `index` and closes. Fires on_change only when the value actually
@@ -129,6 +132,7 @@ class Select final : public Widget {
   int m_selected{-1};
   int m_highlight{-1};
   bool m_open{false};
+  int m_screen_rows{0};  // memoized from draw(); 0 = no frame yet (unclamped)
   BorderStyle m_style{BorderStyle::Single};
 
   Rgb m_fg{0xE0, 0xE0, 0xF0};
