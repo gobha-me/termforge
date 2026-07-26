@@ -215,6 +215,27 @@ TEST_CASE("TextInput: click past end clamps to text size", "[mouse][input]") {
   REQUIRE(ti.cursor_pos() == 3);
 }
 
+TEST_CASE("TextInput: a shrinking set_text leaves no stale scroll for a queued click (#46)",
+          "[mouse][input][failure]") {
+  // Focused 10-col field scrolled to the tail of 20 chars; a callback in the
+  // same event batch calls set_text("abc"), then a queued click dispatches
+  // BEFORE the next draw. Pre-fix the stale m_scroll (~10) survived set_text,
+  // the click walk started past the new end (cursor landed at 10 on a 3-byte
+  // string), and the next ensure_cursor_visible/draw substr(m_scroll) threw.
+  Screen s{10, 1};
+  TextInput ti;
+  ti.set_geometry({0, 0, 10, 1});
+  ti.set_focused(true);
+  ti.set_text("0123456789abcdefghij");
+  ti.draw(s);  // scrolls the window to the tail
+
+  ti.set_text("abc");  // shrink with no draw in between
+  Event ev = press(2, 0);
+  REQUIRE_NOTHROW(ti.on_event(ev));
+  REQUIRE(ti.cursor_pos() <= 3);
+  REQUIRE_NOTHROW(ti.draw(s));
+}
+
 TEST_CASE("TextInput: click maps display column to code-point boundary",
           "[mouse][input]") {
   TextInput ti;
