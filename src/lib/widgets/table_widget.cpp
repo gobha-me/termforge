@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <string_view>
 
+#include "detail/scroll.hpp"
 #include "detail/width.hpp"
 
 namespace termforge {
@@ -100,6 +101,14 @@ auto TableWidget::draw(Screen& screen) -> void {
     clear_dirty();
     return;
   }
+
+  // Re-clamp the scroll against CURRENT geometry (#41's class in the grow
+  // direction, #48 item 2): End at h=4 with 10 rows parks m_scroll at 7, and
+  // a relayout to h=12 leaves rows 0-6 hidden and the bottom blank until a
+  // manual scroll. set_geometry is non-virtual, so draw() reconciles -- the
+  // same treatment ListWidget/RadioGroup got in 73a985e.
+  m_scroll = detail::clamp_scroll(m_scroll, m_selected,
+                                  static_cast<int>(m_rows.size()), r.h - 1);
 
   // Own the whole rect: blank it every frame so the 1-col gaps between columns
   // and rows vacated by clear_rows()/scroll can't leave stale content behind

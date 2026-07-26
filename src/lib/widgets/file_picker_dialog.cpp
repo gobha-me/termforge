@@ -74,8 +74,8 @@ auto FilePickerDialog::build() -> void {
   });
   m_ok.on_activate([this] { finish_ok(); });
   m_cancel.on_activate([this] { finish_cancel(); });
-  // The error dialog just dismisses itself; the app pops it via on_close.
-  m_error.on_ok([] {});
+  // The error dialog is pushed as its own overlay; the host owns its on_close
+  // (to pop it). The flood gate lives in report_error via error_overlay_up.
 
   add_child(&m_path);  // first added starts focused: type a path immediately
   add_child(&m_list);
@@ -88,7 +88,13 @@ auto FilePickerDialog::build() -> void {
 // ── configuration ────────────────────────────────────────────────────────────
 
 auto FilePickerDialog::set_start_dir(std::filesystem::path dir) -> void {
-  m_dir = std::move(dir);
+  // Normalize on the way in (#45 satellite 6): a trailing slash makes
+  // parent_path("/a/b/") == "/a/b", which passes the != m_dir guard yet lists
+  // the same directory -- \"..\" as a one-press no-op. And seed the path field
+  // (#45 satellite 4): the first showing must not open on an empty field
+  // whose relative entries resolve against a directory the user cannot see.
+  m_dir = std::move(dir).lexically_normal();
+  m_path.set_text(m_dir.string());
   mark_dirty();
 }
 
@@ -102,6 +108,19 @@ auto FilePickerDialog::set_filter(std::vector<std::string> extensions) -> void {
 // ── the listing ──────────────────────────────────────────────────────────────
 
 auto FilePickerDialog::refresh() -> bool {
+  // Remember the highlighted entry's leaf so a re-list can land back on it
+  // (the #12 clear_rows hygiene class, #45): ListWidget::set_items resets the
+  // selection to 0. Captured BEFORE m_entries is cleared. With refresh()
+  // running once per showing instead of per frame this only matters across a
+  // directory change, but a file the user highlighted should stay highlighted
+  // if it still exists.
+  const int prev_selected = m_list.selected();
+  const std::string prev_leaf =
+      (prev_selected >= 0 &&
+       prev_selected < static_cast<int>(m_entries.size()))
+          ? m_entries[static_cast<std::size_t>(prev_selected)].leaf
+          : std::string{};
+
   m_entries.clear();
   std::error_code ec;
 
@@ -151,6 +170,19 @@ auto FilePickerDialog::refresh() -> bool {
   items.reserve(m_entries.size());
   for (const auto& e : m_entries) items.push_back(e.display);
   m_list.set_items(std::move(items));
+
+  // Restore the highlight on the same entry if it survived the re-list
+  // (set_items reset it to 0). set_selected re-clamps into range, so a
+  // vanished entry or a shorter listing degrades to a valid row, never a
+  // stale index.
+  if (!prev_leaf.empty()) {
+    for (int i = 0; i < static_cast<int>(m_entries.size()); ++i) {
+      if (m_entries[static_cast<std::size_t>(i)].leaf == prev_leaf) {
+        m_list.set_selected(i);
+        break;
+      }
+    }
+  }
   return true;
 }
 
@@ -231,6 +263,15 @@ auto FilePickerDialog::finish_cancel() -> void {
 }
 
 auto FilePickerDialog::report_error(const std::string& message) -> void {
+  // Flood gate (#45 item 3): an unreadable directory used to push a fresh
+  // MessageDialog on every frame's refresh() (~10 copies/second), and the
+  // flood resumed the moment they were dismissed. The host reports whether
+  // the error dialog is already on its overlay stack (error_overlay_up); one
+  // at a time, re-armed when the host dismisses the one that's up. refresh()
+  // also no longer runs per frame (it moved to on_show), which removes the
+  // original ~10 Hz re-trigger. An unwired query means "not up", preserving
+  // the decline-navigation behavior for an app that never pushes overlays.
+  if (m_error_up_query && m_error_up_query()) return;
   m_error.set_text(message);
   if (m_push_overlay) m_push_overlay(m_error);
 }
@@ -245,11 +286,14 @@ auto FilePickerDialog::content_cols() const -> int {
 }
 
 auto FilePickerDialog::layout_content(Rect area) -> void {
-  // Path field on top, the entry list filling the middle, buttons on the
-  // bottom row. A short screen collapses the list toward zero rather than
-  // spilling past the area Dialog clamped for us.
+  // Path field on top, the entry list filling the middle, a blank spacer row,
+  // then the buttons on the bottom row (#45 satellite 7: the content_rows
+  // reservation includes that spacer -- 8 list rows + field + spacer +
+  // buttons, the documented 8 + separator, not 9 flush against the buttons).
+  // A short screen collapses the list toward zero rather than spilling past
+  // the area Dialog clamped for us.
   const int rows = std::max(0, area.h);
-  const int list_rows = std::max(0, rows - 2);  // field row + button row
+  const int list_rows = std::max(0, rows - 3);  // field + spacer + button row
   m_path.set_geometry(Rect{area.x, area.y, area.w, rows > 0 ? 1 : 0});
   m_list.set_geometry(Rect{area.x, area.y + 1, area.w, list_rows});
   const int button_row = area.y + std::max(0, rows - 1);
@@ -264,18 +308,25 @@ auto FilePickerDialog::draw_content(Screen& screen) -> void {
   m_cancel.draw(screen);
 }
 
-auto FilePickerDialog::draw(Screen& screen) -> void {
-  // Every (re)showing re-reads the directory: the filesystem may have changed
-  // while the picker was dismissed, and a stale listing is the classic file-
-  // picker bug. Dialog::draw is what resets the result latch for a new
-  // showing, so gating the refresh on draw keeps the two in lockstep.
+auto FilePickerDialog::on_show() -> void {
+  // Once per SHOWING (#45): Dialog::draw fires this on the first frame of a
+  // showing, so the per-showing work lives here instead of in a per-frame
+  // draw() that repeated it ~10x/second and fought the user -- a per-frame
+  // refresh() reset the list selection to 0 every frame (navigation could
+  // never move past row 1), a per-frame focus assert yanked focus back to the
+  // list mid-typing (the path field and buttons were unreachable), and a
+  // per-frame read error pushed a fresh MessageDialog every frame.
+  //
+  // Re-read the directory on every (re)showing: the filesystem may have
+  // changed while the picker was dismissed, and a stale listing is the
+  // classic file-picker bug. Seed the path field from the current dir so a
+  // relative entry has a visible base, and assert the list as the starting
+  // focus -- a file picker's primary control is its list, and after a cancel
+  // the path field still held focus, so the next showing's Tab would
+  // otherwise land on OK.
+  m_path.set_text(m_dir.string());
   refresh();
-  // A file picker's primary focus is its file list. Focus persists across
-  // showings in the ring, so re-assert it on every show: after a cancel the
-  // path field still held focus, and the next showing's Tab would otherwise
-  // land on OK. Focusing the list each draw keeps every showing identical.
   ring().focus(&m_list);
-  Dialog::draw(screen);
 }
 
 auto FilePickerDialog::on_event(const Event& ev) -> bool {

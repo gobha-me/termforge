@@ -2,6 +2,7 @@
 
 #include <string_view>
 
+#include "detail/scroll.hpp"
 #include "detail/utf8.hpp"
 #include "detail/width.hpp"
 
@@ -111,4 +112,35 @@ TEST_CASE("truncate_to_width: never straddles a wide glyph", "[width][failure]")
   REQUIRE(truncate_to_width(shijie, 4) == shijie);
   REQUIRE(truncate_to_width(shijie, 1).empty());  // not even the first fits
   REQUIRE(display_width(truncate_to_width(shijie, 3)) <= 3);
+}
+
+// ── clamp_scroll guards (#48 item 4) ─────────────────────────────────────────
+// Latent edges hardened before #21's shared scrollbar becomes a caller.
+
+TEST_CASE("clamp_scroll: basic window and ensure-visible", "[scroll]") {
+  REQUIRE(clamp_scroll(0, 0, 10, 3) == 0);
+  REQUIRE(clamp_scroll(0, 5, 10, 3) == 3);   // selected below the window
+  REQUIRE(clamp_scroll(9, 2, 10, 3) == 2);   // selected above the window
+  REQUIRE(clamp_scroll(99, -1, 10, 3) == 7);  // no selection: pure range cap
+  // A selected row OUTSIDE an over-scrolled window wins (ensure-visible): the
+  // scroll cap alone does not describe callers that pass their real selected.
+  REQUIRE(clamp_scroll(99, 0, 10, 3) == 0);
+}
+
+TEST_CASE("clamp_scroll: zero/negative visible preserves the incoming scroll",
+          "[scroll][failure]") {
+  // Was: returned 0, so a collapse-then-re-expand jumped to the top instead
+  // of restoring the old viewport. Pure range-clamp would also be wrong here
+  // (there is no valid window), so the input passes through untouched.
+  REQUIRE(clamp_scroll(4, 2, 10, 0) == 4);
+  REQUIRE(clamp_scroll(4, 2, 10, -1) == 4);
+}
+
+TEST_CASE("clamp_scroll: a selection past the content cannot blank the window",
+          "[scroll][failure]") {
+  // clamp_scroll(0, 5, 3, 2): selected is out of range (count 3). Unguarded,
+  // the ensure-visible step dragged the window to 4 -- past count-visible=1,
+  // painting nothing. The selection is clamped into [0, count) first.
+  REQUIRE(clamp_scroll(0, 5, 3, 2) == 1);  // selected->2, window follows: 1..2
+  REQUIRE(clamp_scroll(0, 5, 3, 2) <= 3 - 2);
 }

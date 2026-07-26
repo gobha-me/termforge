@@ -11,6 +11,7 @@
 // keyboard events. Enter and Escape are NOT consumed (parent handles them
 // for submit/cancel).
 
+#include <algorithm>
 #include <functional>
 #include <string>
 
@@ -29,11 +30,13 @@ class TextInput final : public Widget {
   auto set_text(std::string text) -> void {
     m_text = std::move(text);
     m_cursor = static_cast<int>(m_text.size());
-    // No scroll decision here: there is no reliable geometry yet (a dialog
-    // calls set_value before first layout, when rect().w == 0 and any clamp
-    // no-ops) and no focus state to anchor against (#40). draw() reconciles
-    // the window on every frame: focused -> keep the cursor visible,
-    // unfocused -> head-anchor so a pre-filled field reads from the start.
+    // Safety clamp, not an anchoring decision: after a SHRINKING set_text the
+    // old scroll can point past the new end, and any event dispatched before
+    // the next draw would consume it (the click walk landing m_cursor past
+    // the end; ensure_cursor_visible/draw substr(m_scroll) throwing
+    // std::out_of_range -- #46). The real window is still picked in draw():
+    // focused -> keep the cursor visible, unfocused -> head-anchor (#40).
+    m_scroll = std::min(m_scroll, static_cast<int>(m_text.size()));
     mark_dirty();
   }
 

@@ -962,9 +962,40 @@ TEST_CASE("Select: a non-left press on the CLOSED box is declined",
   REQUIRE_FALSE(sel.dropdown_open());
 }
 
+TEST_CASE("Select: the dropdown clamps to the screen bottom (#48 item 3)",
+          "[form][select][failure]") {
+  // A Select near the screen bottom: Screen clips the off-screen option rows
+  // out of the paint, but unclamped Down/Down/Enter still committed an option
+  // the user never saw. The dropdown rect (and therefore hit_test, hover,
+  // arrows and Enter) is now capped to the visible rows.
+  Screen s{20, 7};
+  Select sel;
+  sel.set_options({"a", "b", "c", "d", "e"});
+  sel.set_geometry({0, 4, 10, 1});  // open room for y=5,6: 2 of 5 rows fit
+
+  int picked = -1;
+  sel.on_change([&](int i, const std::string&) { picked = i; });
+  REQUIRE(sel.on_event(press(2, 4)));  // open
+  sel.draw(s);
+  REQUIRE(sel.dropdown_open());
+
+  REQUIRE(sel.hit_test(2, 6));        // the last visible row ("b")
+  REQUIRE_FALSE(sel.hit_test(2, 7));  // past the screen: dead, not committable
+
+  // Arrows cannot walk the highlight onto a clipped row...
+  REQUIRE(sel.on_event(key(Key::End)));
+  REQUIRE(sel.highlighted() == 1);  // clamped to the last VISIBLE row
+  // ...and a click past the bottom is declined, so nothing invisible commits.
+  REQUIRE_FALSE(sel.on_event(press(2, 8)));
+  REQUIRE(sel.dropdown_open());
+  REQUIRE(picked == -1);
+
+  REQUIRE(sel.on_event(key(Key::Enter)));  // commits the visible highlight
+  REQUIRE(picked == 1);                    // "b", not the off-screen "e"
+}
+
 TEST_CASE("Select: the dropdown anchors below a taller rect",
-          "[form][select][mouse][failure]") {
-  // #36 item 1: anchored at r.y + 1, a h >= 2 control overdraws its own box
+          "[form][select][mouse][failure]") {  // #36 item 1: anchored at r.y + 1, a h >= 2 control overdraws its own box
   // line and a click on the visually-first option row satisfies
   // rect().contains first -- toggling the dropdown closed instead of
   // committing. Anchored at r.y + r.h the two can never disagree.

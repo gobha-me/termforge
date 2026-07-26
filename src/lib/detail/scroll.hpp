@@ -16,15 +16,19 @@ namespace termforge::detail {
 // Adjust `scroll` (in place) so that:
 //   - it stays within [0, max(0, count - visible_rows)], and
 //   - `selected` lies inside [scroll, scroll + visible_rows).
-// A non-positive visible height or a negative selection (empty list) only
-// clamps the range -- there is nothing to make visible. Pure: no widget
-// state, no dirty flags; callers mark_dirty as they already do.
+// A non-positive visible height has nothing to make visible, so the incoming
+// scroll is preserved (not zeroed) -- a collapse-then-re-expand restores the
+// old viewport instead of jumping to the top (#48 item 4). `selected` is
+// clamped into [0, count): a stale selection past the (shrunk) content must
+// not drag the window into a blank region.
+// Pure: no widget state, no dirty flags; callers mark_dirty as they already do.
 [[nodiscard]] constexpr auto clamp_scroll(int scroll, int selected, int count,
                                           int visible_rows) noexcept -> int {
   if (count < 0) count = 0;
-  if (visible_rows <= 0) return 0;
+  if (visible_rows <= 0) return scroll;
   scroll = std::clamp(scroll, 0, std::max(0, count - visible_rows));
   if (selected >= 0) {
+    selected = std::min(selected, count - 1);
     if (selected < scroll) scroll = selected;
     if (selected >= scroll + visible_rows) scroll = selected - visible_rows + 1;
   }

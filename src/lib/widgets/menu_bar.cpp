@@ -146,9 +146,12 @@ auto MenuBar::handle_mouse(const MouseEvent& m) -> bool {
   }
 
   if (m.button != 0) {
-    // Non-left press inside our area: consume so it doesn't leak to the
-    // widget underneath the dropdown; do nothing.
-    return hit_test(m.x, m.y);
+    // Non-left press: while a dropdown is open, consume inside our area so it
+    // cannot leak to the widget underneath. While CLOSED every sibling
+    // declines (button.cpp, checkbox.cpp, radio_group.cpp, closed Select
+    // after #36), so an app-level right-click handler works over a closed
+    // MenuBar too (#48 item 1).
+    return m_open && hit_test(m.x, m.y);
   }
 
   // Click on the bar row: map x to a title span.

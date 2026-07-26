@@ -38,8 +38,10 @@
 //
 // Losing focus closes the dropdown (set_focused override). That is what makes
 // click-away work for free: FocusRing::focus_at moves focus on a click, which
-// calls set_focused(false) here. Two cases remain the parent app's job, the
-// same two MenuBar documents:
+// calls set_focused(false) here. In a raw-app embedding the app performs the
+// two guards below; inside a Dialog both are handled internally now (#37,
+// #47) -- the pre-route hands dropdown events to the Select, and a press on
+// the dialog's own chrome closes any open child dropdown:
 //
 //   // 1. a press that lands on nothing still needs an explicit close
 //   if (m->pressed && sel.dropdown_open() && !sel.hit_test(m->x, m->y))
@@ -49,9 +51,9 @@
 //   if (sel.dropdown_open() && sel.hit_test(m->x, m->y)) { sel.on_event(ev); return; }
 //
 // See examples/forms.cpp for both. Known limit, inherited from MenuBar: the
-// dropdown has no height cap and does not scroll, so a very long list opened
-// near the bottom of the screen draws rows that are clipped and unreachable.
-// #21 (shared scrollbar) is where that gets revisited.
+// dropdown does not scroll, so a very long list opened near the bottom of the
+// screen clamps to the screen bottom (#48 item 3) and the off-screen options
+// are unreachable until #21 (shared scrollbar) revisits the height cap.
 
 #include <cstddef>
 #include <functional>
@@ -116,7 +118,10 @@ class Select final : public Widget {
 
  private:
   // The single geometry source draw(), hit_test() and on_event() share;
-  // {0,0,0,0} when closed or empty.
+  // {0,0,0,0} when closed or empty. Height is clamped to the screen bottom
+  // (from the last draw) so off-screen rows are neither painted NOR
+  // keyboard-committable (#48 item 3); the full height-cap/scroll story is
+  // #21's.
   [[nodiscard]] auto dropdown_rect() const -> Rect;
   auto open_dropdown() -> void;
   // Selects `index` and closes. Fires on_change only when the value actually
@@ -129,6 +134,7 @@ class Select final : public Widget {
   int m_selected{-1};
   int m_highlight{-1};
   bool m_open{false};
+  int m_screen_rows{0};  // memoized from draw(); 0 = no frame yet (unclamped)
   BorderStyle m_style{BorderStyle::Single};
 
   Rgb m_fg{0xE0, 0xE0, 0xF0};
