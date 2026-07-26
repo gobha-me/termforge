@@ -130,7 +130,16 @@ auto Dialog::draw(Screen& screen) -> void {
   // latch is permanent: an app that holds its dialogs as members, which is
   // the documented way to hold them, would get one working use out of each
   // and then a modal that cannot be dismissed.)
+  //
+  // The latch transition doubles as the per-showing boundary (#45): the first
+  // frame of a showing (the very first draw, or the first after a close armed
+  // the latch) fires on_show() so a subclass can do once-per-showing work --
+  // refresh a listing, seed a field, assert focus -- without repeating it on
+  // every one of the ~10 idle frames a second that follow.
+  const bool new_showing = m_reported || !m_shown_once;
   m_reported = false;
+  m_shown_once = true;
+  if (new_showing) on_show();
 
   layout(screen.cols(), screen.rows());
 

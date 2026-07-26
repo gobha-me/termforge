@@ -97,7 +97,6 @@ class Dialog : public Widget {
 
   // Fired when the dialog is finished. The app wires this to pop_overlay().
   auto on_close(std::function<void()> cb) -> void;
-
   // Size and center for a screen of these dimensions. draw() calls this every
   // frame, so apps normally never do. Call it manually only when you need a
   // real rect() before the first frame — e.g. to hit-test a mouse event that
@@ -127,8 +126,9 @@ class Dialog : public Widget {
   // A result may be reported once per showing. Returns false if this showing
   // has already reported one — a mouse press and an Enter can arrive in the
   // same input batch, and a confirm must not fire twice. The latch clears on
-  // the next draw(), because a dialog that reported a result closed and was
-  // popped, so the next frame that draws it is a new showing.
+  // the next draw(), and that same transition (latched -> cleared) is what
+  // fires on_show(): a dialog that reported a result closed and was popped,
+  // so the next frame that draws it is a new showing.
   auto begin_result() -> bool;
 
   // Extra size the subclass's controls need, inside the border and below the
@@ -144,6 +144,15 @@ class Dialog : public Widget {
 
   // What Escape means. The base closes; Confirm/Prompt report a cancel first.
   virtual auto on_escape() -> void { close(); }
+
+  // Per-SHOWING hook, fired from draw() on the first frame of each showing --
+  // the first draw() after the result latch was armed by a close (plus the
+  // very first showing). Per-showing work belongs here (re-read a directory,
+  // seed a field, assert a starting focus): draw() itself runs EVERY frame
+  // (~10 Hz idle), so work placed there repeats or, worse, fights the user --
+  // a refresh that resets a list's selection every frame makes navigation
+  // impossible (issue #45). The base does nothing.
+  virtual auto on_show() -> void {}
 
   // Fire on_close (copying the callback first — a callback may replace the
   // one it was called from; see issue #5).
@@ -168,6 +177,7 @@ class Dialog : public Widget {
   std::vector<Widget*> m_children;
   Rect m_content_area;      // where the subclass's controls went, or h == 0
   bool m_reported{false};   // see begin_result
+  bool m_shown_once{false}; // has any showing completed its first frame yet
   int m_max_width{48};
   // Must match Frame's hardcoded background, or the border row and the
   // interior disagree. There is no Theme type yet to hold this.

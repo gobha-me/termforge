@@ -22,6 +22,8 @@
 //     d.on_close([this] { pop_overlay(); });
 //     push_overlay(d);
 //   });
+//   // The flood gate (#45): let the picker raise one error dialog at a time.
+//   m_open.error_overlay_up([this] { return top_overlay() != &m_open; });
 //   push_overlay(m_open);
 //
 // The pieces and their keys:
@@ -65,9 +67,12 @@ class FilePickerDialog final : public Dialog {
       std::string title,
       std::function<void(std::optional<std::filesystem::path>)> on_result = {});
 
-  // Where to browse. Does not navigate until the dialog is shown (draw), so a
-  // picker held as a member can be configured once at startup. set_start_dir
-  // navigates lazily; set_dir navigates immediately (used while it is up).
+  // Where to browse. set_start_dir does not navigate until the next showing
+  // (draw -> on_show), so a picker held as a member can be configured once at
+  // startup; it also seeds the path field so the user can see the directory a
+  // relative entry resolves against (#45 satellite 4). The path is normalized
+  // (lexically_normal) so a trailing slash does not make \"..\" a one-press
+  // no-op (#45 satellite 6).
   auto set_start_dir(std::filesystem::path dir) -> void;
   [[nodiscard]] auto current_dir() const noexcept
       -> const std::filesystem::path& {
@@ -94,16 +99,29 @@ class FilePickerDialog final : public Dialog {
     m_push_overlay = std::move(cb);
   }
 
+  // The app wires this to report whether the error MessageDialog is currently
+  // on its overlay stack (e.g. `top_overlay() == &d` or a contains-check).
+  // report_error consults it as the flood gate (#45 item 3): one error dialog
+  // at a time, re-armed when the host dismisses the one that's up -- however
+  // it dismisses it (OK, Escape, or pop). Left unset, the gate falls back to
+  // "no error up", i.e. every report_error pushes (the pre-gate behavior).
+  auto error_overlay_up(std::function<bool()> cb) -> void {
+    m_error_up_query = std::move(cb);
+  }
+
   // Escape cancels with nullopt; Enter on a neutral control resolves the path
   // field. Everything else falls to Dialog's ring + chrome handling.
   auto on_event(const Event& ev) -> bool override;
 
-  // A fresh listing on every (re)showing, and what starts the lazy
-  // set_start_dir navigation. Public so a test (or an app driving a headless
-  // frame) can paint one frame without a tty; Dialog::draw is already public.
-  auto draw(Screen& screen) -> void override;
+  // Dialog::draw is already public; it drives the per-showing on_show() below
+  // on the first frame of each showing, so a test (or an app driving a
+  // headless frame) can paint one frame without a tty.
+  auto draw(Screen& screen) -> void override { Dialog::draw(screen); }
 
  protected:
+  // Once per SHOWING (not per frame, #45): seed the path field, re-read the
+  // directory, and assert the list as the starting focus.
+  auto on_show() -> void override;
   // Path field, entry list (filling the body), spacer, button row.
   [[nodiscard]] auto content_rows() const -> int override { return kListRows + 3; }
   [[nodiscard]] auto content_cols() const -> int override;
@@ -117,8 +135,11 @@ class FilePickerDialog final : public Dialog {
   // Navigate to m_dir's pending target and rebuild the entry list. Returns
   // false (surfacing an error) when the directory cannot be read.
   auto navigate(const std::filesystem::path& dir) -> bool;
-  // Read m_dir into m_entries (dirs-first, "..", filtered). Sets m_error and
-  // returns false on failure; m_entries is then left empty.
+  // Read m_dir into m_entries (dirs-first, up-entry, filtered), preserving
+  // the selection across the re-list where the same entry still exists (the
+  // #12 clear_rows hygiene class: a re-list must not silently yank the
+  // highlight to row 0). Sets m_error and returns false on failure; m_entries
+  // is then left empty.
   auto refresh() -> bool;
 
   // The path the path field currently names, resolved against m_dir.
@@ -142,7 +163,17 @@ class FilePickerDialog final : public Dialog {
 
   static constexpr int kListRows{8};  // visible directory rows
 
-  std::filesystem::path m_dir{std::filesystem::current_path()};
+  // The error_code overload (#45 satellite 5): the throwing current_path()
+  // would throw out of the app's constructor when the cwd is unlinked or
+  // unsearchable. An indeterminate cwd falls back to \".\", which navigate()
+  // resolves on the first showing like any other relative start.
+  static auto default_dir() -> std::filesystem::path {
+    std::error_code ec;
+    auto p = std::filesystem::current_path(ec);
+    return ec ? std::filesystem::path{"."} : p;
+  }
+
+  std::filesystem::path m_dir{default_dir()};
 
   // One ListWidget row = one m_entries entry. Directories carry a trailing
   // slash in the *display* string only; is_dir/leaf hold the real metadata.
@@ -162,6 +193,7 @@ class FilePickerDialog final : public Dialog {
 
   MessageDialog m_error{"Cannot Read Directory", ""};
   std::function<void(Dialog&)> m_push_overlay;
+  std::function<bool()> m_error_up_query;  // flood-gate query (#45 item 3)
   std::function<void(std::optional<std::filesystem::path>)> m_on_result;
 };
 

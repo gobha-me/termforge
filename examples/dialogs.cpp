@@ -65,11 +65,13 @@ class DialogsDemo final : public App {
     m_prompt.on_close([this] { pop_overlay(); });
     m_open.on_close([this] { pop_overlay(); });
     // The picker's read errors raise a MessageDialog as a nested overlay on
-    // top of it; that error dialog pops only itself when dismissed.
+    // top of it; that error dialog pops only itself when dismissed. The
+    // flood-gate query lets the picker raise just one at a time (#45).
     m_open.on_error_overlay([this](Dialog& d) {
       d.on_close([this] { pop_overlay(); });
       push_overlay(d);
     });
+    m_open.error_overlay_up([this] { return top_overlay() != &m_open; });
 
     m_message.on_ok([this] { m_status.set_text("message: acknowledged"); });
     m_confirm.on_result([this](bool yes) {

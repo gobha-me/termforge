@@ -101,6 +101,8 @@ struct WiredPicker {
     picker.set_start_dir(start);
     picker.on_close([this] { host.pop_overlay(); });
     picker.on_error_overlay([this](Dialog& d) { host.push_overlay(d); });
+    picker.error_overlay_up(
+        [this] { return host.top_overlay() != &picker; });
     picker.on_result(
         [this](std::optional<fs::path> p) { results.push_back(std::move(p)); });
   }
@@ -385,4 +387,118 @@ TEST_CASE("FilePicker: re-showing refreshes the listing and reports again",
 
   REQUIRE(w.results.size() == 2);
   REQUIRE(w.results[1]->filename() == "second.txt");
+}
+
+// ── #45: draw() is per-frame, not per-showing ────────────────────────────────
+// The suite was green while items 1-3 made the picker unusable in a real
+// App::run() loop, because no test interleaved a draw() between events. These
+// do -- the single shape that catches the whole class.
+
+TEST_CASE("FilePicker: a draw between keypresses does not reset list navigation (#45)",
+          "[filepicker][failure]") {
+  // Item 1: refresh() ran in draw(), and set_items() resets the selection to
+  // 0 -- so Down (0->1) followed by an idle frame's draw reset it to 0, and
+  // Enter then activated \"..\", ascending instead of opening the highlighted
+  // dir. Selection can never move past row 1 at human speed.
+  TempTree t;
+  t.dir("target");
+  t.dir("other");
+
+  WiredPicker w{t.root};
+  Screen screen{80, 30};
+  w.show(screen);
+
+  w.picker.on_event(key(Key::Home));  // entry 0 = \"..\"
+  w.picker.on_event(key(Key::Down));  // -> first dir (\"other\" sorts first)
+  w.picker.draw(screen);              // an idle frame goes by
+  w.picker.draw(screen);              // ...and another
+  w.picker.on_event(key(Key::Down));  // -> second dir (\"target\")
+  w.picker.draw(screen);              // another idle frame before Enter
+  w.picker.on_event(key(Key::Enter)); // must descend into \"target\", not \"..\"
+
+  REQUIRE(w.picker.current_dir() == t.root / "target");
+  REQUIRE(w.results.empty());  // descending is not a pick
+}
+
+TEST_CASE("FilePicker: a draw while typing does not steal focus from the path field (#45)",
+          "[filepicker][failure][field]") {
+  // Item 2: ring().focus(&m_list) ran in draw(), so Shift+Tab to the path
+  // field and typing was undone within one idle frame -- subsequent chars
+  // went to the ListWidget (ignored) and Enter descended instead of
+  // navigating. The path field must stay focused across frames.
+  TempTree t;
+  t.dir("dest");
+
+  WiredPicker w{t.root};
+  Screen screen{80, 30};
+  w.show(screen);
+
+  w.picker.on_event(key(Key::Tab, 0, /*shift=*/true));  // list -> path field
+  for (std::size_t i = 0; i < t.root.string().size(); ++i) {
+    w.picker.on_event(key(Key::Backspace));
+    w.picker.draw(screen);  // idle frames interleaved with the editing
+  }
+  type(w.picker, (t.root / "dest").string());
+  w.picker.draw(screen);   // another frame before committing
+  w.picker.on_event(key(Key::Enter));
+
+  REQUIRE(w.picker.current_dir() == t.root / "dest");
+  REQUIRE(w.results.empty());
+}
+
+TEST_CASE("FilePicker: an unreadable dir surfaces the error once per showing, not per frame (#45)",
+          "[filepicker][failure]") {
+  // Item 3: with refresh() in draw(), a directory that stayed unreadable
+  // pushed a fresh MessageDialog every frame (~10/second). Two things now
+  // prevent that: refresh() moved to on_show() (once per showing, not per
+  // frame), AND report_error's flood gate (m_error_up) holds a persistent
+  // failure to one dialog per dismissal.
+  TempTree t;
+  const fs::path not_a_dir = t.file("afile.txt");
+
+  WiredPicker w{t.root};
+  Screen screen{80, 30};
+  w.show(screen);
+
+  w.picker.on_event(key(Key::Tab, 0, /*shift=*/true));  // list -> path field
+  for (std::size_t i = 0; i < t.root.string().size(); ++i)
+    w.picker.on_event(key(Key::Backspace));
+  type(w.picker, not_a_dir.string() + "/");
+  w.picker.on_event(key(Key::Enter));  // navigation declines, one error raised
+  REQUIRE(w.host.overlay_count() == 2);
+
+  // Idle frames go by (same showing): refresh() no longer runs per frame, so
+  // nothing re-fires even with the dir still unreadable and the error up.
+  for (int i = 0; i < 5; ++i) w.picker.draw(screen);
+  REQUIRE(w.host.overlay_count() == 2);  // still exactly one error dialog
+
+  // Re-trigger the same bad navigation while the first error is STILL up:
+  // the flood gate holds it to one, where the per-frame refresh stacked them.
+  w.picker.on_event(key(Key::Enter));
+  REQUIRE(w.host.overlay_count() == 2);
+
+  // Dismiss the one that's up: the gate re-arms, and the next showing of a
+  // still-unreadable start dir may surface it again -- exactly once.
+  w.host.pop_overlay();
+  w.picker.on_event(key(Key::Enter));  // same bad navigation, gate now re-armed
+  REQUIRE(w.host.overlay_count() == 2);  // one new dialog, not a flood
+}
+
+TEST_CASE("FilePicker: the path field is seeded with the start dir on first showing (#45)",
+          "[filepicker][field]") {
+  // Satellite 4: set_start_dir never seeded the field, so the first showing
+  // opened on an empty field and the tests' backspace-the-seeded-root loops
+  // were no-ops. The field now shows the directory the list is browsing.
+  TempTree t;
+  WiredPicker w{t.root};
+  Screen screen{80, 30};
+  w.show(screen);
+
+  // The seeded absolute root renders in the path field's top row region; the
+  // strongest portable assertion is behavioral: OK with an untouched field
+  // picks the seeded directory itself.
+  w.picker.on_event(key(Key::Tab));   // list -> OK
+  w.picker.on_event(key(Key::Enter));
+  REQUIRE(w.results.size() == 1);
+  REQUIRE(fs::equivalent(*w.results[0], t.root));
 }
