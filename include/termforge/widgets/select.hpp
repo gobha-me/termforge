@@ -105,7 +105,12 @@ class Select final : public Widget {
   // Closing on focus loss is the click-away mechanism — see the header note.
   auto set_focused(bool focused) -> void override;
 
-  [[nodiscard]] auto dropdown_open() const noexcept -> bool { return m_open; }
+  // Open iff a highlight row exists: the two facts were kept in two fields
+  // and stayed in lockstep at every write site (#42 item 4), so m_open is
+  // derived now -- one field, one fact.
+  [[nodiscard]] auto dropdown_open() const noexcept -> bool {
+    return m_highlight >= 0;
+  }
   auto close_dropdown() -> void;
 
   // Row the arrows are on while open; -1 when closed. Not the selection —
@@ -134,10 +139,10 @@ class Select final : public Widget {
   auto handle_mouse(const MouseEvent& m) -> bool;
 
   // Shared options+selection state (#42 item 3); the dropdown machinery
-  // (m_open/m_highlight) stays here -- it is Select-only.
+  // (m_highlight) stays here -- it is Select-only. m_highlight doubles as the
+  // open flag: >= 0 iff the dropdown is open (see dropdown_open()).
   detail::OptionsList m_list;
   int m_highlight{-1};
-  bool m_open{false};
   int m_screen_rows{0};  // memoized from draw(); 0 = no frame yet (unclamped)
   BorderStyle m_style{BorderStyle::Single};
 

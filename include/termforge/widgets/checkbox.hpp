@@ -13,7 +13,10 @@
 // toggle() is the user-level action and does. That split matches
 // ListWidget::set_selected and TextInput::set_text: a setter that fired would
 // make an app that syncs widget state from a model recurse through its own
-// handler.
+// handler. For the same reason toggle() deliberately does NOT delegate to
+// set_checked() (#42 item 4): toggle = flip + fire, set_checked = silent
+// no-op-guarded set — they are different operations, and routing one through
+// the other would either fire from a programmatic path or lose the fire.
 //
 // Focus is the whole-rect fg/bg swap Button uses, not a decoration on the mark
 // -- one focus idiom across the widget set (see widget.hpp). Keys other than

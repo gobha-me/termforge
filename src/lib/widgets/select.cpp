@@ -44,7 +44,7 @@ auto Select::set_selected(int index) -> void {
 }
 
 auto Select::dropdown_rect() const -> Rect {
-  if (!m_open || m_list.empty()) return {0, 0, 0, 0};
+  if (!dropdown_open() || m_list.empty()) return {0, 0, 0, 0};
   const Rect r = rect();
   // Exactly as wide as the control (see the header note), one row per option,
   // starting BELOW the whole rect -- not r.y + 1, which overlaps the box line
@@ -62,15 +62,13 @@ auto Select::hit_test(int px, int py) const -> bool {
 }
 
 auto Select::open_dropdown() -> void {
-  if (m_open || m_list.empty()) return;
-  m_open = true;
+  if (dropdown_open() || m_list.empty()) return;
   m_highlight = std::max(0, m_list.selected());
   mark_dirty();
 }
 
 auto Select::close_dropdown() -> void {
-  if (!m_open) return;
-  m_open = false;
+  if (!dropdown_open()) return;
   m_highlight = -1;
   mark_dirty();
 }
@@ -168,11 +166,13 @@ auto Select::handle_mouse(const MouseEvent& m) -> bool {
   // make this unreachable and let a scroll drag the highlight around.
   // Ignored like RadioGroup's — a stray scroll must not change a form value —
   // but consumed while the list is open so it cannot reach the widget behind.
-  if (m.scroll_up || m.scroll_down) return m_open && hit_test(m.x, m.y);
+  if (m.scroll_up || m.scroll_down) {
+    return dropdown_open() && hit_test(m.x, m.y);
+  }
 
   // Hover over the open list moves the highlight (MenuBar's behavior).
   if (!m.pressed) {
-    if (m_open && dr.contains(m.x, m.y)) {
+    if (dropdown_open() && dr.contains(m.x, m.y)) {
       const int vi = m.y - dr.y;
       if (vi != m_highlight && vi >= 0 && vi < dr.h) {
         m_highlight = vi;
@@ -188,18 +188,18 @@ auto Select::handle_mouse(const MouseEvent& m) -> bool {
     // does not apply and every sibling declines (button.cpp, checkbox.cpp,
     // radio_group.cpp), so an app-level right-click handler works over a
     // closed Select too (#36 item 4).
-    return m_open && hit_test(m.x, m.y);
+    return dropdown_open() && hit_test(m.x, m.y);
   }
 
   if (rect().contains(m.x, m.y)) {
-    if (m_open)
+    if (dropdown_open())
       close_dropdown();
     else
       open_dropdown();
     return true;
   }
 
-  if (m_open && dr.contains(m.x, m.y)) {
+  if (dropdown_open() && dr.contains(m.x, m.y)) {
     commit(m.y - dr.y);
     return true;
   }
@@ -213,7 +213,7 @@ auto Select::on_event(const Event& ev) -> bool {
   const auto* k = std::get_if<KeyEvent>(&ev);
   if (k == nullptr) return false;
 
-  if (!m_open) {
+  if (!dropdown_open()) {
     if (k->key == Key::Enter || k->key == Key::Down ||
         (k->key == Key::Char && k->ch == U' ')) {
       open_dropdown();
