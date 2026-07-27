@@ -3,22 +3,22 @@
 #include <string>
 
 #include "detail/width.hpp"
+#include "termforge/widgets/detail/callback.hpp"
 
 namespace termforge {
 
 auto Checkbox::set_checked(bool checked) -> void {
   if (m_checked == checked) return;
   m_checked = checked;
+  m_line.clear();  // the mark changed: invalidate the composed line
   mark_dirty();
 }
 
 auto Checkbox::toggle() -> void {
   m_checked = !m_checked;
+  m_line.clear();
   mark_dirty();
-  // Copy before invoking: the callback may reassign m_on_change and destroy
-  // the std::function it is running inside (#32).
-  auto cb = m_on_change;
-  if (cb) cb(m_checked);
+  detail::invoke_copy(m_on_change, m_checked);
 }
 
 auto Checkbox::draw(Screen& screen) -> void {
@@ -39,17 +39,22 @@ auto Checkbox::draw(Screen& screen) -> void {
 
   // Compose mark + label as ONE string and truncate once. Truncating the mark
   // and the label separately would let a wide label glyph land a column short
-  // and leave a gap — the #20 lesson from the frame title.
-  const MarkGlyphs g = mark_glyphs(m_style);
-  std::string line;
-  line += g.check_open;
-  line += m_checked ? g.check_mark : " ";
-  line += g.check_close;
-  line += ' ';
-  line += m_label;
+  // and leave a gap — the #20 lesson from the frame title. The composed line
+  // only changes with the mark, the label or the style, so it is composed on
+  // first use after any of those change and reused across frames otherwise
+  // (#42 item 5); truncate_to_width still runs per frame because r.w can
+  // change without any setter firing.
+  if (m_line.empty()) {
+    const MarkGlyphs g = mark_glyphs(m_style);
+    m_line += g.check_open;
+    m_line += m_checked ? g.check_mark : " ";
+    m_line += g.check_close;
+    m_line += ' ';
+    m_line += m_label;
+  }
 
   const int y = r.y + r.h / 2;
-  screen.write_text(r.x, y, detail::truncate_to_width(line, r.w), fg, bg);
+  screen.write_text(r.x, y, detail::truncate_to_width(m_line, r.w), fg, bg);
 
   clear_dirty();
 }

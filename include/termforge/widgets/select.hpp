@@ -38,10 +38,10 @@
 //
 // Losing focus closes the dropdown (set_focused override). That is what makes
 // click-away work for free: FocusRing::focus_at moves focus on a click, which
-// calls set_focused(false) here. In a raw-app embedding the app performs the
-// two guards below; inside a Dialog both are handled internally now (#37,
-// #47) -- the pre-route hands dropdown events to the Select, and a press on
-// the dialog's own chrome closes any open child dropdown:
+// calls set_focused(false) here. Inside a Dialog both embedding guards are
+// handled internally (#37, #47) -- the pre-route hands dropdown events to the
+// Select, and a press on the dialog's own chrome closes any open child
+// dropdown. A raw-app embedding performs the two guards itself:
 //
 //   // 1. a press that lands on nothing still needs an explicit close
 //   if (m->pressed && sel.dropdown_open() && !sel.hit_test(m->x, m->y))
@@ -50,7 +50,7 @@
 //   //    since focus_at and route_mouse both iterate last-added-first
 //   if (sel.dropdown_open() && sel.hit_test(m->x, m->y)) { sel.on_event(ev); return; }
 //
-// See examples/forms.cpp for both. Known limit, inherited from MenuBar: the
+// See examples/forms.cpp for the raw-app form. Known limit, inherited from MenuBar: the
 // dropdown does not scroll, so a very long list opened near the bottom of the
 // screen clamps to the screen bottom (#48 item 3) and the off-screen options
 // are unreachable until #21 (shared scrollbar) revisits the height cap.
@@ -60,8 +60,10 @@
 #include <string>
 #include <vector>
 
+#include "termforge/widgets/detail/options_list.hpp"
 #include "termforge/widgets/glyphs.hpp"
 #include "termforge/widgets/widget.hpp"
+#include "termforge/widgets/theme.hpp"
 
 namespace termforge {
 
@@ -75,16 +77,19 @@ class Select final : public Widget {
   auto add_option(std::string option) -> void;
   auto clear() -> void;
   [[nodiscard]] auto option_count() const noexcept -> std::size_t {
-    return m_options.size();
+    return m_list.options().size();
   }
 
   // -1 only when there are no options.
-  [[nodiscard]] auto selected() const noexcept -> int { return m_selected; }
+  [[nodiscard]] auto selected() const noexcept -> int {
+    return m_list.selected();
+  }
   [[nodiscard]] auto selected_text() const -> std::string;
   auto set_selected(int index) -> void;
 
   auto set_style(BorderStyle style) -> void {
     m_style = style;
+    m_line.clear();  // glyphs change: invalidate the composed box line
     mark_dirty();
   }
   [[nodiscard]] auto style() const noexcept -> BorderStyle { return m_style; }
@@ -102,7 +107,12 @@ class Select final : public Widget {
   // Closing on focus loss is the click-away mechanism — see the header note.
   auto set_focused(bool focused) -> void override;
 
-  [[nodiscard]] auto dropdown_open() const noexcept -> bool { return m_open; }
+  // Open iff a highlight row exists: the two facts were kept in two fields
+  // and stayed in lockstep at every write site (#42 item 4), so m_open is
+  // derived now -- one field, one fact.
+  [[nodiscard]] auto dropdown_open() const noexcept -> bool {
+    return m_highlight >= 0;
+  }
   auto close_dropdown() -> void;
 
   // Row the arrows are on while open; -1 when closed. Not the selection —
@@ -130,21 +140,27 @@ class Select final : public Widget {
   auto commit(int index) -> void;
   auto handle_mouse(const MouseEvent& m) -> bool;
 
-  std::vector<std::string> m_options;
-  int m_selected{-1};
+  // Shared options+selection state (#42 item 3); the dropdown machinery
+  // (m_highlight) stays here -- it is Select-only. m_highlight doubles as the
+  // open flag: >= 0 iff the dropdown is open (see dropdown_open()).
+  detail::OptionsList m_list;
   int m_highlight{-1};
-  bool m_open{false};
+  // The box's truncated value text, rebuilt in draw() when the selection,
+  // options, style, or inner width change (empty = stale). m_line_inner is
+  // the width the cached truncation was computed against (#42 item 5).
+  std::string m_line;
+  int m_line_inner{-1};
   int m_screen_rows{0};  // memoized from draw(); 0 = no frame yet (unclamped)
   BorderStyle m_style{BorderStyle::Single};
 
-  Rgb m_fg{0xE0, 0xE0, 0xF0};
-  Rgb m_bg{0x0A, 0x0A, 0x14};
-  Rgb m_focused_fg{0x0A, 0x0A, 0x14};
-  Rgb m_focused_bg{0x40, 0x80, 0xFF};
-  Rgb m_dropdown_fg{0xE0, 0xE0, 0xF0};
-  Rgb m_dropdown_bg{0x15, 0x15, 0x25};
-  Rgb m_highlight_fg{0x0A, 0x0A, 0x14};
-  Rgb m_highlight_bg{0x40, 0x80, 0xFF};
+  Rgb m_fg{theme::kFg};
+  Rgb m_bg{theme::kBg};
+  Rgb m_focused_fg{theme::kFocusFg};
+  Rgb m_focused_bg{theme::kFocusBg};
+  Rgb m_dropdown_fg{theme::kDropdownFg};
+  Rgb m_dropdown_bg{theme::kDropdownBg};
+  Rgb m_highlight_fg{theme::kFocusFg};
+  Rgb m_highlight_bg{theme::kFocusBg};
 
   std::function<void(int, const std::string&)> m_on_change;
 };

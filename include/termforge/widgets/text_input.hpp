@@ -16,6 +16,7 @@
 #include <string>
 
 #include "termforge/widgets/widget.hpp"
+#include "termforge/widgets/theme.hpp"
 
 namespace termforge {
 
@@ -73,10 +74,10 @@ class TextInput final : public Widget {
   int m_cursor{0};   // byte offset into m_text
   int m_scroll{0};   // byte offset of the leftmost visible column
 
-  Rgb m_fg{0xE0, 0xE0, 0xF0};
-  Rgb m_bg{0x0A, 0x0A, 0x14};
-  Rgb m_cursor_fg{0x0A, 0x0A, 0x14};
-  Rgb m_cursor_bg{0xE0, 0xE0, 0xF0};
+  Rgb m_fg{theme::kFg};
+  Rgb m_bg{theme::kBg};
+  Rgb m_cursor_fg{theme::kFocusFg};
+  Rgb m_cursor_bg{theme::kFg};
   Rgb m_placeholder_fg{0x50, 0x50, 0x60};
 
   std::function<void(const std::string&)> m_on_change;

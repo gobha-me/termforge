@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "termforge/widgets/widget.hpp"
+#include "termforge/widgets/theme.hpp"
 
 namespace termforge {
 
@@ -59,7 +60,7 @@ class WaveformWidget final : public Widget {
   float m_min{0.0f}, m_max{1.0f};  // fixed range when !m_auto_range
 
   Rgb m_fg{0x00, 0xFF, 0x80};  // waveform color
-  Rgb m_bg{0x0A, 0x0A, 0x14};  // background
+  Rgb m_bg{theme::kBg};  // background
 };
 
 }  // namespace termforge

@@ -13,6 +13,7 @@
 #include <string>
 
 #include "termforge/widgets/widget.hpp"
+#include "termforge/widgets/theme.hpp"
 
 namespace termforge {
 
@@ -44,10 +45,10 @@ class Button final : public Widget {
   std::string m_label;
   bool m_pressed{false};  // visual feedback on activation frame
 
-  Rgb m_fg{0xE0, 0xE0, 0xF0};
-  Rgb m_bg{0x0A, 0x0A, 0x14};
-  Rgb m_focused_fg{0x0A, 0x0A, 0x14};
-  Rgb m_focused_bg{0x40, 0x80, 0xFF};
+  Rgb m_fg{theme::kFg};
+  Rgb m_bg{theme::kBg};
+  Rgb m_focused_fg{theme::kFocusFg};
+  Rgb m_focused_bg{theme::kFocusBg};
   Rgb m_pressed_fg{0xFF, 0xFF, 0xFF};
   Rgb m_pressed_bg{0x80, 0x40, 0xFF};
 

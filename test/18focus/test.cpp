@@ -13,8 +13,10 @@
 #include "termforge/core/types.hpp"
 #include "termforge/widgets/focus_ring.hpp"
 #include "termforge/widgets/widget.hpp"
+#include "support/events.hpp"
 
 using termforge::Event;
+using namespace tfsupport;
 using termforge::FocusRing;
 using termforge::Key;
 using termforge::KeyEvent;
@@ -52,19 +54,6 @@ class Probe final : public Widget {
   int m_keys{0};
 };
 
-auto key(Key k, bool shift = false) -> Event {
-  KeyEvent e;
-  e.key = k;
-  e.shift = shift;
-  return Event{e};
-}
-auto press(int x, int y) -> Event {
-  MouseEvent e;
-  e.x = x;
-  e.y = y;
-  e.pressed = true;
-  return Event{e};
-}
 
 }  // namespace
 
@@ -197,7 +186,7 @@ TEST_CASE("FocusRing: Tab / Shift+Tab cycle only when the member doesn't consume
 
   REQUIRE(ring.handle_key(key(Key::Tab)));  // a doesn't consume -> cycle
   REQUIRE(ring.current() == &b);
-  REQUIRE(ring.handle_key(key(Key::Tab, /*shift=*/true)));  // -> a
+  REQUIRE(ring.handle_key(key(Key::Tab, 0, /*shift=*/true)));  // -> a
   REQUIRE(ring.current() == &a);
 
   // A member that consumes Tab prevents the ring from cycling. The focused

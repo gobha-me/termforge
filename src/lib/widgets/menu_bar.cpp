@@ -3,6 +3,8 @@
 #include <algorithm>
 
 #include "detail/width.hpp"
+#include "termforge/widgets/detail/callback.hpp"
+#include "termforge/widgets/detail/dropdown.hpp"
 
 namespace termforge {
 
@@ -102,21 +104,17 @@ auto MenuBar::draw(Screen& screen) -> void {
   }
 
   // Draw dropdown if open. Geometry comes from dropdown_rect() so drawing
-  // and hit-testing can never disagree.
-  if (const Rect dr = dropdown_rect(); dr.w > 0 && dr.h > 0) {
+  // and hit-testing can never disagree; the row loop is the shared
+  // detail/dropdown.hpp skeleton (#42 item 2).
+  {
     const auto& menu = m_menus[static_cast<std::size_t>(m_active)];
-    for (std::size_t vi = 0; vi < menu.items.size(); ++vi) {
-      const int dy = dr.y + static_cast<int>(vi);
-      const bool is_sel = (static_cast<int>(vi) == m_selected);
-      const auto& fg = is_sel ? m_selected_fg : m_dropdown_fg;
-      const auto& bg = is_sel ? m_selected_bg : m_dropdown_bg;
-
-      // Fill dropdown row.
-      for (int x = 0; x < dr.w; ++x)
-        screen.write_text(dr.x + x, dy, " ", fg, bg);
-
-      screen.write_text(dr.x + 2, dy, menu.items[vi].label, fg, bg);
-    }
+    detail::draw_dropdown_rows(
+        screen, dropdown_rect(), static_cast<int>(menu.items.size()),
+        m_selected, /*label_pad=*/2, m_dropdown_fg, m_dropdown_bg,
+        m_selected_fg, m_selected_bg,
+        [&](int vi) -> const std::string& {
+          return menu.items[static_cast<std::size_t>(vi)].label;
+        });
   }
 
   clear_dirty();
@@ -125,19 +123,18 @@ auto MenuBar::draw(Screen& screen) -> void {
 auto MenuBar::handle_mouse(const MouseEvent& m) -> bool {
   const Rect dr = dropdown_rect();
 
-  // Wheel FIRST. A wheel report arrives with pressed == false
-  // (input.cpp:221-225), so checking it after the hover branch below would
-  // make this unreachable and let a scroll drag the highlight around (#38 --
-  // the same trap 9bb3ad2 fixed in Select). Ignored like RadioGroup's, but
+  // Wheel FIRST, then hover -- the #38 ordering trap, now shared with Select
+  // via detail/dropdown.hpp (#42 item 2). Ignored like RadioGroup's, but
   // consumed while a dropdown is open so it cannot reach the widget behind.
-  if (m.scroll_up || m.scroll_down) return m_open && hit_test(m.x, m.y);
+  if (detail::dropdown_wheel(m, m_open, *this)) return true;
+  if (m.scroll_up || m.scroll_down) return false;  // wheel outside: decline
 
   // Hover over the open dropdown moves the selection highlight.
   if (!m.pressed) {
-    if (m_open && dr.contains(m.x, m.y)) {
-      const int vi = m.y - dr.y;
-      if (vi != m_selected && vi >= 0 && vi < dr.h) {
-        m_selected = vi;
+    int row = m_selected;
+    if (detail::dropdown_hover_row(m, m_open, dr, m_selected, row)) {
+      if (row != m_selected) {
+        m_selected = row;
         mark_dirty();
       }
       return true;
@@ -180,10 +177,10 @@ auto MenuBar::handle_mouse(const MouseEvent& m) -> bool {
     const int vi = m.y - dr.y;
     const auto& menu = m_menus[static_cast<std::size_t>(m_active)];
     if (vi >= 0 && vi < static_cast<int>(menu.items.size())) {
-      // Copy the action before closing — the action may mutate the menus.
+      // Detach the action before closing — the action may mutate the menus.
       auto action = menu.items[static_cast<std::size_t>(vi)].action;
       close_dropdown();
-      if (action) action();
+      detail::invoke_copy(action);
     }
     return true;
   }
@@ -222,27 +219,23 @@ auto MenuBar::on_event(const Event& ev) -> bool {
     if (k->key == Key::Left) {
       // Route through open_menu so an EMPTY target menu does not resurrect
       // an invisible dropdown that swallows every key until Escape (#12).
-      const bool was_open = m_open;
       close_dropdown();
       open_menu((m_active - 1 + menu_count) % menu_count);
-      if (m_open || was_open) mark_dirty();
       return true;
     }
     if (k->key == Key::Right) {
-      const bool was_open = m_open;
       close_dropdown();
       open_menu((m_active + 1) % menu_count);
-      if (m_open || was_open) mark_dirty();
       return true;
     }
     if (k->key == Key::Enter) {
       if (m_selected >= 0 && m_selected < item_count) {
-        // Copy the action before closing, exactly like the mouse path:
+        // Detach the action before closing, exactly like the mouse path:
         // the action may call set_menus()/add_menu(), and a vector
         // reallocation would destroy the std::function mid-call.
         auto action = menu.items[static_cast<std::size_t>(m_selected)].action;
         close_dropdown();
-        if (action) action();
+        detail::invoke_copy(action);
       }
       return true;
     }

@@ -7,6 +7,7 @@
 #include <variant>
 
 #include "detail/width.hpp"
+#include "termforge/widgets/detail/callback.hpp"
 
 namespace termforge {
 
@@ -250,16 +251,14 @@ auto FilePickerDialog::finish_ok() -> void { finish_pick(field_path()); }
 
 auto FilePickerDialog::finish_pick(const std::filesystem::path& p) -> void {
   if (!begin_result()) return;
-  auto cb = m_on_result;
   close();  // close first: a callback that raises a dialog must win
-  if (cb) cb(p);
+  detail::invoke_copy(m_on_result, p);
 }
 
 auto FilePickerDialog::finish_cancel() -> void {
   if (!begin_result()) return;
-  auto cb = m_on_result;
   close();
-  if (cb) cb(std::nullopt);
+  detail::invoke_copy(m_on_result, std::nullopt);
 }
 
 auto FilePickerDialog::report_error(const std::string& message) -> void {

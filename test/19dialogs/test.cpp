@@ -1,3 +1,7 @@
+
+#include "support/events.hpp"
+
+using namespace tfsupport;
 // Modal overlays and the standard dialogs.
 //
 // Two mechanisms under test. The overlay stack is a routing contract: while
@@ -27,8 +31,10 @@
 #include "termforge/widgets/dialogs.hpp"
 #include "termforge/widgets/select.hpp"
 #include "termforge/widgets/widget.hpp"
+#include "support/events.hpp"
 
 using termforge::App;
+using namespace tfsupport;
 using termforge::Backdrop;
 using termforge::BorderStyle;
 using termforge::Button;
@@ -113,38 +119,7 @@ class PopWidget final : public Widget {
   App* m_app;
 };
 
-auto key(Key k, char32_t ch = 0, bool shift = false) -> Event {
-  KeyEvent e;
-  e.key = k;
-  e.ch = ch;
-  e.shift = shift;
-  return Event{e};
-}
-auto ch(char32_t c) -> Event { return key(Key::Char, c); }
-auto press(int x, int y, int button = 0) -> Event {
-  MouseEvent e;
-  e.x = x;
-  e.y = y;
-  e.button = button;
-  e.pressed = true;
-  return Event{e};
-}
-auto wheel(int x, int y) -> Event {
-  MouseEvent e;
-  e.x = x;
-  e.y = y;
-  e.button = -1;
-  e.scroll_down = true;
-  return Event{e};
-}
-auto motion(int x, int y) -> Event {
-  MouseEvent e;
-  e.x = x;
-  e.y = y;
-  e.button = 0;
-  e.pressed = false;
-  return Event{e};
-}
+
 
 }  // namespace
 
@@ -888,8 +863,10 @@ TEST_CASE("Dialog: Escape with no controls still cancels", "[dialog]") {
 
 TEST_CASE("Dialog: a right-click on a control does not activate it",
           "[dialog][failure][mouse]") {
-  // Button still activates on any mouse button (#12 item 1). The dialog
-  // contains that: only button 0 presses reach a control.
+  // Button is gated to button == 0 since 43c756a (#12 item 1), so this test
+  // now pins defense-in-depth: even a control that treated right/middle as
+  // activation would be contained by the dialog -- only button 0 presses
+  // reach a child (#42 item 6).
   bool fired = false;
   MessageDialog d{"T", "body"};
   d.on_ok([&] { fired = true; });

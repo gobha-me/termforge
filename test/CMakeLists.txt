@@ -23,6 +23,7 @@ foreach(TEST_DIR ${TEST_DIRS})
       PUBLIC ${CMAKE_SOURCE_DIR}/include
       PUBLIC ${CMAKE_SOURCE_DIR}/src/lib
       PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include
+      PUBLIC ${CMAKE_CURRENT_LIST_DIR}
     )
 
     target_link_libraries(${TEST_NAME}

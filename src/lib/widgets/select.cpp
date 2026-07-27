@@ -5,6 +5,8 @@
 #include <utility>
 
 #include "detail/width.hpp"
+#include "termforge/widgets/detail/callback.hpp"
+#include "termforge/widgets/detail/dropdown.hpp"
 
 namespace termforge {
 
@@ -13,46 +15,40 @@ Select::Select(std::vector<std::string> options) {
 }
 
 auto Select::set_options(std::vector<std::string> options) -> void {
-  m_options = std::move(options);
-  m_selected = m_options.empty() ? -1 : 0;
-  close_dropdown();
+  // Replacing the list closes the dropdown (#36): an open list must not
+  // survive with a stale m_highlight over options that no longer exist.
+  m_list.set_all(std::move(options), [this] { close_dropdown(); });
+  m_line.clear();
   mark_dirty();
 }
 
 auto Select::add_option(std::string option) -> void {
-  m_options.push_back(std::move(option));
-  if (m_selected < 0) m_selected = 0;
+  m_list.add(std::move(option));
   mark_dirty();
 }
 
 auto Select::clear() -> void {
-  m_options.clear();
-  m_selected = -1;
-  close_dropdown();
+  m_list.clear([this] { close_dropdown(); });
+  m_line.clear();
   mark_dirty();
 }
 
 auto Select::selected_text() const -> std::string {
-  if (m_selected < 0 || m_selected >= static_cast<int>(m_options.size()))
-    return {};
-  return m_options[static_cast<std::size_t>(m_selected)];
+  return m_list.selected_text();
 }
 
 auto Select::set_selected(int index) -> void {
-  if (m_options.empty()) {
-    m_selected = -1;
-  } else {
-    m_selected = std::clamp(index, 0, static_cast<int>(m_options.size()) - 1);
-  }
+  m_list.select(index);
   // Match set_options()/clear(): a programmatic set re-seeds the control, so
   // an open dropdown must not survive with a stale m_highlight that the next
   // Enter would commit over the value the app just set (#36).
   close_dropdown();
+  m_line.clear();
   mark_dirty();
 }
 
 auto Select::dropdown_rect() const -> Rect {
-  if (!m_open || m_options.empty()) return {0, 0, 0, 0};
+  if (!dropdown_open() || m_list.empty()) return {0, 0, 0, 0};
   const Rect r = rect();
   // Exactly as wide as the control (see the header note), one row per option,
   // starting BELOW the whole rect -- not r.y + 1, which overlaps the box line
@@ -60,7 +56,7 @@ auto Select::dropdown_rect() const -> Rect {
   // screen bottom once a frame has painted: rows that would fall off-screen
   // are unreachable and must not be keyboard-committable (#48 item 3). The
   // full height-cap/scroll story stays with #21.
-  int h = static_cast<int>(m_options.size());
+  int h = m_list.count();
   if (m_screen_rows > 0) h = std::min(h, std::max(0, m_screen_rows - (r.y + r.h)));
   return {r.x, r.y + r.h, r.w, h};
 }
@@ -70,15 +66,13 @@ auto Select::hit_test(int px, int py) const -> bool {
 }
 
 auto Select::open_dropdown() -> void {
-  if (m_open || m_options.empty()) return;
-  m_open = true;
-  m_highlight = std::max(0, m_selected);
+  if (dropdown_open() || m_list.empty()) return;
+  m_highlight = std::max(0, m_list.selected());
   mark_dirty();
 }
 
 auto Select::close_dropdown() -> void {
-  if (!m_open) return;
-  m_open = false;
+  if (!dropdown_open()) return;
   m_highlight = -1;
   mark_dirty();
 }
@@ -92,21 +86,20 @@ auto Select::set_focused(bool focused) -> void {
 }
 
 auto Select::commit(int index) -> void {
-  if (index < 0 || index >= static_cast<int>(m_options.size())) return;
-  // Copy BOTH before closing and firing (#5, #32): the option, because the
-  // callback may call set_options() and reallocate the vector behind a
-  // reference into our own storage; and the callback, because it may call
-  // on_change() and destroy the std::function it is running inside.
-  const std::string item = m_options[static_cast<std::size_t>(index)];
-  auto cb = m_on_change;
-  const bool changed = (index != m_selected);
-  m_selected = index;
+  if (index < 0 || index >= m_list.count()) return;
+  // Copy the option as well as the callback (#5, #32): the callback may call
+  // set_options() and reallocate the vector behind a reference into our own
+  // storage. invoke_copy detaches the std::function itself.
+  const std::string item = m_list.at(index);
+  const bool changed = (index != m_list.selected());
+  m_list.select(index);
   close_dropdown();
+  if (changed) m_line.clear();  // the box shows the newly committed value
   mark_dirty();
   // No-change commits stay silent -- the no-op-silence rule RadioGroup::select
   // and Checkbox::set_checked already follow (#36 item 3). Re-committing the
   // current value still closes the list, but fires nothing.
-  if (changed && cb) cb(index, item);
+  if (changed) detail::invoke_copy(m_on_change, index, std::move(item));
 }
 
 auto Select::draw(Screen& screen) -> void {
@@ -130,17 +123,22 @@ auto Select::draw(Screen& screen) -> void {
 
   // "[ value…      ▾ ]" — padded so the closing bracket sits on the last
   // column, then truncated once so a narrow rect degrades by one rule.
+  // The truncated VALUE only changes with the selection/options/inner width,
+  // so it is cached (m_line, invalidated by the setters and by a width
+  // change) -- the old path re-ran selected_text()'s copy plus a UTF-8
+  // truncation scan ~10x/second (#42 item 5). The bracket composition is
+  // cheap appends and stays per frame.
   const int inner = std::max(0, r.w - kChromeCols);
-  // Hold the value in a named local: truncate_to_width returns a view, and
-  // selected_text() returns by value, so viewing the temporary directly would
-  // dangle at the end of the full-expression.
-  const std::string current = selected_text();
-  const std::string_view value = detail::truncate_to_width(current, inner);
+  if (m_line.empty() || m_line_inner != inner) {
+    m_line = m_list.selected_text();
+    m_line = std::string(detail::truncate_to_width(m_line, inner));
+    m_line_inner = inner;
+  }
   std::string line;
   line += g.check_open;
   line += ' ';
-  line += value;
-  const int pad = inner - detail::display_width(value);
+  line += m_line;
+  const int pad = inner - detail::display_width(m_line);
   line.append(static_cast<std::size_t>(std::max(0, pad)), ' ');
   line += ' ';
   line += g.arrow_down;
@@ -152,22 +150,11 @@ auto Select::draw(Screen& screen) -> void {
 
   // The dropdown draws BELOW rect() — the documented exception, matched by
   // hit_test(). Geometry comes from dropdown_rect() so the two cannot disagree.
-  if (const Rect dr = dropdown_rect(); dr.w > 0 && dr.h > 0) {
-    for (int vi = 0; vi < dr.h; ++vi) {
-      const int dy = dr.y + vi;
-      const bool is_hl = (vi == m_highlight);
-      const Rgb rfg = is_hl ? m_highlight_fg : m_dropdown_fg;
-      const Rgb rbg = is_hl ? m_highlight_bg : m_dropdown_bg;
-
-      screen.fill_rect(dr.x, dy, dr.w, 1, rfg, rbg);
-      const int avail = std::max(0, dr.w - 2);
-      screen.write_text(
-          dr.x + 1, dy,
-          detail::truncate_to_width(m_options[static_cast<std::size_t>(vi)],
-                                    avail),
-          rfg, rbg);
-    }
-  }
+  // The row loop is the shared detail/dropdown.hpp skeleton (#42 item 2).
+  detail::draw_dropdown_rows(
+      screen, dropdown_rect(), m_list.count(), m_highlight, /*label_pad=*/1,
+      m_dropdown_fg, m_dropdown_bg, m_highlight_fg, m_highlight_bg,
+      [this](int vi) -> const std::string& { return m_list.at(vi); });
 
   clear_dirty();
 }
@@ -175,19 +162,18 @@ auto Select::draw(Screen& screen) -> void {
 auto Select::handle_mouse(const MouseEvent& m) -> bool {
   const Rect dr = dropdown_rect();
 
-  // Wheel FIRST. A wheel report arrives with pressed == false
-  // (input.cpp:221-225), so checking it after the hover branch below would
-  // make this unreachable and let a scroll drag the highlight around.
-  // Ignored like RadioGroup's — a stray scroll must not change a form value —
-  // but consumed while the list is open so it cannot reach the widget behind.
-  if (m.scroll_up || m.scroll_down) return m_open && hit_test(m.x, m.y);
+  // Wheel FIRST, then hover -- the #38 ordering trap both widgets now share
+  // via detail/dropdown.hpp (#42 item 2). A stray scroll must not change a
+  // form value; consumed while open so it cannot reach the widget behind.
+  if (detail::dropdown_wheel(m, dropdown_open(), *this)) return true;
+  if (m.scroll_up || m.scroll_down) return false;  // wheel outside: decline
 
   // Hover over the open list moves the highlight (MenuBar's behavior).
   if (!m.pressed) {
-    if (m_open && dr.contains(m.x, m.y)) {
-      const int vi = m.y - dr.y;
-      if (vi != m_highlight && vi >= 0 && vi < dr.h) {
-        m_highlight = vi;
+    int row = m_highlight;
+    if (detail::dropdown_hover_row(m, dropdown_open(), dr, m_highlight, row)) {
+      if (row != m_highlight) {
+        m_highlight = row;
         mark_dirty();
       }
       return true;
@@ -200,18 +186,18 @@ auto Select::handle_mouse(const MouseEvent& m) -> bool {
     // does not apply and every sibling declines (button.cpp, checkbox.cpp,
     // radio_group.cpp), so an app-level right-click handler works over a
     // closed Select too (#36 item 4).
-    return m_open && hit_test(m.x, m.y);
+    return dropdown_open() && hit_test(m.x, m.y);
   }
 
   if (rect().contains(m.x, m.y)) {
-    if (m_open)
+    if (dropdown_open())
       close_dropdown();
     else
       open_dropdown();
     return true;
   }
 
-  if (m_open && dr.contains(m.x, m.y)) {
+  if (dropdown_open() && dr.contains(m.x, m.y)) {
     commit(m.y - dr.y);
     return true;
   }
@@ -225,7 +211,7 @@ auto Select::on_event(const Event& ev) -> bool {
   const auto* k = std::get_if<KeyEvent>(&ev);
   if (k == nullptr) return false;
 
-  if (!m_open) {
+  if (!dropdown_open()) {
     if (k->key == Key::Enter || k->key == Key::Down ||
         (k->key == Key::Char && k->ch == U' ')) {
       open_dropdown();

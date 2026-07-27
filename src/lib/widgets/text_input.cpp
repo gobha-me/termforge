@@ -5,6 +5,7 @@
 
 #include "detail/utf8.hpp"
 #include "detail/width.hpp"
+#include "termforge/widgets/detail/callback.hpp"
 
 namespace termforge {
 
@@ -142,10 +143,7 @@ auto TextInput::on_event(const Event& ev) -> bool {
     m_cursor = pos;
     ensure_cursor_visible();
     mark_dirty();
-    // Copy before invoking: the callback may reassign m_on_click, and running
-    // a std::function replaced underneath is a use-after-free (#5, #32).
-    auto cb = m_on_click;
-    if (cb) cb();
+    detail::invoke_copy(m_on_click);
     return true;
   }
 
@@ -216,14 +214,12 @@ auto TextInput::on_event(const Event& ev) -> bool {
 
   ensure_cursor_visible();
   mark_dirty();
-  if (changed && m_on_change) {
-    // Copy BOTH the text and the callback (#32). The text, because the
-    // parameter is a const& into our own m_text and a callback that calls
-    // set_text() would mutate the string it is reading; the callback, because
-    // it may call on_change() and destroy the std::function it runs inside.
-    const std::string text = m_text;
-    auto cb = m_on_change;
-    cb(text);
+  if (changed) {
+    // Copy the text as well as the callback (invoke_copy only detaches the
+    // std::function): the parameter is a const& into our own m_text and a
+    // callback that calls set_text() would mutate the string it is reading
+    // (#32).
+    detail::invoke_copy(m_on_change, std::string(m_text));
   }
   return true;
 }

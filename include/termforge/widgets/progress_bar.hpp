@@ -9,6 +9,7 @@
 #include <string>
 
 #include "termforge/widgets/widget.hpp"
+#include "termforge/widgets/theme.hpp"
 
 namespace termforge {
 
@@ -57,9 +58,9 @@ class ProgressBar final : public Widget {
 
   Rgb m_fill_fg{0x00, 0xFF, 0x80};
   Rgb m_empty_fg{0x30, 0x30, 0x40};
-  Rgb m_label_fg{0xE0, 0xE0, 0xF0};
+  Rgb m_label_fg{theme::kFg};
   Rgb m_label_bg{0x20, 0x20, 0x40};
-  Rgb m_bg{0x0A, 0x0A, 0x14};
+  Rgb m_bg{theme::kBg};
 };
 
 }  // namespace termforge

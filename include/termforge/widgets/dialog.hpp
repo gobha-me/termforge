@@ -52,6 +52,7 @@
 #include "termforge/widgets/frame.hpp"
 #include "termforge/widgets/glyphs.hpp"
 #include "termforge/widgets/widget.hpp"
+#include "termforge/widgets/theme.hpp"
 
 namespace termforge {
 
@@ -181,8 +182,8 @@ class Dialog : public Widget {
   int m_max_width{48};
   // Must match Frame's hardcoded background, or the border row and the
   // interior disagree. There is no Theme type yet to hold this.
-  Rgb m_fg{0xE0, 0xE0, 0xF0};
-  Rgb m_bg{0x0A, 0x0A, 0x14};
+  Rgb m_fg{theme::kFg};
+  Rgb m_bg{theme::kBg};
   std::function<void()> m_on_close;
 };
 

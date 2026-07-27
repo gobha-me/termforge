@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "termforge/widgets/widget.hpp"
+#include "termforge/widgets/theme.hpp"
 
 namespace termforge {
 
@@ -89,14 +90,14 @@ class MenuBar final : public Widget {
   int m_selected{-1};    // selected item in the open dropdown (-1 = none)
   bool m_open{false};
 
-  Rgb m_fg{0xE0, 0xE0, 0xF0};
+  Rgb m_fg{theme::kFg};
   Rgb m_bg{0x20, 0x20, 0x40};
-  Rgb m_active_fg{0x0A, 0x0A, 0x14};
-  Rgb m_active_bg{0x40, 0x80, 0xFF};
-  Rgb m_dropdown_fg{0xE0, 0xE0, 0xF0};
-  Rgb m_dropdown_bg{0x15, 0x15, 0x25};
-  Rgb m_selected_fg{0x0A, 0x0A, 0x14};
-  Rgb m_selected_bg{0x40, 0x80, 0xFF};
+  Rgb m_active_fg{theme::kFocusFg};
+  Rgb m_active_bg{theme::kFocusBg};
+  Rgb m_dropdown_fg{theme::kDropdownFg};
+  Rgb m_dropdown_bg{theme::kDropdownBg};
+  Rgb m_selected_fg{theme::kFocusFg};
+  Rgb m_selected_bg{theme::kFocusBg};
 };
 
 }  // namespace termforge

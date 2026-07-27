@@ -4,24 +4,24 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-07-25)
+## Where we are (2026-07-27)
 
 **Core framework, KittyDriver, and the full widget system are landed and
-tested.** 20 suites, 412 cases, 2882 assertions; gcc 14 + clang 20 green with
-`-Werror`; ASan/UBSan clean via the (now-fixed) sanitizer toolchains. (Note:
-`ctest` reports 22 *tests* — 20 suites plus the `startup`/`shutdown` fixtures.
-Earlier commit messages in this branch say "22 suites"; 20 is the real number.)
+tested.** 23 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
+clean.
 
-**Latest release: `v0.0.8`** (annotated tag + GitHub pre-release, 2026-07-25) —
-adds the **form controls** (#19: Checkbox, RadioGroup, Select) and the **#32**
-callback-copy fix, on top of `v0.0.7` (#20, border styles + delimited title),
-`v0.0.6` (#18, modal overlays + dialogs), `v0.0.5` (#17, FocusRing), `v0.0.4`
-(#11, dirty/clear contract), `v0.0.3` (#10, display-width / wide cells),
-`v0.0.2` (#13, terminal/input robustness), and `v0.0.1` (core + drivers +
-widgets + audit fixes #3–#9, #14, #15).
-`version.cmake` derives `VERSION` from `git describe --tags`, so the build now
-reports `0.0.8`. Release convention: annotated `vX.Y.Z` tag pushed to origin +
-a matching `gh release --prerelease` while pre-1.0.
+**Latest release: `v0.1.4`** (2026-07-27) — the **#42 cleanup bundle**:
+`detail::invoke_copy` replaces ~19 hand-rolled copy-before-invoke sites;
+`detail::OptionsList` dedups the ListWidget/RadioGroup/Select
+options+selection API; `detail/dropdown.hpp` holds the Select/MenuBar
+dropdown skeleton once (the #38 bug class); Select's `m_open` is derived
+from `m_highlight`; MenuBar `was_open` dead code gone; Checkbox/Select
+cache their composed draw lines; `widgets/theme.hpp` names the default
+palette; `test/support/events.hpp` shares the event builders. Pure
+refactor — no behavior change. Prior releases: `v0.1.3` (review batch
+#45–#48: FilePicker `on_show`, dialog dropdown routing), `v0.1.2`
+(#36–#41 form-control review batch), `v0.1.1` (#23 FilePickerDialog),
+`v0.1.0` (#12 click-gating batch), `v0.0.8` (#19 form controls + #32).
 
 Working end to end:
 - `Terminal` — raw-mode RAII, capability probe (kitty/sixel/truecolor),

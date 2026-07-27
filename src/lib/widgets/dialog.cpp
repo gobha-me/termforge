@@ -7,6 +7,7 @@
 #include "detail/width.hpp"
 #include "detail/wrap.hpp"
 #include "termforge/widgets/select.hpp"
+#include "termforge/widgets/detail/callback.hpp"
 
 namespace termforge {
 
@@ -56,11 +57,9 @@ auto Dialog::begin_result() -> bool {
 }
 
 auto Dialog::close() -> void {
-  // Copy before invoking: the callback may reassign m_on_close (or push a
-  // follow-up dialog that does), and running a std::function that has been
-  // replaced underneath is a use-after-free (issue #5).
-  auto cb = m_on_close;
-  if (cb) cb();
+  // invoke_copy: the callback may reassign m_on_close (or push a follow-up
+  // dialog that does) — see detail/callback.hpp (issue #5).
+  detail::invoke_copy(m_on_close);
 }
 
 auto Dialog::layout(int screen_cols, int screen_rows) -> void {
@@ -202,10 +201,12 @@ auto Dialog::on_event(const Event& ev) -> bool {
     // inside a dialog still works (a wheel event carries pressed == false, so
     // it cannot activate anything), and motion is forwarded so an open
     // dropdown's hover-follows-mouse works (#47 item 2). Everything else is
-    // consumed and dropped: releases, and right/middle presses, which some
-    // controls still treat as activation (issue #12 item 1). Containing that
-    // here keeps a stray right-click from confirming a dialog without
-    // changing Button under anyone's feet.
+    // consumed and dropped: releases, and right/middle presses. Every
+    // shipped control has declined non-left presses since 43c756a (#12
+    // item 1), so nothing inside a dialog needs this containment today --
+    // it is defense-in-depth for the next control or an app-defined child
+    // that treats right/middle as activation, so a stray right-click can
+    // never confirm a dialog (#42 item 6).
     if (!activating_press && !wheel && !motion) return true;
 
     // Pre-route: a child's rect-exceeding hit area wins over z-order (#37).

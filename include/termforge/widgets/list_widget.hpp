@@ -13,7 +13,9 @@
 #include <string>
 #include <vector>
 
+#include "termforge/widgets/detail/options_list.hpp"
 #include "termforge/widgets/widget.hpp"
+#include "termforge/widgets/theme.hpp"
 
 namespace termforge {
 
@@ -31,7 +33,9 @@ class ListWidget final : public Widget {
   auto clear() -> void;
 
   // Currently selected index (-1 = none). Setting clamps to valid range.
-  [[nodiscard]] auto selected() const noexcept -> int { return m_selected; }
+  [[nodiscard]] auto selected() const noexcept -> int {
+    return m_list.selected();
+  }
   auto set_selected(int index) -> void;
 
   // The selected item's text, or empty string if none.
@@ -47,7 +51,7 @@ class ListWidget final : public Widget {
   auto on_event(const Event& ev) -> bool override;
 
   [[nodiscard]] auto item_count() const noexcept -> std::size_t {
-    return m_items.size();
+    return m_list.options().size();
   }
   [[nodiscard]] auto scroll_offset() const noexcept -> int { return m_scroll; }
 
@@ -55,14 +59,15 @@ class ListWidget final : public Widget {
   // Ensure the selected item is visible (adjust scroll if needed).
   auto ensure_visible() -> void;
 
-  std::vector<std::string> m_items;
-  int m_selected{-1};  // -1 = no selection (empty list)
+  // Shared options+selection state (#42 item 3): selected() == -1 iff empty,
+  // else clamped. m_scroll stays here -- it is the viewport, not list state.
+  detail::OptionsList m_list;
   int m_scroll{0};
 
-  Rgb m_fg{0xE0, 0xE0, 0xF0};
-  Rgb m_bg{0x0A, 0x0A, 0x14};
-  Rgb m_selected_fg{0x0A, 0x0A, 0x14};
-  Rgb m_selected_bg{0x40, 0x80, 0xFF};
+  Rgb m_fg{theme::kFg};
+  Rgb m_bg{theme::kBg};
+  Rgb m_selected_fg{theme::kFocusFg};
+  Rgb m_selected_bg{theme::kFocusBg};
 
   std::function<void(int, const std::string&)> m_on_select;
 };

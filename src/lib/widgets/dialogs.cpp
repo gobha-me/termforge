@@ -6,6 +6,7 @@
 #include <variant>
 
 #include "detail/width.hpp"
+#include "termforge/widgets/detail/callback.hpp"
 
 namespace termforge {
 
@@ -65,9 +66,8 @@ auto MessageDialog::set_ok_label(std::string label) -> void {
 
 auto MessageDialog::finish() -> void {
   if (!begin_result()) return;
-  auto cb = m_on_ok;
   close();  // close first: a callback that raises another dialog must win
-  if (cb) cb();
+  detail::invoke_copy(m_on_ok);
 }
 
 auto MessageDialog::content_cols() const -> int {
@@ -109,9 +109,8 @@ auto ConfirmDialog::set_default(bool confirm) -> void {
 
 auto ConfirmDialog::finish(bool result) -> void {
   if (!begin_result()) return;
-  auto cb = m_on_result;
   close();
-  if (cb) cb(result);
+  detail::invoke_copy(m_on_result, result);
 }
 
 auto ConfirmDialog::on_event(const Event& ev) -> bool {
@@ -181,17 +180,15 @@ auto PromptDialog::set_labels(std::string ok, std::string cancel) -> void {
 
 auto PromptDialog::finish_submit() -> void {
   if (!begin_result()) return;
-  auto cb = m_on_submit;
   auto text = m_input.text();
   close();
-  if (cb) cb(std::move(text));
+  detail::invoke_copy(m_on_submit, std::move(text));
 }
 
 auto PromptDialog::finish_cancel() -> void {
   if (!begin_result()) return;
-  auto cb = m_on_cancel;
   close();
-  if (cb) cb();
+  detail::invoke_copy(m_on_cancel);
 }
 
 auto PromptDialog::on_event(const Event& ev) -> bool {
