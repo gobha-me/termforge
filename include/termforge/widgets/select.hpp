@@ -60,6 +60,7 @@
 #include <string>
 #include <vector>
 
+#include "termforge/widgets/detail/options_list.hpp"
 #include "termforge/widgets/glyphs.hpp"
 #include "termforge/widgets/widget.hpp"
 
@@ -75,11 +76,13 @@ class Select final : public Widget {
   auto add_option(std::string option) -> void;
   auto clear() -> void;
   [[nodiscard]] auto option_count() const noexcept -> std::size_t {
-    return m_options.size();
+    return m_list.options().size();
   }
 
   // -1 only when there are no options.
-  [[nodiscard]] auto selected() const noexcept -> int { return m_selected; }
+  [[nodiscard]] auto selected() const noexcept -> int {
+    return m_list.selected();
+  }
   [[nodiscard]] auto selected_text() const -> std::string;
   auto set_selected(int index) -> void;
 
@@ -130,8 +133,9 @@ class Select final : public Widget {
   auto commit(int index) -> void;
   auto handle_mouse(const MouseEvent& m) -> bool;
 
-  std::vector<std::string> m_options;
-  int m_selected{-1};
+  // Shared options+selection state (#42 item 3); the dropdown machinery
+  // (m_open/m_highlight) stays here -- it is Select-only.
+  detail::OptionsList m_list;
   int m_highlight{-1};
   bool m_open{false};
   int m_screen_rows{0};  // memoized from draw(); 0 = no frame yet (unclamped)

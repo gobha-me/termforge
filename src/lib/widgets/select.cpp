@@ -14,37 +14,28 @@ Select::Select(std::vector<std::string> options) {
 }
 
 auto Select::set_options(std::vector<std::string> options) -> void {
-  m_options = std::move(options);
-  m_selected = m_options.empty() ? -1 : 0;
-  close_dropdown();
+  // Replacing the list closes the dropdown (#36): an open list must not
+  // survive with a stale m_highlight over options that no longer exist.
+  m_list.set_all(std::move(options), [this] { close_dropdown(); });
   mark_dirty();
 }
 
 auto Select::add_option(std::string option) -> void {
-  m_options.push_back(std::move(option));
-  if (m_selected < 0) m_selected = 0;
+  m_list.add(std::move(option));
   mark_dirty();
 }
 
 auto Select::clear() -> void {
-  m_options.clear();
-  m_selected = -1;
-  close_dropdown();
+  m_list.clear([this] { close_dropdown(); });
   mark_dirty();
 }
 
 auto Select::selected_text() const -> std::string {
-  if (m_selected < 0 || m_selected >= static_cast<int>(m_options.size()))
-    return {};
-  return m_options[static_cast<std::size_t>(m_selected)];
+  return m_list.selected_text();
 }
 
 auto Select::set_selected(int index) -> void {
-  if (m_options.empty()) {
-    m_selected = -1;
-  } else {
-    m_selected = std::clamp(index, 0, static_cast<int>(m_options.size()) - 1);
-  }
+  m_list.select(index);
   // Match set_options()/clear(): a programmatic set re-seeds the control, so
   // an open dropdown must not survive with a stale m_highlight that the next
   // Enter would commit over the value the app just set (#36).
@@ -53,7 +44,7 @@ auto Select::set_selected(int index) -> void {
 }
 
 auto Select::dropdown_rect() const -> Rect {
-  if (!m_open || m_options.empty()) return {0, 0, 0, 0};
+  if (!m_open || m_list.empty()) return {0, 0, 0, 0};
   const Rect r = rect();
   // Exactly as wide as the control (see the header note), one row per option,
   // starting BELOW the whole rect -- not r.y + 1, which overlaps the box line
@@ -61,7 +52,7 @@ auto Select::dropdown_rect() const -> Rect {
   // screen bottom once a frame has painted: rows that would fall off-screen
   // are unreachable and must not be keyboard-committable (#48 item 3). The
   // full height-cap/scroll story stays with #21.
-  int h = static_cast<int>(m_options.size());
+  int h = m_list.count();
   if (m_screen_rows > 0) h = std::min(h, std::max(0, m_screen_rows - (r.y + r.h)));
   return {r.x, r.y + r.h, r.w, h};
 }
@@ -71,9 +62,9 @@ auto Select::hit_test(int px, int py) const -> bool {
 }
 
 auto Select::open_dropdown() -> void {
-  if (m_open || m_options.empty()) return;
+  if (m_open || m_list.empty()) return;
   m_open = true;
-  m_highlight = std::max(0, m_selected);
+  m_highlight = std::max(0, m_list.selected());
   mark_dirty();
 }
 
@@ -93,13 +84,13 @@ auto Select::set_focused(bool focused) -> void {
 }
 
 auto Select::commit(int index) -> void {
-  if (index < 0 || index >= static_cast<int>(m_options.size())) return;
+  if (index < 0 || index >= m_list.count()) return;
   // Copy the option as well as the callback (#5, #32): the callback may call
   // set_options() and reallocate the vector behind a reference into our own
   // storage. invoke_copy detaches the std::function itself.
-  const std::string item = m_options[static_cast<std::size_t>(index)];
-  const bool changed = (index != m_selected);
-  m_selected = index;
+  const std::string item = m_list.at(index);
+  const bool changed = (index != m_list.selected());
+  m_list.select(index);
   close_dropdown();
   mark_dirty();
   // No-change commits stay silent -- the no-op-silence rule RadioGroup::select
@@ -160,11 +151,9 @@ auto Select::draw(Screen& screen) -> void {
 
       screen.fill_rect(dr.x, dy, dr.w, 1, rfg, rbg);
       const int avail = std::max(0, dr.w - 2);
-      screen.write_text(
-          dr.x + 1, dy,
-          detail::truncate_to_width(m_options[static_cast<std::size_t>(vi)],
-                                    avail),
-          rfg, rbg);
+      screen.write_text(dr.x + 1, dy,
+                        detail::truncate_to_width(m_list.at(vi), avail),
+                        rfg, rbg);
     }
   }
 

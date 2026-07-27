@@ -38,6 +38,7 @@
 #include <string>
 #include <vector>
 
+#include "termforge/widgets/detail/options_list.hpp"
 #include "termforge/widgets/glyphs.hpp"
 #include "termforge/widgets/widget.hpp"
 
@@ -54,11 +55,13 @@ class RadioGroup final : public Widget {
   auto add_option(std::string option) -> void;
   auto clear() -> void;
   [[nodiscard]] auto option_count() const noexcept -> std::size_t {
-    return m_options.size();
+    return m_list.options().size();
   }
 
   // -1 only when the group is empty; otherwise always a valid index.
-  [[nodiscard]] auto selected() const noexcept -> int { return m_selected; }
+  [[nodiscard]] auto selected() const noexcept -> int {
+    return m_list.selected();
+  }
   [[nodiscard]] auto selected_text() const -> std::string;
 
   // Clamps into range. Silent, like set_options.
@@ -82,7 +85,7 @@ class RadioGroup final : public Widget {
   // initial focus to a member focusable at add time, so a group populated
   // after being added won't hold initial focus until the first cycle.
   [[nodiscard]] auto focusable() const -> bool override {
-    return !m_options.empty();
+    return !m_list.empty();
   }
 
   [[nodiscard]] auto scroll_offset() const noexcept -> int { return m_scroll; }
@@ -98,8 +101,8 @@ class RadioGroup final : public Widget {
   // Clamp, and fire only if the selection actually moved.
   auto select(int index) -> void;
 
-  std::vector<std::string> m_options;
-  int m_selected{-1};
+  // Shared options+selection state (#42 item 3); m_scroll is the viewport.
+  detail::OptionsList m_list;
   int m_scroll{0};
   BorderStyle m_style{BorderStyle::Single};
 
