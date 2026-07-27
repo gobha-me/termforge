@@ -201,10 +201,12 @@ auto Dialog::on_event(const Event& ev) -> bool {
     // inside a dialog still works (a wheel event carries pressed == false, so
     // it cannot activate anything), and motion is forwarded so an open
     // dropdown's hover-follows-mouse works (#47 item 2). Everything else is
-    // consumed and dropped: releases, and right/middle presses, which some
-    // controls still treat as activation (issue #12 item 1). Containing that
-    // here keeps a stray right-click from confirming a dialog without
-    // changing Button under anyone's feet.
+    // consumed and dropped: releases, and right/middle presses. Every
+    // shipped control has declined non-left presses since 43c756a (#12
+    // item 1), so nothing inside a dialog needs this containment today --
+    // it is defense-in-depth for the next control or an app-defined child
+    // that treats right/middle as activation, so a stray right-click can
+    // never confirm a dialog (#42 item 6).
     if (!activating_press && !wheel && !motion) return true;
 
     // Pre-route: a child's rect-exceeding hit area wins over z-order (#37).

@@ -888,8 +888,10 @@ TEST_CASE("Dialog: Escape with no controls still cancels", "[dialog]") {
 
 TEST_CASE("Dialog: a right-click on a control does not activate it",
           "[dialog][failure][mouse]") {
-  // Button still activates on any mouse button (#12 item 1). The dialog
-  // contains that: only button 0 presses reach a control.
+  // Button is gated to button == 0 since 43c756a (#12 item 1), so this test
+  // now pins defense-in-depth: even a control that treated right/middle as
+  // activation would be contained by the dialog -- only button 0 presses
+  // reach a child (#42 item 6).
   bool fired = false;
   MessageDialog d{"T", "body"};
   d.on_ok([&] { fired = true; });

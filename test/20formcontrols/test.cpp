@@ -209,8 +209,9 @@ TEST_CASE("Checkbox: a left click inside toggles, outside does not",
 
 TEST_CASE("Checkbox: a non-left press does not toggle",
           "[form][check][mouse][failure]") {
-  // A right-click on a form control must not change its value (the gap #12
-  // item 1 still leaves open in Button, deliberately not repeated here).
+  // A right-click on a form control must not change its value. Button was
+  // gated to button == 0 by 43c756a (#12 item 1); this pins the same rule
+  // for Checkbox.
   Checkbox c{"Enable"};
   c.set_geometry({0, 0, 12, 1});
   REQUIRE_FALSE(c.on_event(press(1, 0, 1)));  // middle
