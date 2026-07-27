@@ -4,6 +4,7 @@
 
 #include "detail/scroll.hpp"
 #include "detail/width.hpp"
+#include "termforge/widgets/detail/callback.hpp"
 
 namespace termforge {
 
@@ -120,13 +121,12 @@ auto ListWidget::on_event(const Event& ev) -> bool {
     }
     if (k->key == Key::Enter) {
       if (m_on_select && m_selected >= 0) {
-        // Copy the item AND the callback: the callback may call
+        // Copy the item as well as the callback: the callback may call
         // set_items()/clear(), invalidating a reference into our own storage
-        // mid-call, and it may call on_select() to replace the std::function
-        // it is running inside (#32).
-        const std::string item = m_items[static_cast<std::size_t>(m_selected)];
-        auto cb = m_on_select;
-        cb(m_selected, item);
+        // mid-call (#32). invoke_copy detaches the std::function itself.
+        detail::invoke_copy(
+            m_on_select, m_selected,
+            std::string(m_items[static_cast<std::size_t>(m_selected)]));
       }
       return true;
     }
@@ -146,10 +146,10 @@ auto ListWidget::on_event(const Event& ev) -> bool {
       if (clicked >= 0 && clicked < static_cast<int>(m_items.size())) {
         set_selected(clicked);
         if (m_on_select) {
-          // Copy the item and the callback — see the keyboard path above.
-          const std::string item = m_items[static_cast<std::size_t>(clicked)];
-          auto cb = m_on_select;
-          cb(clicked, item);
+          // Copy the item — see the keyboard path above.
+          detail::invoke_copy(
+              m_on_select, clicked,
+              std::string(m_items[static_cast<std::size_t>(clicked)]));
         }
       }
       return true;

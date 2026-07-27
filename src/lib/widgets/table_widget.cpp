@@ -5,6 +5,7 @@
 
 #include "detail/scroll.hpp"
 #include "detail/width.hpp"
+#include "termforge/widgets/detail/callback.hpp"
 
 namespace termforge {
 
@@ -177,13 +178,14 @@ auto TableWidget::on_event(const Event& ev) -> bool {
         m_selected = clicked;
         mark_dirty();
         if (m_on_select) {
-          // Copy the row AND the callback: the callback may call
+          // Copy the row as well as the callback: the callback may call
           // clear_rows()/add_row(), invalidating a reference into our own
-          // storage mid-call, and it may call on_select() to replace the
-          // std::function it is running inside (#32).
-          const auto row = m_rows[static_cast<std::size_t>(clicked)];
-          auto cb = m_on_select;
-          cb(clicked, row);
+          // storage mid-call (#32). Passing the element directly would
+          // forward a reference into m_rows; the explicit copy detaches it.
+          // invoke_copy detaches the std::function itself.
+          detail::invoke_copy(m_on_select, clicked,
+                              std::vector<std::string>(
+                                  m_rows[static_cast<std::size_t>(clicked)]));
         }
       }
       return true;  // any click inside the table is consumed

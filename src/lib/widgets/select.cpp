@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "detail/width.hpp"
+#include "termforge/widgets/detail/callback.hpp"
 
 namespace termforge {
 
@@ -93,12 +94,10 @@ auto Select::set_focused(bool focused) -> void {
 
 auto Select::commit(int index) -> void {
   if (index < 0 || index >= static_cast<int>(m_options.size())) return;
-  // Copy BOTH before closing and firing (#5, #32): the option, because the
-  // callback may call set_options() and reallocate the vector behind a
-  // reference into our own storage; and the callback, because it may call
-  // on_change() and destroy the std::function it is running inside.
+  // Copy the option as well as the callback (#5, #32): the callback may call
+  // set_options() and reallocate the vector behind a reference into our own
+  // storage. invoke_copy detaches the std::function itself.
   const std::string item = m_options[static_cast<std::size_t>(index)];
-  auto cb = m_on_change;
   const bool changed = (index != m_selected);
   m_selected = index;
   close_dropdown();
@@ -106,7 +105,7 @@ auto Select::commit(int index) -> void {
   // No-change commits stay silent -- the no-op-silence rule RadioGroup::select
   // and Checkbox::set_checked already follow (#36 item 3). Re-committing the
   // current value still closes the list, but fires nothing.
-  if (changed && cb) cb(index, item);
+  if (changed) detail::invoke_copy(m_on_change, index, std::move(item));
 }
 
 auto Select::draw(Screen& screen) -> void {

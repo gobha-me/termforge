@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "detail/width.hpp"
+#include "termforge/widgets/detail/callback.hpp"
 
 namespace termforge {
 
@@ -180,10 +181,10 @@ auto MenuBar::handle_mouse(const MouseEvent& m) -> bool {
     const int vi = m.y - dr.y;
     const auto& menu = m_menus[static_cast<std::size_t>(m_active)];
     if (vi >= 0 && vi < static_cast<int>(menu.items.size())) {
-      // Copy the action before closing — the action may mutate the menus.
+      // Detach the action before closing — the action may mutate the menus.
       auto action = menu.items[static_cast<std::size_t>(vi)].action;
       close_dropdown();
-      if (action) action();
+      detail::invoke_copy(action);
     }
     return true;
   }
@@ -237,12 +238,12 @@ auto MenuBar::on_event(const Event& ev) -> bool {
     }
     if (k->key == Key::Enter) {
       if (m_selected >= 0 && m_selected < item_count) {
-        // Copy the action before closing, exactly like the mouse path:
+        // Detach the action before closing, exactly like the mouse path:
         // the action may call set_menus()/add_menu(), and a vector
         // reallocation would destroy the std::function mid-call.
         auto action = menu.items[static_cast<std::size_t>(m_selected)].action;
         close_dropdown();
-        if (action) action();
+        detail::invoke_copy(action);
       }
       return true;
     }

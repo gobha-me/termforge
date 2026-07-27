@@ -3,6 +3,7 @@
 #include <string>
 
 #include "detail/width.hpp"
+#include "termforge/widgets/detail/callback.hpp"
 
 namespace termforge {
 
@@ -15,10 +16,7 @@ auto Checkbox::set_checked(bool checked) -> void {
 auto Checkbox::toggle() -> void {
   m_checked = !m_checked;
   mark_dirty();
-  // Copy before invoking: the callback may reassign m_on_change and destroy
-  // the std::function it is running inside (#32).
-  auto cb = m_on_change;
-  if (cb) cb(m_checked);
+  detail::invoke_copy(m_on_change, m_checked);
 }
 
 auto Checkbox::draw(Screen& screen) -> void {

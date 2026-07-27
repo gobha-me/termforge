@@ -6,6 +6,7 @@
 
 #include "detail/scroll.hpp"
 #include "detail/width.hpp"
+#include "termforge/widgets/detail/callback.hpp"
 
 namespace termforge {
 
@@ -63,11 +64,10 @@ auto RadioGroup::select(int index) -> void {
   m_selected = next;
   ensure_visible();
   mark_dirty();
-  // Copy both the option and the callback before invoking: the callback may
-  // call set_options() (invalidating a reference into our own storage) or
-  // on_change() (destroying the std::function it runs inside) — #5, #32.
-  auto cb = m_on_change;
-  if (cb) cb(m_selected);
+  // The callback may call set_options() (invalidating our own storage) or
+  // on_change() (destroying the std::function it runs inside) — invoke_copy
+  // detaches it first (#5, #32).
+  detail::invoke_copy(m_on_change, m_selected);
 }
 
 auto RadioGroup::draw(Screen& screen) -> void {

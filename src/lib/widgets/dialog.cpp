@@ -7,6 +7,7 @@
 #include "detail/width.hpp"
 #include "detail/wrap.hpp"
 #include "termforge/widgets/select.hpp"
+#include "termforge/widgets/detail/callback.hpp"
 
 namespace termforge {
 
@@ -56,11 +57,9 @@ auto Dialog::begin_result() -> bool {
 }
 
 auto Dialog::close() -> void {
-  // Copy before invoking: the callback may reassign m_on_close (or push a
-  // follow-up dialog that does), and running a std::function that has been
-  // replaced underneath is a use-after-free (issue #5).
-  auto cb = m_on_close;
-  if (cb) cb();
+  // invoke_copy: the callback may reassign m_on_close (or push a follow-up
+  // dialog that does) — see detail/callback.hpp (issue #5).
+  detail::invoke_copy(m_on_close);
 }
 
 auto Dialog::layout(int screen_cols, int screen_rows) -> void {
