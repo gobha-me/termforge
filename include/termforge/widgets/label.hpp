@@ -9,6 +9,7 @@
 #include <string>
 
 #include "termforge/widgets/widget.hpp"
+#include "termforge/widgets/theme.hpp"
 
 namespace termforge {
 
@@ -43,8 +44,8 @@ class Label final : public Widget {
  private:
   std::string m_text;
   Align m_align{Align::Left};
-  Rgb m_fg{0xE0, 0xE0, 0xF0};
-  Rgb m_bg{0x0A, 0x0A, 0x14};
+  Rgb m_fg{theme::kFg};
+  Rgb m_bg{theme::kBg};
 };
 
 }  // namespace termforge

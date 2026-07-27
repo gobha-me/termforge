@@ -1,3 +1,4 @@
+
 // Form controls: Checkbox, RadioGroup, Select — and the MarkGlyphs table they
 // all draw from (#19).
 //
@@ -28,8 +29,10 @@
 #include "termforge/widgets/radio_group.hpp"
 #include "termforge/widgets/select.hpp"
 #include "termforge/widgets/widget.hpp"
+#include "support/events.hpp"
 
 using termforge::BorderStyle;
+using namespace tfsupport;
 using termforge::Checkbox;
 using termforge::Event;
 using termforge::FocusRing;
@@ -47,31 +50,7 @@ using termforge::Widget;
 
 namespace {
 
-auto key(Key k, char32_t ch = 0, bool shift = false) -> Event {
-  KeyEvent e;
-  e.key = k;
-  e.ch = ch;
-  e.shift = shift;
-  return Event{e};
-}
-auto ch(char32_t c) -> Event { return key(Key::Char, c); }
-auto press(int x, int y, int button = 0) -> Event {
-  MouseEvent e;
-  e.x = x;
-  e.y = y;
-  e.button = button;
-  e.pressed = true;
-  return Event{e};
-}
-auto wheel(int x, int y, bool up = false) -> Event {
-  MouseEvent e;
-  e.x = x;
-  e.y = y;
-  e.button = -1;
-  e.scroll_up = up;
-  e.scroll_down = !up;
-  return Event{e};
-}
+
 // Read back one row of a screen as a string. A blank cell holds "" (see
 // Cell::blank), so it is rendered as a space here to keep the expectations
 // fixed-width and legible.
@@ -84,11 +63,6 @@ auto row_text(const Screen& s, int y, int x0, int w) -> std::string {
   return out;
 }
 
-auto all_seven_bit(std::string_view s) -> bool {
-  for (const unsigned char c : s)
-    if (c >= 0x80) return false;
-  return true;
-}
 
 // Every cell of a rect is 7-bit — the bare-TTY tier check.
 auto rect_is_ascii(const Screen& s, Rect r) -> bool {

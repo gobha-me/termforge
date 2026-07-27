@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "termforge/widgets/widget.hpp"
+#include "termforge/widgets/theme.hpp"
 
 namespace termforge {
 
@@ -81,11 +82,11 @@ class TableWidget final : public Widget {
   int m_scroll{0};
   int m_selected{-1};
 
-  Rgb m_row_fg{0xE0, 0xE0, 0xF0};
-  Rgb m_row_bg{0x0A, 0x0A, 0x14};
+  Rgb m_row_fg{theme::kFg};
+  Rgb m_row_bg{theme::kBg};
   Rgb m_alt_bg{0x10, 0x10, 0x1C};  // alternating row background
-  Rgb m_selected_fg{0x0A, 0x0A, 0x14};
-  Rgb m_selected_bg{0x40, 0x80, 0xFF};
+  Rgb m_selected_fg{theme::kFocusFg};
+  Rgb m_selected_bg{theme::kFocusBg};
 
   std::function<void(int, const std::vector<std::string>&)> m_on_select;
 };

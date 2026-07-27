@@ -8,8 +8,10 @@
 #include "termforge/widgets/menu_bar.hpp"
 #include "termforge/widgets/table_widget.hpp"
 #include "termforge/widgets/text_input.hpp"
+#include "support/events.hpp"
 
 using termforge::App;
+using namespace tfsupport;
 using termforge::Button;
 using termforge::Column;
 using termforge::Event;
@@ -22,23 +24,6 @@ using termforge::Widget;
 
 namespace {
 
-auto press(int x, int y) -> Event {
-  return MouseEvent{.x = x, .y = y, .button = 0, .pressed = true};
-}
-
-auto motion(int x, int y) -> Event {
-  return MouseEvent{.x = x, .y = y, .button = 0, .pressed = false};
-}
-
-auto wheel(int x, int y, bool up = false) -> Event {
-  MouseEvent e;
-  e.x = x;
-  e.y = y;
-  e.button = -1;
-  e.scroll_up = up;
-  e.scroll_down = !up;
-  return Event{e};
-}
 
 // Layout reminder (layout_menus): title width = strlen + 2, 1-col gap.
 // "File" at x=0 w=6, "Edit" at x=7 w=6.

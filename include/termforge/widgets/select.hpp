@@ -63,6 +63,7 @@
 #include "termforge/widgets/detail/options_list.hpp"
 #include "termforge/widgets/glyphs.hpp"
 #include "termforge/widgets/widget.hpp"
+#include "termforge/widgets/theme.hpp"
 
 namespace termforge {
 
@@ -152,14 +153,14 @@ class Select final : public Widget {
   int m_screen_rows{0};  // memoized from draw(); 0 = no frame yet (unclamped)
   BorderStyle m_style{BorderStyle::Single};
 
-  Rgb m_fg{0xE0, 0xE0, 0xF0};
-  Rgb m_bg{0x0A, 0x0A, 0x14};
-  Rgb m_focused_fg{0x0A, 0x0A, 0x14};
-  Rgb m_focused_bg{0x40, 0x80, 0xFF};
-  Rgb m_dropdown_fg{0xE0, 0xE0, 0xF0};
-  Rgb m_dropdown_bg{0x15, 0x15, 0x25};
-  Rgb m_highlight_fg{0x0A, 0x0A, 0x14};
-  Rgb m_highlight_bg{0x40, 0x80, 0xFF};
+  Rgb m_fg{theme::kFg};
+  Rgb m_bg{theme::kBg};
+  Rgb m_focused_fg{theme::kFocusFg};
+  Rgb m_focused_bg{theme::kFocusBg};
+  Rgb m_dropdown_fg{theme::kDropdownFg};
+  Rgb m_dropdown_bg{theme::kDropdownBg};
+  Rgb m_highlight_fg{theme::kFocusFg};
+  Rgb m_highlight_bg{theme::kFocusBg};
 
   std::function<void(int, const std::string&)> m_on_change;
 };

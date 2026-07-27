@@ -14,8 +14,10 @@
 #include "termforge/widgets/menu_bar.hpp"
 #include "termforge/widgets/progress_bar.hpp"
 #include "termforge/widgets/text_input.hpp"
+#include "support/events.hpp"
 
 using termforge::BorderGlyphs;
+using namespace tfsupport;
 using termforge::border_glyphs;
 using termforge::BorderStyle;
 using termforge::Button;
@@ -52,11 +54,6 @@ auto border_ring(const Screen& s, termforge::Rect r) -> std::string {
   return out;
 }
 
-auto all_seven_bit(std::string_view s) -> bool {
-  for (const unsigned char c : s)
-    if (c >= 0x80) return false;
-  return true;
-}
 
 // The continuation cell the renderer writes after a width-2 glyph.
 const std::string kWide{"\0", 1};

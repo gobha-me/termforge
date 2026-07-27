@@ -41,6 +41,7 @@
 #include "termforge/widgets/detail/options_list.hpp"
 #include "termforge/widgets/glyphs.hpp"
 #include "termforge/widgets/widget.hpp"
+#include "termforge/widgets/theme.hpp"
 
 namespace termforge {
 
@@ -106,10 +107,10 @@ class RadioGroup final : public Widget {
   int m_scroll{0};
   BorderStyle m_style{BorderStyle::Single};
 
-  Rgb m_fg{0xE0, 0xE0, 0xF0};
-  Rgb m_bg{0x0A, 0x0A, 0x14};
-  Rgb m_focused_fg{0x0A, 0x0A, 0x14};
-  Rgb m_focused_bg{0x40, 0x80, 0xFF};
+  Rgb m_fg{theme::kFg};
+  Rgb m_bg{theme::kBg};
+  Rgb m_focused_fg{theme::kFocusFg};
+  Rgb m_focused_bg{theme::kFocusBg};
 
   std::function<void(int)> m_on_change;
 };
