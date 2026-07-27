@@ -6,6 +6,7 @@
 
 #include "detail/width.hpp"
 #include "termforge/widgets/detail/callback.hpp"
+#include "termforge/widgets/detail/dropdown.hpp"
 
 namespace termforge {
 
@@ -140,20 +141,11 @@ auto Select::draw(Screen& screen) -> void {
 
   // The dropdown draws BELOW rect() — the documented exception, matched by
   // hit_test(). Geometry comes from dropdown_rect() so the two cannot disagree.
-  if (const Rect dr = dropdown_rect(); dr.w > 0 && dr.h > 0) {
-    for (int vi = 0; vi < dr.h; ++vi) {
-      const int dy = dr.y + vi;
-      const bool is_hl = (vi == m_highlight);
-      const Rgb rfg = is_hl ? m_highlight_fg : m_dropdown_fg;
-      const Rgb rbg = is_hl ? m_highlight_bg : m_dropdown_bg;
-
-      screen.fill_rect(dr.x, dy, dr.w, 1, rfg, rbg);
-      const int avail = std::max(0, dr.w - 2);
-      screen.write_text(dr.x + 1, dy,
-                        detail::truncate_to_width(m_list.at(vi), avail),
-                        rfg, rbg);
-    }
-  }
+  // The row loop is the shared detail/dropdown.hpp skeleton (#42 item 2).
+  detail::draw_dropdown_rows(
+      screen, dropdown_rect(), m_list.count(), m_highlight, /*label_pad=*/1,
+      m_dropdown_fg, m_dropdown_bg, m_highlight_fg, m_highlight_bg,
+      [this](int vi) -> const std::string& { return m_list.at(vi); });
 
   clear_dirty();
 }
@@ -161,21 +153,18 @@ auto Select::draw(Screen& screen) -> void {
 auto Select::handle_mouse(const MouseEvent& m) -> bool {
   const Rect dr = dropdown_rect();
 
-  // Wheel FIRST. A wheel report arrives with pressed == false
-  // (input.cpp:221-225), so checking it after the hover branch below would
-  // make this unreachable and let a scroll drag the highlight around.
-  // Ignored like RadioGroup's — a stray scroll must not change a form value —
-  // but consumed while the list is open so it cannot reach the widget behind.
-  if (m.scroll_up || m.scroll_down) {
-    return dropdown_open() && hit_test(m.x, m.y);
-  }
+  // Wheel FIRST, then hover -- the #38 ordering trap both widgets now share
+  // via detail/dropdown.hpp (#42 item 2). A stray scroll must not change a
+  // form value; consumed while open so it cannot reach the widget behind.
+  if (detail::dropdown_wheel(m, dropdown_open(), *this)) return true;
+  if (m.scroll_up || m.scroll_down) return false;  // wheel outside: decline
 
   // Hover over the open list moves the highlight (MenuBar's behavior).
   if (!m.pressed) {
-    if (dropdown_open() && dr.contains(m.x, m.y)) {
-      const int vi = m.y - dr.y;
-      if (vi != m_highlight && vi >= 0 && vi < dr.h) {
-        m_highlight = vi;
+    int row = m_highlight;
+    if (detail::dropdown_hover_row(m, dropdown_open(), dr, m_highlight, row)) {
+      if (row != m_highlight) {
+        m_highlight = row;
         mark_dirty();
       }
       return true;
