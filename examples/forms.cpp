@@ -75,6 +75,17 @@ class FormsDemo final : public App {
     m_cancel.set_label("Cancel");
     m_cancel.on_activate([this] { set_status("Cancel"); });
 
+    // Constant presentation state lives here, not in on_render (#42 item 5):
+    // the frame title and the section labels never change, and the render
+    // path used to re-run these setters ~10x/second for nothing. The status
+    // bar's colors are constant too -- only its text varies (set_status).
+    m_frame.set_title("Settings");
+    m_theme_label.set_text("Theme");
+    m_theme_label.set_colors(Rgb{0x80, 0x80, 0xA0}, Rgb{0x0A, 0x0A, 0x14});
+    m_driver_label.set_text("Driver");
+    m_driver_label.set_colors(Rgb{0x80, 0x80, 0xA0}, Rgb{0x0A, 0x0A, 0x14});
+    m_status.set_colors(Rgb{0x80, 0x80, 0x80}, Rgb{0x10, 0x10, 0x20});
+
     // Focus order = mouse-routing order below. The Select is LAST in both, so
     // its open dropdown wins over the widgets it overlays.
     m_ring.add(&m_telemetry);
@@ -132,7 +143,6 @@ class FormsDemo final : public App {
     const int H = screen.rows();
     const int form_w = std::min(W, 46);
 
-    m_frame.set_title("Settings");
     m_frame.set_geometry({0, 0, form_w, H - 1});
     m_frame.draw(screen);
     const auto c = m_frame.content_rect();
@@ -144,8 +154,6 @@ class FormsDemo final : public App {
     m_wrap.draw(screen);
 
     ++y;
-    m_theme_label.set_text("Theme");
-    m_theme_label.set_colors(Rgb{0x80, 0x80, 0xA0}, Rgb{0x0A, 0x0A, 0x14});
     m_theme_label.set_geometry({c.x + 1, y++, c.w - 2, 1});
     m_theme_label.draw(screen);
     m_theme.set_geometry(
@@ -153,8 +161,6 @@ class FormsDemo final : public App {
     m_theme.draw(screen);
     y += static_cast<int>(m_theme.option_count()) + 1;
 
-    m_driver_label.set_text("Driver");
-    m_driver_label.set_colors(Rgb{0x80, 0x80, 0xA0}, Rgb{0x0A, 0x0A, 0x14});
     m_driver_label.set_geometry({c.x + 1, y, 8, 1});
     m_driver_label.draw(screen);
     // Geometry now, draw at the very end: the open dropdown has to land on top
@@ -169,7 +175,6 @@ class FormsDemo final : public App {
     m_cancel.draw(screen);
 
     m_status.set_text(m_status_text);
-    m_status.set_colors(Rgb{0x80, 0x80, 0x80}, Rgb{0x10, 0x10, 0x20});
     m_status.set_geometry({0, H - 1, W, 1});
     m_status.draw(screen);
 

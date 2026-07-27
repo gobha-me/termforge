@@ -38,6 +38,7 @@ class Checkbox final : public Widget {
 
   auto set_label(std::string label) -> void {
     m_label = std::move(label);
+    m_line.clear();  // invalidate the composed draw line (#42 item 5)
     mark_dirty();
   }
   [[nodiscard]] auto label() const noexcept -> const std::string& {
@@ -57,6 +58,7 @@ class Checkbox final : public Widget {
   // FallbackDriver choice — see widgets/glyphs.hpp.
   auto set_style(BorderStyle style) -> void {
     m_style = style;
+    m_line.clear();  // glyphs change: invalidate the composed line
     mark_dirty();
   }
   [[nodiscard]] auto style() const noexcept -> BorderStyle { return m_style; }
@@ -80,6 +82,11 @@ class Checkbox final : public Widget {
  private:
   std::string m_label;
   bool m_checked{false};
+  // Composed "[x] label" line, rebuilt in draw() only when something it
+  // depends on changed (empty = stale) -- the run loop renders ~10x/s and
+  // the old per-frame composition + UTF-8 truncation scan was pure churn
+  // (#42 item 5).
+  std::string m_line;
   BorderStyle m_style{BorderStyle::Single};
 
   Rgb m_fg{0xE0, 0xE0, 0xF0};

@@ -90,6 +90,11 @@ auto RadioGroup::draw(Screen& screen) -> void {
     screen.fill_rect(r.x, y, r.w, 1, fg, bg);
 
     // Mark and label composed as one string, truncated once (see Checkbox).
+    // The mark cell moves with the selection on every arrow key, so unlike
+    // Checkbox's line this one is NOT cacheable -- it is composed per frame.
+    // The allocation is amortized across frames by the SSO/move-swap below
+    // and the truncation runs on the row's own width (#42 item 5 only claims
+    // the setters-in-ctor and Checkbox/Select wins here).
     std::string line;
     line += g.radio_open;
     line += (idx == m_list.selected()) ? g.radio_mark : " ";

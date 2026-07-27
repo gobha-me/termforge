@@ -88,6 +88,7 @@ class Select final : public Widget {
 
   auto set_style(BorderStyle style) -> void {
     m_style = style;
+    m_line.clear();  // glyphs change: invalidate the composed box line
     mark_dirty();
   }
   [[nodiscard]] auto style() const noexcept -> BorderStyle { return m_style; }
@@ -143,6 +144,11 @@ class Select final : public Widget {
   // open flag: >= 0 iff the dropdown is open (see dropdown_open()).
   detail::OptionsList m_list;
   int m_highlight{-1};
+  // The box's truncated value text, rebuilt in draw() when the selection,
+  // options, style, or inner width change (empty = stale). m_line_inner is
+  // the width the cached truncation was computed against (#42 item 5).
+  std::string m_line;
+  int m_line_inner{-1};
   int m_screen_rows{0};  // memoized from draw(); 0 = no frame yet (unclamped)
   BorderStyle m_style{BorderStyle::Single};
 

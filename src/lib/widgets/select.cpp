@@ -18,6 +18,7 @@ auto Select::set_options(std::vector<std::string> options) -> void {
   // Replacing the list closes the dropdown (#36): an open list must not
   // survive with a stale m_highlight over options that no longer exist.
   m_list.set_all(std::move(options), [this] { close_dropdown(); });
+  m_line.clear();
   mark_dirty();
 }
 
@@ -28,6 +29,7 @@ auto Select::add_option(std::string option) -> void {
 
 auto Select::clear() -> void {
   m_list.clear([this] { close_dropdown(); });
+  m_line.clear();
   mark_dirty();
 }
 
@@ -41,6 +43,7 @@ auto Select::set_selected(int index) -> void {
   // an open dropdown must not survive with a stale m_highlight that the next
   // Enter would commit over the value the app just set (#36).
   close_dropdown();
+  m_line.clear();
   mark_dirty();
 }
 
@@ -91,6 +94,7 @@ auto Select::commit(int index) -> void {
   const bool changed = (index != m_list.selected());
   m_list.select(index);
   close_dropdown();
+  if (changed) m_line.clear();  // the box shows the newly committed value
   mark_dirty();
   // No-change commits stay silent -- the no-op-silence rule RadioGroup::select
   // and Checkbox::set_checked already follow (#36 item 3). Re-committing the
@@ -119,17 +123,22 @@ auto Select::draw(Screen& screen) -> void {
 
   // "[ value…      ▾ ]" — padded so the closing bracket sits on the last
   // column, then truncated once so a narrow rect degrades by one rule.
+  // The truncated VALUE only changes with the selection/options/inner width,
+  // so it is cached (m_line, invalidated by the setters and by a width
+  // change) -- the old path re-ran selected_text()'s copy plus a UTF-8
+  // truncation scan ~10x/second (#42 item 5). The bracket composition is
+  // cheap appends and stays per frame.
   const int inner = std::max(0, r.w - kChromeCols);
-  // Hold the value in a named local: truncate_to_width returns a view, and
-  // selected_text() returns by value, so viewing the temporary directly would
-  // dangle at the end of the full-expression.
-  const std::string current = selected_text();
-  const std::string_view value = detail::truncate_to_width(current, inner);
+  if (m_line.empty() || m_line_inner != inner) {
+    m_line = m_list.selected_text();
+    m_line = std::string(detail::truncate_to_width(m_line, inner));
+    m_line_inner = inner;
+  }
   std::string line;
   line += g.check_open;
   line += ' ';
-  line += value;
-  const int pad = inner - detail::display_width(value);
+  line += m_line;
+  const int pad = inner - detail::display_width(m_line);
   line.append(static_cast<std::size_t>(std::max(0, pad)), ' ');
   line += ' ';
   line += g.arrow_down;
