@@ -27,8 +27,10 @@
 #include "termforge/core/types.hpp"
 #include "termforge/widgets/dialog.hpp"
 #include "termforge/widgets/file_picker_dialog.hpp"
+#include "support/events.hpp"
 
 using termforge::App;
+using namespace tfsupport;
 using termforge::Dialog;
 using termforge::Event;
 using termforge::FilePickerDialog;
@@ -75,14 +77,6 @@ struct TempTree {
   }
 };
 
-auto key(Key k, char32_t ch = 0, bool shift = false) -> Event {
-  KeyEvent e;
-  e.key = k;
-  e.ch = ch;
-  e.shift = shift;
-  return Event{e};
-}
-auto ch(char32_t c) -> Event { return key(Key::Char, c); }
 
 // Type a whole string into the focused control.
 auto type(FilePickerDialog& d, const std::string& s) -> void {
