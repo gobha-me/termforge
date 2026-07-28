@@ -142,6 +142,12 @@ jobs:
       - name: install + find_package
         run: tools/consume/run.sh install ${{ matrix.cc.cxx }}
 
+      # Vendored as a plain directory inside a repo with its own tags: proves
+      # termforge reports its own version and not the host project's. Silent
+      # when it breaks -- the build stays green and only the number is wrong.
+      - name: add_subdirectory (vendored in a tagged repo)
+        run: tools/consume/run.sh vendored ${{ matrix.cc.cxx }}
+
   fedora:
     name: GCC (Fedora latest)
     runs-on: ubuntu-latest
