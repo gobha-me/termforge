@@ -7,10 +7,94 @@ which holds standing conventions, not state).
 ## Where we are (2026-07-28)
 
 **Core framework, KittyDriver, and the full widget system are landed and
-tested.** 25 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
+tested.** 26 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
 clean.
 
-**Latest release: `v0.1.6`** (2026-07-28) — **#58 (TG-01): real-time frame
+**Latest release: `v0.1.8`** (2026-07-28) — **#59 (TG-02): the `on_tick(dt)`
+update hook.** `App` now has a third override point, and simulation is
+separated from drawing.
+
+*What was wrong:* `App` offered exactly two override points, `on_event` and
+`on_render`, and the loop had no notion of elapsed time anywhere. Fine for an
+event-driven UI, where state changes only in response to input; broken the
+moment state advances on its own. The only place for a falling piece, a moving
+enemy or a tween was inside `on_render`, which conflates simulation with
+drawing — motion written there is measured in *frames*, so a dropped frame, a
+heavier terminal or a different `set_frame_ms` silently changes simulation
+*speed*. The repo shipped the anti-pattern: `examples/dashboard.cpp` derived
+its sine phase from a frame counter incremented inside a `write_text`
+argument, so the wave's frequency was a function of terminal speed.
+
+*The fix:* `virtual auto on_tick(std::chrono::duration<double> dt) -> void {}`,
+called from `frame_step()` after the resize dispatch and the input pump and
+before `on_render`. All three positions are load-bearing — a tick may bound
+motion by `screen().cols()/rows()` (so the resize must land first), the tick
+after a keypress must be the tick that acts on it (so the pump must land
+first), and the frame drawn must be the frame just simulated. `frame_start` is
+reused rather than re-sampled, so the deltas sum to wall-clock exactly.
+
+*Fixed vs variable — both, default variable.* `set_tick_hz(0)` (the default)
+delivers one tick per frame with the real measured delta, which is what a tween
+or a progress animation wants. `set_tick_hz(n)` accumulates and delivers an
+integer number of ticks at a constant `dt` of exactly `1/n`, carrying the
+remainder — that constant is what makes physics deterministic and replayable.
+Variable-only would have pushed determinism onto every caller, and `term-game`
+would have hand-rolled the accumulator (and its spiral-of-death guard) itself;
+fixed-only would be wrong for the UI apps that are most of the framework's
+users. Changing `hz` clears the accumulator: a remainder denominated in the old
+period dumps a burst of ticks under the new one.
+
+*The clamp.* `set_max_tick_dt()`, default **250 ms**, applied to the delta
+before either mode consumes it. Unclamped, a SIGSTOP / breakpoint / laptop
+suspend arrives as one multi-second integration step and teleports everything
+through whatever it was meant to collide with. 250 ms sits above any sane frame
+budget (a deliberately lazy 4 fps app is not silently slowed) and below any
+stall a user would fail to notice. It is also what bounds the fixed-mode
+accumulator to `ceil(max_tick_dt * hz)` ticks per frame — 15 at the defaults —
+so a slow simulation degrades into slow motion rather than accelerating into a
+freeze. A non-positive value disables it, for a replay harness on a synthetic
+clock; combined with `set_tick_hz` that re-arms the spiral by hand. The raw
+frame stamp is stored, never the clamped one — folding the clamp back into the
+clock would compound it into permanent drift.
+
+*Decisions recorded rather than left open:* no interpolation **alpha** (the
+render target is a character grid, so sub-tick position is unobservable in
+cells, and it would oblige apps to keep two states; the residue is retained, so
+exposing it later is purely additive). No `ErrorEvent` when the clamp fires,
+despite "degradation is an event" — that rule is about capability downgrades a
+user would never otherwise learn about, and a clamp firing every frame on a
+slow app is per-frame event spam the app can already detect (`dt ==
+max_tick_dt()`). Ticks keep firing while an overlay is up: only the app knows
+whether its simulation is a game (pause — check `modal()`) or an animation.
+
+*New `test/24tick`* (23 cases, 89 assertions) on the same fake-clock harness
+`23pacing` established, so every dt assertion is an exact equality and the
+suite never sleeps. Two mutation checks confirmed the suite bites: storing the
+clamped stamp instead of the raw one fails the "clamp leaves no residue"
+assertion, and dropping the `!m_running` break fails the quit-inside-a-tick
+case. Fixed-timestep cases use binary-exact periods (1/8, 1/16) — 1/60 lands
+either side of the accumulator boundary and would flake between 4 and 5 ticks.
+
+*Verified on a real pty*, not just in the suite: at a 33 ms budget the box in
+the new `examples/motion.cpp` bounces 4 times in 8 s; at a 97 ms budget (3×
+slower, `dt` reported as 96.9 ms) it bounces **4 times in the same 8 s**.
+`set_tick_hz(120)` reports `dt 8.3ms` and 4 ticks/frame at a 33 ms budget. A
+deliberate 2-second stall leaves the box inside the walls (columns 5–80 of 80)
+with 3 bounces instead of 4 — the clamp discarding the stall, exactly as
+documented. `examples/dashboard.cpp` was converted off its frame counter and
+now runs 30.9 fps against a wall-clock-accurate elapsed readout.
+
+*Rider caught by actually running it:* `motion`'s box was first drawn as
+colour-only blank cells, which is invisible on the `FallbackDriver` tier a bare
+pty selects — there is no colour there to draw it with. It uses an ASCII glyph
+now. Exactly the "green suite ≠ usable UI" trap #45 flagged.
+
+Prior release: `v0.1.7` (2026-07-28) — **#27 (TF-04): CMake clean
+consumption + install/export** (PR #66, plus the #67 follow-ups pinning the
+version derivation to termforge's own git root and giving the vendored fixture
+a git identity).
+
+Prior release: `v0.1.6` (2026-07-28) — **#58 (TG-01): real-time frame
 pacing.** The loop's frame budget is now authoritative instead of advisory.
 
 *What was wrong:* `pump_input()` opened every frame with
@@ -348,8 +432,16 @@ harness).
 
 ## Next session — start here
 
-v0.1.5 shipped the post-release review bundle (#51–#56). The open queue,
-in rough priority order:
+v0.1.8 shipped #59 (TG-02, `on_tick`), which closes the three-issue run
+#58 → #27 → #59 agreed at the top of the TG-xx batch. With pacing, clean
+consumption and a tick hook all landed, `term-game` has everything it needs
+from the loop. The open queue, in rough priority order:
+- **The rest of the TG-xx batch** — **#61** (F5–F12 keys; labelled *good
+  first issue*, the cheapest of the five), **#62** (Cell text attributes:
+  bold/dim/underline/reverse), **#63** (Image sub-rect blit + sprite-sheet
+  slicing), **#60** (kitty keyboard protocol: key release + repeat), **#64**
+  (MapWidget — a **design doc** is the deliverable, and it is the last
+  unchecked Epic 3 item, transitively blocking Epic 4.2 `game.cpp`).
 - **#35** (wheel vs arrow-key semantics) — **needs a user decision** (the
   proposed option 1: wheel scrolls the VIEW, not the selection, decoupling
   ListWidget's view offset from its selection). Everything else here is
@@ -359,10 +451,15 @@ in rough priority order:
   `ProgressBar`'s `█`/`─` and `WaveformWidget`'s half-blocks join
   `glyphs.hpp` (see below). Gives ListWidget's undocumented right-margin
   column an actual job.
-- **TF-01..05 (#24–#28)** — TextBox word-wrap, styled spans, Composer
-  widget, CMake consumption (the 22headers standalone-compile pin is a
-  down payment on #27), App post_event.
+- **TF-01/02/03/05 (#24, #25, #26, #28)** — TextBox word-wrap, styled spans,
+  Composer widget, App post_event. (#27 landed in v0.1.7.)
 - **#16** (forge-top demo) — the larger dogfooding epic.
+
+Surfaced by #59, not fixed by it: `ProgressBar`'s indeterminate pulse
+advances `++m_pulse` inside `draw()` (`progress_bar.cpp:48`), so it animates
+per *frame* rather than per second — the same bug class `on_tick` just
+retired at the App level. Widgets have no tick, so giving them one is a
+widget-API change and its own issue.
 
 Older audit items still open: #53 (kitty probe), #55
 (SIGTERM/tty/SS3/modifiers/paste), #56 (dirty()/clear contract), #57

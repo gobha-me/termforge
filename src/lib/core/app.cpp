@@ -76,6 +76,12 @@ auto App::run() -> int {
     return 1;
   }
   m_running = true;
+  // The tick clock starts at the first frame, not at construction and not at
+  // setup(): the capability probe blocks on terminal replies for anywhere from
+  // microseconds to a DA1 timeout, and charging the simulation for that would
+  // make "how fast did the terminal answer" a gameplay variable.
+  m_last_tick.reset();
+  m_tick_accum = std::chrono::duration<double>::zero();
   while (m_running) frame_step();
   teardown();
   return 0;
@@ -95,6 +101,11 @@ auto App::frame_step() -> void {
     dispatch_event(ResizeEvent{size.cols, size.rows});
   }
   pump_input();
+  // After the resize dispatch and the input pump, before the draw: a tick may
+  // bound motion by screen().cols()/rows(), and the tick following a keypress
+  // must be the tick that acts on it. Drawing then shows the state the tick
+  // just produced rather than one frame of stale state.
+  tick_step(frame_start);
   m_pixel_regions.clear();
   on_render(*m_screen);
   render_overlays(*m_screen);
@@ -102,6 +113,54 @@ auto App::frame_step() -> void {
   restore_backdrop(*m_screen);  // the overlay pass leaves no trace behind
   flush_pixel_regions();
   wait_frame(frame_start);
+}
+
+auto App::set_tick_hz(int hz) -> void {
+  m_tick_hz = hz > 0 ? hz : 0;
+  // 1.0, not 1: integer division here would silently pin every period to zero.
+  m_tick_dt = m_tick_hz > 0
+                  ? std::chrono::duration<double>{1.0 / m_tick_hz}
+                  : std::chrono::duration<double>::zero();
+  // The carried remainder is denominated in the old timestep — see set_tick_hz.
+  m_tick_accum = std::chrono::duration<double>::zero();
+}
+
+auto App::tick_step(std::chrono::steady_clock::time_point frame_start) -> void {
+  using Seconds = std::chrono::duration<double>;
+
+  // On the first frame of a run there is no previous frame to measure against,
+  // so the delta is zero rather than a fabricated frame budget — an integrator
+  // handed a made-up dt is wrong in a way nothing downstream can detect,
+  // whereas zero advances nothing and is exactly true. It goes through the same
+  // path as any other delta, so a fixed timestep simply banks it (i.e. delivers
+  // no ticks) instead of leaking one variable-dt call into a constant-dt world.
+  Seconds dt = Seconds::zero();
+  if (m_last_tick) {
+    dt = frame_start - *m_last_tick;
+    if (dt < Seconds::zero()) dt = Seconds::zero();  // steady_clock says impossible
+    if (m_max_tick_dt > Seconds::zero() && dt > m_max_tick_dt) dt = m_max_tick_dt;
+  }
+  // Store the RAW stamp, never the clamped one: the clamp is a lie told to the
+  // simulation about how much time passed, and folding it back into the clock
+  // would compound that lie into permanent drift.
+  m_last_tick = frame_start;
+
+  if (m_tick_dt <= Seconds::zero()) {  // variable timestep — the default
+    on_tick(dt);
+    return;
+  }
+
+  // Fixed timestep. The accumulator's input is the clamped delta, so this loop
+  // runs at most ceil(max_tick_dt / m_tick_dt) times no matter how long the
+  // frame took or how slow on_tick is — see set_tick_hz.
+  m_tick_accum += dt;
+  while (m_tick_accum >= m_tick_dt) {
+    m_tick_accum -= m_tick_dt;
+    on_tick(m_tick_dt);
+    // quit() from inside a tick ends the catch-up too: the remaining ticks
+    // would advance state the app has already declared dead.
+    if (!m_running) break;
+  }
 }
 
 // ── loop seams (overridden in tests to fake the clock and the fd) ──────────

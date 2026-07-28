@@ -4,9 +4,17 @@
 // (live plot), and TextBox (event log). Shows the App event loop with live
 // updates via set_cell and WaveformWidget::push.
 //
+// It also shows the on_tick/on_render split: the signal is advanced in
+// on_tick(dt) against the wall clock, so it runs at the same speed whatever the
+// frame budget is, while on_render only draws. The `F:` frame counter is a
+// genuine frame counter and will visibly diverge from the elapsed-time readout
+// on a slow terminal — that divergence is exactly what used to distort the
+// waveform back when its phase came from the frame count.
+//
 // Keyboard: Up/Down/PgUp/PgDn scroll the focused widget, Tab switches focus,
 // ESC quits.
 
+#include <chrono>
 #include <cmath>
 #include <format>
 
@@ -72,18 +80,22 @@ class DashboardApp final : public App {
     App::on_event(ev);
   }
 
-  auto on_render(Screen& screen) -> void override {
-    screen.clear();
+  // Simulation: everything that changes on its own lives here, driven by the
+  // clock rather than by how often we happened to be drawn.
+  auto on_tick(std::chrono::duration<double> dt) -> void override {
+    m_t += dt.count();
 
-    // Simulate live data.
-    const float t = static_cast<float>(m_frame) * 0.05f;
-    const float sine = std::sin(t) * 0.5f + 0.5f;         // 0..1
+    const auto sine = static_cast<float>(std::sin(m_t * 1.5) * 0.5 + 0.5);  // 0..1
     m_wave.push(sine);
 
     const int cpu = 20 + static_cast<int>(sine * 60.0f);
-    const int mem_gb = 4 + (m_frame % 3);
+    const int tenths = static_cast<int>(m_t * 10.0) % 10;
     m_table.set_cell(0, 1, std::format("{}%", cpu));
-    m_table.set_cell(1, 1, std::format("{}.{} GB", mem_gb, m_frame % 10));
+    m_table.set_cell(1, 1, std::format("{}.{} GB", 4 + (tenths % 3), tenths));
+  }
+
+  auto on_render(Screen& screen) -> void override {
+    screen.clear();
 
     const int W = screen.cols();
     const int H = screen.rows();
@@ -125,8 +137,9 @@ class DashboardApp final : public App {
     screen.write_text(0, H - 1, footer, Rgb{0x80, 0x80, 0x80},
                       Rgb{0x10, 0x10, 0x20});
 
-    // Frame counter.
-    screen.write_text(W - 12, 0, std::format("F:{:5}", m_frame++),
+    // Frames drawn vs seconds elapsed. The wave now follows the seconds; before
+    // on_tick existed it followed the frames.
+    screen.write_text(W - 20, 0, std::format("F:{:5} {:6.1f}s", m_frame++, m_t),
                       Rgb{0x60, 0x60, 0x80}, Rgb{0x20, 0x40, 0x80});
   }
 
@@ -136,6 +149,7 @@ class DashboardApp final : public App {
   WaveformWidget m_wave;
   int m_focus{0};
   int m_frame{0};
+  double m_t{0.0};  // seconds of simulated time
 };
 
 auto main() -> int {
