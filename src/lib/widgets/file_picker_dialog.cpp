@@ -251,14 +251,20 @@ auto FilePickerDialog::finish_ok() -> void { finish_pick(field_path()); }
 
 auto FilePickerDialog::finish_pick(const std::filesystem::path& p) -> void {
   if (!begin_result()) return;
-  close();  // close first: a callback that raises a dialog must win
-  detail::invoke_copy(m_on_result, p);
+  // Snapshot BEFORE close(): on_close runs app code that may re-arm
+  // m_on_result or destroy this dialog outright -- a member read after
+  // close() would fire the wrong handler or dangle (#51; close still runs
+  // first so a callback that raises a dialog wins).
+  auto cb = m_on_result;
+  close();
+  detail::invoke_copy(cb, p);
 }
 
 auto FilePickerDialog::finish_cancel() -> void {
   if (!begin_result()) return;
+  auto cb = m_on_result;  // snapshot before close() -- see finish_pick (#51)
   close();
-  detail::invoke_copy(m_on_result, std::nullopt);
+  detail::invoke_copy(cb, std::nullopt);
 }
 
 auto FilePickerDialog::report_error(const std::string& message) -> void {

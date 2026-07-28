@@ -17,6 +17,7 @@ using namespace tfsupport;
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <memory>
 #include <string>
 #include <type_traits>
 #include <variant>
@@ -1054,6 +1055,22 @@ TEST_CASE("MessageDialog: clicking OK closes it", "[dialog][message][mouse]") {
   REQUIRE(closes == 1);
 }
 
+TEST_CASE("MessageDialog: on_close may destroy a heap-owned dialog (#51)",
+          "[dialog][message][failure]") {
+  // The documented on_close idiom pops the overlay; an app that owns its
+  // dialogs on the heap destroys them there. The finish path must not touch
+  // a single member after close() -- ASan fails this test if it does.
+  auto d = std::make_unique<MessageDialog>("Note", "Saved.");
+  int oks = 0;
+  MessageDialog* raw = d.get();
+  raw->on_ok([&] { ++oks; });
+  raw->on_close([&] { d.reset(); });
+
+  REQUIRE(raw->on_event(key(Key::Enter)));
+  REQUIRE(d == nullptr);   // destroyed inside on_close
+  REQUIRE(oks == 1);       // snapshot fired anyway
+}
+
 TEST_CASE("MessageDialog: empty text still sizes to hold its button",
           "[dialog][message][failure]") {
   MessageDialog d{"", ""};
@@ -1150,6 +1167,28 @@ TEST_CASE("ConfirmDialog: no result callback still closes",
   d.on_close([&] { ++closes; });
   REQUIRE(d.on_event(key(Key::Escape)));
   REQUIRE(closes == 1);
+}
+
+TEST_CASE("ConfirmDialog: on_close re-arming the result cannot hijack it (#51)",
+          "[dialog][confirm][failure]") {
+  // v0.1.4 regressed the #5/#32 snapshot: the result slot was read AFTER
+  // close() ran on_close, so an on_close that armed the NEXT question's
+  // handler received THIS question's answer. The slot is snapshotted before
+  // close() again; the re-arm only takes effect on a later finish.
+  std::vector<int> fired;
+  ConfirmDialog d{"Q", "Sure?", {}};
+  d.on_result([&](bool yes) { fired.push_back(yes ? 1 : 0); });
+  d.on_close([&] {
+    d.on_result([&](bool yes) { fired.push_back(yes ? 100 : -100); });
+  });
+
+  REQUIRE(d.on_event(ch(U'y')));  // finish(true): close, then fire
+  REQUIRE(fired == std::vector<int>{1});  // the ORIGINAL handler, not the re-arm
+
+  // A freshly constructed dialog with the re-armed shape behaves normally.
+  ConfirmDialog d2{"Q2", "Sure?", [&](bool yes) { fired.push_back(yes ? 2 : -2); }};
+  REQUIRE(d2.on_event(ch(U'n')));
+  REQUIRE(fired == std::vector<int>({1, -2}));
 }
 
 // ── PromptDialog ────────────────────────────────────────────────────────────

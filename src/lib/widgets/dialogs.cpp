@@ -66,8 +66,14 @@ auto MessageDialog::set_ok_label(std::string label) -> void {
 
 auto MessageDialog::finish() -> void {
   if (!begin_result()) return;
-  close();  // close first: a callback that raises another dialog must win
-  detail::invoke_copy(m_on_ok);
+  // Snapshot BEFORE close(): on_close runs app code that may re-arm m_on_ok
+  // with the next question's handler or destroy this dialog outright -- a
+  // member read after close() would fire the wrong handler or dangle (#51,
+  // the seam #5/#32 pinned; close still runs first so a callback that raises
+  // another dialog wins).
+  auto cb = m_on_ok;
+  close();
+  detail::invoke_copy(cb);
 }
 
 auto MessageDialog::content_cols() const -> int {
@@ -109,8 +115,9 @@ auto ConfirmDialog::set_default(bool confirm) -> void {
 
 auto ConfirmDialog::finish(bool result) -> void {
   if (!begin_result()) return;
+  auto cb = m_on_result;  // snapshot before close() -- see MessageDialog (#51)
   close();
-  detail::invoke_copy(m_on_result, result);
+  detail::invoke_copy(cb, result);
 }
 
 auto ConfirmDialog::on_event(const Event& ev) -> bool {
@@ -181,14 +188,16 @@ auto PromptDialog::set_labels(std::string ok, std::string cancel) -> void {
 auto PromptDialog::finish_submit() -> void {
   if (!begin_result()) return;
   auto text = m_input.text();
+  auto cb = m_on_submit;  // snapshot before close() -- see MessageDialog (#51)
   close();
-  detail::invoke_copy(m_on_submit, std::move(text));
+  detail::invoke_copy(cb, std::move(text));
 }
 
 auto PromptDialog::finish_cancel() -> void {
   if (!begin_result()) return;
+  auto cb = m_on_cancel;  // snapshot before close() -- see MessageDialog (#51)
   close();
-  detail::invoke_copy(m_on_cancel);
+  detail::invoke_copy(cb);
 }
 
 auto PromptDialog::on_event(const Event& ev) -> bool {
