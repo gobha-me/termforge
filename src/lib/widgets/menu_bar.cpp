@@ -11,8 +11,7 @@ namespace termforge {
 auto MenuBar::set_menus(std::vector<Menu> menus) -> void {
   m_menus = std::move(menus);
   m_active = 0;
-  m_selected = -1;
-  m_open = false;
+  m_selected = -1;  // closed: dropdown_open() derives from m_selected (#56/7)
   mark_dirty();
 }
 
@@ -22,8 +21,7 @@ auto MenuBar::add_menu(Menu menu) -> void {
 }
 
 auto MenuBar::close_dropdown() -> void {
-  m_open = false;
-  m_selected = -1;
+  m_selected = -1;  // the ONLY open/closed fact: dropdown_open() == >= 0
   mark_dirty();
 }
 
@@ -45,13 +43,17 @@ auto MenuBar::dropdown_width(const Menu& menu, int title_w) const -> int {
   return w;
 }
 
-auto MenuBar::dropdown_rect() const -> Rect {
-  if (!m_open || m_active < 0 ||
+auto MenuBar::dropdown_rect(const TitleLayout* layout) const -> Rect {
+  if (!dropdown_open() || m_active < 0 ||
       m_active >= static_cast<int>(m_menus.size()))
     return {0, 0, 0, 0};
   const auto& menu = m_menus[static_cast<std::size_t>(m_active)];
-  // Copy, not reference: layout_menus() returns a temporary.
-  const auto [mx, mw] = layout_menus()[static_cast<std::size_t>(m_active)];
+  // Use the caller's layout when it has one (draw() computes it for the
+  // titles anyway); otherwise lay out once. Copy, not reference: the
+  // fallback's layout_menus() returns a temporary.
+  const auto fallback = layout ? TitleLayout{} : layout_menus();
+  const auto [mx, mw] =
+      (layout ? *layout : fallback)[static_cast<std::size_t>(m_active)];
   // Clamp to the screen bottom exactly like Select (#48 item 3), via the
   // SHARED skeleton helper so the two dropdowns can never drift again (#53):
   // a row that was clipped out of the rect must not be arrow-reachable or
@@ -63,15 +65,13 @@ auto MenuBar::dropdown_rect() const -> Rect {
 
 auto MenuBar::hit_test(int px, int py) const -> bool {
   return rect().contains(px, py) ||
-         (m_open && dropdown_rect().contains(px, py));
+         (dropdown_open() && dropdown_rect().contains(px, py));
 }
 
 auto MenuBar::open_menu(int index) -> void {
   m_active = index;
-  if (!m_menus[static_cast<std::size_t>(index)].items.empty()) {
-    m_open = true;
-    m_selected = 0;
-  }
+  if (!m_menus[static_cast<std::size_t>(index)].items.empty())
+    m_selected = 0;  // selecting row 0 IS opening the dropdown (#56 item 7)
   mark_dirty();
 }
 
@@ -118,7 +118,7 @@ auto MenuBar::draw(Screen& screen) -> void {
   if (dropdown_open()) {
     const auto& menu = m_menus[static_cast<std::size_t>(m_active)];
     detail::draw_dropdown_rows(
-        screen, dropdown_rect(), static_cast<int>(menu.items.size()),
+        screen, dropdown_rect(&layout), static_cast<int>(menu.items.size()),
         m_selected, /*label_pad=*/2, m_dropdown_fg, m_dropdown_bg,
         m_selected_fg, m_selected_bg,
         [&](int vi) -> const std::string& {
@@ -135,13 +135,13 @@ auto MenuBar::handle_mouse(const MouseEvent& m) -> bool {
   // Wheel FIRST, then hover -- the #38 ordering trap, now shared with Select
   // via detail/dropdown.hpp (#42 item 2). Ignored like RadioGroup's, but
   // consumed while a dropdown is open so it cannot reach the widget behind.
-  if (detail::dropdown_wheel(m, m_open, *this)) return true;
+  if (detail::dropdown_wheel(m, dropdown_open(), *this)) return true;
   if (m.scroll_up || m.scroll_down) return false;  // wheel outside: decline
 
   // Hover over the open dropdown moves the selection highlight.
   if (!m.pressed) {
     int row = m_selected;
-    if (detail::dropdown_hover_row(m, m_open, dr, m_selected, row)) {
+    if (detail::dropdown_hover_row(m, dropdown_open(), dr, m_selected, row)) {
       if (row != m_selected) {
         m_selected = row;
         mark_dirty();
@@ -157,7 +157,7 @@ auto MenuBar::handle_mouse(const MouseEvent& m) -> bool {
     // declines (button.cpp, checkbox.cpp, radio_group.cpp, closed Select
     // after #36), so an app-level right-click handler works over a closed
     // MenuBar too (#48 item 1).
-    return m_open && hit_test(m.x, m.y);
+    return dropdown_open() && hit_test(m.x, m.y);
   }
 
   // Click on the bar row: map x to a title span.
@@ -167,7 +167,7 @@ auto MenuBar::handle_mouse(const MouseEvent& m) -> bool {
       const auto& [mx, mw] = layout[i];
       if (m.x >= mx && m.x < mx + mw) {
         const int idx = static_cast<int>(i);
-        if (m_open && m_active == idx) {
+        if (dropdown_open() && m_active == idx) {
           close_dropdown();
         } else {
           close_dropdown();
@@ -177,19 +177,21 @@ auto MenuBar::handle_mouse(const MouseEvent& m) -> bool {
       }
     }
     // Bar background (between/after titles): close any open dropdown.
-    if (m_open) close_dropdown();
+    if (dropdown_open()) close_dropdown();
     return true;
   }
 
   // Click on an open dropdown row: activate that item.
-  if (m_open && dr.contains(m.x, m.y)) {
+  if (dropdown_open() && dr.contains(m.x, m.y)) {
     const int vi = m.y - dr.y;
     const auto& menu = m_menus[static_cast<std::size_t>(m_active)];
     if (vi >= 0 && vi < static_cast<int>(menu.items.size())) {
       // Detach the action before closing — the action may mutate the menus.
+      // The copy IS the detach, so call it directly (#56 item 5): routing a
+      // local through invoke_copy would copy it a second time for nothing.
       auto action = menu.items[static_cast<std::size_t>(vi)].action;
       close_dropdown();
-      detail::invoke_copy(action);
+      if (action) action();
     }
     return true;
   }
@@ -207,7 +209,7 @@ auto MenuBar::on_event(const Event& ev) -> bool {
 
   const int menu_count = static_cast<int>(m_menus.size());
 
-  if (m_open) {
+  if (dropdown_open()) {
     auto& menu = m_menus[static_cast<std::size_t>(m_active)];
     const int item_count = static_cast<int>(menu.items.size());
     // Bound navigation by what is actually on screen, not the item count:
@@ -251,10 +253,11 @@ auto MenuBar::on_event(const Event& ev) -> bool {
       if (m_selected >= 0 && m_selected < visible) {
         // Detach the action before closing, exactly like the mouse path:
         // the action may call set_menus()/add_menu(), and a vector
-        // reallocation would destroy the std::function mid-call.
+        // reallocation would destroy the std::function mid-call. The copy
+        // IS the detach (#56 item 5) — no second copy through invoke_copy.
         auto action = menu.items[static_cast<std::size_t>(m_selected)].action;
         close_dropdown();
-        detail::invoke_copy(action);
+        if (action) action();
       }
       return true;
     }

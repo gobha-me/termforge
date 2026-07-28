@@ -23,7 +23,6 @@
 // call in flight. A null slot is a no-op, matching the old `if (cb)` guard.
 
 #include <functional>
-#include <type_traits>
 #include <utility>
 
 namespace termforge::detail {
@@ -33,19 +32,20 @@ namespace termforge::detail {
 // the call arguments) because a signature like void(int, const std::string&)
 // cannot be deduced from by-value template parameters — an rvalue std::string
 // would deduce Args = std::string, not const std::string&.
-template <typename R, typename... Args, typename... CallArgs>
-auto invoke_copy(const std::function<R(Args...)>& slot, CallArgs&&... args)
-    -> R {
+//
+// Void-only on purpose (#56 item 5): every widget callback in the codebase
+// returns void (the one non-void callback, FilePickerDialog's error-overlay
+// query, is invoked directly, not through here). A non-void R would force a
+// what-to-return-on-null design question no caller asks; add it back when a
+// real caller does.
+template <typename... Args, typename... CallArgs>
+auto invoke_copy(const std::function<void(Args...)>& slot, CallArgs&&... args)
+    -> void {
   // Decay-copied: any lambda capture by reference still refers to whatever
   // the app captured; only the std::function holder itself is detached from
   // the widget.
   auto cb = slot;
-  if constexpr (std::is_void_v<R>) {
-    if (cb) cb(std::forward<CallArgs>(args)...);
-  } else {
-    if (cb) return cb(std::forward<CallArgs>(args)...);
-    return R{};
-  }
+  if (cb) cb(std::forward<CallArgs>(args)...);
 }
 
 }  // namespace termforge::detail

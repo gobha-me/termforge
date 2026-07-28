@@ -42,6 +42,7 @@
 #include "termforge/widgets/label.hpp"
 #include "termforge/widgets/radio_group.hpp"
 #include "termforge/widgets/select.hpp"
+#include "termforge/widgets/theme.hpp"
 
 using namespace termforge;
 
@@ -81,9 +82,9 @@ class FormsDemo final : public App {
     // bar's colors are constant too -- only its text varies (set_status).
     m_frame.set_title("Settings");
     m_theme_label.set_text("Theme");
-    m_theme_label.set_colors(Rgb{0x80, 0x80, 0xA0}, Rgb{0x0A, 0x0A, 0x14});
+    m_theme_label.set_colors(Rgb{0x80, 0x80, 0xA0}, theme::kBg);
     m_driver_label.set_text("Driver");
-    m_driver_label.set_colors(Rgb{0x80, 0x80, 0xA0}, Rgb{0x0A, 0x0A, 0x14});
+    m_driver_label.set_colors(Rgb{0x80, 0x80, 0xA0}, theme::kBg);
     m_status.set_colors(Rgb{0x80, 0x80, 0x80}, Rgb{0x10, 0x10, 0x20});
 
     // Focus order = mouse-routing order below. The Select is LAST in both, so

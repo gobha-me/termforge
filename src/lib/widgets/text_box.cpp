@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "detail/wrap.hpp"
+#include "termforge/widgets/theme.hpp"
 
 namespace termforge {
 
@@ -56,7 +57,7 @@ auto TextBox::draw(Screen& screen) -> void {
   const Rect r = rect();
   if (r.w <= 0 || r.h <= 0) { clear_dirty(); return; }
 
-  const Rgb fg{0xE0, 0xE0, 0xF0};
+  const Rgb fg = theme::kFg;
   // Own the whole rect: blank it every frame so clear()/scroll/shrink can't
   // leave stale text behind (immediate-mode contract, see widget.hpp).
   screen.fill_rect(r.x, r.y, r.w, r.h, fg, {});
@@ -84,7 +85,7 @@ auto TextBox::draw(Screen& screen) -> void {
 
   // scroll indicator when not at the bottom
   if (m_scroll > 0 && r.w > 8) {
-    screen.write_text(r.x + r.w - 7, r.y, "[more]", Rgb{0x7A, 0x7A, 0x9A}, {});
+    screen.write_text(r.x + r.w - 7, r.y, "[more]", theme::kDim, {});
   }
   clear_dirty();
 }

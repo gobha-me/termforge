@@ -32,6 +32,7 @@
 #include "termforge/widgets/focus_ring.hpp"
 #include "termforge/widgets/frame.hpp"
 #include "termforge/widgets/label.hpp"
+#include "termforge/widgets/theme.hpp"
 #include "termforge/widgets/list_widget.hpp"
 #include "termforge/widgets/menu_bar.hpp"
 #include "termforge/widgets/progress_bar.hpp"
@@ -162,7 +163,7 @@ class WidgetsDemo final : public App {
     // Label.
     m_label.set_text("Widget Showcase");
     m_label.set_align(Label::Align::Center);
-    m_label.set_colors(Rgb{0x00, 0xFF, 0xFF}, Rgb{0x0A, 0x0A, 0x14});
+    m_label.set_colors(Rgb{0x00, 0xFF, 0xFF}, theme::kBg);
     m_label.set_geometry({li.x, li.y, li.w, 1});
     m_label.draw(screen);
 

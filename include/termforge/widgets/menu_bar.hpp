@@ -61,9 +61,12 @@ class MenuBar final : public Widget {
   // Bar row plus the open dropdown's rows (which extend below rect()).
   [[nodiscard]] auto hit_test(int px, int py) const -> bool override;
 
-  // Whether a dropdown is currently open.
+  // Whether a dropdown is currently open. Derived from the selection, not a
+  // separate flag (#56 item 7): every write site kept m_open == (m_selected
+  // >= 0), the same lockstep-flag pattern #42 item 4 removed from Select --
+  // one fact, no way to desync.
   [[nodiscard]] auto dropdown_open() const noexcept -> bool {
-    return m_open;
+    return m_selected >= 0;
   }
 
   // Close the dropdown (parent can call on Escape or click-away).
@@ -79,16 +82,21 @@ class MenuBar final : public Widget {
   auto dropdown_width(const Menu& menu, int title_w) const -> int;
 
   // Screen rect of the open dropdown; {0,0,0,0} when closed. draw() and
-  // hit_test()/on_event() share this so they can never disagree.
-  [[nodiscard]] auto dropdown_rect() const -> Rect;
+  // hit_test()/on_event() share this so they can never disagree. draw()
+  // passes the title layout it already computed so an open frame scans the
+  // titles once, not twice (#56 item 4).
+  using TitleLayout = std::vector<std::pair<int, int>>;
+  [[nodiscard]] auto dropdown_rect(const TitleLayout* layout = nullptr) const
+      -> Rect;
 
   auto handle_mouse(const MouseEvent& m) -> bool;
   auto open_menu(int index) -> void;
 
   std::vector<Menu> m_menus;
   int m_active{0};       // which menu is highlighted/open
-  int m_selected{-1};    // selected item in the open dropdown (-1 = none)
-  bool m_open{false};
+  // Selected item in the open dropdown; doubles as the open flag (>= 0 iff
+  // open, see dropdown_open()) -- the Select m_highlight pattern (#42/4).
+  int m_selected{-1};
   int m_screen_rows{0};  // memoized from draw(); 0 = no frame yet (unclamped)
 
   Rgb m_fg{theme::kFg};
