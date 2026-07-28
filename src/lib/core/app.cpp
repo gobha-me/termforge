@@ -67,6 +67,7 @@ auto App::teardown() -> void {
     m_term.leave_screen();
     m_in_screen = false;
   }
+  m_term.leave_raw();
   std::signal(SIGWINCH, SIG_DFL);
 }
 

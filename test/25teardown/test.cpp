@@ -4,8 +4,10 @@
 #include <stdexcept>
 #include <string>
 
+#include "detail/tty_restore.hpp"
 #include "termforge/core/app.hpp"
 #include "termforge/core/screen.hpp"
+#include "termforge/core/terminal.hpp"
 
 using namespace termforge;
 
@@ -116,6 +118,25 @@ TEST_CASE("run loop: teardown survives the second call from ~App", "[teardown]")
     REQUIRE_FALSE(probe.test_in_screen());
   }  // ~App -> teardown() again
   SUCCEED("second teardown from ~App was clean");
+}
+
+// leave_raw() is the half of teardown() that only matters when no destructor
+// runs, so its own contract gets pinned directly: idempotent, and it disarms
+// the termios half of the signal-restore path so the handler can't re-apply a
+// state that is already back. Without a tty enter_raw() fails, so this
+// exercises the never-entered path — the one every ctest run takes — and pokes
+// restore_state() the way test/16signals does.
+TEST_CASE("terminal: leave_raw is a no-op when raw mode was never entered",
+          "[teardown]") {
+  auto& rs = detail::restore_state();
+  const auto armed_before = rs.armed;
+
+  Terminal term;
+  REQUIRE_FALSE(term.enter_raw().has_value());  // no tty under ctest
+  term.leave_raw();
+  term.leave_raw();  // twice: idempotent
+
+  REQUIRE(rs.armed == armed_before);
 }
 
 // Not covered here, and faking it would be worse than saying so: the

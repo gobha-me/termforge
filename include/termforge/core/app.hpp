@@ -323,6 +323,10 @@ class App {
   auto save_backdrop(const Screen& screen) -> void;
   auto dim_screen(Screen& screen) -> void;
   auto setup() -> std::expected<void, ErrorEvent>;
+  // The exact inverse of setup(): leave the alt-screen, restore cooked mode,
+  // return SIGWINCH to its default. Idempotent, and called from three places —
+  // the end of run_loop(), run_loop()'s catch, and ~App — so on the exception
+  // path it runs twice by design. Must never throw: ~App is noexcept.
   auto teardown() -> void;
   auto pump_input() -> void;
   // The headless Screen/Renderer/FallbackDriver wiring shared by the two test
