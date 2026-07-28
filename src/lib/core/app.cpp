@@ -6,11 +6,12 @@
 #include <cstdint>
 #include <cstdio>
 #include <initializer_list>
-#include <thread>
 #include <variant>
 
 #include <sys/ioctl.h>
 #include <unistd.h>
+
+#include "termforge/drivers/fallback_driver.hpp"
 
 namespace termforge {
 
@@ -52,10 +53,12 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
   m_in_screen = true;
   g_active.store(this, std::memory_order_relaxed);
   std::signal(SIGWINCH, on_winch);
-  // pump_input() manages the read timeout per-phase (zero-timeout drain,
-  // grace read only while an ESC is held). Start at the loop's idle poll
-  // rate so the very first frame behaves like the rest.
-  m_term.set_read_timeout(1);
+  // Reads never block, ever: VMIN=0/VTIME=0 once, here, and the loop never
+  // touches termios again. All waiting is done by wait_readable(), which has
+  // millisecond granularity where VTIME has only deciseconds. (The old loop
+  // toggled VTIME 4-9 times per frame — two syscalls each — to emulate a
+  // wait it could only express in 100ms steps.)
+  m_term.set_read_timeout(0);
   return {};
 }
 
@@ -73,81 +76,116 @@ auto App::run() -> int {
     return 1;
   }
   m_running = true;
-  while (m_running) {
-    if (m_resize_pending) {
-      // Clear *before* measuring: a SIGWINCH landing between the ioctl and
-      // the store would otherwise be erased by it, leaving the screen at a
-      // stale size until the next resize. Clear-then-measure re-arms the
-      // next iteration instead.
-      m_resize_pending.store(false);
-      const auto size = current_size();
-      m_screen->resize(size.cols, size.rows);
-      m_renderer->invalidate();
-      dispatch_event(ResizeEvent{size.cols, size.rows});
-    }
-    pump_input();
-    m_pixel_regions.clear();
-    on_render(*m_screen);
-    render_overlays(*m_screen);
-    m_renderer->present(*m_screen);
-    restore_backdrop(*m_screen);  // the overlay pass leaves no trace behind
-    flush_pixel_regions();
-    if (m_frame_ms > 0)
-      std::this_thread::sleep_for(std::chrono::milliseconds(m_frame_ms));
-  }
+  while (m_running) frame_step();
   teardown();
   return 0;
 }
 
-auto App::pump_input() -> void {
-  // Shape the reads so a frame never stalls and a drag never wedges:
-  //   * the *first* read carries the frame's idle tick (up to 100ms), so an
-  //     idle app still wakes ~10x/s to re-render (dashboards, clocks);
-  //   * every *drain* read after it is zero-timeout, so once input is
-  //     flowing we empty the fd without blocking — during a sustained SGR
-  //     drag these return instantly and the loop keeps rendering;
-  //   * a held lone ESC pays at most one short grace read for the rest of
-  //     its sequence, then we move on rather than re-blocking.
+auto App::frame_step() -> void {
+  const auto frame_start = now_steady();
+  if (m_resize_pending) {
+    // Clear *before* measuring: a SIGWINCH landing between the ioctl and
+    // the store would otherwise be erased by it, leaving the screen at a
+    // stale size until the next resize. Clear-then-measure re-arms the
+    // next iteration instead.
+    m_resize_pending.store(false);
+    const auto size = current_size();
+    m_screen->resize(size.cols, size.rows);
+    m_renderer->invalidate();
+    dispatch_event(ResizeEvent{size.cols, size.rows});
+  }
+  pump_input();
+  m_pixel_regions.clear();
+  on_render(*m_screen);
+  render_overlays(*m_screen);
+  m_renderer->present(*m_screen);
+  restore_backdrop(*m_screen);  // the overlay pass leaves no trace behind
+  flush_pixel_regions();
+  wait_frame(frame_start);
+}
+
+// ── loop seams (overridden in tests to fake the clock and the fd) ──────────
+
+auto App::now_steady() const -> std::chrono::steady_clock::time_point {
+  return std::chrono::steady_clock::now();
+}
+
+auto App::wait_readable(int timeout_ms) -> bool { return m_term.wait_readable(timeout_ms); }
+
+auto App::read_available(char* out, int max) -> int { return m_term.read_input(out, max); }
+
+auto App::drain_input() -> int {
+  // Reads are non-blocking (VMIN=0/VTIME=0, set once in setup), so this
+  // empties whatever the tty has buffered and stops the instant it's dry.
   char buf[256];
-
-  // First read: the idle-tick wait (and, mid-drag, an immediate return).
-  m_term.set_read_timeout(1);
-  int n = m_term.read_input(buf, sizeof(buf));
-  const bool had_input = (n > 0);
-  if (had_input)
-    m_input.feed(std::string_view{buf, static_cast<std::size_t>(n)});
-
-  // Drain everything already queued, never blocking.
+  int total = 0;
   while (true) {
-    m_term.set_read_timeout(0);
-    n = m_term.read_input(buf, sizeof(buf));
+    const int n = read_available(buf, sizeof(buf));
     if (n <= 0) break;
     m_input.feed(std::string_view{buf, static_cast<std::size_t>(n)});
+    total += n;
   }
+  if (total > 0) m_got_bytes = true;
+  return total;
+}
 
-  if (m_input.esc_pending()) {
-    // A lone ESC is held. Give the terminal a short grace window to deliver
-    // the rest of the sequence, then drain whatever arrived without
-    // blocking. If nothing arrives the ESC is a genuine keypress and
-    // flush() below commits it.
-    m_term.set_read_timeout(1);
-    n = m_term.read_input(buf, sizeof(buf));
-    if (n > 0) {
-      m_input.feed(std::string_view{buf, static_cast<std::size_t>(n)});
-      while (true) {
-        m_term.set_read_timeout(0);
-        n = m_term.read_input(buf, sizeof(buf));
-        if (n <= 0) break;
-        m_input.feed(std::string_view{buf, static_cast<std::size_t>(n)});
-      }
-    }
+auto App::wait_frame(std::chrono::steady_clock::time_point frame_start) -> void {
+  // The frame's one and only wait. Two rules make the rate hold steady:
+  //   * the deadline is absolute, measured from the *start* of the frame, so
+  //     rendering time comes out of the budget rather than adding to it;
+  //   * input arriving mid-wait is absorbed, not treated as a reason to end
+  //     the frame early. Those bytes dispatch at the top of the next frame.
+  //     (The old loop returned the moment a byte landed, which is why the
+  //     frame rate used to depend on whether the user was typing.)
+  auto deadline = frame_start + std::chrono::milliseconds(m_frame_ms);
+  // The sanctioned overrun: a half-arrived escape sequence gets kEscGraceMs
+  // to finish, even under a tighter budget, or a 16ms frame would chop every
+  // arrow key into ESC + '[' + 'A'.
+  if (m_input.esc_pending() && !m_esc_waited) {
+    const auto grace = frame_start + std::chrono::milliseconds(kEscGraceMs);
+    if (grace > deadline) deadline = grace;
+    m_esc_waited = true;
   }
+  while (true) {
+    const auto left =
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now_steady());
+    if (left.count() <= 0) break;
+    if (!wait_readable(static_cast<int>(left.count()))) break;  // budget spent
+    // Readable but empty means EOF/hangup: stop, or we'd spin on a dead fd
+    // for the rest of the budget.
+    if (drain_input() == 0) break;
+  }
+}
 
-  // Only flush at a true input boundary. A frame that produced no input at
-  // all (a pure idle tick) must not commit a held ESC — the grace window
-  // for it is the next frame's first read.
-  if (had_input) m_input.flush();
-  m_term.set_read_timeout(1);  // restore the idle-tick rate for next frame
+auto App::test_run_frames(int frames, int cols, int rows, std::string* sink) -> void {
+  // Everything setup() does *except* the parts that need a tty: no enter_raw,
+  // no capability probe, no alt-screen, no SIGWINCH handler. The frame body
+  // itself is the real one, so cadence and input handling are the shipped
+  // code paths and not a reimplementation.
+  auto driver = std::make_unique<FallbackDriver>();
+  driver->set_output(sink);
+  m_driver = std::move(driver);
+  m_screen = std::make_unique<Screen>(cols, rows);
+  m_renderer = std::make_unique<Renderer>(*m_driver);
+  m_running = true;
+  for (int i = 0; i < frames && m_running; ++i) frame_step();
+}
+
+auto App::pump_input() -> void {
+  drain_input();
+
+  // Only flush at a true input boundary, and never while an escape sequence
+  // may still be in flight — flushing a lone ESC commits it as an Escape
+  // keypress, which would turn every arrow key into a quit in the default
+  // on_event. wait_frame() gives that ESC one grace window; if it's still
+  // alone after that, m_esc_waited says the wait already happened and this
+  // frame commits it.
+  const bool hold_for_esc = m_input.esc_pending() && !m_esc_waited;
+  if (m_got_bytes && !hold_for_esc) {
+    m_input.flush();
+    m_got_bytes = false;
+  }
+  if (!m_input.esc_pending()) m_esc_waited = false;
   for (auto& ev : m_input.poll()) dispatch_event(ev);
 }
 

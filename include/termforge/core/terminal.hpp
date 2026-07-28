@@ -51,6 +51,16 @@ class Terminal {
   auto set_read_timeout(int deciseconds) -> void;  // VMIN=0, VTIME=n (poll)
   auto set_read_blocking() -> void;                // VMIN=1, VTIME=0 (block)
 
+  // Wait up to `timeout_ms` for input to become readable. True if bytes are
+  // waiting (or the fd hung up — read() then reports the EOF), false on
+  // timeout. This is the event loop's wait, and it exists because VTIME has
+  // *decisecond* granularity: the smallest non-zero blocking read termios can
+  // express is 100ms, which caps a VTIME-driven loop at 10fps. Pair it with
+  // set_read_timeout(0) so the reads themselves never block.
+  // EINTR-safe: a signal (SIGWINCH is the common one) resumes the remaining
+  // wait rather than restarting or abandoning it.
+  auto wait_readable(int timeout_ms) -> bool;
+
   // Read available input bytes into `out` (up to its capacity). Returns the
   // number of bytes read (0 on timeout/none). Use with the read modes above.
   auto read_input(char* out, int max) -> int;

@@ -4,7 +4,11 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <cerrno>
+#include <chrono>
+
 #include <fcntl.h>
+#include <poll.h>
 #include <termios.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -202,6 +206,27 @@ auto Terminal::set_read_timeout(int deciseconds) -> void {
   t.c_cc[VMIN] = 0;
   t.c_cc[VTIME] = static_cast<cc_t>(deciseconds < 0 ? 0 : (deciseconds > 255 ? 255 : deciseconds));
   tcsetattr(m_impl->tty_fd, TCSANOW, &t);
+}
+
+auto Terminal::wait_readable(int timeout_ms) -> bool {
+  if (timeout_ms < 0) timeout_ms = 0;
+  // Deadline, not a bare timeout: EINTR must resume the *remaining* wait.
+  // SIGWINCH lands here constantly (every drag of a window edge), and both
+  // naive recoveries are wrong — restarting with the full timeout stretches
+  // the frame, giving up shortens it to zero and spins the loop.
+  using clock = std::chrono::steady_clock;
+  const auto deadline = clock::now() + std::chrono::milliseconds(timeout_ms);
+  while (true) {
+    pollfd pfd{m_impl->tty_fd, POLLIN, 0};
+    const int r = ::poll(&pfd, 1, timeout_ms);
+    if (r > 0) return (pfd.revents & (POLLIN | POLLHUP | POLLERR)) != 0;
+    if (r == 0) return false;  // timed out
+    if (errno != EINTR) return false;
+    const auto left =
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - clock::now());
+    if (left.count() <= 0) return false;
+    timeout_ms = static_cast<int>(left.count());
+  }
 }
 
 auto Terminal::set_read_blocking() -> void {

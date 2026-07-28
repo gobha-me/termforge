@@ -22,8 +22,10 @@
 // beneath irrelevant is the backdrop, not any drawing privilege.
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "termforge/core/input.hpp"
@@ -121,8 +123,16 @@ class App {
   // Escape that was meant to cancel the dialog.
   auto dispatch_event(const Event& ev) -> void;
 
-  // Frame budget hint (ms). The loop renders at most once per this interval.
-  void set_frame_ms(int ms) { m_frame_ms = ms; }
+  // Frame budget (ms) — authoritative, not a hint. The loop spends exactly
+  // this long per frame: it renders, then waits out whatever is left of the
+  // budget, absorbing input during the wait rather than being cut short by it.
+  // So the rate holds whether or not the user is typing, which is what makes
+  // time-based motion look right. set_frame_ms(16) -> ~60fps, (33) -> ~30fps,
+  // (0) -> uncapped. Negative values are clamped to 0.
+  // The one documented overrun: a frame holding an incomplete escape sequence
+  // extends to kEscGraceMs so the rest of it can land (see pump_input).
+  void set_frame_ms(int ms) { m_frame_ms = ms < 0 ? 0 : ms; }
+  [[nodiscard]] auto frame_ms() const noexcept -> int { return m_frame_ms; }
 
   // Called by the SIGWINCH handler (async-signal context): just sets a flag
   // the loop consumes next frame. Public so the signal trampoline can reach it.
@@ -142,6 +152,14 @@ class App {
     const bool was = m_resize_pending.exchange(false);
     return was;
   }
+  // Drive the real loop body `frames` times with no tty: no termios, no
+  // signal handlers, no setup()/teardown(). Builds a Screen and a Renderer
+  // over a FallbackDriver whose output goes to `sink` (pass nullptr to
+  // discard), then calls the same frame_step() run() calls. Subclass and
+  // override now_steady()/wait_readable()/read_available() to drive it over a
+  // fake clock and a fake fd — that is how frame cadence is tested without
+  // sleeping in the suite. Stops early if quit() is called.
+  auto test_run_frames(int frames, int cols, int rows, std::string* sink) -> void;
 
   struct Size { int cols; int rows; };
 
@@ -198,6 +216,27 @@ class App {
   auto setup() -> std::expected<void, ErrorEvent>;
   auto teardown() -> void;
   auto pump_input() -> void;
+  // One iteration of the loop: resize check, input pump, render, present,
+  // then the frame wait. run() is this in a while(m_running).
+  auto frame_step() -> void;
+
+  // ── loop seams ──
+  // The loop touches the clock and the fd only through these three, so a test
+  // can subclass App, override them, and drive run()'s body over a fake clock
+  // and fake input with no tty and no real sleeping. Defaults are the real
+  // steady_clock and the real Terminal.
+  [[nodiscard]] virtual auto now_steady() const -> std::chrono::steady_clock::time_point;
+  virtual auto wait_readable(int timeout_ms) -> bool;
+  virtual auto read_available(char* out, int max) -> int;
+
+  // Drain everything currently readable into m_input. Returns the byte count;
+  // 0 means the fd had nothing (or hung up), which is the signal to stop
+  // waiting on it. Never blocks: the reads are zero-timeout by construction.
+  auto drain_input() -> int;
+  // Wait out the rest of this frame's budget, absorbing (but not dispatching)
+  // any input that arrives. Dispatch happens at the top of the next frame,
+  // which is what keeps the frame rate independent of input activity.
+  auto wait_frame(std::chrono::steady_clock::time_point frame_start) -> void;
 
   Terminal m_term;
   std::unique_ptr<TerminalDriver> m_driver;
@@ -226,7 +265,18 @@ class App {
   // Set from the SIGWINCH handler — must be atomic (lock-free atomics are
   // async-signal-safe; a plain bool write from a handler is a data race).
   std::atomic<bool> m_resize_pending{false};
-  int m_frame_ms{33};  // ~30fps default
+  int m_frame_ms{33};  // ~30fps: the loop's default frame budget
+  // How long an incomplete escape sequence gets to finish arriving before a
+  // lone ESC is committed as a genuine Escape keypress. A frame holding one
+  // extends to at least this long — the only sanctioned budget overrun, and
+  // only on the rare frame where an ESC is actually pending.
+  static constexpr int kEscGraceMs{50};
+  // True once the pending ESC has been given its full grace window, so the
+  // next frame commits it instead of deferring forever.
+  bool m_esc_waited{false};
+  // Bytes arrived since the last flush. Drives the "only flush at a true
+  // input boundary" rule: a pure idle frame must not commit a held ESC.
+  bool m_got_bytes{false};
 
   [[nodiscard]] auto current_size() const -> Size;
 };
