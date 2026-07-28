@@ -280,10 +280,11 @@ class App {
   // the contract being pinned. Give your probe a hard frame cap: a regressed
   // guard must fail the suite, not hang it. Returns run_loop()'s exit code.
   auto test_run_guarded(int cols, int rows, std::string* sink) -> int;
-  // True while the alt-screen is entered. This is the state teardown() clears,
-  // so a probe reads it to witness that teardown() ran — real production state
-  // rather than a test-only counter.
-  [[nodiscard]] auto test_in_screen() const -> bool { return m_in_screen; }
+  // True while setup()'s SIGWINCH handler is installed. teardown() clears it,
+  // so a probe reads it to witness that teardown() ran — real production
+  // state rather than a test-only counter, and the one piece of that state
+  // whose undo writes nothing to a terminal.
+  [[nodiscard]] auto test_winch_hooked() const -> bool { return m_winch_hooked; }
 
   struct Size { int cols; int rows; };
 
@@ -339,9 +340,12 @@ class App {
   auto dim_screen(Screen& screen) -> void;
   auto setup() -> std::expected<void, ErrorEvent>;
   // The exact inverse of setup(): leave the alt-screen, restore cooked mode,
-  // return SIGWINCH to its default. Idempotent, and called from three places —
-  // the end of run_loop(), run_loop()'s catch, and ~App — so on the exception
-  // path it runs twice by design. Must never throw: ~App is noexcept.
+  // return SIGWINCH to its default, and deregister from the resize handler.
+  // Idempotent, and called from four places — run()'s setup-failure return,
+  // run()'s catch, the end of run_loop(), run_loop()'s catch, and ~App — so on
+  // the exception path it runs twice by design. Each half is gated on the
+  // setup() step that established it, because the setup-failure path reaches
+  // here having done only some of them. Must never throw: ~App is noexcept.
   auto teardown() -> void;
   auto pump_input() -> void;
   // The headless Screen/Renderer/FallbackDriver wiring shared by the two test
@@ -400,6 +404,10 @@ class App {
   std::vector<Cell> m_backdrop_backup;
   bool m_running{false};
   bool m_in_screen{false};
+  // Whether setup() replaced the SIGWINCH disposition. teardown() restores the
+  // default only if it did — an unconditional reset would clobber a handler an
+  // embedding program owns on the run where setup() failed before installing.
+  bool m_winch_hooked{false};
   // Set from the SIGWINCH handler — must be atomic (lock-free atomics are
   // async-signal-safe; a plain bool write from a handler is a data race).
   std::atomic<bool> m_resize_pending{false};

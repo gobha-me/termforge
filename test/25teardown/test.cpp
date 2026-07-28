@@ -20,6 +20,9 @@ namespace {
 // Never run(): setup() calls enter_raw(), which fails under ctest — but
 // *succeeds* for a developer running this binary from a terminal, who would
 // then get a real alt-screen and a test blocked on real keyboard input.
+// Nothing else here may depend on which of those two it is either: a case
+// that asserts "there is no tty" passes in CI and fails on a dev box, which
+// is worse than no case at all.
 //
 // The seams below are the same three test/23pacing and test/24tick override,
 // duplicated per the convention stated at test/24tick/test.cpp:28-31: each
@@ -68,14 +71,14 @@ class GuardProbe : public App {
 TEST_CASE("run loop: a throwing frame still tears the terminal down", "[teardown]") {
   GuardProbe probe;
   probe.throw_on_frame = 2;
-  REQUIRE(probe.test_in_screen() == false);
+  REQUIRE(probe.test_winch_hooked() == false);
 
   // Constructed outside the macro on purpose: REQUIRE_THROWS_AS evaluates its
   // argument, and a probe declared inside it would be destroyed before the
   // assertions below could read it.
   REQUIRE_THROWS_AS(probe.go(), Boom);
 
-  REQUIRE_FALSE(probe.test_in_screen());
+  REQUIRE_FALSE(probe.test_winch_hooked());
   REQUIRE(probe.renders == 2);  // stopped at the throw, did not keep looping
 }
 
@@ -88,7 +91,7 @@ TEST_CASE("run loop: quit() still exits 0 and tears down", "[teardown]") {
 
   REQUIRE(probe.go() == 0);
   REQUIRE(probe.renders == 4);
-  REQUIRE_FALSE(probe.test_in_screen());
+  REQUIRE_FALSE(probe.test_winch_hooked());
 }
 
 // run() does not swallow. The library has no channel to report an application's
@@ -115,27 +118,30 @@ TEST_CASE("run loop: teardown survives the second call from ~App", "[teardown]")
     GuardProbe probe;
     probe.throw_on_frame = 1;
     REQUIRE_THROWS_AS(probe.go(), Boom);
-    REQUIRE_FALSE(probe.test_in_screen());
+    REQUIRE_FALSE(probe.test_winch_hooked());
   }  // ~App -> teardown() again
   SUCCEED("second teardown from ~App was clean");
 }
 
 // leave_raw() is the half of teardown() that only matters when no destructor
-// runs, so its own contract gets pinned directly: idempotent, and it disarms
-// the termios half of the signal-restore path so the handler can't re-apply a
-// state that is already back. Without a tty enter_raw() fails, so this
-// exercises the never-entered path — the one every ctest run takes — and pokes
-// restore_state() the way test/16signals does.
+// runs, so its own contract gets pinned directly: on a Terminal that never
+// entered raw mode it must do nothing at all — in particular it must not
+// disarm the signal-restore path, which at that point is either untouched or
+// armed by somebody else. Deliberately never calls enter_raw(): asserting
+// anything about *that* would make the case depend on whether the runner has
+// a tty, which is how a suite goes red for a developer and stays green in CI.
+// restore_state() is poked directly, the way test/16signals does.
 TEST_CASE("terminal: leave_raw is a no-op when raw mode was never entered",
           "[teardown]") {
   auto& rs = detail::restore_state();
   const auto armed_before = rs.armed;
 
   Terminal term;
-  REQUIRE_FALSE(term.enter_raw().has_value());  // no tty under ctest
+  REQUIRE_FALSE(term.raw());
   term.leave_raw();
   term.leave_raw();  // twice: idempotent
 
+  REQUIRE_FALSE(term.raw());
   REQUIRE(rs.armed == armed_before);
 }
 

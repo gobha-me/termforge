@@ -17,7 +17,7 @@ for tests.
 ## Status
 
 Core framework, KittyDriver, the widget system, and mouse routing are all
-landed and tested (523 test cases across 25 suites, gcc 13/14 + clang 19/20
+landed and tested (520 test cases across 25 suites, gcc 13/14 + clang 19/20
 green in CI, ASan/UBSan clean).
 
 Landed and verified:
