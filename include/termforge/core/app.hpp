@@ -249,6 +249,27 @@ class App {
   // the only thing that makes tick cadence testable at all.
   auto test_run_frames(int frames, int cols, int rows, std::string* sink) -> void;
 
+  // Drive the real *loop* with no tty — run_loop(), byte for byte what run()
+  // calls, teardown and all. test_run_frames covers one frame body; this one
+  // covers the thing wrapped around it, which is where the teardown guarantee
+  // lives and why it needs its own hook: run() itself is untestable (setup()
+  // needs a tty), so the guarantee has to be pinned one level down.
+  //
+  // Wires the same headless Screen/Renderer/FallbackDriver and then pretends
+  // setup() got as far as enter_screen(), so teardown() has something real to
+  // undo. Nothing is emitted: with neither stream a tty the Terminal's out_fd
+  // is -1 and its writes are dropped.
+  //
+  // Runs until quit() or an exception — an exception from on_event/on_tick/
+  // on_render propagates out of here exactly as it does out of run(), which is
+  // the contract being pinned. Give your probe a hard frame cap: a regressed
+  // guard must fail the suite, not hang it. Returns run_loop()'s exit code.
+  auto test_run_guarded(int cols, int rows, std::string* sink) -> int;
+  // True while the alt-screen is entered. This is the state teardown() clears,
+  // so a probe reads it to witness that teardown() ran — real production state
+  // rather than a test-only counter.
+  [[nodiscard]] auto test_in_screen() const -> bool { return m_in_screen; }
+
   struct Size { int cols; int rows; };
 
  protected:
@@ -304,6 +325,9 @@ class App {
   auto setup() -> std::expected<void, ErrorEvent>;
   auto teardown() -> void;
   auto pump_input() -> void;
+  // The headless Screen/Renderer/FallbackDriver wiring shared by the two test
+  // hooks. Not a test hook itself — neither of them should own it.
+  auto test_wire_headless(int cols, int rows, std::string* sink) -> void;
   // The loop itself: frame_step() until quit(), then teardown. Split out of
   // run() because run() cannot be called from a test — setup() needs a tty —
   // so anything that lives in run() ships untested. Returns run()'s exit code.

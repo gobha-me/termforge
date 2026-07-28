@@ -72,6 +72,12 @@ auto App::teardown() -> void {
 
 auto App::run() -> int {
   if (auto r = setup(); !r) {
+    // Undo whatever setup() got through before it failed. A no-op on both of
+    // today's failure paths — enter_raw() fails before anything is armed, and
+    // driver->init() fails before enter_screen() — but teardown() is
+    // idempotent, and the alternative is that a failure point added after
+    // enter_screen() someday leaks the alt-screen with nothing to catch it.
+    teardown();
     std::fprintf(stderr, "termforge: setup failed: %s\n", r.error().message.c_str());
     return 1;
   }
@@ -86,7 +92,29 @@ auto App::run() -> int {
 }
 
 auto App::run_loop() -> int {
-  while (m_running) frame_step();
+  // The only exceptions that reach here come from user code — on_event,
+  // on_tick, on_render — because the library itself reports failure as an
+  // ErrorEvent through std::expected and never throws. run() has no channel
+  // to report one through an int, so it restores the terminal and rethrows
+  // rather than deciding an application's exception is meaningless.
+  //
+  // Restoring *here* rather than leaning on ~App is the whole point: for the
+  // shape the examples teach (`MyApp app; return app.run();`) an exception
+  // with no handler anywhere calls std::terminate without unwinding, so ~App
+  // never runs. Before this, the terminal was rescued only by the SIGABRT
+  // entry in the fatal-signal backstop — the crash handler doing the work the
+  // documented path claimed to.
+  //
+  // The frame is abandoned mid-flight: a throw from on_render skips present(),
+  // restore_backdrop() and flush_pixel_regions(), so the Screen can be left
+  // dimmed under an overlay. Harmless because the loop is over — but it is the
+  // first thing to fix if catching-and-resuming ever becomes a feature.
+  try {
+    while (m_running) frame_step();
+  } catch (...) {
+    teardown();
+    throw;
+  }
   teardown();
   return 0;
 }
@@ -220,7 +248,7 @@ auto App::wait_frame(std::chrono::steady_clock::time_point frame_start) -> void 
   }
 }
 
-auto App::test_run_frames(int frames, int cols, int rows, std::string* sink) -> void {
+auto App::test_wire_headless(int cols, int rows, std::string* sink) -> void {
   // Everything setup() does *except* the parts that need a tty: no enter_raw,
   // no capability probe, no alt-screen, no SIGWINCH handler. The frame body
   // itself is the real one, so cadence and input handling are the shipped
@@ -230,8 +258,24 @@ auto App::test_run_frames(int frames, int cols, int rows, std::string* sink) -> 
   m_driver = std::move(driver);
   m_screen = std::make_unique<Screen>(cols, rows);
   m_renderer = std::make_unique<Renderer>(*m_driver);
+}
+
+auto App::test_run_frames(int frames, int cols, int rows, std::string* sink) -> void {
+  test_wire_headless(cols, rows, sink);
   m_running = true;
   for (int i = 0; i < frames && m_running; ++i) frame_step();
+}
+
+auto App::test_run_guarded(int cols, int rows, std::string* sink) -> int {
+  test_wire_headless(cols, rows, sink);
+  // Stand in for the one piece of setup() that teardown() undoes. leave_screen()
+  // writes through Terminal::emit(), which returns early on out_fd < 0 — and
+  // with neither stream a tty under ctest, out_fd *is* -1. So this flag is the
+  // whole of the alt-screen state here, and watching it go back to false is how
+  // a test sees teardown() run without a terminal to look at.
+  m_in_screen = true;
+  m_running = true;
+  return run_loop();
 }
 
 auto App::pump_input() -> void {
