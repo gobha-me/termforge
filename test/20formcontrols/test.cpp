@@ -94,13 +94,17 @@ TEST_CASE("mark_glyphs: every glyph is one column wide and non-empty",
           "[form][glyphs]") {
   // Frame's and Dialog's arithmetic rests on one-column border glyphs; the
   // controls' chrome constants (Checkbox::kMarkCols et al) rest on the same
-  // invariant here. • U+2022 and ▾ U+25BE are UAX #11 Ambiguous, so this is
-  // the assertion that pins what detail/width.hpp believes about them.
+  // invariant here, and so does ListWidget::gutter_cols (#72). • U+2022, ▾
+  // U+25BE and ▸ U+25B8 are UAX #11 Ambiguous, so this is the assertion that
+  // pins what detail/width.hpp believes about them.
+  //
+  // Swept via MarkGlyphs::all(), not a by-name list: a by-name list silently
+  // skips a field it was not told about, which is the failure glyphs.hpp's two
+  // static_asserts exist to make impossible. This stays a test because "one
+  // column wide" is a width-table fact, not something a static_assert can ask.
   for (const auto style : kStyles) {
     const MarkGlyphs g = mark_glyphs(style);
-    for (const auto glyph :
-         {g.check_open, g.check_close, g.check_mark, g.radio_open,
-          g.radio_close, g.radio_mark, g.arrow_down}) {
+    for (const auto glyph : g.all()) {
       REQUIRE_FALSE(glyph.empty());
       REQUIRE(termforge::detail::display_width(glyph) == 1);
     }
@@ -110,14 +114,13 @@ TEST_CASE("mark_glyphs: every glyph is one column wide and non-empty",
 TEST_CASE("mark_glyphs: the Ascii family is 7-bit throughout",
           "[form][glyphs][failure]") {
   const MarkGlyphs g = mark_glyphs(BorderStyle::Ascii);
-  for (const auto glyph :
-       {g.check_open, g.check_close, g.check_mark, g.radio_open, g.radio_close,
-        g.radio_mark, g.arrow_down}) {
+  for (const auto glyph : g.all()) {
     REQUIRE(all_seven_bit(glyph));
   }
   // And the Unicode families really do differ, or the table would be pointless.
   REQUIRE(mark_glyphs(BorderStyle::Single).radio_mark != g.radio_mark);
   REQUIRE(mark_glyphs(BorderStyle::Single).arrow_down != g.arrow_down);
+  REQUIRE(mark_glyphs(BorderStyle::Single).selector != g.selector);
 }
 
 TEST_CASE("mark_glyphs: the four Unicode families share one table",
@@ -131,6 +134,7 @@ TEST_CASE("mark_glyphs: the four Unicode families share one table",
     REQUIRE(g.radio_mark == single.radio_mark);
     REQUIRE(g.arrow_down == single.arrow_down);
     REQUIRE(g.check_mark == single.check_mark);
+    REQUIRE(g.selector == single.selector);
   }
   REQUIRE(is_ascii(BorderStyle::Ascii));
 }

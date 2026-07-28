@@ -53,6 +53,29 @@ auto ListWidget::draw(Screen& screen) -> void {
   // covers the path no setter runs on.
   ensure_visible();
 
+  // The selection marker's gutter (#72). Colour was this widget's whole
+  // affordance and FallbackDriver::draw_text drops colour, so on the bottom
+  // tier -- the tier every headless test runs on -- the selected row was
+  // byte-identical to the rest. A character survives every driver.
+  //
+  // Reserved on EVERY row so item text does not shift a column as the selection
+  // moves; only the selected row writes into it, and the rest keeps the
+  // coloured blank fill_rect already painted, so the highlight bar still spans
+  // the full width where colour does survive.
+  //
+  // The right-hand column stays reserved as it always was -- #21's scrollbar is
+  // its eventual job -- so the text budget is r.w - gutter - 1. gutter_cols()
+  // owns the narrow-rect rule (it returns 0 rather than squeeze out the last
+  // text column), which is why it is asked here rather than second-guessed:
+  // one predicate, so the accessor a consumer lays out against cannot disagree
+  // with what this function draws. Dropping it is silent, like every other
+  // layout truncation here (Select, Checkbox, Frame titles) -- "degradation is
+  // an event" is about runtime capability downgrades, and draw() has no channel
+  // to raise one on.
+  const int gutter = gutter_cols();
+  const int text_x = r.x + gutter;
+  const int max_w = r.w - gutter - 1;
+
   for (int vr = 0; vr < r.h; ++vr) {
     const int idx = m_scroll + vr;
     const int y = r.y + vr;
@@ -71,10 +94,17 @@ auto ListWidget::draw(Screen& screen) -> void {
     // Fill the row background.
     screen.fill_rect(r.x, y, r.w, 1, fg, bg);
 
+    // Marker and text are written separately, not composed into one string the
+    // way Checkbox does it: both sit at fixed columns here, so composing would
+    // buy nothing and cost a std::string concat per visible row per frame.
+    if (gutter > 0 && is_selected) {
+      screen.write_text(r.x, y, marker(), fg, bg);
+    }
+
     // Write the item text (clipped to widget width, by display columns).
-    const int max_w = r.w - 1;  // leave 1 char margin
     if (!text.empty()) {
-      screen.write_text(r.x, y, detail::truncate_to_width(text, max_w), fg, bg);
+      screen.write_text(text_x, y, detail::truncate_to_width(text, max_w), fg,
+                        bg);
     }
   }
 

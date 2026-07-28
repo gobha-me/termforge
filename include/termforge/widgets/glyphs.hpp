@@ -25,12 +25,14 @@
 // BorderGlyphs and test/20formcontrols pins it for MarkGlyphs.
 //
 // #19 landed the second table (MarkGlyphs, below) on this same enum, as the
-// extension note here asked. Its two Unicode marks, • U+2022 and ▾ U+25BE, are
-// UAX #11 *Ambiguous* width — but so is the whole Box Drawing block U+2500-257F
-// that all four Unicode border families already draw with, so they are the
-// existing bet, not a new one: a terminal configured ambiguous-as-wide shifts
-// them either way, and BorderStyle::Ascii is the escape hatch for exactly that.
-// detail/width.hpp measures both as one column.
+// extension note here asked. Its Unicode marks — • U+2022, ▾ U+25BE and ▸
+// U+25B8 (#72) — are UAX #11 *Ambiguous* width, but so is the whole Box Drawing
+// block U+2500-257F that all four Unicode border families already draw with, so
+// they are the existing bet, not a new one: a terminal configured
+// ambiguous-as-wide shifts them either way, and BorderStyle::Ascii is the
+// escape hatch for exactly that. detail/width.hpp measures them all as one
+// column. ▸ is deliberately the small triangle, not ▶ U+25B6, which many
+// terminals give an emoji presentation and render double-width.
 //
 // Still an extension point for the shared scrollbar (#21), which needs │/█ vs
 // |/#. That belongs HERE too, keyed off this same enum — in practice it only
@@ -44,6 +46,7 @@
 // luminance ramp). #21 is the first issue that genuinely needs a second glyph
 // family; that is when to decide whether they join.
 
+#include <array>
 #include <string_view>
 
 namespace termforge {
@@ -93,11 +96,15 @@ struct BorderGlyphs {
   return style == BorderStyle::Ascii;
 }
 
-// The marks form controls draw with (#19):
+// The marks a widget states a choice with — the form controls of #19, plus
+// ListWidget's selected row (#72), which is not a form control but has the same
+// need: one mark, whose only axis of variation is whether it may leave 7-bit
+// ASCII.
 //
 //   [x] Enable      check_open  check_mark  check_close
 //   (•) Dark        radio_open  radio_mark  radio_close
 //   [ ansi-rgb ▾ ]  check_open              check_close  arrow_down
+//   ▸ Snake                                              selector
 //
 // There is no field for the *unset* state: it is a space in every family, and
 // a family that wanted a glyph there would add one rather than have four
@@ -108,6 +115,15 @@ struct MarkGlyphs {
   std::string_view radio_open, radio_close;
   std::string_view radio_mark;
   std::string_view arrow_down;
+  std::string_view selector;
+
+  // Every field once, so a sweep does not have to name them. See the
+  // static_asserts under the tables for what this is really for.
+  [[nodiscard]] constexpr auto all() const noexcept
+      -> std::array<std::string_view, 8> {
+    return {check_open,  check_close, check_mark, radio_open,
+            radio_close, radio_mark,  arrow_down, selector};
+  }
 };
 
 // Two rows, not five. Unlike borders — where each family is a genuinely
@@ -115,8 +131,29 @@ struct MarkGlyphs {
 // mark is whether it may leave 7-bit ASCII. The brackets and the checkbox "x"
 // are ASCII in every family; they are listed anyway so no widget hardcodes "["
 // and this header stays the single source.
-inline constexpr MarkGlyphs kUnicodeMarks{"[", "]", "x", "(", ")", "•", "▾"};
-inline constexpr MarkGlyphs kAsciiMarks{"[", "]", "x", "(", ")", "*", "v"};
+//
+// ⚠ Both tables are initialised POSITIONALLY, which is the one mistake this
+// header could not otherwise catch: a field added to MarkGlyphs and left out of
+// a table is a default-constructed (empty) view, the widget drawing it renders
+// nothing, and a by-name test sweep never sees the member it was not told
+// about. The two static_asserts below close that — the first makes "you added a
+// field and forgot all()" a build error, the second makes "you added it to one
+// table only" a build error. Neither needs a test to run.
+inline constexpr MarkGlyphs kUnicodeMarks{"[", "]", "x", "(", ")", "•", "▾", "▸"};
+inline constexpr MarkGlyphs kAsciiMarks{"[", "]", "x", "(", ")", "*", "v", ">"};
+
+// All members are string_view, so the size is exactly the field count -- which
+// makes this the tripwire on all()'s hardcoded extent.
+static_assert(sizeof(MarkGlyphs) ==
+                  kUnicodeMarks.all().size() * sizeof(std::string_view),
+              "MarkGlyphs gained a field: add it to all() and to BOTH tables");
+
+static_assert([] {
+  for (const auto& table : {kUnicodeMarks, kAsciiMarks})
+    for (const auto glyph : table.all())
+      if (glyph.empty()) return false;
+  return true;
+}(), "a MarkGlyphs field is empty in one of the tables (positional init)");
 
 // A fall-through switch rather than `is_ascii(style) ? ascii : unicode`,
 // which reads shorter but drops the -Wswitch tripwire — and rather than five
