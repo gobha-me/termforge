@@ -51,6 +51,12 @@ Landed and verified:
   and center themselves, and `FilePickerDialog`, a modal file browser composed
   from those pieces (path field + dirs-first listing + OK/Cancel) with
   permission errors surfaced as a nested dialog. See `docs/modal-overlays.md`.
+- **Simulation split** — `App::on_tick(dt)` advances state, `on_render` only
+  draws, so motion is measured in seconds rather than in frames and runs at the
+  same speed at any frame budget. Variable `dt` by default; `set_tick_hz(n)`
+  switches to a fixed timestep for deterministic, replayable physics, and the
+  `set_max_tick_dt` clamp keeps a stall from teleporting objects through walls.
+  See `examples/motion.cpp`.
 
 Deferred per the roadmap: `SixelDriver` (Epic 5), MapWidget + game example,
 SIMD waveform rasterization, framebuffer driver.
@@ -145,7 +151,8 @@ and Clang.
   the real interactive loop. Under a non-TTY it exits cleanly with "stdout is
   not a tty" — the failure path working as designed.
 - `examples/` — focused demos per subsystem: `dashboard` (TableWidget +
-  WaveformWidget + TextBox), `widgets` (all primitives + focus model), `image`,
+  WaveformWidget + TextBox), `motion` (`on_tick` — fixed vs variable timestep
+  and the stall clamp, live), `widgets` (all primitives + focus model), `image`,
   `chat`, `input`, `colors`, `low_level`, `hello`.
 
 A btop-style system monitor (`forge-top`) is planned as a permanent

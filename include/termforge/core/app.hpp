@@ -10,7 +10,10 @@
 //
 // You subclass App (or provide handlers) and implement:
 //   * on_event(Event)  — called for each input/resize/error event
+//   * on_tick(dt)      — advance simulation state by the elapsed time
 //   * on_render(Screen&) — draw your UI into the screen each frame
+// Every frame runs them in exactly that order, on the loop thread: input is
+// dispatched, then state advances, then the frame is drawn.
 // The loop runs until quit() is called. Resize events resize the Screen and
 // force a full repaint. The terminal is always restored on exit (RAII + the
 // Terminal destructor), even on exception.
@@ -25,6 +28,7 @@
 #include <chrono>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -79,6 +83,33 @@ class App {
   // covered by any widget — screen.clear() at the top of on_render is the
   // simplest way to own the whole background.
   virtual auto on_render(Screen& screen) -> void = 0;
+  // Advance simulation state by dt seconds. Called every frame after this
+  // frame's input has been dispatched and before on_render, with the measured
+  // wall-clock delta between this frame's start and the previous frame's.
+  //
+  // The split is the whole point: on_tick moves things, on_render only draws
+  // them. Motion written inside on_render has no clock but "how often did I
+  // get called", so a dropped frame, a heavier terminal or a different
+  // set_frame_ms silently becomes a change in simulation *speed* — a bug that
+  // is invisible on the machine it was written on.
+  //
+  // dt is CLAMPED — see set_max_tick_dt. An unclamped delta after a SIGSTOP, a
+  // debugger breakpoint or a laptop suspend arrives as one multi-second
+  // integration step, which teleports every moving object straight through
+  // whatever it was meant to collide with. The clamp discards that time rather
+  // than banking it: after a stall the simulation is behind wall-clock, which
+  // is the failure you can live with.
+  //
+  // The first frame of a run gets dt == 0 — there is no previous frame to
+  // measure against, and a fabricated delta is wrong in a way no caller can
+  // detect. Under set_tick_hz(n) this is instead called an integer number of
+  // times per frame with a constant dt, possibly zero times on a fast frame.
+  //
+  // It keeps firing while an overlay is up: only the app knows whether its
+  // simulation is a game (pause behind the dialog — check modal()) or a
+  // progress animation (keep going). Default is a no-op, so every existing App
+  // is unaffected.
+  virtual auto on_tick(std::chrono::duration<double> /*dt*/) -> void {}
 
   // ── modal overlays ──
   // Push a widget onto the overlay stack. Overlays draw after on_render (in
@@ -134,6 +165,59 @@ class App {
   void set_frame_ms(int ms) { m_frame_ms = ms < 0 ? 0 : ms; }
   [[nodiscard]] auto frame_ms() const noexcept -> int { return m_frame_ms; }
 
+  // Switch on_tick to a FIXED timestep: each frame's elapsed time goes into an
+  // accumulator and on_tick is called with a constant dt of exactly 1/hz until
+  // the accumulator is drained, carrying the remainder to the next frame. A
+  // 100ms frame at 60Hz is six ticks plus a 4ms carry; a frame shorter than the
+  // period delivers no ticks at all. The constant dt is what makes a simulation
+  // deterministic and replayable — the same inputs produce the same state no
+  // matter what the frame rate did, which is not true of any variable-dt
+  // integrator.
+  //
+  // hz <= 0 restores the default variable timestep (one on_tick per frame with
+  // the real measured delta), which is what a tween or a progress animation
+  // wants. Changing hz CLEARS the accumulator: a pending remainder is
+  // denominated in the old timestep, and replaying it against the new one dumps
+  // a burst of ticks on the next frame.
+  //
+  // The tick loop cannot run away. Its input is the *clamped* delta, so at most
+  // ceil(max_tick_dt * hz) ticks are issued for any one frame however long that
+  // frame took or however slow on_tick is — 15 at the defaults. A simulation
+  // that cannot keep up runs in slow motion instead of spiralling into a
+  // freeze, because a slower frame is clamped harder, not accumulated harder.
+  auto set_tick_hz(int hz) -> void;
+  [[nodiscard]] auto tick_hz() const noexcept -> int { return m_tick_hz; }
+
+  // Upper bound on the dt handed to on_tick (default 250ms). This is NOT a
+  // frame budget — the loop still takes as long as it takes; it only caps what
+  // the simulation is *told* about it, so a process that was stopped for a
+  // minute resumes as one slow frame instead of one enormous step. 250ms sits
+  // above any sane frame budget (so even a deliberately lazy 4fps app is not
+  // silently slowed) and below any stall a user would fail to notice.
+  //
+  // The clamp applies to the delta before anything consumes it, never to the
+  // accumulator: clamping the accumulator would discard simulated time already
+  // owed and make the fixed timestep non-deterministic, defeating its only
+  // purpose.
+  //
+  // A non-positive value removes the clamp entirely. That is for a replay
+  // harness driving a synthetic clock, where a ten-second step is legitimate;
+  // combined with set_tick_hz it also removes the bound on ticks per frame,
+  // which is the spiral of death re-armed by hand. Not for interactive apps.
+  //
+  // Deliberately absent: an interpolation alpha for smoothing a render between
+  // two fixed ticks. The render target is a character grid, so sub-tick
+  // position is unobservable for anything drawn in cells, and it would oblige
+  // apps to keep two simulation states. The residue is retained in the
+  // accumulator regardless, so exposing it later is purely additive.
+  auto set_max_tick_dt(std::chrono::duration<double> dt) -> void {
+    m_max_tick_dt = dt;
+  }
+  [[nodiscard]] auto max_tick_dt() const noexcept
+      -> std::chrono::duration<double> {
+    return m_max_tick_dt;
+  }
+
   // Called by the SIGWINCH handler (async-signal context): just sets a flag
   // the loop consumes next frame. Public so the signal trampoline can reach it.
   auto request_resize() -> void { m_resize_pending = true; }
@@ -159,6 +243,10 @@ class App {
   // override now_steady()/wait_readable()/read_available() to drive it over a
   // fake clock and a fake fd — that is how frame cadence is tested without
   // sleeping in the suite. Stops early if quit() is called.
+  //
+  // Unlike run(), it deliberately does NOT reset the tick clock: a probe that
+  // calls it one frame at a time gets a continuous dt across calls, which is
+  // the only thing that makes tick cadence testable at all.
   auto test_run_frames(int frames, int cols, int rows, std::string* sink) -> void;
 
   struct Size { int cols; int rows; };
@@ -216,9 +304,12 @@ class App {
   auto setup() -> std::expected<void, ErrorEvent>;
   auto teardown() -> void;
   auto pump_input() -> void;
-  // One iteration of the loop: resize check, input pump, render, present,
-  // then the frame wait. run() is this in a while(m_running).
+  // One iteration of the loop: resize check, input pump, tick, render,
+  // present, then the frame wait. run() is this in a while(m_running).
   auto frame_step() -> void;
+  // Measure this frame's delta, clamp it, and deliver it to on_tick — once
+  // with the measured dt, or N times with the fixed dt under set_tick_hz.
+  auto tick_step(std::chrono::steady_clock::time_point frame_start) -> void;
 
   // ── loop seams ──
   // The loop touches the clock and the fd only through these three, so a test
@@ -277,6 +368,21 @@ class App {
   // Bytes arrived since the last flush. Drives the "only flush at a true
   // input boundary" rule: a pure idle frame must not commit a held ESC.
   bool m_got_bytes{false};
+
+  // ── on_tick state ──
+  // Start stamp of the previous frame. optional rather than a sentinel because
+  // the loop has no init hook to seed it in, and the first frame's honest
+  // answer is "there is no delta yet". run() clears it so the simulation is
+  // never charged for setup()'s capability probe, which can block anywhere
+  // from microseconds to a DA1 timeout.
+  std::optional<std::chrono::steady_clock::time_point> m_last_tick;
+  std::chrono::duration<double> m_tick_accum{};  // fixed-timestep remainder
+  std::chrono::duration<double> m_tick_dt{};     // 0 = variable; else 1/hz
+  int m_tick_hz{0};
+  // See set_max_tick_dt: above any real frame budget, below any stall a user
+  // would fail to notice.
+  static constexpr std::chrono::duration<double> kDefaultMaxTickDt{0.25};
+  std::chrono::duration<double> m_max_tick_dt{kDefaultMaxTickDt};
 
   [[nodiscard]] auto current_size() const -> Size;
 };

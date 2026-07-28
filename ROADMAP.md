@@ -93,6 +93,11 @@ completed items.
   cycles the style across the frame *and* every control — the ASCII-tier
   demo, and the "how do I style a whole app" answer.
 
+- [x] **4.6 — motion.cpp** ✅
+  The `on_tick(dt)` contract (#59): motion in cells per *second*, fixed vs
+  variable timestep, and a stall the clamp has to absorb. The piece 4.2
+  needs from the loop.
+
 - [ ] **4.2 — game.cpp** (blocked on MapWidget)
 
 ---

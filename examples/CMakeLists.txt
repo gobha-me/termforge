@@ -9,6 +9,7 @@ set(EXAMPLES
   chat
   low_level
   dashboard
+  motion
   widgets
   dialogs
   forms
