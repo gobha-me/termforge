@@ -315,10 +315,19 @@ TEST_CASE("Terminal::wait_readable has millisecond granularity", "[pacing][termi
   }
 
   SECTION("a sub-decisecond wait is honored, not floored to 100ms") {
-    const auto start = std::chrono::steady_clock::now();
-    REQUIRE_FALSE(term.wait_readable(30));
-    const auto waited = std::chrono::steady_clock::now() - start;
-    REQUIRE(waited >= 25ms);  // it really waited
-    REQUIRE(waited < 90ms);   // but nowhere near VTIME's 100ms floor
+    // Best-of-N, not a single sample: a loaded CI runner can stretch any one
+    // wait arbitrarily, but it cannot make a wait finish *early*. The claim
+    // is a lower bound on the mechanism ("30ms is expressible at all"), so
+    // the fastest trial is the honest measurement and the slow ones are just
+    // scheduler noise. A single-sample upper bound here would flake.
+    auto fastest = std::chrono::steady_clock::duration::max();
+    for (int i = 0; i < 5; ++i) {
+      const auto start = std::chrono::steady_clock::now();
+      REQUIRE_FALSE(term.wait_readable(30));
+      const auto waited = std::chrono::steady_clock::now() - start;
+      REQUIRE(waited >= 25ms);  // it really waited, every time
+      if (waited < fastest) fastest = waited;
+    }
+    REQUIRE(fastest < 90ms);  // nowhere near VTIME's 100ms floor
   }
 }
