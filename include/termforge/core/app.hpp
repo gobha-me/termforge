@@ -304,8 +304,12 @@ class App {
   auto setup() -> std::expected<void, ErrorEvent>;
   auto teardown() -> void;
   auto pump_input() -> void;
+  // The loop itself: frame_step() until quit(), then teardown. Split out of
+  // run() because run() cannot be called from a test — setup() needs a tty —
+  // so anything that lives in run() ships untested. Returns run()'s exit code.
+  auto run_loop() -> int;
   // One iteration of the loop: resize check, input pump, tick, render,
-  // present, then the frame wait. run() is this in a while(m_running).
+  // present, then the frame wait. run_loop() is this in a while(m_running).
   auto frame_step() -> void;
   // Measure this frame's delta, clamp it, and deliver it to on_tick — once
   // with the measured dt, or N times with the fixed dt under set_tick_hz.
