@@ -10,7 +10,88 @@ which holds standing conventions, not state).
 tested.** 27 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
 clean.
 
-**Latest release: `v0.1.10`** (2026-07-28) — **#71: `run()` skips `teardown()`
+**Latest release: `v0.1.11`** (2026-07-28) — **#72: ListWidget's selection was
+invisible on the fallback tier.**
+
+*What was wrong:* the selection was stated exactly once, in colour —
+`theme::kFocusFg`/`kFocusBg` on the selected row, `kFg`/`kBg` on the rest — and
+`FallbackDriver::draw_text` discards colour outright (its `fg`/`bg` parameters
+are literally unnamed). So on the bottom tier the selected row was
+**byte-for-byte identical** to every other row and a list was not navigable, on
+exactly the terminal AGENTS.md says must always work. Worse for us: the four
+colour members were private with **no setters**, so an app could not even
+work around it, and `App::test_run_frames` installs a `FallbackDriver` — every
+headless test of a ListWidget UI ran in the configuration where selection is
+invisible, and none could assert it, because nothing in the cells differed.
+Found by `term-game`, which carries the workaround in `Shell::draw_selector`
+with a deletion date pointing here.
+
+*The fix:* say it twice. The colours get the setters they should always have
+had (`set_colors`, `set_selected_colors` — `Label`'s shape), and the selected
+row gets a **marker glyph** in a gutter reserved on every row. A character is
+the only channel that survives every driver, which is why the marker is **on by
+default**: off-by-default would leave the tier broken out of the box, which is
+the entire complaint. `set_marker_enabled(false)` restores the pre-#72 geometry
+exactly, `set_marker()` overrides the glyph, and `gutter_cols()` reports the
+reservation so a consumer can lay out beside it.
+
+The glyph is `MarkGlyphs::selector` — ▸ U+25B8, `>` under `BorderStyle::Ascii` —
+not a constant in `list_widget.hpp`. `ListWidget` is not a form control, but it
+has the same need `MarkGlyphs` exists to serve: one mark whose only axis of
+variation is whether it may leave 7-bit ASCII. So `ListWidget` grew `set_style`
+like every other style-aware widget, and `FilePickerDialog::layout_content`
+forwards the dialog's style into its embedded list — without that, an
+ASCII-tier picker would emit `E2 96 B8` in its own file list.
+
+*Three decisions a reviewer will ask about.* The gutter goes on the **left**:
+the historical `r.w - 1` right margin is already earmarked for #21's shared
+scrollbar and this change does not take it. A rect too narrow for both drops
+the **gutter**, not the text — the marker must never be why a list has no room
+for its items. And there is **no `ErrorEvent`**: `Widget::draw` returns `void`
+with no `std::expected` channel, and "degradation is an event" is about runtime
+capability downgrades, not layout truncation (`Select`, `Checkbox` and `Frame`
+titles all truncate silently).
+
+*Free improvement:* the gutter is inside `rect()`, so clicking the marker
+selects its row. term-game's workaround sits in the frame's content area
+*outside* `list.rect()` and is dead to clicks — a limitation its own comment
+names.
+
+*Verified on a real pty*, which is the only check that could have caught this
+in the first place. Under `script -qc` the example emits no `38;2` anywhere —
+FallbackDriver, the tier in question — and replaying the escape stream back
+into a grid shows the marker present and moving:
+
+```
+│▸ Item  1 — selectable list entry     │      │  Item  1 — ...
+│  Item  2 — selectable list entry     │  →   │  Item  2 — ...
+                                              │▸ Item  5 — ...   (after 4 × Down)
+```
+
+*Pinned by `test/09listwidget`* (23 cases, up from 13) — the acceptance case
+gives two items **identical text**, so colour is the only thing that could tell
+the rows apart, then renders through a `FallbackDriver` sink and requires that
+what reaches the terminal still differs. Confirmed red: stubbing the marker
+write fails 6 cases including that one. `test/20formcontrols`' glyph sweeps grew
+`selector` — and stopped being by-name sweeps at all. `MarkGlyphs`' two tables
+are initialised **positionally**, so a field added to the struct and left out of
+one table is a silently empty view, and a sweep that enumerates fields by name
+never sees the member it was not told about. That is now **two
+`static_assert`s** rather than a comment: `MarkGlyphs::all()` returns every
+field, `sizeof(MarkGlyphs) == all().size() * sizeof(string_view)` fails the
+build if a field is added and `all()` is not, and a `constexpr` scan of both
+tables fails it if any field is empty. Both confirmed red by mutation. The
+sweeps now iterate `all()`, so "one column wide" and "the Ascii family is 7-bit"
+cannot go stale either.
+
+*One source-compat note*, since `MarkGlyphs` is public: it is an aggregate, so
+out-of-tree code that destructures it (`auto [co, cc, cm, ro, rc, rm, ad] = …`)
+or brace-initialises its own table with seven initialisers now breaks or
+silently value-initialises the eighth. Nothing in-tree does either — all three
+form controls access fields by name — and we are pre-1.0, but it is the kind of
+break that is invisible until someone reports it.
+
+**Previous release: `v0.1.10`** (2026-07-28) — **#71: `run()` skips `teardown()`
 when a frame throws.**
 
 *What was wrong:* `app.hpp` promised "the terminal is always restored on exit
@@ -66,7 +147,7 @@ catch and dropped from the fallthrough passes the throw case and fails this
 one), the exception's type and message reach the caller unchanged, and the
 now-routine double teardown from `~App` stays clean.
 
-**Previous release: `v0.1.9`** (2026-07-28) — **#61 (TG-04): F5–F12.** `Key`
+**Before that: `v0.1.9`** (2026-07-28) — **#61 (TG-04): F5–F12.** `Key`
 stopped at `F4`, so every function key past the fourth was silently dropped: the
 CSI-tilde family (`ESC[<n>~`) was already fully parsed, modifiers included, but
 `map_tilde_key` stopped at `14` and `15~`–`24~` fell through to `Key::Unknown`.
@@ -79,7 +160,7 @@ pins them at `Unknown` so a future edit can't "complete" the table and shift
 F6–F12 by one key each. `examples/input.cpp`'s `key_name` is the repo's only
 exhaustive `switch (Key)`, so it grew to match (and is what the pty check reads).
 
-**Before that: `v0.1.8`** (2026-07-28) — **#59 (TG-02): the `on_tick(dt)`
+**And before that: `v0.1.8`** (2026-07-28) — **#59 (TG-02): the `on_tick(dt)`
 update hook.** `App` now has a third override point, and simulation is
 separated from drawing.
 
@@ -504,10 +585,20 @@ harness).
 v0.1.8 shipped #59 (TG-02, `on_tick`), which closed the three-issue run
 #58 → #27 → #59 agreed at the top of the TG-xx batch; v0.1.9 then took the
 cheapest of what remained, #61 (F5–F12); v0.1.10 jumped the queue for #71, a
-correctness bug against a documented guarantee. With pacing, clean consumption,
-a tick hook, the full function-key row and a loop that restores the terminal on
-every exit path, `term-game` has everything it needs from the loop — and can
-delete its `guarded_run` workaround. The open queue, in rough priority order:
+correctness bug against a documented guarantee; v0.1.11 did the same for #72,
+a widget unusable on the tier we promise always works. With pacing, clean
+consumption, a tick hook, the full function-key row and a loop that restores the
+terminal on every exit path, `term-game` has everything it needs from the loop —
+and can now delete **both** workarounds it carries: `guarded_run` (#71) and
+`Shell::draw_selector`'s hand-drawn marker (#72).
+
+⚠ **That second deletion is required, not optional.** term-game's `kMarkerCols`
+gutter is two columns and so is `ListWidget::gutter_cols()`, so the *widths*
+agree and the surrounding layout does not move — but until the block goes, the
+selected row draws **both** marks (`> ▸ item`) in a gutter that is now doubled.
+An app that wants to keep its own marker calls `set_marker_enabled(false)`
+instead; either way the upgrade is not a no-op for anyone drawing their own.
+The open queue, in rough priority order:
 - **The rest of the TG-xx batch** — **#62** (Cell text attributes:
   bold/dim/underline/reverse), **#63** (Image sub-rect blit + sprite-sheet
   slicing), **#60** (kitty keyboard protocol: key release + repeat — it
@@ -522,11 +613,29 @@ delete its `guarded_run` workaround. The open queue, in rough priority order:
   proposed option 1: wheel scrolls the VIEW, not the selection, decoupling
   ListWidget's view offset from its selection). Everything else here is
   mechanical; this one is a behavior call.
+- **#73** (`App` has no way to observe `quit()`; `test_run_frames` re-arms
+  `m_running`) — filed alongside #72 by the same consumer, low priority and
+  testability-only, but small: a `running()` accessor plus a decision on
+  whether `test_run_frames` should preserve a pre-set `false`.
+- **Unfiled, found reviewing #72 — the same bug in three more widgets.**
+  `ListWidget` was the one a consumer reported, but colour-only selection is
+  not unique to it: `detail::draw_dropdown_rows`
+  (`include/termforge/widgets/detail/dropdown.hpp:53`) states its highlight as
+  `is_hl ? highlight_fg : normal_fg` and nothing else, and **Select** and
+  **MenuBar** both draw their dropdowns through it; `TableWidget`
+  (`table_widget.cpp:138`) repeats the pattern inline. On the FallbackDriver
+  tier an open dropdown's highlight is invisible and arrows move a cursor the
+  user cannot see. The fix is cheaper there than it was here: `label_pad` is
+  already a gutter (Select passes 1, MenuBar 2) and `MarkGlyphs::selector`
+  already exists, so it is a few lines in the shared skeleton covering three
+  widgets — which is also the right altitude, since `dropdown.hpp` exists
+  because #38 was a fix that landed in Select and not MenuBar. **Worth filing.**
 - **#22** (TabBar) — small, independent.
 - **#21** (shared scrollbar) — small; the issue that decides whether
   `ProgressBar`'s `█`/`─` and `WaveformWidget`'s half-blocks join
-  `glyphs.hpp` (see below). Gives ListWidget's undocumented right-margin
-  column an actual job.
+  `glyphs.hpp` (see below). Gives ListWidget's right-margin column an actual
+  job — #72 deliberately left it alone and put its marker gutter on the left,
+  so that column is still free.
 - **TF-01/02/03/05 (#24, #25, #26, #28)** — TextBox word-wrap, styled spans,
   Composer widget, App post_event. (#27 landed in v0.1.7.)
 - **#16** (forge-top demo) — the larger dogfooding epic.
@@ -605,11 +714,16 @@ the radio and fire, the Select opens below its box / commits / reopens, Tab whil
 open both closes it and moves focus in one press leaving no trail, and F1 cycles
 all five families with `Ascii` emitting **zero** bytes ≥ 0x80 (`(*)` and `v`).
 What is owed is a **real-terminal** pass on the one thing a pty cannot answer:
-**do `•` U+2022 and `▾` U+25BE actually occupy one column** in the user's kitty?
-They are UAX #11 *Ambiguous*, so a terminal configured ambiguous-as-wide shifts
-the Select box and the radio rows by a column — run
-`build/examples/termforge_example_forms` and check the `]` still lands where the
-frame expects. `Ascii` (F1 ×4) also wants a bare-TTY/`FallbackDriver` pass.
+**do `•` U+2022, `▾` U+25BE and (since #72) `▸` U+25B8 actually occupy one
+column** in the user's kitty? They are UAX #11 *Ambiguous*, so a terminal
+configured ambiguous-as-wide shifts the Select box and the radio rows by a
+column — run `build/examples/termforge_example_forms` and check the `]` still
+lands where the frame expects. **`▸` raises the stakes**: it is the first
+Ambiguous glyph that is *on by default*, in a widget every app uses, so an
+ambiguous-as-wide terminal shifts every ListWidget row by one and the text
+overruns the reserved right margin. `build/examples/termforge_example_widgets`
+shows it; `Ascii` (F1 ×4, and Border→ASCII in widgets) is the escape hatch and
+also wants a bare-TTY/`FallbackDriver` pass.
 **#20**'s five border families were
 driven end to end in a pty (all five render, ASCII emits only 7-bit bytes on the
 ring, the delimited title renders as `+| Controls |----+` / `╔╣ Controls ╠══╗`)
