@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Out-of-tree consumption acceptance test (issue #27).
 #
-#   tools/consume/run.sh subdir  [cxx]  -- add_subdirectory, ZERO extra options
-#   tools/consume/run.sh install [cxx]  -- install + find_package(termforge CONFIG)
+#   tools/consume/run.sh subdir   [cxx] -- add_subdirectory, ZERO extra options
+#   tools/consume/run.sh install  [cxx] -- install + find_package(termforge CONFIG)
+#   tools/consume/run.sh vendored [cxx] -- add_subdirectory from a plain copy
+#                                          inside someone else's tagged repo
 #
 # Both paths must yield the same target spelling (termforge::lib) and must
 # build ONLY the library. Everything happens in a mktemp -d, because
@@ -83,8 +85,62 @@ case "${MODE}" in
     "${WORK}/build/consumer"
     ;;
 
+  vendored)
+    # `git describe` searches *upward* for a .git, so termforge dropped into
+    # another project as a plain directory -- external/termforge/, not a
+    # submodule -- used to answer with the *consumer's* tag and report it as
+    # its own version. Configure only: this is about the number project()
+    # records, and nothing downstream of it needs compiling to see the number.
+    VENDOR=${WORK}/vendor
+    mkdir -p "${VENDOR}/external/termforge"
+
+    # Tracked paths copied out of the WORKING TREE, so an uncommitted edit to
+    # cmake/version.cmake is what gets tested -- and so no .git, no build dir
+    # and no stray artifact rides along to hand the copy a repo of its own,
+    # which would defeat the whole fixture.
+    # -C before --null -T -: tar treats options after a non-option argument as
+    # positional, so trailing -C silently does nothing.
+    (cd "${ROOT}" && git ls-files -z) \
+      | tar -cf - -C "${ROOT}" --null -T - \
+      | tar -xf - -C "${VENDOR}/external/termforge"
+
+    git -C "${VENDOR}" init -q .
+    git -C "${VENDOR}" -c user.email=ci@termforge -c user.name=ci \
+        commit -qm vendor --allow-empty
+    git -C "${VENDOR}" tag -a v9.9.9 -m v9.9.9
+
+    cat > "${VENDOR}/CMakeLists.txt" <<'EOF'
+cmake_minimum_required(VERSION 3.28)
+project(vendored_consumer LANGUAGES CXX)
+add_subdirectory(external/termforge)
+EOF
+
+    # $1 = build dir, $2 = expected version, rest = extra cmake args
+    assert_version() {
+      local tree=$1 want=$2; shift 2
+      local out
+      if ! out=$(cmake -S "${VENDOR}" -B "${tree}" "${ARGS[@]}" "$@" 2>&1); then
+        echo "${out}" >&2
+        echo "FAIL: vendored consumer failed to configure" >&2
+        exit 1
+      fi
+      if ! grep -qx -- "-- termforge:${want}" <<<"${out}"; then
+        echo "FAIL: expected 'termforge:${want}', got:" >&2
+        grep -- 'termforge:' <<<"${out}" | sed 's/^/  /' >&2
+        exit 1
+      fi
+    }
+
+    # The bug: 9.9.9 is the CONSUMER's tag. Anything but the honest fallback
+    # means the enclosing repository is still being trusted.
+    assert_version "${VENDOR}/build" "0.0.0.1"
+
+    # ...and the documented escape hatch still outranks the guard.
+    assert_version "${VENDOR}/build-pin" "1.2.3" -DTERMFORGE_VERSION=1.2.3
+    ;;
+
   *)
-    echo "unknown mode: ${MODE} (expected 'subdir' or 'install')" >&2
+    echo "unknown mode: ${MODE} (expected 'subdir', 'install' or 'vendored')" >&2
     exit 2
     ;;
 esac
