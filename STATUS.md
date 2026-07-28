@@ -576,6 +576,21 @@ items 1–4 and 6. Before starting anything, run `venice memory tasks` and
 mid-flight or unpushed; coordinate via the issue tracker (see the
 `kimi-k3-coagent` memory) so two agents don't collide.
 
+**#71 is fully verified — nothing owed** (2026-07-28). The pty run settled the
+byte-level question (leave sequence before the terminate diagnostic, `^M` in
+the diagnostic, `stty -a` cooked); the user then ran a deliberately-throwing
+App on real hardware and got the clean landing: no leftover frame, prompt back,
+shell echoing normally afterward. `Aborted (core dumped)` / exit 134 is the
+correct outcome and not a defect — an uncaught exception is supposed to kill
+the process; what #71 changed is the terminal it leaves behind.
+
+Note for whoever revisits this: **no committed binary can regress-test that by
+hand**, because nothing in `examples/` throws — deliberately, since a
+permanently-crashing example is a bad thing to ship. The check needs a
+throwaway App with a `throw` in `on_render`, built against the lib and run in a
+real emulator; the four things to look at afterward are echo, Backspace/Enter,
+Ctrl+C, and the cursor. `test/25teardown` covers the regression in CI.
+
 **Owed manual checks (sandbox has no tty):** **#58** was driven end to end in
 a pty and the frame rate measured before/after at four budgets (numbers above),
 so the pacing itself is verified — what is owed is a **real-terminal** feel
