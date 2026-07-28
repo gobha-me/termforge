@@ -104,10 +104,15 @@ case "${MODE}" in
       | tar -cf - -C "${ROOT}" --null -T - \
       | tar -xf - -C "${VENDOR}/external/termforge"
 
-    git -C "${VENDOR}" init -q .
-    git -C "${VENDOR}" -c user.email=ci@termforge -c user.name=ci \
-        commit -qm vendor --allow-empty
-    git -C "${VENDOR}" tag -a v9.9.9 -m v9.9.9
+    # The identity goes on every write, tag included: `git tag -a` needs a
+    # tagger just like commit needs a committer, and a CI runner has no global
+    # git config to fall back on. A dev box does, which is exactly how a
+    # missing -c here stays invisible until it fails on GitHub.
+    vgit() { git -C "${VENDOR}" -c user.email=ci@termforge -c user.name=ci "$@"; }
+
+    vgit init -q .
+    vgit commit -qm vendor --allow-empty
+    vgit tag -a v9.9.9 -m v9.9.9
 
     cat > "${VENDOR}/CMakeLists.txt" <<'EOF'
 cmake_minimum_required(VERSION 3.28)
