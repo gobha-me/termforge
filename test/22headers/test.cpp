@@ -5,7 +5,7 @@
 // with only the PUBLIC include dir couldn't compile the advertised building
 // block. In-tree builds never noticed (library TUs compile with the private
 // dir). This suite pins the contract that killed it: EVERY public header must
-// compile standalone with ${CMAKE_SOURCE_DIR}/include as the ONLY include
+// compile standalone with ${PROJECT_SOURCE_DIR}/include as the ONLY include
 // path.
 //
 // Mechanism: CMake globs include/termforge/**/*.hpp at configure time and

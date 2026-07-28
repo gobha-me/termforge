@@ -83,6 +83,62 @@ cmake -B build-clang -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/clang.cmake \
 Sanitizer builds route through toolchain files (they actually apply the
 flags): `cmake/toolchain/address.cmake`, `cmake/toolchain/thread.cmake`.
 
+## Using TermForge in your project
+
+TermForge is stdlib-only — there are no transitive dependencies to satisfy.
+Both paths below give you the same target, `termforge::lib`, and build **only**
+the library: the demo binary, examples and tests default OFF whenever TermForge
+is not the top-level project, no Catch2 is fetched, and TermForge never touches
+your `CMAKE_TOOLCHAIN_FILE` or `CMAKE_EXPORT_COMPILE_COMMANDS`.
+
+### find_package first, FetchContent as fallback (recommended)
+
+```cmake
+find_package(termforge CONFIG QUIET)
+
+if (NOT termforge_FOUND)
+  include(FetchContent)
+  FetchContent_Declare(termforge
+    GIT_REPOSITORY https://github.com/gobha-me/termforge.git
+    GIT_TAG        v0.1.7
+  )
+  FetchContent_MakeAvailable(termforge)
+endif ()
+
+target_link_libraries(my_app PRIVATE termforge::lib)
+```
+
+### add_subdirectory (vendored / sibling checkout)
+
+```cmake
+add_subdirectory(external/termforge)
+target_link_libraries(my_app PRIVATE termforge::lib)
+```
+
+### Installing
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release \
+  -Dtermforge_TESTS=OFF -Dtermforge_EXAMPLES=OFF -Dtermforge_BIN=OFF
+cmake --build build -j
+cmake --install build --prefix /usr/local
+```
+
+Headers land in `${prefix}/include/termforge/`, the package config in
+`${prefix}/lib/cmake/termforge/`. Building from a source tarball with no git
+history yields version `0.0.0.1`; packagers can pin it with
+`-DTERMFORGE_VERSION=x.y.z`.
+
+| option | default | effect |
+|---|---|---|
+| `termforge_TESTS` | ON at top level, else OFF | Catch2 test suite (also honours `BUILD_TESTING`) |
+| `termforge_EXAMPLES` | ON at top level, else OFF | the `examples/` demos |
+| `termforge_BIN` | ON at top level, else OFF | the `termforge` chat demo binary |
+| `termforge_INSTALL` | ON at top level, else OFF | generate `install()`/`export()` rules |
+
+Both consumption paths are exercised in CI by `tools/consume/run.sh`, on GCC
+and Clang.
+
 ## Demos
 
 - `src/bin` — a chat-scrollback demo (live TextBox + input line) that runs on

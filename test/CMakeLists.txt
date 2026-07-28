@@ -20,8 +20,8 @@ foreach(TEST_DIR ${TEST_DIRS})
     )
 
     target_include_directories(${TEST_NAME}
-      PUBLIC ${CMAKE_SOURCE_DIR}/include
-      PUBLIC ${CMAKE_SOURCE_DIR}/src/lib
+      PUBLIC ${PROJECT_SOURCE_DIR}/include
+      PUBLIC ${PROJECT_SOURCE_DIR}/src/lib
       PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include
       PUBLIC ${CMAKE_CURRENT_LIST_DIR}
     )

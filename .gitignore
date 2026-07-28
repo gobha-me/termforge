@@ -3,6 +3,8 @@
 # docs/building-test.md), silently never committing it.
 /build*/
 /Testing*/
+# Vestigial since #27 (version.hpp is generated into the build tree now), but
+# kept: checkouts that predate it still have a stale generated file on disk.
 include/version.hpp
 
 # Prerequisites

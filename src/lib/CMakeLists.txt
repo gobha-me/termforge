@@ -32,8 +32,31 @@ add_library(${PROJECT_NAME}_lib STATIC
 add_library(${PROJECT_NAME}::lib ALIAS ${PROJECT_NAME}_lib)
 
 target_include_directories(${PROJECT_NAME}_lib
-  PUBLIC ${CMAKE_SOURCE_DIR}/include
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+  PUBLIC
+    # PROJECT_SOURCE_DIR, not CMAKE_SOURCE_DIR: the latter is the *consumer's*
+    # root under add_subdirectory, so headers were simply not found there.
+    #
+    # The generator expressions are mandatory, not cosmetic: install(EXPORT)
+    # hard-errors on an exported target whose interface still names a path
+    # inside the source tree. Writing only the INSTALL half is the classic
+    # mistake -- it drops the build-tree include dir out of the compile
+    # database, which is what clang-tidy consumes.
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 target_compile_features(${PROJECT_NAME}_lib PUBLIC cxx_std_23)
+
+# EXPORT_NAME is the line the whole two-path story hangs on: NAMESPACE
+# termforge:: applied to target termforge_lib would synthesise
+# termforge::termforge_lib, a *different* spelling than the ALIAS above, so
+# find_package consumers and add_subdirectory consumers would disagree. With
+# EXPORT_NAME lib both paths give termforge::lib.
+# OUTPUT_NAME so the installed archive is libtermforge.a, not libtermforge_lib.a
+# (no clash with the src/bin executable, which is not installed).
+set_target_properties(${PROJECT_NAME}_lib PROPERTIES
+  EXPORT_NAME lib
+  OUTPUT_NAME ${PROJECT_NAME}
+)
