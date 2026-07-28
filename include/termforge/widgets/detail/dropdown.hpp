@@ -16,6 +16,10 @@
 //     widest item and hangs under the active title). The helpers take the
 //     rect as a parameter so draw and hit-test still share one source per
 //     widget.
+//
+// Width measurement comes from detail/width.hpp (PUBLIC, like this header)
+// -- never the library's private src/lib include dir, or out-of-tree
+// consumers cannot compile (#54).
 //   - labels: Select draws options at dr.x + 1, MenuBar at dr.x + 2.
 //   - colors: each widget passes its own normal/highlight pair.
 //   - press/activate and keyboard handling stay with the widget: Select
@@ -28,8 +32,8 @@
 #include <algorithm>
 #include <string>
 
-#include "detail/width.hpp"
 #include "termforge/core/screen.hpp"
+#include "termforge/widgets/detail/width.hpp"
 #include "termforge/widgets/widget.hpp"
 
 namespace termforge::detail {
