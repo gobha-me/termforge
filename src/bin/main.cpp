@@ -6,6 +6,7 @@
 
 #include "termforge/core/app.hpp"
 #include "termforge/widgets/text_box.hpp"
+#include "termforge/widgets/theme.hpp"
 
 using namespace termforge;
 
@@ -54,7 +55,7 @@ class ChatDemo final : public App {
     const int W = screen.cols(), H = screen.rows();
     // textbox fills all but the last 2 rows
     m_box.set_geometry({0, 1, W, H - 3});
-    screen.write_text(0, 0, "TermForge chat demo — ESC quits", Rgb{0x7A,0x7A,0x9A}, {});
+    screen.write_text(0, 0, "TermForge chat demo — ESC quits", theme::kDim, {});
     m_box.draw(screen);
     // input line
     screen.write_text(0, H - 2, std::string(W > 1 ? W - 1 : 1, '-'), Rgb{0x2A,0x2A,0x52}, {});

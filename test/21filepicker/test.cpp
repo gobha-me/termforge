@@ -258,6 +258,28 @@ TEST_CASE("FilePicker: the result fires exactly once across a double activation"
   REQUIRE(w.results.size() == 1);
 }
 
+TEST_CASE("FilePicker: on_close re-arming the result cannot hijack the pick (#51)",
+          "[filepicker][failure]") {
+  // Same regression class as the plain dialogs: v0.1.4 read m_on_result
+  // AFTER close() ran on_close, so an on_close that armed the next picker's
+  // handler received this pick. The slot is snapshotted before close().
+  TempTree t;
+
+  FilePickerDialog picker;
+  picker.set_start_dir(t.root);
+  std::vector<int> fired;
+  picker.on_result([&](std::optional<fs::path>) { fired.push_back(1); });
+  picker.on_close([&] {
+    picker.on_result([&](std::optional<fs::path>) { fired.push_back(2); });
+  });
+
+  Screen screen{80, 30};
+  picker.draw(screen);  // first showing: lists the start dir
+
+  picker.on_event(key(Key::Escape));  // cancel: close, then fire nullopt
+  REQUIRE(fired == std::vector<int>{1});  // the ORIGINAL handler
+}
+
 // ── filter ───────────────────────────────────────────────────────────────────
 
 TEST_CASE("FilePicker: the extension filter hides non-matching files",

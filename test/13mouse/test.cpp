@@ -3,7 +3,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <variant>
+
 #include "termforge/core/app.hpp"
+#include "termforge/core/input.hpp"
 #include "termforge/widgets/button.hpp"
 #include "termforge/widgets/menu_bar.hpp"
 #include "termforge/widgets/table_widget.hpp"
@@ -139,8 +142,7 @@ TEST_CASE("MenuBar: hover moves dropdown selection", "[mouse][menu]") {
   Event hover = motion(2, 2);  // over "Open"
   REQUIRE(mb.on_event(hover));
   // Enter now activates the hovered item.
-  Event enter = termforge::KeyEvent{termforge::Key::Enter};
-  mb.on_event(enter);
+  mb.on_event(key(Key::Enter));
   REQUIRE(which == 1);
 }
 
@@ -162,8 +164,7 @@ TEST_CASE("MenuBar: wheel over an open dropdown does not drag the selection",
   Event tick = wheel(2, 2);  // over "Open": would highlight row 1 ungated
   REQUIRE(mb.on_event(tick));  // consumed while open, but inert
 
-  Event enter = termforge::KeyEvent{termforge::Key::Enter};
-  mb.on_event(enter);
+  mb.on_event(key(Key::Enter));
   REQUIRE(which == 0);  // selection stayed on "New"
 }
 
@@ -175,14 +176,13 @@ TEST_CASE("MenuBar: a non-left press on the CLOSED bar is declined (#48)",
   // an app-level right-click handler could never fire over the bar row.
   bool fired = false;
   auto mb = make_menu(fired);
-  MouseEvent right{.x = 1, .y = 0, .button = 2, .pressed = true};
-  REQUIRE_FALSE(mb.on_event(Event{right}));
+  REQUIRE_FALSE(mb.on_event(press(1, 0, 2)));  // right
   REQUIRE_FALSE(mb.dropdown_open());
 
   // While open, the same press is still consumed (leak containment).
   mb.on_event(press(1, 0));
   REQUIRE(mb.dropdown_open());
-  REQUIRE(mb.on_event(Event{right}));
+  REQUIRE(mb.on_event(press(1, 0, 2)));  // right, inside the open area
 }
 
 TEST_CASE("MenuBar: click on title with no items does not open",
@@ -395,4 +395,57 @@ TEST_CASE("route_mouse: closed menu does not shadow the widget underneath",
   REQUIRE(app.route(click, {&under, &mb}));
   REQUIRE(button_fired);
   REQUIRE_FALSE(item_fired);
+}
+
+// ── decoder round-trip (#55) ──────────────────────────────────────────────────
+
+TEST_CASE("Decoder round-trip: the event builders emit what the decoder emits (#55)",
+          "[mouse][input][failure]") {
+  // motion() used to emit button = 0 while a hand-rolled hover elsewhere used
+  // -1 -- and the real decoder emits 3 (btn = 32|3, input.cpp:226-230). All
+  // three were functionally inert (hover gates on scroll flags + !pressed),
+  // but the suite was exercising events the terminal can never deliver: the
+  // moment any widget discriminates on button in motion handling, tests and
+  // reality diverge silently. This pins builder == decoder so the drift
+  // fails HERE, not in a widget's behavior.
+  termforge::Input in;
+
+  // ?1003 buttonless motion at (x=4, y=3) 0-based = SGR (5, 4) 1-based, btn 35.
+  auto decoded = in.decode("\x1b[<35;5;4M");
+  REQUIRE(decoded.size() == 1);
+  const auto* dm = std::get_if<MouseEvent>(&decoded.front());
+  REQUIRE(dm != nullptr);
+  const auto built = motion(4, 3);
+  const auto& bm = std::get<MouseEvent>(built);
+  REQUIRE(bm.x == dm->x);
+  REQUIRE(bm.y == dm->y);
+  REQUIRE(bm.button == dm->button);    // 3 == 3, not the old 0 or the hand-rolled -1
+  REQUIRE(bm.pressed == dm->pressed);
+  REQUIRE(bm.scroll_up == dm->scroll_up);
+  REQUIRE(bm.scroll_down == dm->scroll_down);
+
+  // Left press at (5, 1) 0-based = SGR (6, 2) 1-based, btn 0.
+  decoded = in.decode("\x1b[<0;6;2M");
+  REQUIRE(decoded.size() == 1);
+  dm = std::get_if<MouseEvent>(&decoded.front());
+  REQUIRE(dm != nullptr);
+  const auto built_press = press(5, 1, 0);
+  const auto& bp = std::get<MouseEvent>(built_press);
+  REQUIRE(bp.x == dm->x);
+  REQUIRE(bp.y == dm->y);
+  REQUIRE(bp.button == dm->button);
+  REQUIRE(bp.pressed == dm->pressed);
+
+  // Wheel-down at (2, 2) 0-based = SGR (3, 3) 1-based, btn 64|1 = 65.
+  decoded = in.decode("\x1b[<65;3;3M");
+  REQUIRE(decoded.size() == 1);
+  dm = std::get_if<MouseEvent>(&decoded.front());
+  REQUIRE(dm != nullptr);
+  const auto built_wheel = wheel(2, 2, /*up=*/false);
+  const auto& bw = std::get<MouseEvent>(built_wheel);
+  REQUIRE(bw.x == dm->x);
+  REQUIRE(bw.y == dm->y);
+  REQUIRE(bw.button == dm->button);  // -1 == -1
+  REQUIRE(bw.scroll_down == dm->scroll_down);
+  REQUIRE(bw.scroll_up == dm->scroll_up);
 }

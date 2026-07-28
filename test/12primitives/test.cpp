@@ -29,6 +29,7 @@ using termforge::KeyEvent;
 using termforge::Label;
 using termforge::Menu;
 using termforge::MenuBar;
+using termforge::Menu;
 using termforge::MenuItem;
 using termforge::MouseEvent;
 using termforge::ProgressBar;
@@ -141,8 +142,7 @@ TEST_CASE("Button: Enter fires callback", "[primitives][button]") {
   bool fired = false;
   b.on_activate([&] { fired = true; });
 
-  Event enter = KeyEvent{Key::Enter};
-  REQUIRE(b.on_event(enter));
+  REQUIRE(b.on_event(key(Key::Enter)));
   REQUIRE(fired);
 }
 
@@ -154,8 +154,7 @@ TEST_CASE("Button: Space fires callback", "[primitives][button]") {
   bool fired = false;
   b.on_activate([&] { fired = true; });
 
-  Event space = KeyEvent{Key::Char, U' '};
-  REQUIRE(b.on_event(space));
+  REQUIRE(b.on_event(ch(U' ')));
   REQUIRE(fired);
 }
 
@@ -167,8 +166,7 @@ TEST_CASE("Button: mouse click fires callback", "[primitives][button]") {
   bool fired = false;
   b.on_activate([&] { fired = true; });
 
-  Event click = MouseEvent{.x = 5, .y = 1, .pressed = true};
-  REQUIRE(b.on_event(click));
+  REQUIRE(b.on_event(press(5, 1)));
   REQUIRE(fired);
 }
 
@@ -180,8 +178,7 @@ TEST_CASE("Button: mouse click outside rect doesn't fire", "[primitives][button]
   bool fired = false;
   b.on_activate([&] { fired = true; });
 
-  Event click = MouseEvent{.x = 8, .y = 1, .pressed = true};
-  REQUIRE_FALSE(b.on_event(click));
+  REQUIRE_FALSE(b.on_event(press(8, 1)));
   REQUIRE_FALSE(fired);
 }
 
@@ -193,16 +190,12 @@ TEST_CASE("Button: right/middle click does not activate (#12)", "[primitives][bu
   bool fired = false;
   b.on_activate([&] { fired = true; });
 
-  // .button comes before .pressed in MouseEvent, so name everything past x/y.
-  Event right = MouseEvent{.x = 5, .y = 1, .button = 2, .pressed = true};
-  REQUIRE_FALSE(b.on_event(right));
-  Event middle = MouseEvent{.x = 5, .y = 1, .button = 1, .pressed = true};
-  REQUIRE_FALSE(b.on_event(middle));
+  REQUIRE_FALSE(b.on_event(press(5, 1, 2)));  // right
+  REQUIRE_FALSE(b.on_event(press(5, 1, 1)));  // middle
   REQUIRE_FALSE(fired);
 
   // Left still works.
-  Event left = MouseEvent{.x = 5, .y = 1, .button = 0, .pressed = true};
-  REQUIRE(b.on_event(left));
+  REQUIRE(b.on_event(press(5, 1, 0)));
   REQUIRE(fired);
 }
 
@@ -802,6 +795,26 @@ TEST_CASE("MenuBar: renders menu titles", "[primitives][menu]") {
   REQUIRE(s.at(2, 0).text == "i");
 }
 
+TEST_CASE("MenuBar: draw before any menu is added is not UB (#52)",
+          "[primitives][menu][failure]") {
+  // The #42 item 2 dropdown-skeleton refactor dropped v0.1.3's closed-rect
+  // guard and indexed m_menus[m_active] unconditionally in draw(): a bar
+  // drawn before its first set_menus/add_menu (m_active == 0, m_menus empty)
+  // read the null page every frame. ASan fails this test on that build.
+  Screen s{80, 4};
+  MenuBar mb;
+  mb.set_geometry({0, 0, 80, 1});
+  mb.draw(s);          // must not index an empty m_menus
+  mb.draw(s);          // every frame, not just the first
+
+  MenuBar cleared;
+  cleared.set_geometry({0, 0, 80, 1});
+  cleared.set_menus({{"File", {{"New", {}}}}});
+  cleared.draw(s);
+  cleared.set_menus({});  // back to empty after having been populated
+  cleared.draw(s);
+}
+
 TEST_CASE("MenuBar: first menu is active by default", "[primitives][menu]") {
   MenuBar mb;
   mb.add_menu({"File", {}});
@@ -908,6 +921,58 @@ TEST_CASE("MenuBar: Down/Up navigate dropdown items", "[primitives][menu]") {
   mb.on_event(down);  // select "Copy"
   mb.on_event(enter); // fire
   REQUIRE(selected_idx == 1);
+}
+
+TEST_CASE("MenuBar: off-screen dropdown rows are unreachable and uncommittable (#53)",
+          "[primitives][menu][failure]") {
+  // #48 item 3 fixed the invisible-but-committable class in Select, but the
+  // #42 item 2 skeleton left geometry per-widget and MenuBar kept sizing its
+  // dropdown to items.size() with no screen clamp: arrows parked the
+  // selection on rows that were never painted, and Enter fired the invisible
+  // item's action.
+  Screen s{40, 6};
+  MenuBar mb;
+  mb.set_geometry({0, 0, 40, 1});
+  int fired = -1;
+  Menu big{"File", {}};
+  for (int i = 0; i < 20; ++i)
+    big.items.push_back({"item" + std::to_string(i), [&, i] { fired = i; }});
+  mb.add_menu(std::move(big));
+
+  Event enter = KeyEvent{Key::Enter};
+  mb.on_event(enter);  // open; selection starts on row 0
+  mb.draw(s);          // a frame paints (and memoizes the screen height)
+
+  // Only rows 1..5 fit under a bar on row 0 of a 6-row screen: 5 visible.
+  // Row 5 (the last that fits) holds item4 (MenuBar's label_pad is 2); a
+  // 20-item unclamped menu would have painted through row 20+.
+  REQUIRE(s.at(2, 5).text == "i");  // item4 on the last visible row
+
+  // Hammering Down must clamp to the last VISIBLE row (index 4), not item 19.
+  Event down = KeyEvent{Key::Down};
+  for (int i = 0; i < 25; ++i) mb.on_event(down);
+  mb.on_event(enter);
+  REQUIRE(fired == 4);
+}
+
+TEST_CASE("MenuBar: a menu opened before any frame cannot commit off-screen (#53)",
+          "[primitives][menu][failure]") {
+  // m_screen_rows == 0 (no draw yet) is the UNCLAMPED memo: all items are
+  // reachable, matching Select's pre-frame behavior. Once a 6-row frame has
+  // painted, the clamp applies (the case above) -- this pins the other leg.
+  MenuBar mb;
+  int fired = -1;
+  mb.add_menu({"File", {{"a", [&] { fired = 0; }},
+                        {"b", [&] { fired = 1; }},
+                        {"c", [&] { fired = 2; }}}});
+  mb.set_geometry({0, 0, 40, 1});
+  Event enter = KeyEvent{Key::Enter};
+  Event down = KeyEvent{Key::Down};
+  mb.on_event(enter);
+  mb.on_event(down);
+  mb.on_event(down);  // item 2 reachable pre-frame (unclamped)
+  mb.on_event(enter);
+  REQUIRE(fired == 2);
 }
 
 TEST_CASE("MenuBar: Left/Right onto an EMPTY menu opens no invisible dropdown (#12)", "[primitives][menu][failure]") {

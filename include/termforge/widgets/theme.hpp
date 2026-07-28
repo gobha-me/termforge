@@ -9,6 +9,8 @@
 // roles. A widget that genuinely deviates keeps its own literal (the
 // MenuBar/ProgressBar darker bar, the TableWidget alt row, the Waveform/
 // ProgressBar signal green, the TextInput placeholder dim) and says so.
+// A deviation that recurs gets named below (kDim); one-off app/example
+// colors stay literals.
 //
 // This is NOT a theme system: there is no global mutable palette, and
 // changing a constant changes the DEFAULT for widgets that have not been
@@ -32,5 +34,9 @@ inline constexpr Rgb kFocusBg{0x40, 0x80, 0xFF};
 // Popup surface: dropdown lists float one shade above the panel.
 inline constexpr Rgb kDropdownFg{0xE0, 0xE0, 0xF0};
 inline constexpr Rgb kDropdownBg{0x15, 0x15, 0x25};
+
+// De-emphasis: the shared muted slate for secondary text -- the TextBox
+// "[more]" scroll hint, the demo status line. Same role, one name.
+inline constexpr Rgb kDim{0x7A, 0x7A, 0x9A};
 
 }  // namespace termforge::theme

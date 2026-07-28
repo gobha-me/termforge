@@ -11,6 +11,8 @@
 // Everything is inline and in namespace tfsupport so suites can dump it in
 // an anonymous namespace without ODR worries.
 
+#include <string_view>
+
 #include "termforge/core/input.hpp"
 
 namespace tfsupport {
@@ -20,6 +22,11 @@ using termforge::Key;
 using termforge::KeyEvent;
 using termforge::MouseEvent;
 
+// Every builder emits what the REAL decoder (src/lib/core/input.cpp) emits
+// for the corresponding escape sequence -- a test that feeds a widget an
+// event the terminal can never deliver is a green suite != real input (#55).
+// The "Decoder round-trip" test in 13mouse pins builder == decoder, so a
+// decoder change that drags a builder out of sync fails there, not silently.
 inline auto key(Key k, char32_t ch = 0, bool shift = false) -> Event {
   KeyEvent e;
   e.key = k;
@@ -29,6 +36,8 @@ inline auto key(Key k, char32_t ch = 0, bool shift = false) -> Event {
 }
 inline auto ch(char32_t c) -> Event { return key(Key::Char, c); }
 
+// Left press: SGR "ESC[<b;x;yM", button bits b & 0x03, pressed = (final ==
+// 'M') (input.cpp:231-233).
 inline auto press(int x, int y, int button = 0) -> Event {
   MouseEvent e;
   e.x = x;
@@ -38,21 +47,26 @@ inline auto press(int x, int y, int button = 0) -> Event {
   return Event{e};
 }
 
+// Buttonless pointer motion: ?1003 reports btn = 32 | 3 = 35, which decodes
+// to button = btn & 0x03 = **3** (input.cpp:226-230) -- NOT 0 (a press's
+// button) and NOT -1 (a wheel). Functionally inert today (hover paths gate
+// on scroll flags and !pressed, never button), but a widget that ever
+// discriminates on button in motion handling must see the real value.
 inline auto motion(int x, int y) -> Event {
   MouseEvent e;
   e.x = x;
   e.y = y;
-  e.button = 0;
+  e.button = 3;  // buttonless motion, exactly as the decoder emits it
   e.pressed = false;
   return Event{e};
 }
 
-// Wheel reports carry pressed == false and button == -1 (input.cpp).
+// Wheel reports carry pressed == false and button == -1 (input.cpp:221-225).
 inline auto wheel(int x, int y, bool up = false) -> Event {
   MouseEvent e;
   e.x = x;
   e.y = y;
-  e.button = -1;
+  e.button = -1;  // wheel, input.cpp:222
   e.scroll_up = up;
   e.scroll_down = !up;
   return Event{e};

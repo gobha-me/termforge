@@ -7,6 +7,14 @@
 // scrolling for overflow, and row selection (click or set_selected).
 //
 // Designed for dashboards: system stats, process lists, log tables.
+//
+// Selection is deliberately NOT detail::OptionsList (#56 item 8): a table
+// clamps to [-1, max] and ALLOWS deselection (-1 is the default and
+// clear_rows() restores it, pinned by test/08tablewidget), where OptionsList
+// clamps to [0, count), auto-selects the first entry on insert, and never
+// deselects. Migrating to OptionsList would silently break the
+// selected() == -1-after-clear_rows() contract. The divergence is
+// load-bearing; see the matching note in detail/options_list.hpp.
 
 #include <functional>
 #include <string>

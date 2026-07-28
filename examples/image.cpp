@@ -16,6 +16,7 @@
 
 #include "termforge/core/image_loader.hpp"
 #include "termforge/core/terminal.hpp"
+#include "termforge/widgets/theme.hpp"
 
 using namespace termforge;
 
@@ -55,7 +56,7 @@ auto main() -> int {
                      : dcaps.truecolor    ? "ANSI truecolor half-blocks"
                                           : "ASCII fallback";
 
-  const Rgb white{0xFF, 0xFF, 0xFF}, dark{0x0A, 0x0A, 0x14};
+  const Rgb white{0xFF, 0xFF, 0xFF}, dark = theme::kBg;
   const Rgb cyan{0x00, 0xFF, 0xFF}, green{0x00, 0xFF, 0x80};
 
   driver->draw_text(0, 0, "TermForge Image Demo", cyan, dark);

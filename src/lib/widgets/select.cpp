@@ -17,19 +17,28 @@ Select::Select(std::vector<std::string> options) {
 auto Select::set_options(std::vector<std::string> options) -> void {
   // Replacing the list closes the dropdown (#36): an open list must not
   // survive with a stale m_highlight over options that no longer exist.
-  m_list.set_all(std::move(options), [this] { close_dropdown(); });
-  m_line.clear();
+  m_list.set_all(std::move(options));
+  close_dropdown();  // was the on_reset hook; plain call is equivalent (#56/6)
+  invalidate_line();
   mark_dirty();
 }
 
 auto Select::add_option(std::string option) -> void {
   m_list.add(std::move(option));
+  // The first insert into an empty list auto-selects it (OptionsList), which
+  // changes what the box shows -- invalidate the cached line with every
+  // other selection-affecting setter. Pre-#56 item 3 this was masked: the
+  // empty box's m_line.empty() doubled as the staleness marker, so draw()
+  // recomposed anyway; with the int as the sole sentinel the cache would
+  // serve the stale empty value forever.
+  invalidate_line();
   mark_dirty();
 }
 
 auto Select::clear() -> void {
-  m_list.clear([this] { close_dropdown(); });
-  m_line.clear();
+  m_list.clear();
+  close_dropdown();  // see set_options (#56 item 6)
+  invalidate_line();
   mark_dirty();
 }
 
@@ -43,7 +52,7 @@ auto Select::set_selected(int index) -> void {
   // an open dropdown must not survive with a stale m_highlight that the next
   // Enter would commit over the value the app just set (#36).
   close_dropdown();
-  m_line.clear();
+  invalidate_line();
   mark_dirty();
 }
 
@@ -56,8 +65,8 @@ auto Select::dropdown_rect() const -> Rect {
   // screen bottom once a frame has painted: rows that would fall off-screen
   // are unreachable and must not be keyboard-committable (#48 item 3). The
   // full height-cap/scroll story stays with #21.
-  int h = m_list.count();
-  if (m_screen_rows > 0) h = std::min(h, std::max(0, m_screen_rows - (r.y + r.h)));
+  const int h = detail::dropdown_visible_rows(m_list.count(), r.y + r.h,
+                                              m_screen_rows);
   return {r.x, r.y + r.h, r.w, h};
 }
 
@@ -94,7 +103,7 @@ auto Select::commit(int index) -> void {
   const bool changed = (index != m_list.selected());
   m_list.select(index);
   close_dropdown();
-  if (changed) m_line.clear();  // the box shows the newly committed value
+  if (changed) invalidate_line();  // the box shows the newly committed value
   mark_dirty();
   // No-change commits stay silent -- the no-op-silence rule RadioGroup::select
   // and Checkbox::set_checked already follow (#36 item 3). Re-committing the
@@ -129,7 +138,12 @@ auto Select::draw(Screen& screen) -> void {
   // truncation scan ~10x/second (#42 item 5). The bracket composition is
   // cheap appends and stays per frame.
   const int inner = std::max(0, r.w - kChromeCols);
-  if (m_line.empty() || m_line_inner != inner) {
+  // Stale iff m_line_inner != inner -- the int is the ONLY sentinel (#56
+  // item 3): m_line.empty() must not double as one, or a legitimately empty
+  // value (no selection, or inner width 0) defeats the cache and re-runs
+  // selected_text() + the truncation scan every frame, reintroducing the
+  // churn #42 item 5 removed. Setters invalidate via invalidate_line().
+  if (m_line_inner != inner) {
     m_line = m_list.selected_text();
     m_line = std::string(detail::truncate_to_width(m_line, inner));
     m_line_inner = inner;

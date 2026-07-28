@@ -13,13 +13,21 @@
 // inline accessors against it; treat it like detail/callback.hpp -- usable
 // by app code, but documented as a building block, not a widget.
 //
-// Deliberate divergences stay with the widget, as hooks:
-//  - reset_scroll: ListWidget/RadioGroup rewind the viewport on
-//    set_all/clear; Select has no scroll offset and passes nothing.
-//  - on_reset(): Select closes its dropdown whenever the list is replaced
-//    (#36); the others have nothing to tear down.
+// Deliberate divergences stay with the widget, in the widget:
+//  - reset_scroll: ListWidget/RadioGroup rewind their own m_scroll on
+//    set_all/clear; Select has no scroll offset.
+//  - teardown: Select closes its dropdown after replacing the list (#36) by
+//    calling close_dropdown() itself after set_all/clear -- no on_reset
+//    hook overloads here (they served exactly one caller, #56 item 6).
 // scroll-index access (ListWidget/RadioGroup viewports) is not this type's
 // business -- the widgets keep their own m_scroll and ensure_visible().
+//
+// TableWidget is deliberately NOT a user (#56 item 8): it clamps its
+// selection to [-1, max] and allows deselection (selected() == -1 after
+// clear_rows() is a pinned contract, test/08tablewidget), where this type
+// clamps to [0, count), auto-selects the first entry on insert, and never
+// deselects. A 'helpful' unification would break that contract -- the
+// divergence is load-bearing; see the matching note in table_widget.hpp.
 //
 // Pure: no Widget base, no dirty flags; callers mark_dirty as they already do.
 
@@ -32,19 +40,12 @@ namespace termforge::detail {
 
 class OptionsList {
  public:
-  OptionsList() = default;
-  explicit OptionsList(std::vector<std::string> options) {
-    set_all(std::move(options));
-  }
+  OptionsList() = default;  // converting ctor removed: zero callers (#56/6)
 
   // Replace the whole list; selection resets to the first entry (or -1).
-  template <typename F> auto set_all(std::vector<std::string> options, F&& on_reset) -> void {
+  auto set_all(std::vector<std::string> options) -> void {
     m_options = std::move(options);
     m_selected = m_options.empty() ? -1 : 0;
-    on_reset();
-  }
-  auto set_all(std::vector<std::string> options) -> void {
-    set_all(std::move(options), [] {});
   }
 
   // Append; selects the first entry if the list was empty.
@@ -53,12 +54,10 @@ class OptionsList {
     if (m_selected < 0) m_selected = 0;
   }
 
-  template <typename F> auto clear(F&& on_reset) -> void {
+  auto clear() -> void {
     m_options.clear();
     m_selected = -1;
-    on_reset();
   }
-  auto clear() -> void { clear([] {}); }
 
   // Clamp into range; empty list forces -1. Silent, like every setter.
   auto select(int index) -> void {

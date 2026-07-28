@@ -86,7 +86,7 @@ struct KeyEvent {
 
 struct MouseEvent {
   int x{0}, y{0};
-  int button{0};        // 0 left, 1 middle, 2 right; -1 = none (wheel/motion)
+  int button{0};        // 0 left, 1 middle, 2 right; -1 = wheel, 3 = buttonless motion
   bool pressed{false};
   bool scroll_up{false}, scroll_down{false};
   bool ctrl{false}, alt{false}, shift{false};

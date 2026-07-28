@@ -37,6 +37,13 @@ auto RadioGroup::selected_text() const -> std::string {
 }
 
 auto RadioGroup::set_selected(int index) -> void {
+  // No-op-silent, like Checkbox::set_checked and Select::commit (#36 item
+  // 3): a clamped no-change set must not flag a repaint that repaints
+  // nothing. (Inert while nothing reads dirty() and draw isn't dirty-gated,
+  // but the flag shouldn't lie -- #56 item 2.)
+  if (!m_list.empty() && std::clamp(index, 0, m_list.count() - 1) ==
+                             m_list.selected())
+    return;
   m_list.select(index);
   ensure_visible();
   mark_dirty();
@@ -91,10 +98,11 @@ auto RadioGroup::draw(Screen& screen) -> void {
 
     // Mark and label composed as one string, truncated once (see Checkbox).
     // The mark cell moves with the selection on every arrow key, so unlike
-    // Checkbox's line this one is NOT cacheable -- it is composed per frame.
-    // The allocation is amortized across frames by the SSO/move-swap below
-    // and the truncation runs on the row's own width (#42 item 5 only claims
-    // the setters-in-ctor and Checkbox/Select wins here).
+    // Checkbox's line this one is NOT cacheable: it is composed per row per
+    // frame as a fresh std::string local. There is no move-swap or reuse to
+    // amortize it -- that is the honest tradeoff (#56 item 2); short rows
+    // stay within SSO, and #42 item 5 only claims the setters-in-ctor and
+    // Checkbox/Select wins here.
     std::string line;
     line += g.radio_open;
     line += (idx == m_list.selected()) ? g.radio_mark : " ";
