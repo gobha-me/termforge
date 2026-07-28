@@ -82,6 +82,10 @@ auto App::run() -> int {
   // make "how fast did the terminal answer" a gameplay variable.
   m_last_tick.reset();
   m_tick_accum = std::chrono::duration<double>::zero();
+  return run_loop();
+}
+
+auto App::run_loop() -> int {
   while (m_running) frame_step();
   teardown();
   return 0;
