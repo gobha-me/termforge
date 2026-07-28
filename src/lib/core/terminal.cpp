@@ -91,6 +91,18 @@ auto Terminal::enter_raw() -> std::expected<void, ErrorEvent> {
   return {};
 }
 
+auto Terminal::leave_raw() -> void {
+  if (!m_raw || !m_impl->saved_valid) return;
+  tcsetattr(m_impl->tty_fd, TCSAFLUSH, &m_impl->saved);
+  m_raw = false;
+  // Disarm the termios half only: cooked mode is already back, so the signal
+  // handler must not tcsetattr() the saved state a second time. The handlers
+  // stay installed — a crash between here and the destructor should still get
+  // the (by then redundant) leave sequence. ~Terminal does the uninstall, and
+  // sees m_raw == false so it skips its own restore.
+  detail::restore_state().armed = 0;
+}
+
 // ── capability probing ─────────────────────────────────────────────────────
 //
 // Strategy (display-server agnostic): ask the terminal, read its reply.

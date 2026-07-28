@@ -2,7 +2,9 @@
 
 // TermForge — Terminal: raw-mode lifecycle + capability probing.
 //
-// Raw mode is RAII: enter_raw() sets termios, the destructor restores it. A
+// Raw mode is RAII: enter_raw() sets termios, leave_raw() or the destructor
+// restores it (whichever comes first — the destructor is the guarantee, an
+// explicit leave_raw() is for exit paths where no destructor is guaranteed). A
 // crash or early exit can't wedge the user's terminal because entering raw mode
 // also arms an async-signal-safe restore path (see detail/tty_restore.hpp):
 // SIGTERM/SIGHUP and hard crashes (SIGSEGV, …) that bypass destructors still
@@ -33,6 +35,16 @@ class Terminal {
   // Enter raw mode (noecho, noncanonical, disable signals we handle
   // ourselves). Idempotent. Failure -> ErrorEvent.
   auto enter_raw() -> std::expected<void, ErrorEvent>;
+
+  // Restore the termios enter_raw() captured. Idempotent; a no-op if raw mode
+  // was never entered. Exists so a caller can put the terminal back at a
+  // chosen moment instead of waiting for the destructor — App::teardown() uses
+  // it to restore on an exception, where no destructor is guaranteed to run.
+  // Disarms the termios half of the signal-restore path (the saved state has
+  // been applied; a later fatal signal must not apply it again) but leaves the
+  // handlers installed, so a crash before the destructor still leaves the
+  // alt-screen. A later enter_raw() re-captures and re-arms.
+  auto leave_raw() -> void;
 
   // Probe terminal capabilities (Kitty graphics -> Sixel -> truecolor) with a
   // short response timeout. Populates a Capabilities struct; detection
