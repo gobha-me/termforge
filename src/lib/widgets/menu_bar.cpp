@@ -105,8 +105,11 @@ auto MenuBar::draw(Screen& screen) -> void {
 
   // Draw dropdown if open. Geometry comes from dropdown_rect() so drawing
   // and hit-testing can never disagree; the row loop is the shared
-  // detail/dropdown.hpp skeleton (#42 item 2).
-  {
+  // detail/dropdown.hpp skeleton (#42 item 2). The dropdown_open() guard is
+  // load-bearing, not redundant: an empty (or not-yet-populated) bar has
+  // m_active == 0 and NO m_menus[0] to index, and v0.1.3's equivalent
+  // dr.w/dr.h > 0 guard was what kept this block off m_menus (#52).
+  if (dropdown_open()) {
     const auto& menu = m_menus[static_cast<std::size_t>(m_active)];
     detail::draw_dropdown_rows(
         screen, dropdown_rect(), static_cast<int>(menu.items.size()),

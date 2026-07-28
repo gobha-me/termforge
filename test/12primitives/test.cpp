@@ -802,6 +802,26 @@ TEST_CASE("MenuBar: renders menu titles", "[primitives][menu]") {
   REQUIRE(s.at(2, 0).text == "i");
 }
 
+TEST_CASE("MenuBar: draw before any menu is added is not UB (#52)",
+          "[primitives][menu][failure]") {
+  // The #42 item 2 dropdown-skeleton refactor dropped v0.1.3's closed-rect
+  // guard and indexed m_menus[m_active] unconditionally in draw(): a bar
+  // drawn before its first set_menus/add_menu (m_active == 0, m_menus empty)
+  // read the null page every frame. ASan fails this test on that build.
+  Screen s{80, 4};
+  MenuBar mb;
+  mb.set_geometry({0, 0, 80, 1});
+  mb.draw(s);          // must not index an empty m_menus
+  mb.draw(s);          // every frame, not just the first
+
+  MenuBar cleared;
+  cleared.set_geometry({0, 0, 80, 1});
+  cleared.set_menus({{"File", {{"New", {}}}}});
+  cleared.draw(s);
+  cleared.set_menus({});  // back to empty after having been populated
+  cleared.draw(s);
+}
+
 TEST_CASE("MenuBar: first menu is active by default", "[primitives][menu]") {
   MenuBar mb;
   mb.add_menu({"File", {}});
