@@ -34,7 +34,7 @@ if (GIT_FOUND AND NOT TERMFORGE_VERSION)
       set(DIRTY_BRANCH ${CMAKE_MATCH_3})
     endif()
   endif()
-endif (GIT_FOUND)
+endif ()
 
 if (NOT TERMFORGE_VERSION)
   set(TERMFORGE_VERSION 0.0.0.1)
