@@ -701,6 +701,23 @@ TEST_CASE("Select: the closed box renders the value between the chrome",
   REQUIRE(s.at(0, 1).blank());
 }
 
+TEST_CASE("Select: add_option to an empty Select updates the box",
+          "[form][select][failure]") {
+  // The first insert auto-selects, so the box must show the new value on the
+  // next frame -- the m_line cache would serve the stale empty value forever
+  // if add_option didn't invalidate it (masked while m_line.empty() doubled
+  // as the staleness marker; real once m_line_inner became the sentinel).
+  Screen s{20, 2};
+  Select sel;
+  sel.set_geometry({0, 0, 14, 1});
+  sel.draw(s);
+  REQUIRE(row_text(s, 0, 0, 14) == "[          ▾ ]");  // empty
+
+  sel.add_option("kitty");
+  sel.draw(s);
+  REQUIRE(row_text(s, 0, 0, 14) == "[ kitty    ▾ ]");
+}
+
 TEST_CASE("Select: the closed box never writes outside its rect",
           "[form][select][failure]") {
   // Every width from nothing to comfortable. kChromeCols is 6, so most of

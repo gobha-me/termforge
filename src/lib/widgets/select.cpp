@@ -25,6 +25,13 @@ auto Select::set_options(std::vector<std::string> options) -> void {
 
 auto Select::add_option(std::string option) -> void {
   m_list.add(std::move(option));
+  // The first insert into an empty list auto-selects it (OptionsList), which
+  // changes what the box shows -- invalidate the cached line with every
+  // other selection-affecting setter. Pre-#56 item 3 this was masked: the
+  // empty box's m_line.empty() doubled as the staleness marker, so draw()
+  // recomposed anyway; with the int as the sole sentinel the cache would
+  // serve the stale empty value forever.
+  invalidate_line();
   mark_dirty();
 }
 
