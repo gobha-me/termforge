@@ -10,7 +10,20 @@ which holds standing conventions, not state).
 tested.** 26 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
 clean.
 
-**Latest release: `v0.1.8`** (2026-07-28) — **#59 (TG-02): the `on_tick(dt)`
+**Latest release: `v0.1.9`** (2026-07-28) — **#61 (TG-04): F5–F12.** `Key`
+stopped at `F4`, so every function key past the fourth was silently dropped: the
+CSI-tilde family (`ESC[<n>~`) was already fully parsed, modifiers included, but
+`map_tilde_key` stopped at `14` and `15~`–`24~` fell through to `Key::Unknown`.
+The fix is eight rows in that table plus the eight enumerators — modifiers fall
+out for free, since `parse_csi` already routes the second param through
+`apply_key_mods` (`ESC[15;5~` → Ctrl+F5). `parse_ss3` is untouched: xterm uses
+SS3 only for F1–F4. **The table is deliberately not contiguous** — 15, 17, 18,
+19, 20, 21, 23, 24; **16 and 22 are historical DEC/xterm holes**, and a test
+pins them at `Unknown` so a future edit can't "complete" the table and shift
+F6–F12 by one key each. `examples/input.cpp`'s `key_name` is the repo's only
+exhaustive `switch (Key)`, so it grew to match (and is what the pty check reads).
+
+**Previous release: `v0.1.8`** (2026-07-28) — **#59 (TG-02): the `on_tick(dt)`
 update hook.** `App` now has a third override point, and simulation is
 separated from drawing.
 
@@ -432,14 +445,15 @@ harness).
 
 ## Next session — start here
 
-v0.1.8 shipped #59 (TG-02, `on_tick`), which closes the three-issue run
-#58 → #27 → #59 agreed at the top of the TG-xx batch. With pacing, clean
-consumption and a tick hook all landed, `term-game` has everything it needs
+v0.1.8 shipped #59 (TG-02, `on_tick`), which closed the three-issue run
+#58 → #27 → #59 agreed at the top of the TG-xx batch; v0.1.9 then took the
+cheapest of what remained, #61 (F5–F12). With pacing, clean consumption, a tick
+hook and the full function-key row landed, `term-game` has everything it needs
 from the loop. The open queue, in rough priority order:
-- **The rest of the TG-xx batch** — **#61** (F5–F12 keys; labelled *good
-  first issue*, the cheapest of the five), **#62** (Cell text attributes:
+- **The rest of the TG-xx batch** — **#62** (Cell text attributes:
   bold/dim/underline/reverse), **#63** (Image sub-rect blit + sprite-sheet
-  slicing), **#60** (kitty keyboard protocol: key release + repeat), **#64**
+  slicing), **#60** (kitty keyboard protocol: key release + repeat — it
+  re-opens the same parser #61 just touched), **#64**
   (MapWidget — a **design doc** is the deliverable, and it is the last
   unchecked Epic 3 item, transitively blocking Epic 4.2 `game.cpp`).
 - **#35** (wheel vs arrow-key semantics) — **needs a user decision** (the
