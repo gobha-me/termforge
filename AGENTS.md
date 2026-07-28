@@ -33,7 +33,12 @@ file is the tactical version.
 - **Capability detection queries the terminal**, never the display server. Pin
   capability *requirements*, never emulator version numbers.
 - **Raw mode is RAII** — `Terminal` restores termios on destruction. Never
-  leave the terminal in raw mode on any exit path.
+  leave the terminal in raw mode on any exit path, **including one an exception
+  takes**: a destructor is not a guarantee (an exception escaping `main`
+  terminates without unwinding), so `App::run_loop()` guards its loop and
+  `App::teardown()` is the exact inverse of `App::setup()` — alt-screen, cooked
+  mode, SIGWINCH. The fatal-signal backstop is for crashes, not for exceptions;
+  if it is what restores your terminal, that is the bug (#71).
 
 ## Protocol priority (driver selection)
 

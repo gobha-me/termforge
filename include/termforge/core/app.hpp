@@ -15,8 +15,16 @@
 // Every frame runs them in exactly that order, on the loop thread: input is
 // dispatched, then state advances, then the frame is drawn.
 // The loop runs until quit() is called. Resize events resize the Screen and
-// force a full repaint. The terminal is always restored on exit (RAII + the
-// Terminal destructor), even on exception.
+// force a full repaint.
+//
+// The terminal is restored on every path out of run(): a normal quit, a failed
+// setup, and an exception thrown by your on_event/on_tick/on_render. The loop
+// tears down — alt-screen, cooked mode, SIGWINCH — *before* the exception
+// leaves run(), so the guarantee does not depend on the App being destroyed.
+// (It cannot: an exception escaping a bare `main` calls std::terminate without
+// unwinding, and no destructor runs at all.) run() does not swallow it — the
+// exception continues on, and if nothing catches it the process still dies,
+// just on a terminal you can read.
 //
 // Modal overlays (see docs/modal-overlays.md): push_overlay() puts a widget on
 // a stack that draws AFTER on_render and captures ALL input. An overlay is a
@@ -67,8 +75,15 @@ class App {
   App(const App&) = delete;
   auto operator=(const App&) = delete;
 
-  // Enter raw mode + alt-screen, run the loop until quit(), restore. Returns
-  // the exit code. Probes capabilities and selects the driver first.
+  // Enter raw mode + alt-screen, run the loop until quit(), restore. Probes
+  // capabilities and selects the driver first. Returns 0 on a clean quit(), or
+  // 1 if setup failed (the reason goes to stderr).
+  //
+  // An exception from on_event/on_tick/on_render propagates out of here, after
+  // the terminal has been restored. It is deliberately not converted to a
+  // return code: an int has no room for it, and the library will not decide
+  // that your exception was meaningless. Catch it around run() if you want a
+  // diagnostic of your own — the terminal is already sane by then.
   auto run() -> int;
 
   // Signal the loop to exit after the current frame.
