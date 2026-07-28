@@ -142,8 +142,7 @@ TEST_CASE("Button: Enter fires callback", "[primitives][button]") {
   bool fired = false;
   b.on_activate([&] { fired = true; });
 
-  Event enter = KeyEvent{Key::Enter};
-  REQUIRE(b.on_event(enter));
+  REQUIRE(b.on_event(key(Key::Enter)));
   REQUIRE(fired);
 }
 
@@ -155,8 +154,7 @@ TEST_CASE("Button: Space fires callback", "[primitives][button]") {
   bool fired = false;
   b.on_activate([&] { fired = true; });
 
-  Event space = KeyEvent{Key::Char, U' '};
-  REQUIRE(b.on_event(space));
+  REQUIRE(b.on_event(ch(U' ')));
   REQUIRE(fired);
 }
 
@@ -168,8 +166,7 @@ TEST_CASE("Button: mouse click fires callback", "[primitives][button]") {
   bool fired = false;
   b.on_activate([&] { fired = true; });
 
-  Event click = MouseEvent{.x = 5, .y = 1, .pressed = true};
-  REQUIRE(b.on_event(click));
+  REQUIRE(b.on_event(press(5, 1)));
   REQUIRE(fired);
 }
 
@@ -181,8 +178,7 @@ TEST_CASE("Button: mouse click outside rect doesn't fire", "[primitives][button]
   bool fired = false;
   b.on_activate([&] { fired = true; });
 
-  Event click = MouseEvent{.x = 8, .y = 1, .pressed = true};
-  REQUIRE_FALSE(b.on_event(click));
+  REQUIRE_FALSE(b.on_event(press(8, 1)));
   REQUIRE_FALSE(fired);
 }
 
@@ -194,16 +190,12 @@ TEST_CASE("Button: right/middle click does not activate (#12)", "[primitives][bu
   bool fired = false;
   b.on_activate([&] { fired = true; });
 
-  // .button comes before .pressed in MouseEvent, so name everything past x/y.
-  Event right = MouseEvent{.x = 5, .y = 1, .button = 2, .pressed = true};
-  REQUIRE_FALSE(b.on_event(right));
-  Event middle = MouseEvent{.x = 5, .y = 1, .button = 1, .pressed = true};
-  REQUIRE_FALSE(b.on_event(middle));
+  REQUIRE_FALSE(b.on_event(press(5, 1, 2)));  // right
+  REQUIRE_FALSE(b.on_event(press(5, 1, 1)));  // middle
   REQUIRE_FALSE(fired);
 
   // Left still works.
-  Event left = MouseEvent{.x = 5, .y = 1, .button = 0, .pressed = true};
-  REQUIRE(b.on_event(left));
+  REQUIRE(b.on_event(press(5, 1, 0)));
   REQUIRE(fired);
 }
 

@@ -1038,11 +1038,7 @@ TEST_CASE("Select: hover over the open list moves the highlight",
   make_select(sel);
   REQUIRE(sel.on_event(key(Key::Enter)));
 
-  MouseEvent hover;
-  hover.x = 3;
-  hover.y = 3;
-  hover.button = -1;
-  REQUIRE(sel.on_event(Event{hover}));
+  REQUIRE(sel.on_event(motion(3, 3)));  // hover over the third option
   REQUIRE(sel.highlighted() == 2);
 }
 
