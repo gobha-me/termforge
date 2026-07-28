@@ -518,3 +518,61 @@ TEST_CASE("FilePicker: the path field is seeded with the start dir on first show
   REQUIRE(w.results.size() == 1);
   REQUIRE(fs::equivalent(*w.results[0], t.root));
 }
+
+// ── glyph family reaches the children (#72) ─────────────────────────────────
+
+TEST_CASE("FilePicker: BorderStyle::Ascii reaches the entry list and the error"
+          " dialog", "[filepicker][glyphs][failure]") {
+  // The picker owns two style-aware widgets the app has no handle on: the
+  // ListWidget it browses with, and the MessageDialog it reports an unreadable
+  // directory through. Neither took the dialog's style, so an Ascii-tier picker
+  // -- a bare TTY, the tier that must always work -- emitted the Unicode
+  // selection marker in its own file list and a Unicode border on the modal
+  // sitting on top of everything. Both are one forward each; without them
+  // nothing in this suite notices.
+  TempTree t;
+  t.file("alpha.txt");
+  t.file("beta.txt");
+
+  Screen screen{80, 30};
+  WiredPicker p{t.root};
+  p.picker.set_border_style(termforge::BorderStyle::Ascii);
+  p.show(screen);
+  p.picker.draw(screen);
+
+  for (int y = 0; y < screen.rows(); ++y) {
+    for (int x = 0; x < screen.cols(); ++x) {
+      INFO("cell " << x << "," << y);
+      REQUIRE(all_seven_bit(screen.at(x, y).text));
+    }
+  }
+
+  // The selection is still *stated* -- 7-bit, but present. Without #72 the
+  // sweep above would pass on a list whose selected row is indistinguishable.
+  bool marked = false;
+  for (int y = 0; y < screen.rows(); ++y)
+    for (int x = 0; x < screen.cols(); ++x)
+      if (screen.at(x, y).text == ">") marked = true;
+  REQUIRE(marked);
+
+  // Now the error dialog, which is the other widget the app cannot reach.
+  // Same trick as the failure cases above: a regular file passed as a
+  // directory raises ENOTDIR for every user, root included.
+  const fs::path not_a_dir = t.file("gamma.txt");
+  p.picker.on_event(key(Key::Tab, 0, /*shift=*/true));  // list -> path field
+  for (std::size_t i = 0; i < t.root.string().size(); ++i)
+    p.picker.on_event(key(Key::Backspace));
+  type(p.picker, not_a_dir.string() + "/");
+  p.picker.on_event(key(Key::Enter));
+  REQUIRE(p.host.overlay_count() == 2);  // the error is up, on top
+
+  Screen over{80, 30};
+  p.picker.draw(over);
+  p.host.top_overlay()->draw(over);
+  for (int y = 0; y < over.rows(); ++y) {
+    for (int x = 0; x < over.cols(); ++x) {
+      INFO("error-overlay cell " << x << "," << y);
+      REQUIRE(all_seven_bit(over.at(x, y).text));
+    }
+  }
+}
