@@ -32,7 +32,7 @@
 #include <algorithm>
 #include <string>
 
-#include "termforge/core/screen.hpp"
+#include "termforge/core/screen.hpp"  // also pulls in detail/width.hpp
 #include "termforge/widgets/detail/width.hpp"
 #include "termforge/widgets/widget.hpp"
 
@@ -85,6 +85,27 @@ auto draw_dropdown_rows(Screen& screen, Rect dr, int count, int highlight,
   const int vi = m.y - dr.y;
   row = (vi >= 0 && vi < dr.h && vi != current) ? vi : current;
   return true;
+}
+
+// Rows of a dropdown that actually fit on screen: item_count, capped by the
+// space below `anchor_bottom_exclusive` (the screen row the dropdown starts
+// on -- rect().y + rect().h for Select, rect().y + 1 for MenuBar). screen_rows
+// <= 0 means "no frame painted yet": unclamped, matching Select's original
+// m_screen_rows == 0 memo (#48 item 3).
+//
+// This is the #48 item 3 clamp lifted into the skeleton (#53): the fix first
+// landed in Select alone, and MenuBar's copy kept its rows arrow-reachable
+// and Enter-committable off-screen -- the exact "fix lands in one dropdown,
+// not the other" drift (#38's pattern) this header exists to end. Both
+// widgets feed their rect through here so a row that was never painted is
+// unreachable in EITHER, and the next dropdown inherits it.
+[[nodiscard]] inline auto dropdown_visible_rows(int item_count,
+                                                int anchor_bottom_exclusive,
+                                                int screen_rows) noexcept
+    -> int {
+  if (screen_rows <= 0) return item_count;
+  return std::max(0,
+                  std::min(item_count, screen_rows - anchor_bottom_exclusive));
 }
 
 }  // namespace termforge::detail

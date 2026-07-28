@@ -29,6 +29,7 @@ using termforge::KeyEvent;
 using termforge::Label;
 using termforge::Menu;
 using termforge::MenuBar;
+using termforge::Menu;
 using termforge::MenuItem;
 using termforge::MouseEvent;
 using termforge::ProgressBar;
@@ -928,6 +929,58 @@ TEST_CASE("MenuBar: Down/Up navigate dropdown items", "[primitives][menu]") {
   mb.on_event(down);  // select "Copy"
   mb.on_event(enter); // fire
   REQUIRE(selected_idx == 1);
+}
+
+TEST_CASE("MenuBar: off-screen dropdown rows are unreachable and uncommittable (#53)",
+          "[primitives][menu][failure]") {
+  // #48 item 3 fixed the invisible-but-committable class in Select, but the
+  // #42 item 2 skeleton left geometry per-widget and MenuBar kept sizing its
+  // dropdown to items.size() with no screen clamp: arrows parked the
+  // selection on rows that were never painted, and Enter fired the invisible
+  // item's action.
+  Screen s{40, 6};
+  MenuBar mb;
+  mb.set_geometry({0, 0, 40, 1});
+  int fired = -1;
+  Menu big{"File", {}};
+  for (int i = 0; i < 20; ++i)
+    big.items.push_back({"item" + std::to_string(i), [&, i] { fired = i; }});
+  mb.add_menu(std::move(big));
+
+  Event enter = KeyEvent{Key::Enter};
+  mb.on_event(enter);  // open; selection starts on row 0
+  mb.draw(s);          // a frame paints (and memoizes the screen height)
+
+  // Only rows 1..5 fit under a bar on row 0 of a 6-row screen: 5 visible.
+  // Row 5 (the last that fits) holds item4 (MenuBar's label_pad is 2); a
+  // 20-item unclamped menu would have painted through row 20+.
+  REQUIRE(s.at(2, 5).text == "i");  // item4 on the last visible row
+
+  // Hammering Down must clamp to the last VISIBLE row (index 4), not item 19.
+  Event down = KeyEvent{Key::Down};
+  for (int i = 0; i < 25; ++i) mb.on_event(down);
+  mb.on_event(enter);
+  REQUIRE(fired == 4);
+}
+
+TEST_CASE("MenuBar: a menu opened before any frame cannot commit off-screen (#53)",
+          "[primitives][menu][failure]") {
+  // m_screen_rows == 0 (no draw yet) is the UNCLAMPED memo: all items are
+  // reachable, matching Select's pre-frame behavior. Once a 6-row frame has
+  // painted, the clamp applies (the case above) -- this pins the other leg.
+  MenuBar mb;
+  int fired = -1;
+  mb.add_menu({"File", {{"a", [&] { fired = 0; }},
+                        {"b", [&] { fired = 1; }},
+                        {"c", [&] { fired = 2; }}}});
+  mb.set_geometry({0, 0, 40, 1});
+  Event enter = KeyEvent{Key::Enter};
+  Event down = KeyEvent{Key::Down};
+  mb.on_event(enter);
+  mb.on_event(down);
+  mb.on_event(down);  // item 2 reachable pre-frame (unclamped)
+  mb.on_event(enter);
+  REQUIRE(fired == 2);
 }
 
 TEST_CASE("MenuBar: Left/Right onto an EMPTY menu opens no invisible dropdown (#12)", "[primitives][menu][failure]") {

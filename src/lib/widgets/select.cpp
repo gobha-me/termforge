@@ -56,8 +56,8 @@ auto Select::dropdown_rect() const -> Rect {
   // screen bottom once a frame has painted: rows that would fall off-screen
   // are unreachable and must not be keyboard-committable (#48 item 3). The
   // full height-cap/scroll story stays with #21.
-  int h = m_list.count();
-  if (m_screen_rows > 0) h = std::min(h, std::max(0, m_screen_rows - (r.y + r.h)));
+  const int h = detail::dropdown_visible_rows(m_list.count(), r.y + r.h,
+                                              m_screen_rows);
   return {r.x, r.y + r.h, r.w, h};
 }
 

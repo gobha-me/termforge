@@ -89,6 +89,7 @@ class MenuBar final : public Widget {
   int m_active{0};       // which menu is highlighted/open
   int m_selected{-1};    // selected item in the open dropdown (-1 = none)
   bool m_open{false};
+  int m_screen_rows{0};  // memoized from draw(); 0 = no frame yet (unclamped)
 
   Rgb m_fg{theme::kFg};
   Rgb m_bg{0x20, 0x20, 0x40};

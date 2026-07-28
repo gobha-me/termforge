@@ -52,8 +52,13 @@ auto MenuBar::dropdown_rect() const -> Rect {
   const auto& menu = m_menus[static_cast<std::size_t>(m_active)];
   // Copy, not reference: layout_menus() returns a temporary.
   const auto [mx, mw] = layout_menus()[static_cast<std::size_t>(m_active)];
-  return {mx, rect().y + 1, dropdown_width(menu, mw),
-          static_cast<int>(menu.items.size())};
+  // Clamp to the screen bottom exactly like Select (#48 item 3), via the
+  // SHARED skeleton helper so the two dropdowns can never drift again (#53):
+  // a row that was clipped out of the rect must not be arrow-reachable or
+  // Enter-committable.
+  const int h = detail::dropdown_visible_rows(
+      static_cast<int>(menu.items.size()), rect().y + 1, m_screen_rows);
+  return {mx, rect().y + 1, dropdown_width(menu, mw), h};
 }
 
 auto MenuBar::hit_test(int px, int py) const -> bool {
@@ -72,6 +77,7 @@ auto MenuBar::open_menu(int index) -> void {
 
 auto MenuBar::draw(Screen& screen) -> void {
   const Rect r = rect();
+  m_screen_rows = screen.rows();  // dropdown_rect() clamps to this (#48/3, #53)
   if (r.w <= 0 || r.h <= 0) {
     clear_dirty();
     return;
@@ -204,10 +210,20 @@ auto MenuBar::on_event(const Event& ev) -> bool {
   if (m_open) {
     auto& menu = m_menus[static_cast<std::size_t>(m_active)];
     const int item_count = static_cast<int>(menu.items.size());
+    // Bound navigation by what is actually on screen, not the item count:
+    // rows past the screen bottom are clipped out of the rect (#48 item 3),
+    // so arrows must not park the selection there and Enter commit an
+    // invisible item (#53).
+    const int visible = std::min(item_count, dropdown_rect().h);
 
     if (k->key == Key::Escape) {
       close_dropdown();
       return true;
+    }
+    if (visible <= 0) return true;  // nothing fits: only dismissal keys work
+    if (m_selected >= visible) {
+      m_selected = visible - 1;
+      mark_dirty();
     }
     if (k->key == Key::Up) {
       m_selected = std::max(0, m_selected - 1);
@@ -215,7 +231,7 @@ auto MenuBar::on_event(const Event& ev) -> bool {
       return true;
     }
     if (k->key == Key::Down) {
-      m_selected = std::min(item_count - 1, m_selected + 1);
+      m_selected = std::min(visible - 1, m_selected + 1);
       mark_dirty();
       return true;
     }
@@ -232,7 +248,7 @@ auto MenuBar::on_event(const Event& ev) -> bool {
       return true;
     }
     if (k->key == Key::Enter) {
-      if (m_selected >= 0 && m_selected < item_count) {
+      if (m_selected >= 0 && m_selected < visible) {
         // Detach the action before closing, exactly like the mouse path:
         // the action may call set_menus()/add_menu(), and a vector
         // reallocation would destroy the std::function mid-call.
