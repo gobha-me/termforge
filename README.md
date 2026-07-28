@@ -17,15 +17,17 @@ for tests.
 ## Status
 
 Core framework, KittyDriver, the widget system, and mouse routing are all
-landed and tested (412 test cases across 20 suites, gcc 13/14 + clang 19/20
+landed and tested (523 test cases across 25 suites, gcc 13/14 + clang 19/20
 green in CI, ASan/UBSan clean).
 
 Landed and verified:
 - **Core** — value types (`Cell`/`Image`, `Capabilities`, `Event`/`ErrorEvent`
   variant), `Screen` (cell grid + sanitize boundary), `Renderer` (diff-render
   with color pass-through), `Input` (escape state machine, UTF-8, SGR mouse),
-  `App` (event loop, SIGWINCH resize, pixel-region plumbing).
-- `Terminal` — raw-mode RAII (termios restore on destruction), capability
+  `App` (event loop, SIGWINCH resize, pixel-region plumbing, guarded teardown
+  on every exit path including an exception).
+- `Terminal` — raw-mode RAII (termios restore on destruction, or explicitly via
+  `leave_raw()` where no destructor is guaranteed to run), capability
   probing (Kitty query + DA1, Sixel attribute, truecolor env), driver
   selection, read-mode API, alt-screen lifecycle.
 - **KittyDriver** — Kitty graphics protocol: base64 + APC transmit, classic

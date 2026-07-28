@@ -7,10 +7,66 @@ which holds standing conventions, not state).
 ## Where we are (2026-07-28)
 
 **Core framework, KittyDriver, and the full widget system are landed and
-tested.** 26 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
+tested.** 27 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
 clean.
 
-**Latest release: `v0.1.9`** (2026-07-28) — **#61 (TG-04): F5–F12.** `Key`
+**Latest release: `v0.1.10`** (2026-07-28) — **#71: `run()` skips `teardown()`
+when a frame throws.**
+
+*What was wrong:* `app.hpp` promised "the terminal is always restored on exit
+… even on exception" and `run()` did not implement it — the loop was
+unguarded, so an exception out of `on_event`/`on_tick`/`on_render` skipped
+`teardown()`. `~App()` was the safety net, but a destructor only runs if the
+object is destroyed, and for the shape every example teaches (`MyApp app;
+return app.run();`) an uncaught exception calls `std::terminate` **without
+unwinding**. So nothing ran and the terminal was rescued by the `SIGABRT`
+entry in `kFatalSignals` — the crash backstop doing the documented path's job.
+Found by `term-game`, the second external consumer, which carries a
+`termgame::guarded_run` workaround with a deletion date pointing here.
+
+*The fix, in two halves.* The loop moved out of `run()` into `run_loop()` —
+`run()` cannot be called from the suite (`setup()` needs a tty), which is why
+this shipped untested for nine releases — and `run_loop()` guards it:
+`teardown()` then rethrow. **Rethrow, not swallow:** `run()` returns an `int`
+with no room for an application's exception, and mapping "anything thrown" to
+`1` is a policy the third consumer rediscovers painfully. A consumer's own
+`try`/`catch` still gets its exception, now with the terminal already sane.
+The second half is `Terminal::leave_raw()`: `teardown()` undid only
+`enter_screen()`, so the guard alone would have left termios raw for the
+backstop. It is now the exact inverse of `setup()` — alt-screen, cooked mode,
+SIGWINCH. Side effect worth naming: `run()` also returns cooked on the normal
+`quit()` path now. Every call site in the repo is `return app.run();`, so
+nothing observes it.
+
+*Empirically, under `script -e -qc` with a throwing `on_render`* — the two
+runs differ exactly where the claim lives:
+
+```
+before:  terminate called after throwing an instance of 'std::runtime_error'
+         what():  boom
+         ESC[?1002l…ESC[?1049l          <- backstop, after the diagnostic
+after:   ESC[?1002l…ESC[?1049l          <- teardown, before it
+         terminate called after throwing an instance of 'std::runtime_error'^M
+         what():  boom^M
+```
+
+The `^M` is the tell: the runtime prints that message *before* `abort()`, so a
+CR in it means cooked mode was already back — `leave_raw()`, not the signal
+handler. `stty -a` in the pty afterwards: `icrnl opost isig icanon echo`, all
+five restored. Exit stays `134` under both, and should: that is what an
+uncaught exception means. What changed is that it is now a truthful exit on a
+readable terminal rather than a wedge the crash handler caught.
+
+*Pinned by `test/25teardown`* (5 cases), which drives the real `run_loop()`
+headless through a new `test_run_guarded()` hook and reads `m_in_screen` — the
+state `teardown()` clears — as the witness. Confirmed red before the guard
+(`REQUIRE_FALSE( probe.test_in_screen() )` / `!true`). It also pins the halves
+that regress silently: `quit()` still exits 0 (a `teardown()` moved *into* the
+catch and dropped from the fallthrough passes the throw case and fails this
+one), the exception's type and message reach the caller unchanged, and the
+now-routine double teardown from `~App` stays clean.
+
+**Previous release: `v0.1.9`** (2026-07-28) — **#61 (TG-04): F5–F12.** `Key`
 stopped at `F4`, so every function key past the fourth was silently dropped: the
 CSI-tilde family (`ESC[<n>~`) was already fully parsed, modifiers included, but
 `map_tilde_key` stopped at `14` and `15~`–`24~` fell through to `Key::Unknown`.
@@ -23,7 +79,7 @@ pins them at `Unknown` so a future edit can't "complete" the table and shift
 F6–F12 by one key each. `examples/input.cpp`'s `key_name` is the repo's only
 exhaustive `switch (Key)`, so it grew to match (and is what the pty check reads).
 
-**Previous release: `v0.1.8`** (2026-07-28) — **#59 (TG-02): the `on_tick(dt)`
+**Before that: `v0.1.8`** (2026-07-28) — **#59 (TG-02): the `on_tick(dt)`
 update hook.** `App` now has a third override point, and simulation is
 separated from drawing.
 
@@ -447,15 +503,21 @@ harness).
 
 v0.1.8 shipped #59 (TG-02, `on_tick`), which closed the three-issue run
 #58 → #27 → #59 agreed at the top of the TG-xx batch; v0.1.9 then took the
-cheapest of what remained, #61 (F5–F12). With pacing, clean consumption, a tick
-hook and the full function-key row landed, `term-game` has everything it needs
-from the loop. The open queue, in rough priority order:
+cheapest of what remained, #61 (F5–F12); v0.1.10 jumped the queue for #71, a
+correctness bug against a documented guarantee. With pacing, clean consumption,
+a tick hook, the full function-key row and a loop that restores the terminal on
+every exit path, `term-game` has everything it needs from the loop — and can
+delete its `guarded_run` workaround. The open queue, in rough priority order:
 - **The rest of the TG-xx batch** — **#62** (Cell text attributes:
   bold/dim/underline/reverse), **#63** (Image sub-rect blit + sprite-sheet
   slicing), **#60** (kitty keyboard protocol: key release + repeat — it
   re-opens the same parser #61 just touched), **#64**
   (MapWidget — a **design doc** is the deliverable, and it is the last
   unchecked Epic 3 item, transitively blocking Epic 4.2 `game.cpp`).
+- **#69** (ProgressBar's indeterminate pulse animates per *frame*, not per
+  second) — the same bug class #59 retired one layer up, now one layer down.
+  Fixing it properly means deciding how time reaches a **widget**, which is a
+  public API call, not a one-line change.
 - **#35** (wheel vs arrow-key semantics) — **needs a user decision** (the
   proposed option 1: wheel scrolls the VIEW, not the selection, decoupling
   ListWidget's view offset from its selection). Everything else here is
