@@ -7,10 +7,69 @@ which holds standing conventions, not state).
 ## Where we are (2026-07-28)
 
 **Core framework, KittyDriver, and the full widget system are landed and
-tested.** 24 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
+tested.** 25 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
 clean.
 
-**Latest release: `v0.1.5`** (2026-07-28) — the **post-release review
+**Latest release: `v0.1.6`** (2026-07-28) — **#58 (TG-01): real-time frame
+pacing.** The loop's frame budget is now authoritative instead of advisory.
+
+*What was wrong:* `pump_input()` opened every frame with
+`set_read_timeout(1)` — that is `VTIME=1`, and VTIME has **decisecond**
+granularity, so the smallest non-zero blocking read termios can express is
+100 ms. `run()` then slept `m_frame_ms` **on top of** that read instead of
+sleeping the remainder. An idle frame therefore cost 100 + 33 ≈ 133 ms, and
+`set_frame_ms()` could only ever make the loop *slower*. Measured on
+`v0.1.5` in a pty: `set_frame_ms(33)` → **7.6 fps**, `(16)` → 8.6 fps,
+`(0)` → 10.0 fps — a hard 10 fps ceiling. Worse, the first read returned
+*immediately* when bytes were waiting, so the rate was a function of input
+activity: ~30 fps while a key was held, ~7.5 fps when idle, which reads as
+a speed change in anything time-based.
+
+*The fix:* new `Terminal::wait_readable(int timeout_ms)` — `poll()` on the
+tty fd, EINTR-safe against a deadline (SIGWINCH lands there constantly and
+must neither restart nor abandon the wait). `setup()` now sets
+`VMIN=0/VTIME=0` **once** and the loop never touches termios again, so
+`pump_input()` never blocks and the 4–9 `tcgetattr`/`tcsetattr` round-trips
+per frame are gone. The loop body moved into `frame_step()`, which ends in a
+single `wait_frame(frame_start)`: an absolute deadline measured from frame
+*start*, so render time comes out of the budget rather than adding to it.
+Input arriving mid-wait is **absorbed but not dispatched** — it does not cut
+the frame short, which is what removes the input-activity dependence.
+`std::this_thread::sleep_for` is gone from the library entirely. Same pty
+measurement after: `(33)` → **30.7 fps**, `(16)` → **64.3 fps**, `(0)` →
+6390 fps.
+
+*Lone-ESC grace, rebuilt:* the old blocking 100 ms grace read is gone. A
+frame holding an incomplete escape sequence instead defers the flush and
+extends its own deadline to `kEscGraceMs` (50 ms) — the one sanctioned
+budget overrun, and only on a frame where an ESC is actually pending.
+`m_esc_waited` guarantees the next frame commits a genuine lone Escape
+rather than deferring forever.
+
+*Behavior change worth knowing:* a keypress landing mid-wait now dispatches
+at the top of the next frame, so input→render latency is bounded by one
+frame budget rather than being ~immediate-then-paced. At 16–33 ms that is
+imperceptible, and it is strictly better than `v0.1.5` at every budget
+(which paid 100 ms + `m_frame_ms` regardless). Apps wanting tighter input
+latency lower `set_frame_ms`.
+
+*New test shape:* **test/23pacing** is the first suite that runs App's real
+frame body. `test_run_frames()` skips only the tty-dependent half of
+`setup()`, and three protected seams (`now_steady`, `wait_readable`,
+`read_available`) let a probe drive the loop over a fake clock and fake fd —
+so cadence assertions are exact and the suite never sleeps. This is a direct
+dent in the test-shape gap flagged after #45: the suite finally exercises
+event→render→wait sequencing rather than only compilation breadth.
+
+*Rider (not #58):* `.clangd` was missing `-I src/lib` and pinned
+`-std=c++20` while the target builds `cxx_std_23`. Both poison the AST in
+the editor — `#include "detail/wrap.hpp"` was a **fatal** "file not found"
+that truncated the TU, and `std::expected` in the public headers failed to
+parse, so `Terminal`, `App` and every driver read as undefined. Fixed to
+mirror `src/lib/CMakeLists.txt`. This was pre-existing, not caused by any
+recent change.
+
+Prior release: `v0.1.5` (2026-07-28) — the **post-release review
 bundle (#51–#56)**. The v0.1.4 review found two regressions the #42
 refactor introduced and a tail of leftovers: **#51** restored the
 snapshot-before-close ordering at all six dialog finish paths (the #42
@@ -344,7 +403,15 @@ items 1–4 and 6. Before starting anything, run `venice memory tasks` and
 mid-flight or unpushed; coordinate via the issue tracker (see the
 `kimi-k3-coagent` memory) so two agents don't collide.
 
-**Owed manual checks (sandbox has no tty):** **#19**'s three controls were driven
+**Owed manual checks (sandbox has no tty):** **#58** was driven end to end in
+a pty and the frame rate measured before/after at four budgets (numbers above),
+so the pacing itself is verified — what is owed is a **real-terminal** feel
+pass in kitty: `build/examples/termforge_example_widgets` should respond
+without the sluggishness the 133 ms idle frame caused, and holding a key must
+not visibly change the animation rate of anything on screen. Also worth
+confirming Escape still cancels a dialog crisply (the grace window moved from a
+blocking 100 ms read to a 50 ms deferred flush) and that an arrow key never
+registers as an Escape over a slow SSH link. **#19**'s three controls were driven
 end to end in a pty (`examples/forms.cpp`): Space toggles a checkbox, arrows move
 the radio and fire, the Select opens below its box / commits / reopens, Tab while
 open both closes it and moves focus in one press leaving no trail, and F1 cycles

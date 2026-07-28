@@ -1,6 +1,15 @@
 ---
 CompileFlags:
-  Add: [-xc++, -Wall, -Wnarrowing, -I, include, -std=c++20]
+  # Must mirror src/lib/CMakeLists.txt or the AST dies:
+  #   -I src/lib  — library sources include "detail/wrap.hpp", "detail/width.hpp"
+  #                 etc. via the target's PRIVATE include dir. Without it clangd
+  #                 hits a *fatal* "file not found" and truncates the TU there,
+  #                 so everything below the include has no AST at all.
+  #   -std=c++23  — the target sets cxx_std_23 and the public headers use
+  #                 std::expected. Under c++20 that is "no template named
+  #                 'expected'", which breaks Terminal, App and every driver,
+  #                 and every use of them then reads as an undefined symbol.
+  Add: [-xc++, -Wall, -Wnarrowing, -I, include, -I, src/lib, -std=c++23]
   Compiler: clang++
 Index:
   StandardLibrary: Yes
