@@ -24,7 +24,7 @@ if [ -n "${CXX_COMPILER}" ]; then
   ARGS+=(-DCMAKE_CXX_COMPILER="${CXX_COMPILER}")
 fi
 
-jobs() { command -v nproc >/dev/null 2>&1 && nproc || echo 2; }
+njobs() { command -v nproc >/dev/null 2>&1 && nproc || echo 2; }
 
 # $1 = consumer build tree. Only meaningful in subdir mode (in install mode the
 # consumer tree contains nothing but `consumer`).
@@ -50,7 +50,7 @@ assert_lib_only() {
 case "${MODE}" in
   subdir)
     cmake -S "${HERE}" -B "${WORK}/build" "${ARGS[@]}" -DTERMFORGE_SOURCE_DIR="${ROOT}"
-    cmake --build "${WORK}/build" -j"$(jobs)"
+    cmake --build "${WORK}/build" -j"$(njobs)"
     assert_lib_only "${WORK}/build"
     "${WORK}/build/consumer"
     ;;
@@ -60,7 +60,7 @@ case "${MODE}" in
     cmake -S "${ROOT}" -B "${WORK}/tf" "${ARGS[@]}" \
       -DCMAKE_INSTALL_PREFIX="${WORK}/prefix" \
       -Dtermforge_TESTS=OFF -Dtermforge_EXAMPLES=OFF -Dtermforge_BIN=OFF
-    cmake --build "${WORK}/tf" -j"$(jobs)"
+    cmake --build "${WORK}/tf" -j"$(njobs)"
     cmake --install "${WORK}/tf"
 
     if ! find "${WORK}/prefix" -name 'termforgeConfig.cmake' | grep -q .; then
@@ -79,7 +79,7 @@ case "${MODE}" in
 
     cmake -S "${HERE}" -B "${WORK}/build" "${ARGS[@]}" \
       -DCMAKE_PREFIX_PATH="${WORK}/prefix"
-    cmake --build "${WORK}/build" -j"$(jobs)"
+    cmake --build "${WORK}/build" -j"$(njobs)"
     "${WORK}/build/consumer"
     ;;
 
