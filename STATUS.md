@@ -4,13 +4,33 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-07-27)
+## Where we are (2026-07-28)
 
 **Core framework, KittyDriver, and the full widget system are landed and
-tested.** 23 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
+tested.** 24 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
 clean.
 
-**Latest release: `v0.1.4`** (2026-07-27) — the **#42 cleanup bundle**:
+**Latest release: `v0.1.5`** (2026-07-28) — the **post-release review
+bundle (#51–#56)**. The v0.1.4 review found two regressions the #42
+refactor introduced and a tail of leftovers: **#51** restored the
+snapshot-before-close ordering at all six dialog finish paths (the #42
+item 1 substitution flipped it — an on_close re-arm hijacked the answer,
+a heap-destroying on_close dangled); **#52** guards `MenuBar::draw()`'s
+dropdown block on `dropdown_open()` (an empty bar SEGV'd every frame);
+**#53** moved the #48 item 3 screen clamp into the SHARED
+`detail/dropdown.hpp` skeleton as `dropdown_visible_rows()` so MenuBar
+(and the next dropdown) inherit it — a 20-item menu on a 6-row screen
+fired item 19, now item 4; **#54** made the public `detail/dropdown.hpp`
+self-sufficient (no private `detail/width.hpp`) and added **test/22headers**
+compiling all 35 public headers standalone with only the public include
+path; **#55** aligned `motion()` to the decoder's `button=3` with a
+round-trip test pinning builder ≡ decoder; **#56** swept the 9-item
+cleanup tail (theme stragglers + `kDim`, Select sentinel, MenuBar layout
+reuse, invoke_copy void-only, OptionsList trims, `m_open` derived,
+TableWidget↔OptionsList divergence documented). Plus a rider:
+`Select::add_option` invalidates the box-line cache.
+
+Prior releases: `v0.1.4` (2026-07-27) — the **#42 cleanup bundle**:
 `detail::invoke_copy` replaces ~19 hand-rolled copy-before-invoke sites;
 `detail::OptionsList` dedups the ListWidget/RadioGroup/Select
 options+selection API; `detail/dropdown.hpp` holds the Select/MenuBar
@@ -18,7 +38,7 @@ dropdown skeleton once (the #38 bug class); Select's `m_open` is derived
 from `m_highlight`; MenuBar `was_open` dead code gone; Checkbox/Select
 cache their composed draw lines; `widgets/theme.hpp` names the default
 palette; `test/support/events.hpp` shares the event builders. Pure
-refactor — no behavior change. Prior releases: `v0.1.3` (review batch
+refactor — no behavior change. `v0.1.3` (review batch
 #45–#48: FilePicker `on_show`, dialog dropdown routing), `v0.1.2`
 (#36–#41 form-control review batch), `v0.1.1` (#23 FilePickerDialog),
 `v0.1.0` (#12 click-gating batch), `v0.0.8` (#19 form controls + #32).
@@ -269,13 +289,32 @@ harness).
 
 ## Next session — start here
 
+v0.1.5 shipped the post-release review bundle (#51–#56). The open queue,
+in rough priority order:
+- **#35** (wheel vs arrow-key semantics) — **needs a user decision** (the
+  proposed option 1: wheel scrolls the VIEW, not the selection, decoupling
+  ListWidget's view offset from its selection). Everything else here is
+  mechanical; this one is a behavior call.
+- **#22** (TabBar) — small, independent.
+- **#21** (shared scrollbar) — small; the issue that decides whether
+  `ProgressBar`'s `█`/`─` and `WaveformWidget`'s half-blocks join
+  `glyphs.hpp` (see below). Gives ListWidget's undocumented right-margin
+  column an actual job.
+- **TF-01..05 (#24–#28)** — TextBox word-wrap, styled spans, Composer
+  widget, CMake consumption (the 22headers standalone-compile pin is a
+  down payment on #27), App post_event.
+- **#16** (forge-top demo) — the larger dogfooding epic.
+
+Older audit items still open: #53 (kitty probe), #55
+(SIGTERM/tty/SS3/modifiers/paste), #56 (dirty()/clear contract), #57
+(display_width in widgets) — re-check those numbers against `gh issue
+list` before starting; the gh numbering shifted after the v0.1.4 review
+filed new issues.
+
 With #17/#18/#19/#20 landed, the widget-gap wave has all three shared pieces
 (the focus ring, the overlay stack, the glyph source) **and** the form controls,
 so the rest is composition:
-- **#23** (FilePickerDialog) — the obvious next one: `Dialog` + `ListWidget` +
-  the overlay stack, and the first real test of whether the `Dialog` base
-  carries a content-heavy subclass or needs a scrollable-content hook. #19's
-  `Select` is the closest precedent for the "who closes the popup" question.
+- **#23** (FilePickerDialog) — LANDED (v0.1.1).
 - **#21** (shared scrollbar) — small, and it is the issue that decides whether
   `ProgressBar`'s `█`/`─` and `WaveformWidget`'s half-blocks join `glyphs.hpp`.
   **Add its table to `glyphs.hpp` keyed off the same `BorderStyle`** — the
