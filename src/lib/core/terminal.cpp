@@ -37,10 +37,7 @@ struct Terminal::Impl {
 
 Terminal::Terminal() : m_impl(std::make_unique<Impl>()) {}
 Terminal::~Terminal() {
-  if (m_raw && m_impl->saved_valid) {
-    tcsetattr(m_impl->tty_fd, TCSAFLUSH, &m_impl->saved);
-    m_raw = false;
-  }
+  leave_raw();  // no-op if teardown() or an earlier call already did it
   // Disarm the signal-restore path: this Terminal's saved state is gone, so a
   // later fatal signal must not tcsetattr() with it. Return the handlers we
   // installed to their default disposition.
@@ -93,7 +90,13 @@ auto Terminal::enter_raw() -> std::expected<void, ErrorEvent> {
 
 auto Terminal::leave_raw() -> void {
   if (!m_raw || !m_impl->saved_valid) return;
-  tcsetattr(m_impl->tty_fd, TCSAFLUSH, &m_impl->saved);
+  // Failure leaves everything as it was, deliberately: still m_raw, still
+  // armed. There is nowhere to report it — teardown() and ~Terminal have no
+  // event loop left to raise an ErrorEvent into — so the only useful response
+  // is to keep every other restore path live. Clearing the flags on a failed
+  // tcsetattr would disarm the signal backstop *and* make ~Terminal skip its
+  // own attempt, turning one failed syscall into a wedged terminal.
+  if (tcsetattr(m_impl->tty_fd, TCSAFLUSH, &m_impl->saved) != 0) return;
   m_raw = false;
   // Disarm the termios half only: cooked mode is already back, so the signal
   // handler must not tcsetattr() the saved state a second time. The handlers
@@ -275,7 +278,11 @@ auto Terminal::leave_screen() -> void {
   // Undo enter_screen in reverse: disable paste/mouse tracking, reset attrs,
   // show cursor, main screen. Byte-for-byte the detail::kLeaveSequence constant.
   detail::restore_state().in_screen = 0;
-  emit(m_impl->out_fd, std::string{detail::kLeaveSequence}.c_str());
+  // .data(), not a std::string copy: kLeaveSequence is a view over a string
+  // literal, so it is already NUL-terminated — and this runs from teardown(),
+  // which ~App calls and must therefore never throw. The copy allocated, which
+  // on a bad_alloc unwind meant std::terminate with the alt-screen still up.
+  emit(m_impl->out_fd, detail::kLeaveSequence.data());
 }
 
 auto Terminal::is_console_vt() const noexcept -> bool {

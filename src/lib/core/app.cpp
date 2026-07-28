@@ -30,11 +30,7 @@ void on_winch(int) {
 
 App::App() = default;
 
-App::~App() {
-  teardown();
-  App* expected = this;
-  g_active.compare_exchange_strong(expected, nullptr, std::memory_order_relaxed);
-}
+App::~App() { teardown(); }
 
 auto App::setup() -> std::expected<void, ErrorEvent> {
   if (auto r = m_term.enter_raw(); !r) return r;
@@ -53,6 +49,7 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
   m_in_screen = true;
   g_active.store(this, std::memory_order_relaxed);
   std::signal(SIGWINCH, on_winch);
+  m_winch_hooked = true;
   // Reads never block, ever: VMIN=0/VTIME=0 once, here, and the loop never
   // touches termios again. All waiting is done by wait_readable(), which has
   // millisecond granularity where VTIME has only deciseconds. (The old loop
@@ -68,19 +65,41 @@ auto App::teardown() -> void {
     m_in_screen = false;
   }
   m_term.leave_raw();
-  std::signal(SIGWINCH, SIG_DFL);
+  // Gated, because run()'s setup-failure path reaches teardown() on a run
+  // where setup() never got this far: an unconditional reset would clobber a
+  // SIGWINCH disposition an embedding program owns and we never replaced.
+  if (m_winch_hooked) {
+    std::signal(SIGWINCH, SIG_DFL);
+    m_winch_hooked = false;
+  }
+  // Last, and here rather than only in ~App: the handler is unhooked above, so
+  // leaving a process-wide pointer to this App behind would serve nothing and
+  // outlive teardown on the one path (an exception escaping main) where ~App
+  // is never going to run.
+  App* expected = this;
+  g_active.compare_exchange_strong(expected, nullptr, std::memory_order_relaxed);
 }
 
 auto App::run() -> int {
-  if (auto r = setup(); !r) {
-    // Undo whatever setup() got through before it failed. A no-op on both of
-    // today's failure paths — enter_raw() fails before anything is armed, and
-    // driver->init() fails before enter_screen() — but teardown() is
-    // idempotent, and the alternative is that a failure point added after
-    // enter_screen() someday leaks the alt-screen with nothing to catch it.
+  // setup() is guarded too, not just the loop: it enters raw mode first and
+  // *then* allocates — the capability probe builds strings, and the Screen is
+  // sized from whatever TIOCGWINSZ reports. A bad_alloc between those two
+  // points would escape run() with the terminal raw, which is this issue
+  // exactly, one function earlier.
+  try {
+    if (auto r = setup(); !r) {
+      // Undo whatever setup() got through before it failed. A no-op on both of
+      // today's failure paths — enter_raw() fails before anything is armed, and
+      // driver->init() fails before enter_screen() — but teardown() is
+      // idempotent, and the alternative is that a failure point added after
+      // enter_screen() someday leaks the alt-screen with nothing to catch it.
+      teardown();
+      std::fprintf(stderr, "termforge: setup failed: %s\n", r.error().message.c_str());
+      return 1;
+    }
+  } catch (...) {
     teardown();
-    std::fprintf(stderr, "termforge: setup failed: %s\n", r.error().message.c_str());
-    return 1;
+    throw;
   }
   m_running = true;
   // The tick clock starts at the first frame, not at construction and not at
@@ -269,12 +288,17 @@ auto App::test_run_frames(int frames, int cols, int rows, std::string* sink) -> 
 
 auto App::test_run_guarded(int cols, int rows, std::string* sink) -> int {
   test_wire_headless(cols, rows, sink);
-  // Stand in for the one piece of setup() that teardown() undoes. leave_screen()
-  // writes through Terminal::emit(), which returns early on out_fd < 0 — and
-  // with neither stream a tty under ctest, out_fd *is* -1. So this flag is the
-  // whole of the alt-screen state here, and watching it go back to false is how
-  // a test sees teardown() run without a terminal to look at.
-  m_in_screen = true;
+  // Stand in for the piece of setup() that teardown() undoes, so teardown()
+  // has real work to do and a test can see it happen.
+  //
+  // Deliberately NOT m_in_screen: teardown() would answer that by calling
+  // leave_screen(), which writes to whatever fd the Terminal found. Under
+  // ctest that fd is -1 and nothing is emitted, but a developer running this
+  // binary straight from a shell would get the alt-screen leave sequence
+  // spat into a terminal that was never in the alt-screen — a test hook with
+  // the same failure mode as the bug it is here to pin. The SIGWINCH hook
+  // costs one process-wide disposition and writes nothing anywhere.
+  m_winch_hooked = true;
   m_running = true;
   return run_loop();
 }

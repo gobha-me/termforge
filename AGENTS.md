@@ -37,7 +37,8 @@ file is the tactical version.
   takes**: a destructor is not a guarantee (an exception escaping `main`
   terminates without unwinding), so `App::run_loop()` guards its loop and
   `App::teardown()` is the exact inverse of `App::setup()` — alt-screen, cooked
-  mode, SIGWINCH. The fatal-signal backstop is for crashes, not for exceptions;
+  mode, SIGWINCH, the resize registration. The fatal-signal backstop is for
+  crashes, not for exceptions;
   if it is what restores your terminal, that is the bug (#71).
 
 ## Protocol priority (driver selection)
