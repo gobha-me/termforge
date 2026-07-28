@@ -1,0 +1,18 @@
+# Package config for TermForge. Consumed as:
+#
+#   find_package(termforge CONFIG REQUIRED)
+#   target_link_libraries(my_app PRIVATE termforge::lib)
+#
+# The shipped library is stdlib + POSIX only, so there is nothing to resolve
+# here. If a third-party dependency is ever added to src/lib, it MUST get an
+#   include(CMakeFindDependencyMacro)
+#   find_dependency(<pkg>)
+# above the targets include below -- otherwise every installed consumer breaks
+# at configure time with an unresolved imported target, and the in-tree build
+# keeps working, so CI would only catch it in the consumption job.
+
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/@PROJECT_NAME@Targets.cmake")
+
+check_required_components(@PROJECT_NAME@)

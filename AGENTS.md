@@ -13,6 +13,12 @@ file is the tactical version.
 - **Catch2 v3** for tests (`FetchContent`). **Stdlib-only at runtime** — no
   third-party deps in the shipped library.
 - **Compiled static library** (`src/lib/`), not header-only.
+- **`project(termforge)` is hardcoded**, not derived from the directory name,
+  and `termforge_{TESTS,EXAMPLES,BIN,INSTALL}` all default to
+  `PROJECT_IS_TOP_LEVEL` — a consumer gets `termforge::lib` and nothing else.
+  Never spell `CMAKE_SOURCE_DIR` in termforge's own paths (it is the
+  *consumer's* root under `add_subdirectory`); use `PROJECT_SOURCE_DIR`.
+  `tools/consume/run.sh` is the acceptance test for both consumption paths.
 
 ## Hard rules (project-specific)
 

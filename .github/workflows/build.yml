@@ -102,6 +102,46 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
 
+  consume:
+    # Issue #27's acceptance criteria: a minimal external project builds
+    # against termforge both ways, on GCC and Clang, building only the library.
+    # No other job exercises install/export or subproject consumption, so a
+    # regression here is invisible to the rest of the matrix.
+    name: Consume (${{ matrix.cc.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        cc:
+          - { name: GCC 14,   kind: gcc,   version: 14, cxx: g++-14 }
+          - { name: Clang 20, kind: clang, version: 20, cxx: clang++-20 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GCC ${{ matrix.cc.version }}
+        if: matrix.cc.kind == 'gcc'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-${{ matrix.cc.version }}
+
+      - name: Install Clang ${{ matrix.cc.version }}
+        if: matrix.cc.kind == 'clang'
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh ${{ matrix.cc.version }}
+
+      # Zero extra options: proves bin/examples/tests default OFF off top level
+      # and that no Catch2 is cloned into a consumer's tree.
+      - name: add_subdirectory (zero options)
+        run: tools/consume/run.sh subdir ${{ matrix.cc.cxx }}
+
+      # Proves the exported target is spelled termforge::lib in this path too,
+      # and that the headers land under ${prefix}/include/termforge.
+      - name: install + find_package
+        run: tools/consume/run.sh install ${{ matrix.cc.cxx }}
+
   fedora:
     name: GCC (Fedora latest)
     runs-on: ubuntu-latest
