@@ -303,6 +303,53 @@ TEST_CASE("Input: SS3 F1–F4 decode", "[input][ss3]") {
   REQUIRE(first_key(f4).key == Key::F4);
 }
 
+// ── CSI-tilde function keys F5–F12 — issue #61 ────────────────────────────
+
+TEST_CASE("Input: CSI-tilde F1–F12 decode", "[input][fkeys]") {
+  Input in;
+  const struct { const char* seq; Key key; } cases[] = {
+    {"\033[11~", Key::F1},  {"\033[12~", Key::F2},  {"\033[13~", Key::F3},
+    {"\033[14~", Key::F4},  {"\033[15~", Key::F5},  {"\033[17~", Key::F6},
+    {"\033[18~", Key::F7},  {"\033[19~", Key::F8},  {"\033[20~", Key::F9},
+    {"\033[21~", Key::F10}, {"\033[23~", Key::F11}, {"\033[24~", Key::F12},
+  };
+  for (const auto& c : cases) {
+    auto ev = in.decode(c.seq);
+    REQUIRE(ev.size() == 1);
+    REQUIRE(first_key(ev).key == c.key);
+  }
+}
+
+TEST_CASE("Input: the 16 and 22 tilde gaps stay Unknown", "[input][fkeys]") {
+  // 16 and 22 are historical holes in the xterm numbering, not typos. If a
+  // future edit "completes" the table, F6–F12 all shift by one key.
+  Input in;
+  auto sixteen = in.decode("\033[16~");
+  REQUIRE(first_key(sixteen).key == Key::Unknown);
+  auto twentytwo = in.decode("\033[22~");
+  REQUIRE(first_key(twentytwo).key == Key::Unknown);
+}
+
+TEST_CASE("Input: Ctrl+F5 via ESC[15;5~ sets ctrl", "[input][fkeys][mods]") {
+  Input in;
+  auto ev = in.decode("\033[15;5~");
+  auto k = first_key(ev);
+  REQUIRE(k.key == Key::F5);
+  REQUIRE(k.ctrl);
+  REQUIRE_FALSE(k.alt);
+  REQUIRE_FALSE(k.shift);
+}
+
+TEST_CASE("Input: Shift+F12 via ESC[24;2~ sets shift", "[input][fkeys][mods]") {
+  Input in;
+  auto ev = in.decode("\033[24;2~");
+  auto k = first_key(ev);
+  REQUIRE(k.key == Key::F12);
+  REQUIRE(k.shift);
+  REQUIRE_FALSE(k.ctrl);
+  REQUIRE_FALSE(k.alt);
+}
+
 // ── key modifiers (CSI ;<mod>) — issue #13.4 ──────────────────────────────
 
 TEST_CASE("Input: Ctrl+Right via ESC[1;5C sets ctrl", "[input][mods]") {

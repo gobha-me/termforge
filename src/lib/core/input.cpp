@@ -41,6 +41,16 @@ auto map_tilde_key(int n) -> Key {
     case 12: return Key::F2;
     case 13: return Key::F3;
     case 14: return Key::F4;
+    // F5–F12 skip 16 and 22: those numbers are historical DEC/xterm holes, not
+    // typos. Leave them Unknown — the table is deliberately not contiguous.
+    case 15: return Key::F5;
+    case 17: return Key::F6;
+    case 18: return Key::F7;
+    case 19: return Key::F8;
+    case 20: return Key::F9;
+    case 21: return Key::F10;
+    case 23: return Key::F11;
+    case 24: return Key::F12;
     default: return Key::Unknown;
   }
 }
