@@ -10,7 +10,29 @@ which holds standing conventions, not state).
 tested.** 27 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
 clean.
 
-**Latest release: `v0.1.13`** (2026-07-29) — **#76, closed: the third site.
+**Latest release: `v0.1.14`** (2026-07-29) — **#73, closed: `App::running()`
+accessor so tests observe `quit()` without counting renders.**
+
+*What was wrong:* the only way to assert "this key quits" headlessly was to
+count `on_render` calls in a subclass and reason backwards through
+`pump_input`'s escape grace window. Every app that tested the quit path
+reimplemented the same inference — term-game's Shell added a
+`quit_requested()` flag purely as an observable, duplicating state the
+framework already had but would not show.
+
+*The fix:* one accessor, `[[nodiscard]] auto running() const noexcept ->
+bool`, reading the flag directly. No behavior change to `test_run_frames` —
+the re-arm on entry is unchanged because a `quit()` issued *during* a frame
+is caught by the loop's own `m_running` check after each `frame_step()`, so
+`running()` is `false` when the call returns. The re-arm only erases a
+`quit()` issued *before* the call, which the issue's acceptance criterion
+does not require.
+
+*Pinned in `test/25teardown`* with two cases: quit during a frame
+(`running()` false, `renders == quit_after`), and no quit (`running()` true,
+`renders == frames run`).
+
+**Previous release: `v0.1.13`** (2026-07-29) — **#76, closed: the third site.
 `TableWidget`'s selection was invisible on the fallback tier.**
 
 *What was wrong:* the last of the three sites #76 names, deliberately left
@@ -727,12 +749,15 @@ harness).
 
 ## Next session — start here
 
-v0.1.8 shipped #59 (TG-02, `on_tick`), which closed the three-issue run
+v0.1.14 shipped #73 (`App::running()`), closing the testability gap that
+made every app reimplement quit-detection. Before that, v0.1.8 shipped #59
+(TG-02, `on_tick`), which closed the three-issue run
 #58 → #27 → #59 agreed at the top of the TG-xx batch; v0.1.9 then took the
 cheapest of what remained, #61 (F5–F12); v0.1.10 jumped the queue for #71, a
 correctness bug against a documented guarantee; v0.1.11 did the same for #72,
-a widget unusable on the tier we promise always works, and v0.1.12 carried that
-fix to the dropdowns (#76), where reviewing #72 found the identical bug. With pacing, clean
+a widget unusable on the tier we promise always works, and v0.1.12/v0.1.13
+carried that fix to the dropdowns and TableWidget (#76), where reviewing #72
+found the identical bug. With pacing, clean
 consumption, a tick hook, the full function-key row and a loop that restores the
 terminal on every exit path, `term-game` has everything it needs from the loop —
 and can now delete **both** workarounds it carries: `guarded_run` (#71) and
@@ -755,14 +780,13 @@ The open queue, in rough priority order:
   second) — the same bug class #59 retired one layer up, now one layer down.
   Fixing it properly means deciding how time reaches a **widget**, which is a
   public API call, not a one-line change.
+- **#75** (Terminal: mouse tracking mode hardcoded to ?1002h) — needs a
+  `MouseMode` enum + setter, with a suggested API shape already in the issue.
+  Default `Drag` preserves today's behaviour exactly.
 - **#35** (wheel vs arrow-key semantics) — **needs a user decision** (the
   proposed option 1: wheel scrolls the VIEW, not the selection, decoupling
   ListWidget's view offset from its selection). Everything else here is
   mechanical; this one is a behavior call.
-- **#73** (`App` has no way to observe `quit()`; `test_run_frames` re-arms
-  `m_running`) — filed alongside #72 by the same consumer, low priority and
-  testability-only, but small: a `running()` accessor plus a decision on
-  whether `test_run_frames` should preserve a pre-set `false`.
 - **#76** — filed from this gap and **half-shipped in v0.1.12**. The dropdown
   half (Select + MenuBar, one change in the shared skeleton) is done; what
   remains is **`TableWidget`**, which reads like a ride-along and is not one.
