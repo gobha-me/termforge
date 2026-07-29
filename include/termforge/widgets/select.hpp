@@ -55,12 +55,19 @@
 // The dropdown scrolls (#85). Its height is still capped to the rows that fit
 // below the box (#48 item 3), but that cap now sizes a WINDOW onto the options
 // rather than truncating them: arrows, Home/End and the wheel move the window,
-// and every option is reachable however short the terminal is. Two invariants
+// so every option is reachable as long as at least one row fits. Two invariants
 // hold at any offset -- what Enter commits is always painted and marked (#53),
 // and a click resolves to the option drawn on that row (#10), because draw,
 // hover and press share one mapper in detail/dropdown.hpp. #21 still owns the
 // real scrollbar; the ▴/▾ overflow hints in the rightmost column are its
 // placeholder.
+//
+// The one case scrolling cannot rescue: a box on the LAST screen row leaves
+// zero rows below it, so the list opens, paints nothing and reaches nothing --
+// it consumes keys until Escape or Tab. That is the deliberate #53 leg (an
+// unpainted row must not be committable) and not a scroll bug; the fix is to
+// flip the dropdown ABOVE its anchor when there is no room below, which #48
+// item 3 named and no issue has taken yet.
 
 #include <cstddef>
 #include <functional>
@@ -127,6 +134,12 @@ class Select final : public Widget {
   // before #85 a highlight past the last row that fit was clamped to the
   // window, so this could differ from the option the user was on. It cannot
   // now — the window scrolls instead.
+  //
+  // #85 also made the wheel move it, indirectly: a wheel scrolls the window and
+  // the highlight is carried along to stay inside it, so a scroll over an open
+  // list changes what the next Enter commits. Callers that mirrored the old
+  // capped-to-the-window semantics (indexing a per-ROW array with this) need an
+  // option-indexed array instead.
   [[nodiscard]] auto highlighted() const noexcept -> int { return m_highlight; }
 
   // Columns "[ " + " ▾ ]" costs on top of the value. A parent sizing a Select

@@ -276,7 +276,13 @@ auto MenuBar::on_event(const Event& ev) -> bool {
       return true;
     }
     if (k->key == Key::Down) {
-      m_selected = std::min(count - 1, m_selected + 1);
+      // max(0, ...) like Select's and like End below: with count == 0 the min
+      // alone writes -1, and -1 IS the closed flag, so the dropdown would close
+      // by side effect without running close_dropdown(). Unreachable today (the
+      // visible <= 0 return above fires first when count is 0) -- kept because
+      // the other three arrow handlers carry it, and an asymmetry between them
+      // is the drift this header exists to end.
+      m_selected = std::max(0, std::min(count - 1, m_selected + 1));
       reveal();
       return true;
     }

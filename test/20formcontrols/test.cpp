@@ -1370,6 +1370,105 @@ TEST_CASE("Select: a dropdown one column wide draws no indicator (#85)",
   REQUIRE(s.at(0, 1).text != "▾");
 }
 
+TEST_CASE("Select: a wheel with no window at all changes nothing (#85)",
+          "[form][select][mouse][failure]") {
+  // The zero-height window is the one place clamp_scroll cannot be trusted to
+  // bound the wheel: its visible_rows <= 0 leg deliberately PRESERVES the
+  // scroll it is handed (#48 item 4), which would be the already-stepped value
+  // -- so each tick moved an unbounded offset and reported a repaint for a
+  // dropdown that paints nothing. hit_test still covers rect(), so a wheel over
+  // the closed box reaches the gate; the guard has to be in the wheel itself.
+  Screen s{20, 2};
+  Select sel;
+  sel.set_options({"a", "b", "c", "d", "e", "f", "g", "h"});
+  sel.set_geometry({0, 1, 12, 1});  // last row: zero rows fit below
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
+  REQUIRE(sel.dropdown_open());
+
+  REQUIRE_FALSE(sel.dirty());  // draw() above cleared it
+  for (int i = 0; i < 5; ++i) REQUIRE(sel.on_event(wheel(3, 1)));
+  for (int i = 0; i < 5; ++i) REQUIRE(sel.on_event(wheel(3, 1, true)));
+  REQUIRE(sel.highlighted() == 0);
+  // Consumed (it is ours, and must not leak to whatever is behind), but nothing
+  // moved -- so the dirty flag must not claim a repaint is needed (#56 item 2).
+  REQUIRE_FALSE(sel.dirty());
+}
+
+TEST_CASE("Select: a box on the LAST screen row reaches nothing, by design "
+          "(#85, #53)", "[form][select][failure]") {
+  // The one case scrolling cannot rescue, pinned so the limit is deliberate
+  // rather than discovered. With zero rows below the anchor there is no window
+  // to scroll: dropdown_visible_rows returns 0, nothing paints, and #53 says an
+  // unpainted row must not be committable -- so the list is open, blank, and
+  // eats keys until Escape. Scrolling does not and cannot help; the fix is to
+  // flip the dropdown ABOVE its anchor, which #48 item 3 named and nobody has
+  // taken. If that lands, this test is what tells you to update it.
+  Screen s{20, 2};
+  Select sel;
+  sel.set_options({"a", "b", "c", "d", "e"});
+  sel.set_geometry({0, 1, 12, 1});  // last row: nothing fits below
+
+  int picked = -1;
+  sel.on_change([&](int i, const std::string&) { picked = i; });
+  REQUIRE(sel.on_event(key(Key::Enter)));  // opens
+  sel.draw(s);
+  REQUIRE(sel.dropdown_open());
+
+  for (int i = 0; i < 8; ++i) REQUIRE(sel.on_event(key(Key::Down)));
+  REQUIRE(sel.highlighted() == 0);         // nowhere to go
+  REQUIRE(sel.on_event(key(Key::Enter)));  // consumed...
+  REQUIRE(picked == -1);                   // ...but commits nothing (#53)
+  REQUIRE(sel.dropdown_open());
+
+  REQUIRE(sel.on_event(key(Key::Escape)));  // the documented way out
+  REQUIRE_FALSE(sel.dropdown_open());
+}
+
+TEST_CASE("Select: a relayout between frames cannot desync click from paint "
+          "(#85, #10)", "[form][select][mouse][failure]") {
+  // set_geometry() is public, non-virtual, and reachable while the list is
+  // open, so an app that relayouts inside an event handler changes the window
+  // height before the widget gets a chance to re-clamp its offset. If the draw
+  // loop clamped a stale offset and the hit-test did not, a press landing in
+  // that gap would commit the option the row is ABOUT to show rather than the
+  // one drawn on it -- #10's hit-span drift, reachable only because #85 made
+  // the row->item map something other than the identity.
+  // Two widgets driven into the identical stale state, because a press both
+  // commits AND closes: `painter` shows what that row draws, `presser` shows
+  // what clicking it takes. Drawing heals the offset, so only the presser may
+  // stay undrawn -- which is exactly the window the bug lived in.
+  const std::vector<std::string> opts{"o0", "o1", "o2", "o3", "o4",
+                                      "o5", "o6", "o7", "o8", "o9"};
+  const auto stage = [&](Select& sel, Screen& s) {
+    sel.set_options(opts);
+    sel.set_geometry({0, 15, 12, 1});  // 4 rows fit: y=16..19
+    REQUIRE(sel.on_event(key(Key::Enter)));
+    sel.draw(s);
+    REQUIRE(sel.on_event(key(Key::End)));  // scrolled to the tail
+    sel.draw(s);
+    // The app moves the control to the top of the screen from an event
+    // handler. The window is 10 rows now and the stored offset is stale --
+    // its valid maximum just became 0.
+    sel.set_geometry({0, 0, 12, 1});
+  };
+  const int item_y = 1;  // first dropdown row under the new geometry
+
+  Screen s{20, 20};
+  Select painter;
+  stage(painter, s);
+  painter.draw(s);
+  const std::string drawn = row_text(s, item_y, 1, 2);
+
+  Screen s2{20, 20};
+  Select presser;
+  stage(presser, s2);
+  REQUIRE(presser.on_event(press(3, item_y)));  // no draw in between
+
+  REQUIRE(drawn == "o0");                       // the clamped window's top
+  REQUIRE(opts[static_cast<std::size_t>(presser.selected())] == drawn);
+}
+
 TEST_CASE("Select: a shrinking screen re-clamps a scrolled window (#85)",
           "[form][select][failure]") {
   // The path no setter runs on, and it breaks BOTH invariants at once. A resize

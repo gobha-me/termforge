@@ -9,9 +9,10 @@
 // copies in three widgets (modulo member names), and they had already
 // diverged once (clear() resetting scroll in two widgets, not the third).
 // The scroll-window half of the family lives in detail/scroll.hpp
-// (clamp_scroll) -- also public since #85. This header is public because the three widget headers
-// inline accessors against it; treat it like detail/callback.hpp -- usable
-// by app code, but documented as a building block, not a widget.
+// (clamp_scroll) -- also public since #85. This header is public because the
+// three widget headers inline accessors against it; treat it like
+// detail/callback.hpp -- usable by app code, but documented as a building
+// block, not a widget.
 //
 // Deliberate divergences stay with the widget, in the widget:
 //  - reset_scroll: ListWidget/RadioGroup rewind their own m_scroll on

@@ -123,15 +123,25 @@ struct MarkGlyphs {
   std::string_view check_mark;
   std::string_view radio_open, radio_close;
   std::string_view radio_mark;
-  std::string_view arrow_down, arrow_up;
+  std::string_view arrow_down;
   std::string_view selector;
+  // APPENDED, not slotted in beside arrow_down where it reads better. These
+  // tables are initialised positionally, so inserting a field mid-struct keeps
+  // an existing 8-element aggregate init COMPILING while shifting everything
+  // after it: "▸" would bind to arrow_up and leave selector empty, the mark_w
+  // > 0 guard would drop the marker, and the highlighted row would lose the one
+  // affordance that survives a driver dropping colour -- reinstating #76 with
+  // no diagnostic. Appended, an 8-element init stays correct and merely has no
+  // indicator, which is cosmetic. all()'s extent changing 8 -> 9 is the loud
+  // half of the break; this is the silent half. Keep appending.
+  std::string_view arrow_up;
 
   // Every field once, so a sweep does not have to name them. See the
   // static_asserts under the tables for what this is really for.
   [[nodiscard]] constexpr auto all() const noexcept
       -> std::array<std::string_view, 9> {
     return {check_open,  check_close, check_mark, radio_open, radio_close,
-            radio_mark,  arrow_down,  arrow_up,   selector};
+            radio_mark,  arrow_down,  selector,   arrow_up};
   }
 };
 
@@ -149,9 +159,9 @@ struct MarkGlyphs {
 // field and forgot all()" a build error, the second makes "you added it to one
 // table only" a build error. Neither needs a test to run.
 inline constexpr MarkGlyphs kUnicodeMarks{"[", "]", "x", "(", ")",
-                                          "•", "▾", "▴", "▸"};
+                                          "•", "▾", "▸", "▴"};
 inline constexpr MarkGlyphs kAsciiMarks{"[", "]", "x", "(", ")",
-                                        "*", "v", "^", ">"};
+                                        "*", "v", ">", "^"};
 
 // All members are string_view, so the size is exactly the field count -- which
 // makes this the tripwire on all()'s hardcoded extent.
