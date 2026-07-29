@@ -89,6 +89,11 @@ class App {
   // Signal the loop to exit after the current frame.
   auto quit() -> void { m_running = false; }
 
+  // Whether the loop is still running \u2014 true until quit() is called, false
+  // after. Lets a test observe that a quit happened without inferring it
+  // from render counts.
+  [[nodiscard]] auto running() const noexcept -> bool { return m_running; }
+
   // ── override points ──
   // Handle one event (input, resize, error). Default: ESC / Ctrl+C quits.
   virtual auto on_event(const Event& ev) -> void;
@@ -262,6 +267,10 @@ class App {
   // Unlike run(), it deliberately does NOT reset the tick clock: a probe that
   // calls it one frame at a time gets a continuous dt across calls, which is
   // the only thing that makes tick cadence testable at all.
+  //
+  // After this call, running() reflects whether quit() was called during any
+  // of the frames \u2014 a test that dispatches a quitting key can assert
+  // !running() afterwards rather than counting render calls.
   auto test_run_frames(int frames, int cols, int rows, std::string* sink) -> void;
 
   // Drive the real *loop* with no tty — run_loop(), byte for byte what run()
