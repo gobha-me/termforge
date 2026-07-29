@@ -22,6 +22,10 @@ namespace termforge {
 struct Terminal::Impl {
   termios saved{};
   bool saved_valid{false};
+  // Set once by enter_screen(), cleared by leave_screen() — the witness that
+  // a screen is up, so set_mouse_mode() knows whether a mode change must be
+  // emitted live or simply recorded for the next enter_screen().
+  bool in_screen{false};
   // The fd raw mode is applied to. Reads happen on STDIN, so prefer it when
   // it's a tty — termios settings (VMIN/VTIME) only affect the fd they're
   // set on, and applying them to a different fd than the one being read
@@ -170,7 +174,38 @@ void emit(int fd, const char* seq) {
   }
 }
 
+// #75: the enable/disable pair for a tracking mode. SGR (?1006h) is the
+// coordinate *encoding*, not a mode — it goes with any non-None mode and is
+// absent only for None (nothing to encode when nothing is reported).
+[[nodiscard]] constexpr auto mouse_mode_enable_seq(MouseMode mode)
+    -> const char* {
+  switch (mode) {
+    case MouseMode::None:   return "";
+    case MouseMode::Click:  return "\033[?1006h\033[?1000h";
+    case MouseMode::Drag:   return "\033[?1006h\033[?1002h";
+    case MouseMode::Motion: return "\033[?1006h\033[?1003h";
+  }
+  return "";  // unreachable: -Wswitch covers every enumerator
+}
+
+[[nodiscard]] constexpr auto mouse_mode_disable_seq(MouseMode mode)
+    -> const char* {
+  switch (mode) {
+    case MouseMode::None:   return "";
+    case MouseMode::Click:  return "\033[?1000l\033[?1006l";
+    case MouseMode::Drag:   return "\033[?1002l\033[?1006l";
+    case MouseMode::Motion: return "\033[?1003l\033[?1006l";
+  }
+  return "";  // unreachable: -Wswitch covers every enumerator
+}
+
 }  // namespace
+
+// Emit the current mode's enable sequences. enter_screen() and a live
+// set_mouse_mode() both go through here so the two paths cannot drift.
+auto Terminal::emit_mouse_mode() const -> void {
+  emit(m_impl->out_fd, mouse_mode_enable_seq(m_mouse_mode));
+}
 
 auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
   Capabilities caps;
@@ -264,20 +299,38 @@ auto Terminal::read_input(char* out, int max) -> int {
 // ── screen lifecycle ────────────────────────────────────────────────────────
 
 auto Terminal::enter_screen() -> void {
-  // alt-buffer, hide cursor, clear, home, SGR mouse (1006), button-event
-  // mouse tracking (1002: report press/release + scroll), bracketed paste
-  // (2004: bracket pasted text so an embedded ESC can't fake an Escape key).
-  emit(m_impl->out_fd,
-       "\033[?1049h\033[?25l\033[2J\033[H\033[?1006h\033[?1002h\033[?2004h");
+  // alt-buffer, hide cursor, clear, home, SGR mouse (1006), the configured
+  // button-event mouse tracking mode (#75: default 1002 — report
+  // press/release + scroll + drag), bracketed paste (2004: bracket pasted
+  // text so an embedded ESC can't fake an Escape key).
+  emit(m_impl->out_fd, "\033[?1049h\033[?25l\033[2J\033[H");
+  emit_mouse_mode();
+  emit(m_impl->out_fd, "\033[?2004h");
+  m_impl->in_screen = true;
   // Arm the escape half of the signal-restore path (termios half is armed in
   // enter_raw). Now a fatal signal will also leave the alt-screen + mouse/paste.
   detail::restore_state().in_screen = 1;
+}
+
+auto Terminal::set_mouse_mode(MouseMode mode) -> void {
+  if (mode == m_mouse_mode) return;
+  if (m_impl->in_screen) {
+    // Live switch: the terminal is currently reporting in the old mode, so
+    // undo it before arming the new one. Disabling a mode that was never
+    // enabled (old == None) is a documented no-op on the terminal side.
+    emit(m_impl->out_fd, mouse_mode_disable_seq(m_mouse_mode));
+    m_mouse_mode = mode;
+    emit_mouse_mode();
+    return;
+  }
+  m_mouse_mode = mode;  // no screen up: recorded, applied by enter_screen()
 }
 
 auto Terminal::leave_screen() -> void {
   // Undo enter_screen in reverse: disable paste/mouse tracking, reset attrs,
   // show cursor, main screen. Byte-for-byte the detail::kLeaveSequence constant.
   detail::restore_state().in_screen = 0;
+  m_impl->in_screen = false;
   // .data(), not a std::string copy: kLeaveSequence is a view over a string
   // literal, so it is already NUL-terminated — and this runs from teardown(),
   // which ~App calls and must therefore never throw. The copy allocated, which

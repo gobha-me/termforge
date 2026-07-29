@@ -23,7 +23,9 @@ TEST_CASE("tty_restore: leave sequence undoes exactly what enter_screen set",
   // Every mode enter_screen enables has its disable here…
   REQUIRE(seq.find("\033[?1049l") != std::string_view::npos);  // main screen
   REQUIRE(seq.find("\033[?25h") != std::string_view::npos);    // show cursor
-  REQUIRE(seq.find("\033[?1002l") != std::string_view::npos);  // mouse tracking
+  REQUIRE(seq.find("\033[?1000l") != std::string_view::npos);  // click tracking
+  REQUIRE(seq.find("\033[?1002l") != std::string_view::npos);  // drag tracking
+  REQUIRE(seq.find("\033[?1003l") != std::string_view::npos);  // any-event (#75)
   REQUIRE(seq.find("\033[?1006l") != std::string_view::npos);  // SGR mouse
   REQUIRE(seq.find("\033[?2004l") != std::string_view::npos);  // paste
   // …and it must not accidentally *enable* anything (no high-set toggles).

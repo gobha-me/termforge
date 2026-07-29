@@ -43,9 +43,11 @@ include/version.hpp
 # Core dumps. Deliberately crashing a test binary is a normal part of
 # verifying a [uaf] case (revert the fix, confirm it segfaults), and the
 # dump lands in the repo root — a 10MB blob one `git add -A` away from
-# history.
-core
-core.*
+# history. Anchored: an unanchored `core` also matches every *directory*
+# named core (src/lib/core/, include/termforge/core/), which blocks
+# `git add` of tracked files inside them.
+/core
+/core.*
 
 # editor
 *.swp

@@ -78,6 +78,19 @@ enum class Key {
   F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
 };
 
+// Which mouse events the terminal is asked to report (#75):
+//   None   \u2014 no tracking at all: native click-drag selection (copy/paste out
+//            of the app) belongs to the terminal again.
+//   Click  \u2014 ?1000h: presses and releases only, no motion of any kind.
+//   Drag   \u2014 ?1002h: presses/releases plus motion *while a button is held*
+//            (and wheel). The default \u2014 what TermForge has always asked for.
+//   Motion \u2014 ?1003h: any-event tracking, adds buttonless hover. A grid app
+//            that wants its keyboard cursor to follow the pointer needs this;
+//            it is also the noisiest mode (an event per crossed cell).
+// The SGR *encoding* (?1006h) is orthogonal \u2014 it is not a tracking mode and
+// is enabled with any non-None mode.
+enum class MouseMode { None, Click, Drag, Motion };
+
 struct KeyEvent {
   Key key{Key::Unknown};
   char32_t ch{0};       // valid when key == Key::Char
