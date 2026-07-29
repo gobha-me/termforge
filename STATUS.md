@@ -7,10 +7,49 @@ which holds standing conventions, not state).
 ## Where we are (2026-07-29)
 
 **Core framework, KittyDriver, and the full widget system are landed and
-tested.** 28 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
+tested.** 29 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
 clean.
 
-**Latest release: `v0.1.15`** (2026-07-29) — **#75, closed: mouse tracking
+**Latest release: `v0.1.16`** (2026-07-29) — **#62, closed: `Cell` carries
+text attributes (bold/dim/italic/underline/reverse/strike).**
+
+*What was wrong:* `Cell` carried `{text, fg, bg, image_id}` and nothing
+else, and the renderer emitted SGR for color only — so bold, dim, italic,
+underline, reverse, and strikethrough could never reach the terminal at
+all. This is a floor on expressiveness color alone can't work around: dim
+is the semantic tool for a disabled control, reverse is how selection is
+conventionally drawn (theme-independent, unlike the fg/bg swap widgets
+hand-roll), and on the low-color tier attributes are the *only* channel
+left once color is gone. term-game's Minesweeper hit it a second time: a
+reverse-video cursor would halve its board width vs. bracket characters.
+
+*The fix:* `enum class Attr : std::uint8_t { None, Bold, Dim, Italic,
+Underline, Reverse, Strike }` plus bitmask operators in `types.hpp`.
+`Cell` gains `Attr attrs{Attr::None}` — one byte, default memberwise `==`,
+so the renderer's per-frame diff picks up attr changes for free.
+`write_text`/`fill_rect` take a defaulted `attrs` arg (every existing call
+site source-compatible). `TerminalDriver::draw_text` now takes the attrs.
+AnsiRgbDriver and KittyDriver pass all six through: an attr change breaks
+the SGR run exactly like a color change — reset all SGR, re-enable the new
+set, invalidate the color cache so colors re-emit — so a dropped attribute
+is actually cleared (a leaked `SGR 1` is a visible bug). FallbackDriver
+(the floor) keeps only Reverse and Bold — honored even on a dumb terminal,
+and the two the bottom tier genuinely needs once color is gone — and drops
+the rest, resetting after the run. The enable-byte encoding lives once in
+`src/lib/detail/sgr_attrs.hpp`, shared by the two text drivers. This is the
+type #25 (styled spans) was waiting for.
+
+*Pinned in `test/27cellattrs`* (offline, in-memory sink): per-attribute
+SGR emission, attribute-only run break (same colors, different attrs →
+two runs), a dropped attribute is cleared (no leak), same-attr run
+coalesces, the `Cell` attr-only inequality that drives the diff, the
+bitmask operators, the Fallback keep/drop split. Mutation-tested: removing
+the run-break reset fails the leak + coalescing cases; making the run-break
+ignore attrs fails the break case. 29/29 on gcc 13/14 + clang, gcc clean
+under `-Werror -Wall -Wextra` at -O3, both consumption paths build, all 8
+CI jobs pass.
+
+**Previous release: `v0.1.15`** (2026-07-29) — **#75, closed: mouse tracking
 mode is selectable and can be turned off.**
 
 *What was wrong:* `Terminal::enter_screen()` emitted `\033[?1006h\033[?1002h`
@@ -788,7 +827,10 @@ harness).
 
 ## Next session — start here
 
-v0.1.15 shipped #75 (`MouseMode`), closing the hardcoded mouse-tracking mode;
+v0.1.16 shipped #62 (`Cell` text attributes \u2014 the `Attr` bitmask now reaches
+the terminal through the SGR run-coalescing, and is the type #25 styled spans
+was waiting for); v0.1.15 shipped #75 (`MouseMode`), closing the hardcoded
+mouse-tracking mode;
 v0.1.14 shipped #73 (`App::running()`), closing the testability gap that
 made every app reimplement quit-detection. Before that, v0.1.8 shipped #59
 (TG-02, `on_tick`), which closed the three-issue run
@@ -810,8 +852,8 @@ selected row draws **both** marks (`> ▸ item`) in a gutter that is now doubled
 An app that wants to keep its own marker calls `set_marker_enabled(false)`
 instead; either way the upgrade is not a no-op for anyone drawing their own.
 The open queue, in rough priority order:
-- **The rest of the TG-xx batch** — **#62** (Cell text attributes:
-  bold/dim/underline/reverse), **#63** (Image sub-rect blit + sprite-sheet
+- **The rest of the TG-xx batch** — ~~#62~~ **LANDED (v0.1.16)** (Cell text
+  attributes), **#63** (Image sub-rect blit + sprite-sheet
   slicing), **#60** (kitty keyboard protocol: key release + repeat — it
   re-opens the same parser #61 just touched), **#64**
   (MapWidget — a **design doc** is the deliverable, and it is the last
@@ -873,6 +915,13 @@ so the rest is composition:
   dialogs, modality, and form controls to build on.
 
 Follow-ups this work surfaced but did not fix:
+- **#62 is core-level only.** `Cell`/`Screen`/drivers now carry and emit
+  attributes, but no *widget* exposes them yet \u2014 there is no
+  `set_disabled(bool)` (dim), no selection drawn via `Reverse` instead of an
+  fg/bg swap. Those are per-widget API decisions, one issue each, and #62 is
+  the enabler rather than any one of them. term-game's Minesweeper cursor
+  (halve the board width by switching `[#]` brackets to a reverse-video cell)
+  is the first consumer and can now be done app-side against `Cell::attrs`.
 - **Escape cannot reach a `Select` inside a `Dialog`.** `dialog.cpp:160-166`
   intercepts Escape before its ring, so Escape cancels the dialog rather than
   closing an open dropdown. It degrades safely (Tab, click-away and focus loss
