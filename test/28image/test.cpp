@@ -5,12 +5,83 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <climits>
 #include <vector>
 
 #include "termforge/core/types.hpp"
 
 using termforge::Image;
 using termforge::Pixel;
+using termforge::Rect;
+
+// ── Rect ────────────────────────────────────────────────────────────────────
+//
+// intersect() is the one place the clipping arithmetic for sub/blit/blend/fill
+// lives, so an off-by-one here is an off-by-one in all four.
+
+TEST_CASE("Rect: intersect returns the overlap of two rects", "[image][rect]") {
+  // Partial overlap, offset on both axes.
+  REQUIRE(Rect{0, 0, 4, 4}.intersect(Rect{2, 2, 4, 4}) == Rect{2, 2, 2, 2});
+  // Commutative.
+  REQUIRE(Rect{2, 2, 4, 4}.intersect(Rect{0, 0, 4, 4}) == Rect{2, 2, 2, 2});
+  // One fully inside the other, both ways round.
+  REQUIRE(Rect{0, 0, 10, 10}.intersect(Rect{3, 4, 2, 2}) == Rect{3, 4, 2, 2});
+  REQUIRE(Rect{3, 4, 2, 2}.intersect(Rect{0, 0, 10, 10}) == Rect{3, 4, 2, 2});
+  // Identical.
+  REQUIRE(Rect{1, 2, 3, 4}.intersect(Rect{1, 2, 3, 4}) == Rect{1, 2, 3, 4});
+}
+
+TEST_CASE("Rect: rects that only touch along an edge do not overlap",
+          "[image][rect]") {
+  // Half-open: {0,0,4,4} covers x 0..3, so x==4 belongs to the neighbour.
+  REQUIRE(Rect{0, 0, 4, 4}.intersect(Rect{4, 0, 4, 4}).empty());
+  REQUIRE(Rect{0, 0, 4, 4}.intersect(Rect{0, 4, 4, 4}).empty());
+  // Fully disjoint.
+  REQUIRE(Rect{0, 0, 4, 4}.intersect(Rect{99, 99, 4, 4}).empty());
+  REQUIRE(Rect{0, 0, 4, 4}.intersect(Rect{-9, 0, 4, 4}).empty());
+}
+
+TEST_CASE("Rect: a degenerate or negative rect intersects to nothing",
+          "[image][rect][failure]") {
+  const Rect box{0, 0, 10, 10};
+  REQUIRE(box.intersect(Rect{0, 0, 0, 5}).empty());
+  REQUIRE(box.intersect(Rect{0, 0, 5, 0}).empty());
+  REQUIRE(box.intersect(Rect{2, 2, -4, 4}).empty());
+  REQUIRE(box.intersect(Rect{2, 2, 4, -4}).empty());
+  // A miss returns a default Rect, not merely something with w or h <= 0.
+  REQUIRE(box.intersect(Rect{0, 0, 0, 5}) == Rect{});
+}
+
+TEST_CASE("Rect: empty() tracks non-positive extents", "[image][rect]") {
+  REQUIRE(Rect{}.empty());
+  REQUIRE(Rect{5, 5, 0, 3}.empty());
+  REQUIRE(Rect{5, 5, 3, 0}.empty());
+  REQUIRE(Rect{5, 5, -1, 3}.empty());
+  REQUIRE_FALSE(Rect{5, 5, 1, 1}.empty());
+}
+
+TEST_CASE("Rect: intersect does not overflow on extreme coordinates",
+          "[image][rect][failure]") {
+  // x + w overflows int here; the i64 arithmetic is what keeps this defined.
+  // Run under -fsanitize=undefined — that is where this case earns its keep.
+  const Rect huge{INT_MAX - 2, INT_MAX - 2, 4, 4};
+  REQUIRE(huge.intersect(Rect{0, 0, 4, 4}).empty());
+  // Self-intersection is the identity even though x + w is past INT_MAX: the
+  // result is bounded by both inputs, so its EXTENT always fits back in int
+  // even when its far edge does not.
+  REQUIRE(huge.intersect(huge) == huge);
+  const Rect low{INT_MIN, INT_MIN, 4, 4};
+  REQUIRE(low.intersect(Rect{0, 0, 4, 4}).empty());
+}
+
+TEST_CASE("Rect: contains still tests the half-open interior", "[image][rect]") {
+  const Rect r{2, 3, 4, 5};
+  REQUIRE(r.contains(2, 3));
+  REQUIRE(r.contains(5, 7));
+  REQUIRE_FALSE(r.contains(6, 7));
+  REQUIRE_FALSE(r.contains(5, 8));
+  REQUIRE_FALSE(r.contains(1, 3));
+}
 
 // ── the pixels/dimensions invariant ─────────────────────────────────────────
 //

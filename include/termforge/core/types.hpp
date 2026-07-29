@@ -73,6 +73,53 @@ constexpr auto operator&=(Attr& a, Attr b) -> Attr& {
 // Whether any attribute bit is set (an Attr is a bitmask, not a bool).
 [[nodiscard]] constexpr auto any(Attr a) -> bool { return a != Attr::None; }
 
+// ── geometry ─────────────────────────────────────────────────────────────
+// A half-open rectangle: it covers x .. x+w-1, y .. y+h-1. A non-positive w
+// or h means "empty" — every consumer clips rather than throwing, so a
+// degenerate rect is a legal input that produces no work, not an error.
+//
+// Rect lives here rather than in widgets/widget.hpp (where it was defined
+// until #63) because it is cell geometry, not a widget concern: Image's
+// region ops below need it, and so do the drivers.
+//
+// Keep this an aggregate. tools/consume/main.cpp aggregate-initializes a Rect
+// as the out-of-tree consumption test, so adding any constructor breaks it.
+
+struct Rect {
+  int x{0}, y{0}, w{0}, h{0};
+
+  [[nodiscard]] constexpr auto contains(int px, int py) const noexcept -> bool {
+    return px >= x && px < x + w && py >= y && py < y + h;
+  }
+
+  [[nodiscard]] constexpr auto empty() const noexcept -> bool {
+    return w <= 0 || h <= 0;
+  }
+
+  // The overlap of two rects, or a default (empty) Rect when they miss.
+  // Rects that merely touch along an edge do not overlap.
+  //
+  // The arithmetic is in std::int64_t so that an adversarial x + w cannot
+  // overflow; the result always fits back in int because it is bounded by
+  // both inputs. std::min/std::max are spelled out as ?: on purpose —
+  // types.hpp is transitively included by nearly every TU in the project and
+  // must not start pulling in <algorithm>.
+  [[nodiscard]] constexpr auto intersect(const Rect& o) const noexcept -> Rect {
+    using i64 = std::int64_t;
+    const i64 ax1 = i64{x} + w, ay1 = i64{y} + h;
+    const i64 bx1 = i64{o.x} + o.w, by1 = i64{o.y} + o.h;
+    const i64 x0 = x > o.x ? x : o.x;
+    const i64 y0 = y > o.y ? y : o.y;
+    const i64 x1 = ax1 < bx1 ? ax1 : bx1;
+    const i64 y1 = ay1 < by1 ? ay1 : by1;
+    if (x1 <= x0 || y1 <= y0) return Rect{};
+    return Rect{static_cast<int>(x0), static_cast<int>(y0),
+                static_cast<int>(x1 - x0), static_cast<int>(y1 - y0)};
+  }
+
+  constexpr auto operator==(const Rect&) const noexcept -> bool = default;
+};
+
 // ── image ────────────────────────────────────────────────────────────────
 // Raw 32-bit RGBA pixel buffer. Loaded from raw-RGB assets (PNG/JPEG are
 // deliberately out of scope for the core; decode elsewhere and hand us RGBA).
