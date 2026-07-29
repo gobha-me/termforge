@@ -138,6 +138,20 @@ TEST_CASE("clamp_scroll: zero/negative visible preserves the incoming scroll",
 
 // ── clamp_to_window, clamp_scroll's inverse (#85) ────────────────────────────
 
+TEST_CASE("clamp_scroll: an empty list cannot produce a negative scroll",
+          "[scroll][failure]") {
+  // clamp_scroll(0, 0, 0, 5) returned -1: the `selected >= 0` test ran BEFORE
+  // the clamp into [0, count), so with count == 0 the clamp drove selected to
+  // -1 and the ensure-visible step then assigned scroll = selected. That breaks
+  // the function's own postcondition and is an operator[] underflow one
+  // indexing step later. Latent for the in-tree callers, but this header went
+  // public in #85 and #21's scrollbar -- whose viewport height is independent
+  // of its item count, the shape that reaches this -- is queued as caller five.
+  REQUIRE(clamp_scroll(0, 0, 0, 5) == 0);
+  REQUIRE(clamp_scroll(3, 2, 0, 5) == 0);
+  REQUIRE(clamp_scroll(0, 7, 0, 1) == 0);
+}
+
 TEST_CASE("clamp_to_window: carries the selection into a window that moved",
           "[scroll]") {
   // clamp_scroll moves the window onto the selection (an arrow key moved the

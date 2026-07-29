@@ -58,6 +58,24 @@ namespace termforge::detail {
 // "unify" the two constants -- they are sized for different things.
 inline constexpr int kDropdownWheelStep = 1;
 
+// The offset the window is ACTUALLY drawn at, given a window height. Callers
+// keep their own m_scroll and re-clamp it on the paths that move it, but a
+// widget's stored offset can still be out of range for the current dr.h --
+// set_geometry() is public, non-virtual and reachable while the list is open,
+// so an app that relayouts in an event handler changes the window without the
+// widget getting a chance to re-clamp first.
+//
+// Everything below routes through this, which is what makes the claim on
+// dropdown_item_at true rather than merely intended: if the draw loop clamped
+// and the hit-test did not, a press between the relayout and the next frame
+// would commit the option the row is ABOUT to show rather than the one on it.
+[[nodiscard]] constexpr auto dropdown_scroll_at(int scroll, int count,
+                                                int visible_rows) noexcept
+    -> int {
+  if (count < 0) count = 0;
+  return std::clamp(scroll, 0, std::max(0, count - visible_rows));
+}
+
 // The ONE screen-row -> item mapping. The draw loop, the hover branch and both
 // widgets' press paths all resolve a row through here, so a click can never
 // land on an option other than the one painted on that row. That is not
@@ -73,7 +91,7 @@ inline constexpr int kDropdownWheelStep = 1;
                                               int py) noexcept -> int {
   const int vi = py - dr.y;
   if (vi < 0 || vi >= dr.h) return -1;
-  const int item = scroll + vi;
+  const int item = dropdown_scroll_at(scroll, count, dr.h) + vi;
   return (item >= 0 && item < count) ? item : -1;
 }
 
@@ -139,7 +157,10 @@ auto draw_dropdown_rows(Screen& screen, Rect dr, int count, int highlight,
                         const MarkGlyphs& glyphs, F&& label_at) -> void {
   if (dr.w <= 0 || dr.h <= 0) return;
   if (count < 0) count = 0;
-  scroll = std::clamp(scroll, 0, std::max(0, count - dr.h));
+  // The same clamp the hit-test applies, from the same function -- see
+  // dropdown_scroll_at. Doing it in only one of the two is #10's hit-span
+  // drift with extra steps.
+  scroll = dropdown_scroll_at(scroll, count, dr.h);
   // SANITIZED once, then measured and painted as the same string. write_text
   // sanitizes whatever it is handed, so measuring the caller's raw view would
   // let the two disagree on exactly the input an app is likeliest to try:
@@ -151,13 +172,20 @@ auto draw_dropdown_rows(Screen& screen, Rect dr, int count, int highlight,
   // so it normalises here. Once per call, not per row.
   const std::string mark = Screen::sanitize(glyphs.selector);
   const int mark_w = display_width(mark);
-  // The indicators share the marker's sanitize-then-measure discipline, and
-  // land only where the label was never allowed to reach: dr.w > label_pad
-  // keeps them off the marker's gutter in a dropdown one column wide, where the
-  // fit test above would otherwise put both glyphs in the same cell.
+  // The indicators get the marker's full sanitize-then-measure treatment, once
+  // per call rather than per row, and the same fit discipline. The strip they
+  // land in is exactly ONE column, so a hint wider than that would put its
+  // continuation cell at dr.x + dr.w -- outside the rect, on a cell this widget
+  // does not own and the renderer would diff anyway. Both in-tree families are
+  // one column, but this is a public building block taking an arbitrary
+  // MarkGlyphs: the third-party dropdown is precisely who the guard is for.
+  // dr.w > label_pad additionally keeps a hint off the marker's own gutter in a
+  // dropdown one column wide.
+  const std::string up = Screen::sanitize(glyphs.arrow_up);
+  const std::string down = Screen::sanitize(glyphs.arrow_down);
   const bool room_for_hint = dr.w > label_pad;
-  const bool more_above = scroll > 0;
-  const bool more_below = scroll + dr.h < count;
+  const bool more_above = scroll > 0 && display_width(up) == 1;
+  const bool more_below = scroll + dr.h < count && display_width(down) == 1;
   for (int vi = 0; vi < dr.h && scroll + vi < count; ++vi) {
     const int item = scroll + vi;
     const int dy = dr.y + vi;
@@ -184,9 +212,8 @@ auto draw_dropdown_rows(Screen& screen, Rect dr, int count, int highlight,
     // is the one the next keypress reveals anyway.
     if (room_for_hint && ((vi == 0 && more_above) ||
                           (vi == dr.h - 1 && more_below))) {
-      const std::string_view hint = (vi == 0 && more_above) ? glyphs.arrow_up
-                                                            : glyphs.arrow_down;
-      screen.write_text(dr.x + dr.w - 1, dy, Screen::sanitize(hint), fg, bg);
+      screen.write_text(dr.x + dr.w - 1, dy,
+                        (vi == 0 && more_above) ? up : down, fg, bg);
     }
   }
 }
@@ -228,6 +255,14 @@ enum class WheelResult {
                                          int visible_rows) -> WheelResult {
   if (!m.scroll_up && !m.scroll_down) return WheelResult::Declined;
   if (!open || !w.hit_test(m.x, m.y)) return WheelResult::Declined;
+  // No window means nothing to scroll, and it must be checked HERE rather than
+  // left to clamp_scroll: that helper's visible_rows <= 0 leg deliberately
+  // preserves the scroll it was handed (#48 item 4), which would be the
+  // ALREADY-STEPPED value -- so every tick would move an unbounded offset and
+  // report Scrolled, marking dirty for a dropdown that paints nothing. Reachable
+  // whenever the box sits with no room below it: hit_test still covers rect(),
+  // so a wheel over the closed box gets this far.
+  if (visible_rows <= 0) return WheelResult::Consumed;
   const int before = scroll;
   const int step = m.scroll_up ? -kDropdownWheelStep : kDropdownWheelStep;
   // selected == -1 is clamp_scroll's "no selection, pure range cap" leg: the
