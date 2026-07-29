@@ -152,9 +152,7 @@ auto region_key(int x, int y, int w, int h) -> std::uint64_t {
 // distinct uploads (the transmitted s=/v= geometry differs). Never
 // returns 0 (the slot's "nothing transmitted" sentinel).
 auto image_hash(const Image& image) -> std::uint64_t {
-  const auto* bytes = reinterpret_cast<const unsigned char*>(&image.at(0, 0));
-  const std::size_t data_len = static_cast<std::size_t>(image.width()) *
-                               image.height() * sizeof(Pixel);
+  const auto bytes = std::as_bytes(image.pixels());
   std::uint64_t hash = 14695981039346656037ULL;
   for (const std::uint32_t dim : {static_cast<std::uint32_t>(image.width()),
                                   static_cast<std::uint32_t>(image.height())}) {
@@ -163,22 +161,11 @@ auto image_hash(const Image& image) -> std::uint64_t {
       hash *= 1099511628211ULL;
     }
   }
-  for (std::size_t i = 0; i < data_len; ++i) {
-    hash ^= static_cast<std::uint64_t>(bytes[i]);
+  for (const std::byte b : bytes) {
+    hash ^= static_cast<std::uint64_t>(std::to_integer<unsigned char>(b));
     hash *= 1099511628211ULL;
   }
   return hash == 0 ? 1 : hash;
-}
-
-// Top-left crop to at most max_w x max_h cells/pixels.
-auto crop_image(const Image& image, int max_w, int max_h) -> Image {
-  const int w = std::min(image.width(), max_w);
-  const int h = std::min(image.height(), max_h);
-  std::vector<Pixel> px;
-  px.reserve(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
-  for (int yy = 0; yy < h; ++yy)
-    for (int xx = 0; xx < w; ++xx) px.push_back(image.at(xx, yy));
-  return Image{w, h, std::move(px)};
 }
 
 // Bound on tracked regions; past this the least-recently-drawn slot is
@@ -229,7 +216,7 @@ auto KittyDriver::draw_image(int x, int y, const Image& image)
   const Image* img = &image;
   if (m_mode == PlacementMode::UnicodePlaceholders &&
       (image.width() > kDiacriticCount || image.height() > kDiacriticCount)) {
-    cropped_img = crop_image(image, kDiacriticCount, kDiacriticCount);
+    cropped_img = image.sub(Rect{0, 0, kDiacriticCount, kDiacriticCount});
     img = &cropped_img;
     cropped = true;
   }
@@ -337,12 +324,10 @@ auto KittyDriver::gc_regions() -> void {
 // ── Kitty APC protocol ──────────────────────────────────────────────────────
 
 auto KittyDriver::transmit(const Image& image, std::uint32_t id) -> void {
-  // Encode the raw RGBA pixel data as base64.
-  const auto* raw = reinterpret_cast<const std::byte*>(&image.at(0, 0));
-  const std::size_t raw_len = static_cast<std::size_t>(image.width()) *
-                              image.height() * sizeof(Pixel);
-  const std::string b64 =
-      detail::base64_encode({raw, raw_len});
+  // Encode the raw RGBA pixel data as base64. The span carries its own length,
+  // so this can no longer disagree with the buffer the way a length recomputed
+  // from width()*height() could.
+  const std::string b64 = detail::base64_encode(std::as_bytes(image.pixels()));
 
   // Chunk into ≤4096-byte APC payloads.
   constexpr std::size_t kChunkSize = 4096;

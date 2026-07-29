@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -172,6 +173,49 @@ class Image {
     return m_pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(m_width) +
                     static_cast<std::size_t>(x)];
   }
+
+  // The whole buffer, row-major, always exactly width()*height() elements (see
+  // the constructor). Exists so callers needing the raw bytes — the kitty
+  // transmit path, #90's kernels — get the length FROM the object instead of
+  // recomputing it from the dimensions and hoping the two agree.
+  [[nodiscard]] auto pixels() const noexcept -> std::span<const Pixel> {
+    return m_pixels;
+  }
+
+  // ── region ops (#63) ───────────────────────────────────────────────────
+  // All of these CLIP: they never throw, and never read or write outside
+  // either buffer. A rect that is degenerate, or lands entirely outside, is a
+  // legal input that produces no work.
+  //
+  // Alpha is STRAIGHT (non-premultiplied) throughout. Only blend() composites
+  // — blit() and fill() copy alpha verbatim, because they are a copy and a
+  // clear. See docs/pixel-regions.md for the exact integer formula.
+
+  // Copy out a sub-rectangle. The result has the dimensions of the CLIPPED
+  // overlap, not of the requested rect: an oversized rect yields the part that
+  // exists, a fully-outside or degenerate one yields an empty Image. (Padding
+  // the request back out to its asked-for size would be a border policy, and
+  // borders/scaling are out of scope.) This is sprite-sheet slicing.
+  [[nodiscard]] auto sub(Rect r) const -> Image;
+
+  // Copy src over this image at (dx, dy): src pixels REPLACE destination
+  // pixels, alpha included. A copy, not a composite — src alpha is data being
+  // copied, not coverage.
+  auto blit(const Image& src, int dx, int dy) -> void;
+  auto blit(const Image& src, Rect src_rect, int dx, int dy) -> void;
+
+  // Composite src over this image at (dx, dy), source-over.
+  //
+  // The src_rect overload is the one a game wants in its frame loop: it reads
+  // straight out of an atlas, where blend(atlas.sub(frame), …) would allocate
+  // and copy a whole sprite per draw per frame.
+  auto blend(const Image& src, int dx, int dy) -> void;
+  auto blend(const Image& src, Rect src_rect, int dx, int dy) -> void;
+
+  // Write p into every pixel of the clipped rect, alpha included. A clear, not
+  // a composite: fill(r, Pixel{0,0,0,0}) is how a region is cleared to
+  // transparent.
+  auto fill(Rect r, Pixel p) -> void;
 
  private:
   int m_width{0};

@@ -6,6 +6,7 @@ add_library(${PROJECT_NAME}_lib STATIC
   core/input.cpp
   core/app.cpp
   core/image_loader.cpp
+  core/image.cpp
   detail/base64.cpp
   widgets/text_box.cpp
   widgets/table_widget.cpp
