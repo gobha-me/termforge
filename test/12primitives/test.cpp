@@ -6,7 +6,9 @@
 #include <string>
 
 #include "detail/width.hpp"
+#include "termforge/core/renderer.hpp"
 #include "termforge/core/screen.hpp"
+#include "termforge/drivers/fallback_driver.hpp"
 #include "termforge/widgets/button.hpp"
 #include "termforge/widgets/frame.hpp"
 #include "termforge/widgets/glyphs.hpp"
@@ -22,6 +24,7 @@ using termforge::border_glyphs;
 using termforge::BorderStyle;
 using termforge::Button;
 using termforge::Event;
+using termforge::FallbackDriver;
 using termforge::Frame;
 using termforge::is_ascii;
 using termforge::Key;
@@ -33,6 +36,7 @@ using termforge::Menu;
 using termforge::MenuItem;
 using termforge::MouseEvent;
 using termforge::ProgressBar;
+using termforge::Renderer;
 using termforge::Rgb;
 using termforge::Screen;
 using termforge::TextInput;
@@ -1078,4 +1082,123 @@ TEST_CASE("TextInput: cursor sits just past a wide glyph",
   REQUIRE(s.at(0, 0).text == "\xE4\xB8\x96");
   REQUIRE(s.at(1, 0).text == std::string("\0", 1));
   REQUIRE(is_cursor_cell(s.at(2, 0)));
+}
+
+// ── MenuBar's dropdown selection marker (#76) ───────────────────────────────
+//
+// The open dropdown stated its selection exactly once, in colour, and
+// FallbackDriver::draw_text discards colour -- so on the tier AGENTS.md says
+// must always work, the selected item was byte-for-byte identical to the rest.
+// A menu is modal and it COMMITS: Up/Down moved a cursor the user could not see
+// and Enter fired whichever action it landed on.
+//
+// The marker is drawn by the shared detail/dropdown.hpp skeleton, which is the
+// point: #38 was a fix that landed in Select and not here. Select's half of
+// these cases lives in 20formcontrols, and both suites must pass.
+
+namespace {
+
+auto open_file_menu(MenuBar& mb) -> void {
+  mb.set_geometry({0, 0, 40, 1});
+  mb.add_menu({"File", {{"New", {}}, {"Open", {}}, {"Quit", {}}}});
+  Event enter = KeyEvent{Key::Enter};
+  mb.on_event(enter);
+}
+
+}  // namespace
+
+TEST_CASE("MenuBar: the open dropdown marks its selection with a glyph (#76)",
+          "[primitives][menu][glyphs]") {
+  Screen s{40, 5};
+  MenuBar mb;
+  open_file_menu(mb);
+  mb.draw(s);
+
+  REQUIRE(s.at(0, 1).text == "▸");   // selected item
+  REQUIRE(s.at(1, 1).text.empty());  // the separator column of the pad
+  REQUIRE(s.at(0, 2).text.empty());  // unselected: gutter stays blank
+  REQUIRE(s.at(0, 3).text.empty());
+  // The labels did not move: label_pad already reserved these two columns, so
+  // this is exactly the geometry the pre-#76 test above asserts.
+  REQUIRE(s.at(2, 1).text == "N");
+}
+
+TEST_CASE("MenuBar: the marker follows Down/Up (#76)",
+          "[primitives][menu][glyphs]") {
+  Screen s{40, 5};
+  MenuBar mb;
+  open_file_menu(mb);
+
+  Event down = KeyEvent{Key::Down};
+  mb.on_event(down);
+  mb.draw(s);
+  REQUIRE(s.at(0, 1).text.empty());
+  REQUIRE(s.at(0, 2).text == "▸");
+
+  Event up = KeyEvent{Key::Up};
+  mb.on_event(up);
+  mb.draw(s);
+  REQUIRE(s.at(0, 1).text == "▸");
+  REQUIRE(s.at(0, 2).text.empty());
+}
+
+TEST_CASE("MenuBar: a hover moves the marker too (#76)",
+          "[primitives][menu][glyphs][mouse]") {
+  // The selection has two drivers, keys and the pointer -- a marker that
+  // tracked only one would mislead on exactly the tier it exists for.
+  Screen s{40, 5};
+  MenuBar mb;
+  open_file_menu(mb);
+  REQUIRE(mb.on_event(motion(3, 3)));  // third item's row
+  mb.draw(s);
+
+  REQUIRE(s.at(0, 3).text == "▸");
+  REQUIRE(s.at(0, 1).text.empty());
+}
+
+TEST_CASE("MenuBar: BorderStyle::Ascii keeps the open menu 7-bit (#76)",
+          "[primitives][menu][glyphs]") {
+  // MenuBar draws no box, so set_style has exactly one job: keep a bare TTY
+  // from getting a Unicode ▸ it may not have a glyph for.
+  Screen s{40, 5};
+  MenuBar mb;
+  mb.set_style(BorderStyle::Ascii);
+  open_file_menu(mb);
+  mb.draw(s);
+
+  REQUIRE(mb.style() == BorderStyle::Ascii);
+  REQUIRE(s.at(0, 1).text == ">");
+  for (int y = 0; y < 5; ++y)
+    for (int x = 0; x < 40; ++x) REQUIRE(all_seven_bit(s.at(x, y).text));
+}
+
+TEST_CASE("MenuBar: the selection survives a driver that drops colour (#76)",
+          "[primitives][menu][failure]") {
+  // The acceptance case. Two items with IDENTICAL labels, so colour is the
+  // only thing that could tell them apart -- then rendered through the driver
+  // that throws colour away. What reaches the TERMINAL must still differ; a
+  // Screen-level assertion alone would not prove it, because the whole bug was
+  // a difference that existed in Screen and died in the driver.
+  Screen s{12, 3};
+  MenuBar mb;
+  mb.set_geometry({0, 0, 12, 1});
+  mb.add_menu({"F", {{"same", {}}, {"same", {}}}});
+  Event enter = KeyEvent{Key::Enter};
+  mb.on_event(enter);
+  mb.draw(s);
+
+  std::string row1, row2;
+  for (int x = 0; x < 8; ++x) {
+    row1 += s.at(x, 1).text.empty() ? " " : s.at(x, 1).text;
+    row2 += s.at(x, 2).text.empty() ? " " : s.at(x, 2).text;
+  }
+  REQUIRE(row1 != row2);  // in CELL TEXT, not only in colour
+
+  FallbackDriver d;
+  std::string out;
+  d.set_output(&out);
+  Renderer r(d);
+  r.present(s);  // first frame: the renderer diffs, so assert on this one
+  d.flush();
+  REQUIRE(out.find("▸") != std::string::npos);
 }

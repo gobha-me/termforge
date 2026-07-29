@@ -4,13 +4,104 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-07-28)
+## Where we are (2026-07-29)
 
 **Core framework, KittyDriver, and the full widget system are landed and
 tested.** 27 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
 clean.
 
-**Latest release: `v0.1.11`** (2026-07-28) — **#72: ListWidget's selection was
+**Latest release: `v0.1.12`** (2026-07-29) — **#76: the same bug in the
+dropdowns. `Select` and `MenuBar` highlighted a row in colour and nothing
+else.**
+
+*What was wrong:* exactly what #72 had just fixed one widget over, found while
+reviewing it rather than reported by a consumer.
+`detail::draw_dropdown_rows` stated its highlight as `is_hl ? highlight_fg :
+normal_fg` and nothing more, and **both** dropdowns draw through it — so on the
+`FallbackDriver` tier an open list's highlighted row was byte-for-byte identical
+to every other row.
+
+*Why this was sharper than #72.* A list you cannot read is unreadable. An open
+dropdown you cannot read is **modal and it commits**: Up/Down moved a cursor the
+user could not see and Enter fired whichever option or menu action it happened
+to be sitting on. The user learned what they had picked afterwards, from the
+closed control.
+
+*The fix:* one required `marker` parameter on the shared skeleton, drawn
+flush-left in the highlighted row's gutter. **Required, not defaulted** — the
+whole reason `detail/dropdown.hpp` exists is that #38 was a fix that landed in
+`Select` and not in `MenuBar` (and #53 the same story again), so a third
+dropdown that forgets the marker is now a **compile error** rather than a
+rediscovery. That is the same tripwire discipline as the `-Wswitch`
+fall-throughs in `glyphs.hpp`.
+
+*It cost no geometry, which is the whole difference from #72.* `label_pad`
+already reserved those columns (`Select` passes 1, `MenuBar` 2) and `fill_rect`
+already painted them, so no row moved and no label shifted. That is also why
+neither widget grew a `set_marker_enabled`: `ListWidget` needed one because its
+gutter *took* columns and an app might want them back — here there is nothing to
+opt out of. The only new API is `MenuBar::set_style`/`style()`, which it had no
+reason to have before; it draws no box, so its sole job is keeping ▸ off a bare
+TTY. `Select` already had one.
+
+*One judgement call worth naming.* `Select`'s `label_pad` is 1, so its
+highlighted row reads `▸ansi-rgb` with no space between mark and label, while
+`MenuBar`'s pad of 2 gives `▸ New`. Widening `Select` to 2 for symmetry would
+have shrunk `avail` by a column and truncated long options one character
+earlier in a narrow control — a real regression to buy cosmetic consistency.
+The marker sits at `dr.x` in both, so the *rule* is uniform even though the
+spacing is not.
+
+*Verified on a real pty*, the only check that could have caught this in the
+first place. Under `script -qc` neither example emits a single SGR sequence —
+`FallbackDriver`, the tier in question — and replaying the escape stream back
+into a grid shows both markers present and moving:
+
+```
+ File   Edit   View   Border          │ Driver   [ ansi-rgb   ▾ ]
+▸ New                                 │           kitty
+  Open      →   ▸ Save  (2 × Down)    │     OK   ▸ansi-rgb        →  ▸fallback
+  Save                                │           fallback           (1 × Down)
+```
+
+Switching the demo to `BorderStyle::ASCII` from its own Border menu leaves
+**zero** U+25B8 in the final frame and two `>` markers (the menu's and the
+list's) — so `examples/widgets.cpp` now syncs `m_menu.set_style` alongside the
+`m_list.set_style` #72 added, or the demo would contradict the tier it is
+advertising.
+
+*Pinned in both suites*, because a fix in the skeleton is only worth anything if
+both widgets prove it: `test/20formcontrols` for `Select`, `test/12primitives`
+for `MenuBar`, each with the #72 acceptance shape — two options with **identical
+text**, so colour is the only thing that could tell them apart, rendered through
+a `FallbackDriver` sink, requiring that what reaches the *terminal* still
+differs. Confirmed red: stubbing the marker write fails **13 cases** across the
+two suites. The fit guard (a marker wider than its pad, or a zero-width one) is
+driven against the skeleton **directly**, with a comment saying why — no widget
+can reach that branch today, and untested defensive code is how a guarantee
+rots. Confirmed red on its own mutation.
+
+*One thing review caught that the first cut had wrong.* The skeleton measured
+the caller's **raw** view with `display_width` but painted through
+`Screen::write_text`, which sanitizes — so a marker like `"\033[7m>\033[0m"`
+measures 7 columns (the CSI parameter bytes are printable) and paints 1. The fit
+test would have **rejected a mark that would have fit**, leaving the highlighted
+row identical to the rest: the #76 bug back again, silently, through the very
+parameter added to close it, and with no compile error to catch it.
+`ListWidget::set_marker` normalises at the setter for exactly this reason; the
+skeleton has no setter, so it normalises in the draw and measures and paints the
+same string. Pinned and confirmed red on its own mutation. Not reachable through
+today's two callers — both pass literals out of `mark_glyphs` — but the header's
+whole claim is that a third dropdown *cannot* quietly reinstate the bug, and this
+was the path by which it could.
+
+*Deliberately not in this cut:* `TableWidget`, the third site #76 names. It
+reads as a ride-along and is not one — `draw()` lays columns out from `r.x` via
+`compute_widths()` with **no gutter at all**, so it needs the full `ListWidget`
+treatment plus a decision on whether the marker column costs the first column
+its width or comes out of the inter-column gaps. #76 stays open for it.
+
+**Previous release: `v0.1.11`** (2026-07-28) — **#72: ListWidget's selection was
 invisible on the fallback tier.**
 
 *What was wrong:* the selection was stated exactly once, in colour —
@@ -91,7 +182,7 @@ silently value-initialises the eighth. Nothing in-tree does either — all three
 form controls access fields by name — and we are pre-1.0, but it is the kind of
 break that is invisible until someone reports it.
 
-**Previous release: `v0.1.10`** (2026-07-28) — **#71: `run()` skips `teardown()`
+**Earlier: `v0.1.10`** (2026-07-28) — **#71: `run()` skips `teardown()`
 when a frame throws.**
 
 *What was wrong:* `app.hpp` promised "the terminal is always restored on exit
@@ -586,7 +677,8 @@ v0.1.8 shipped #59 (TG-02, `on_tick`), which closed the three-issue run
 #58 → #27 → #59 agreed at the top of the TG-xx batch; v0.1.9 then took the
 cheapest of what remained, #61 (F5–F12); v0.1.10 jumped the queue for #71, a
 correctness bug against a documented guarantee; v0.1.11 did the same for #72,
-a widget unusable on the tier we promise always works. With pacing, clean
+a widget unusable on the tier we promise always works, and v0.1.12 carried that
+fix to the dropdowns (#76), where reviewing #72 found the identical bug. With pacing, clean
 consumption, a tick hook, the full function-key row and a loop that restores the
 terminal on every exit path, `term-game` has everything it needs from the loop —
 and can now delete **both** workarounds it carries: `guarded_run` (#71) and
@@ -617,19 +709,16 @@ The open queue, in rough priority order:
   `m_running`) — filed alongside #72 by the same consumer, low priority and
   testability-only, but small: a `running()` accessor plus a decision on
   whether `test_run_frames` should preserve a pre-set `false`.
-- **Unfiled, found reviewing #72 — the same bug in three more widgets.**
-  `ListWidget` was the one a consumer reported, but colour-only selection is
-  not unique to it: `detail::draw_dropdown_rows`
-  (`include/termforge/widgets/detail/dropdown.hpp:53`) states its highlight as
-  `is_hl ? highlight_fg : normal_fg` and nothing else, and **Select** and
-  **MenuBar** both draw their dropdowns through it; `TableWidget`
-  (`table_widget.cpp:138`) repeats the pattern inline. On the FallbackDriver
-  tier an open dropdown's highlight is invisible and arrows move a cursor the
-  user cannot see. The fix is cheaper there than it was here: `label_pad` is
-  already a gutter (Select passes 1, MenuBar 2) and `MarkGlyphs::selector`
-  already exists, so it is a few lines in the shared skeleton covering three
-  widgets — which is also the right altitude, since `dropdown.hpp` exists
-  because #38 was a fix that landed in Select and not MenuBar. **Worth filing.**
+- **#76** — filed from this gap and **half-shipped in v0.1.12**. The dropdown
+  half (Select + MenuBar, one change in the shared skeleton) is done; what
+  remains is **`TableWidget`**, which reads like a ride-along and is not one.
+  The dropdowns were cheap because `label_pad` had already reserved their
+  gutter; `TableWidget::draw` lays columns out from `r.x` via `compute_widths()`
+  with **no gutter at all**, so it needs the `ListWidget` treatment (reserve a
+  column, shrink the content area, keep the click hit-test honest over it) plus
+  a decision no other site had to make: whether the marker column costs the
+  first column its width or comes out of the inter-column gaps. That decision is
+  the only thing in #76 that is not mechanical.
 - **#22** (TabBar) — small, independent.
 - **#21** (shared scrollbar) — small; the issue that decides whether
   `ProgressBar`'s `█`/`─` and `WaveformWidget`'s half-blocks join

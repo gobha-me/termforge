@@ -117,10 +117,14 @@ auto MenuBar::draw(Screen& screen) -> void {
   // dr.w/dr.h > 0 guard was what kept this block off m_menus (#52).
   if (dropdown_open()) {
     const auto& menu = m_menus[static_cast<std::size_t>(m_active)];
+    // The marker (#76) goes in the two columns label_pad already reserved, so
+    // no row moves and the item text stays where it was. MenuBar's dropdown is
+    // modal and commits on Enter, so on a colour-dropping driver this is the
+    // difference between navigating and guessing.
     detail::draw_dropdown_rows(
         screen, dropdown_rect(&layout), static_cast<int>(menu.items.size()),
         m_selected, /*label_pad=*/2, m_dropdown_fg, m_dropdown_bg,
-        m_selected_fg, m_selected_bg,
+        m_selected_fg, m_selected_bg, mark_glyphs(m_style).selector,
         [&](int vi) -> const std::string& {
           return menu.items[static_cast<std::size_t>(vi)].label;
         });

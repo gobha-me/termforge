@@ -225,10 +225,11 @@ class WidgetsDemo final : public App {
     m_left_frame.set_style(style);
     m_right_frame.set_style(style);
     m_wave_frame.set_style(style);
-    // Not a frame, but it draws from the same glyph family: without this the
-    // Ascii entry leaves a Unicode ▸ in the list and the demo contradicts the
-    // tier it is advertising (#72).
+    // Not frames, but they draw from the same glyph family: without these the
+    // Ascii entry leaves a Unicode ▸ in the list (#72) and in the open menu
+    // (#76), and the demo contradicts the tier it is advertising.
     m_list.set_style(style);
+    m_menu.set_style(style);
     set_status(std::format("Border: {}", name));
   }
 

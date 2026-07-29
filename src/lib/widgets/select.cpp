@@ -165,9 +165,12 @@ auto Select::draw(Screen& screen) -> void {
   // The dropdown draws BELOW rect() — the documented exception, matched by
   // hit_test(). Geometry comes from dropdown_rect() so the two cannot disagree.
   // The row loop is the shared detail/dropdown.hpp skeleton (#42 item 2).
+  // The marker (#76) rides in the label_pad gutter the skeleton already
+  // reserved, so the rows do not move; g is this widget's own glyph family, so
+  // BorderStyle::Ascii keeps the open list 7-bit along with the closed box.
   detail::draw_dropdown_rows(
       screen, dropdown_rect(), m_list.count(), m_highlight, /*label_pad=*/1,
-      m_dropdown_fg, m_dropdown_bg, m_highlight_fg, m_highlight_bg,
+      m_dropdown_fg, m_dropdown_bg, m_highlight_fg, m_highlight_bg, g.selector,
       [this](int vi) -> const std::string& { return m_list.at(vi); });
 
   clear_dirty();
