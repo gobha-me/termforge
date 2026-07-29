@@ -136,6 +136,46 @@ TEST_CASE("clamp_scroll: zero/negative visible preserves the incoming scroll",
   REQUIRE(clamp_scroll(4, 2, 10, -1) == 4);
 }
 
+// ── clamp_to_window, clamp_scroll's inverse (#85) ────────────────────────────
+
+TEST_CASE("clamp_to_window: carries the selection into a window that moved",
+          "[scroll]") {
+  // clamp_scroll moves the window onto the selection (an arrow key moved the
+  // selection); clamp_to_window moves the selection into the window (a wheel
+  // moved the window). Dropdowns need this direction because they COMMIT: a
+  // highlight outside the painted window is invisible, unmarked, and still what
+  // Enter takes -- the blind commit #53 closed.
+  REQUIRE(clamp_to_window(3, 3, 10, 3) == 3);  // already inside: untouched
+  REQUIRE(clamp_to_window(3, 4, 10, 3) == 4);  // still inside
+  REQUIRE(clamp_to_window(3, 0, 10, 3) == 3);  // above: pulled to the top row
+  REQUIRE(clamp_to_window(3, 9, 10, 3) == 5);  // below: pulled to the last row
+}
+
+TEST_CASE("clamp_to_window: it is NOT clamp_scroll with the arguments swapped",
+          "[scroll][failure]") {
+  // The two take (scroll, selected, count, visible) in the SAME order despite
+  // returning different things, so a swap is a compile error rather than a
+  // plausible wrong answer -- but only for callers whose types differ, and
+  // these are all int. This pins the asymmetry that makes the swap detectable:
+  // the two disagree on the same inputs, and neither result is out of range.
+  REQUIRE(clamp_to_window(7, 0, 20, 5) == 7);
+  REQUIRE(clamp_to_window(0, 7, 20, 5) == 4);  // the swap: valid, and wrong
+}
+
+TEST_CASE("clamp_to_window: degenerate windows leave the selection alone",
+          "[scroll][failure]") {
+  // No selection, no content, and no window are all "nothing to carry" -- the
+  // caller's value passes through rather than being clamped to a row that does
+  // not exist. -1 in particular is the closed-dropdown sentinel in both
+  // widgets, and turning it into 0 would silently reopen a closed list.
+  REQUIRE(clamp_to_window(3, -1, 10, 3) == -1);
+  REQUIRE(clamp_to_window(0, 2, 0, 3) == 2);
+  REQUIRE(clamp_to_window(0, 2, 10, 0) == 2);
+  REQUIRE(clamp_to_window(0, 2, 10, -1) == 2);
+  // A window taller than the content clamps to the content, not to the window.
+  REQUIRE(clamp_to_window(0, 9, 3, 10) == 2);
+}
+
 TEST_CASE("clamp_scroll: a selection past the content cannot blank the window",
           "[scroll][failure]") {
   // clamp_scroll(0, 5, 3, 2): selected is out of range (count 3). Unguarded,
