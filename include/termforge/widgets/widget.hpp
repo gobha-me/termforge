@@ -38,12 +38,9 @@
 
 namespace termforge {
 
-struct Rect {
-  int x{0}, y{0}, w{0}, h{0};
-  [[nodiscard]] auto contains(int px, int py) const noexcept -> bool {
-    return px >= x && px < x + w && py >= y && py < y + h;
-  }
-};
+// Rect moved to core/types.hpp in #63 — Image's region ops need it, and so
+// will the drivers (#83). It arrives here via the core/types.hpp include
+// above, so every consumer of this header keeps compiling unchanged.
 
 class Widget {
  public:
