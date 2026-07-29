@@ -59,24 +59,26 @@ auto main() -> int {
   const Rgb white{0xFF, 0xFF, 0xFF}, dark = theme::kBg;
   const Rgb cyan{0x00, 0xFF, 0xFF}, green{0x00, 0xFF, 0x80};
 
-  driver->draw_text(0, 0, "TermForge Image Demo", cyan, dark);
-  driver->draw_text(0, 1, std::format("Driver tier: {}", tier), green, dark);
+  driver->draw_text(0, 0, "TermForge Image Demo", cyan, dark, Attr::Bold);
+  driver->draw_text(0, 1, std::format("Driver tier: {}", tier), green, dark,
+                    Attr::None);
   driver->draw_text(
       0, 2,
       std::format("Asset: assets/gradient.rgba ({}x{})", img.width(),
                   img.height()),
-      white, dark);
+      white, dark, Attr::None);
 
   if (auto res = driver->draw_image(0, 4, img); !res) {
     driver->draw_text(0, 4, "Image render failed: " + res.error().message,
-                      Rgb{0xFF, 0x40, 0x40}, dark);
+                      Rgb{0xFF, 0x40, 0x40}, dark, Attr::None);
   }
 
   // Position the exit prompt below the image. Half-block drivers use
   // height/2 rows; kitty uses the full height. Add a small margin.
   const int prompt_row = 4 + (dcaps.kitty_graphics ? img.height()
                                                     : (img.height() + 1) / 2) + 1;
-  driver->draw_text(0, prompt_row, "Press any key to exit...", white, dark);
+  driver->draw_text(0, prompt_row, "Press any key to exit...", white, dark,
+                    Attr::Dim);
   driver->flush();
 
   // Drain any pending input (kitty sends APC ack responses that would

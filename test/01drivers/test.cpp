@@ -9,6 +9,7 @@
 #include "termforge/drivers/terminal_driver.hpp"
 
 using termforge::AnsiRgbDriver;
+using termforge::Attr;
 using termforge::DriverImpl;
 using termforge::ErrorEvent;
 using termforge::FallbackDriver;
@@ -285,7 +286,8 @@ TEST_CASE("KittyDriver: draw_text emits SGR colors", "[drivers][kitty]") {
   KittyDriver d;
   std::string out;
   d.set_output(&out);
-  d.draw_text(0, 0, "Hi", Rgb{0xFF, 0x00, 0x00}, Rgb{0x00, 0x00, 0xFF});
+  d.draw_text(0, 0, "Hi", Rgb{0xFF, 0x00, 0x00}, Rgb{0x00, 0x00, 0xFF},
+              Attr::None);
   d.flush();
   REQUIRE(out.find("38;2;255;0;0") != std::string::npos);   // fg red
   REQUIRE(out.find("48;2;0;0;255") != std::string::npos);   // bg blue

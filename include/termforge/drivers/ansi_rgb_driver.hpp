@@ -20,7 +20,8 @@ class AnsiRgbDriver final : public TerminalDriver {
   ~AnsiRgbDriver() override = default;
 
   auto init() -> std::expected<void, ErrorEvent> override;
-  auto draw_text(int x, int y, std::string_view text, Rgb fg, Rgb bg) -> void override;
+  auto draw_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
+                 Attr attrs) -> void override;
   auto draw_image(int x, int y, const Image& image)
       -> std::expected<void, ErrorEvent> override;
   auto flush() -> void override;
@@ -39,6 +40,10 @@ class AnsiRgbDriver final : public TerminalDriver {
   std::string m_buf;
   int m_cur_fg{-1};  // active SGR foreground, -1 = no SGR emitted yet
   int m_cur_bg{-1};  // active SGR background
+  // Active SGR attributes (#62) as the Attr bitmask's underlying value, -1 =
+  // none emitted yet. Tracked so a run breaks (and resets) on an attr change
+  // exactly like a color change  a leaked SGR 1 is a visible bug.
+  int m_cur_attrs{-1};
 };
 
 }  // namespace termforge

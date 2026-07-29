@@ -26,10 +26,24 @@ auto FallbackDriver::capabilities() const noexcept -> Capabilities {
 }
 
 void FallbackDriver::draw_text(int x, int y, std::string_view text, Rgb /*fg*/,
-                               Rgb /*bg*/) {
+                               Rgb /*bg*/, Attr attrs) {
   // Color is silently dropped — this is the floor driver, degradation is
   // implicit in its tier (its capabilities() reports all-false).
-  m_buf += std::format("\033[{};{}H{}", y + 1, x + 1, text);
+  //
+  // Attributes (#62): only Reverse and Bold survive on the floor — both are
+  // honored even by a dumb terminal and are the two the bottom tier genuinely
+  // needs (selection, emphasis) once color is gone. Dim/Italic/Underline/
+  // Strike are dropped: a "dumb"-class terminal either lacks them or renders
+  // them unreliably, and the floor's promise is that what it draws is what you
+  // get. Reaching this driver at all is the tier-degradation event; this driver
+  // does not compound it with a per-cell notice.
+  m_buf += std::format("\033[{};{}H", y + 1, x + 1);
+  const bool rev = any(attrs & Attr::Reverse);
+  const bool bold = any(attrs & Attr::Bold);
+  if (rev) m_buf += "\033[7m";
+  if (bold) m_buf += "\033[1m";
+  m_buf += text;
+  if (rev || bold) m_buf += "\033[0m";  // don't leak the attribute past the run
 }
 
 auto FallbackDriver::draw_image(int x, int y, const Image& image)

@@ -46,19 +46,21 @@ auto Screen::clear(const Cell& fill) -> void {
   std::fill(m_cells.begin(), m_cells.end(), fill);
 }
 
-auto Screen::fill_rect(int x, int y, int w, int h, Rgb fg, Rgb bg) -> void {
+auto Screen::fill_rect(int x, int y, int w, int h, Rgb fg, Rgb bg,
+                       Attr attrs) -> void {
   if (w <= 0 || h <= 0) return;
   const int x0 = std::max(0, x);
   const int y0 = std::max(0, y);
   const int x1 = std::min(m_cols, x + w);
   const int y1 = std::min(m_rows, y + h);
-  const Cell fill{"", fg, bg};  // blank colored cell (image_id defaults to -1)
+  const Cell fill{"", fg, bg, attrs};  // blank cell (image_id defaults to -1)
   for (int yy = y0; yy < y1; ++yy)
     for (int xx = x0; xx < x1; ++xx)
       m_cells[static_cast<std::size_t>(yy) * m_cols + xx] = fill;
 }
 
-auto Screen::write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg) -> int {
+auto Screen::write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
+                        Attr attrs) -> int {
   if (y < 0 || y >= m_rows || x >= m_cols) return 0;
   const std::string clean = sanitize(text);
   const std::string_view sv{clean};
@@ -94,6 +96,7 @@ auto Screen::write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg) -> 
       cell.text = " ";
       cell.fg = fg;
       cell.bg = bg;
+      cell.attrs = attrs;
       ++cx;
       ++written;
       break;
@@ -102,6 +105,7 @@ auto Screen::write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg) -> 
     cell.text.assign(sv, i, len);
     cell.fg = fg;
     cell.bg = bg;
+    cell.attrs = attrs;
     base_cx = cx;
     ++cx;
     ++written;
@@ -110,6 +114,7 @@ auto Screen::write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg) -> 
       cont.text.assign(1, '\0');  // width-2 continuation cell (renderer skips)
       cont.fg = fg;
       cont.bg = bg;
+      cont.attrs = attrs;
       ++cx;
       ++written;
     }

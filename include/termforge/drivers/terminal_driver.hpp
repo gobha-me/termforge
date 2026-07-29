@@ -27,7 +27,11 @@ class TerminalDriver {
   virtual ~TerminalDriver() = default;
 
   virtual auto init() -> std::expected<void, ErrorEvent> = 0;
-  virtual auto draw_text(int x, int y, std::string_view text, Rgb fg, Rgb bg) -> void = 0;
+  // Emit one run of text at (x,y). `attrs` carries the per-cell display
+  // attributes (#62); a driver that cannot honor all of them drops what it
+  // cannot and surfaces the degradation per its tier (see Attr).
+  virtual auto draw_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
+                         Attr attrs) -> void = 0;
   virtual auto draw_image(int x, int y, const Image& image)
       -> std::expected<void, ErrorEvent> = 0;
   virtual auto flush() -> void = 0;

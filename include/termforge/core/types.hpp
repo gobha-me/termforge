@@ -20,6 +20,58 @@ struct Rgb {
   constexpr auto operator==(const Rgb&) const -> bool = default;
 };
 
+// ── text attributes (#62) ────────────────────────────────────────────────────
+// Per-cell display attributes beyond fg/bg color, carried on `Cell` and
+// emitted by the renderer's SGR run-coalescing. A bitmask so a cell can carry
+// several at once. `Cell` is stored per grid position and compared every
+// frame by the diff renderer, so the attribute is packed into one byte and
+// the equality is the default memberwise compare.
+//
+// These are the attributes a terminal can express that color alone cannot:
+//   * Dim       — the semantic tool for a disabled/inactive control.
+//   * Reverse   — how selection is conventionally drawn; theme-independent,
+//                 unlike the fg/bg swap widgets currently hand-roll.
+//   * Underline — the accepted affordance for a link / menu accelerator.
+// On the low-color / FallbackDriver tier, attributes are the *only* channel
+// left once color is gone, which makes this a degradation-story feature, not
+// just expressiveness.
+//
+// Per-driver survival: AnsiRgbDriver and KittyDriver pass all six through;
+// FallbackDriver (the floor) emits only Reverse and Bold — universally honored
+// even on a dumb terminal — and drops the rest, surfaced as ErrorEvent{Info}
+// per the degradation-is-an-event contract.
+enum class Attr : std::uint8_t {
+  None = 0,
+  Bold = 1 << 0,       // SGR 1
+  Dim = 1 << 1,        // SGR 2
+  Italic = 1 << 2,     // SGR 3
+  Underline = 1 << 3,  // SGR 4
+  Reverse = 1 << 4,    // SGR 7
+  Strike = 1 << 5,     // SGR 9
+};
+
+[[nodiscard]] constexpr auto operator|(Attr a, Attr b) -> Attr {
+  return static_cast<Attr>(static_cast<std::uint8_t>(a) |
+                           static_cast<std::uint8_t>(b));
+}
+[[nodiscard]] constexpr auto operator&(Attr a, Attr b) -> Attr {
+  return static_cast<Attr>(static_cast<std::uint8_t>(a) &
+                           static_cast<std::uint8_t>(b));
+}
+[[nodiscard]] constexpr auto operator~(Attr a) -> Attr {
+  return static_cast<Attr>(~static_cast<std::uint8_t>(a));
+}
+constexpr auto operator|=(Attr& a, Attr b) -> Attr& {
+  a = a | b;
+  return a;
+}
+constexpr auto operator&=(Attr& a, Attr b) -> Attr& {
+  a = a & b;
+  return a;
+}
+// Whether any attribute bit is set (an Attr is a bitmask, not a bool).
+[[nodiscard]] constexpr auto any(Attr a) -> bool { return a != Attr::None; }
+
 // ── image ────────────────────────────────────────────────────────────────
 // Raw 32-bit RGBA pixel buffer. Loaded from raw-RGB assets (PNG/JPEG are
 // deliberately out of scope for the core; decode elsewhere and hand us RGBA).
