@@ -240,8 +240,25 @@ enum class WheelResult {
   // Scrolled so the caller does not mark_dirty for a repaint that is not
   // needed -- the flag must not lie (#56 item 2).
   if (scroll == before) return WheelResult::Consumed;
-  highlight = clamp_to_window(highlight, scroll, count, visible_rows);
+  highlight = clamp_to_window(scroll, highlight, count, visible_rows);
   return WheelResult::Scrolled;
+}
+
+// The other direction, and the other half of the pair: the HIGHLIGHT moved (an
+// arrow, Home/End, or opening onto a selection deep in the list), so the window
+// is pulled onto it. Every such path must call this, or the highlight walks off
+// the painted window and Enter commits something invisible (#53).
+//
+// A one-line wrapper over clamp_scroll, and worth naming anyway: this and
+// dropdown_wheel are the only two ways a dropdown's window may move, they are
+// exact opposites, and picking the wrong one is silent (clamp_scroll on a wheel
+// is the dead-wheel TableWidget bug #35 found; clamp_to_window on an arrow
+// would let the highlight drag the window nowhere). Both widgets calling one
+// named pair beats four hand-rolled clamps whose direction the reader has to
+// re-derive -- which is the drift this header exists to end.
+[[nodiscard]] inline auto dropdown_reveal(int scroll, int highlight, int count,
+                                          int visible_rows) noexcept -> int {
+  return clamp_scroll(scroll, highlight, count, visible_rows);
 }
 
 // The hover branch. Returns true when the event was consumed: a motion over

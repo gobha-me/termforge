@@ -82,8 +82,8 @@ auto Select::open_dropdown() -> void {
   // Order is load-bearing: dropdown_rect() returns {0,0,0,0} while the list is
   // closed, and "closed" is m_highlight < 0 -- so the highlight must be set
   // before the window height can be read.
-  m_scroll = detail::clamp_scroll(0, m_highlight, m_list.count(),
-                                  dropdown_rect().h);
+  m_scroll = detail::dropdown_reveal(0, m_highlight, m_list.count(),
+                                     dropdown_rect().h);
   mark_dirty();
 }
 
@@ -193,7 +193,8 @@ auto Select::draw(Screen& screen) -> void {
   // untouched, and the only way to reach it with the highlight outside is a
   // resize -- which is precisely the case that needs the reveal. TableWidget
   // cannot do this because its wheel leaves the selection behind.
-  m_scroll = detail::clamp_scroll(m_scroll, m_highlight, m_list.count(), ddr.h);
+  m_scroll = detail::dropdown_reveal(m_scroll, m_highlight, m_list.count(),
+                                     ddr.h);
   detail::draw_dropdown_rows(
       screen, ddr, m_list.count(), /*highlight=*/m_highlight,
       /*scroll=*/m_scroll, /*label_pad=*/1, m_dropdown_fg, m_dropdown_bg,
@@ -308,8 +309,8 @@ auto Select::on_event(const Event& ev) -> bool {
   // is dragged after them by reveal() below (#85).
   const int last = std::max(0, m_list.count() - 1);
   const auto reveal = [this, visible] {
-    m_scroll = detail::clamp_scroll(m_scroll, m_highlight, m_list.count(),
-                                    visible);
+    m_scroll = detail::dropdown_reveal(m_scroll, m_highlight, m_list.count(),
+                                       visible);
     mark_dirty();
   };
   if (k->key == Key::Up) {

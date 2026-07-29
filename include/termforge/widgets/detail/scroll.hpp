@@ -62,7 +62,15 @@ namespace termforge::detail {
 // the #38 wheel-drags-the-highlight bug, which was the wheel falling into the
 // hover branch and picking the row under the POINTER; nothing here looks at the
 // pointer at all.
-[[nodiscard]] constexpr auto clamp_to_window(int selected, int scroll,
+//
+// Takes (scroll, selected, ...) in the SAME order as clamp_scroll even though
+// it returns the selection rather than the scroll. Inverting the first two
+// would make a swapped call compile and return a plausible index rather than an
+// obviously wrong one -- clamp_to_window(7, 0, 20, 5) is 7 and the swap is 4,
+// both valid items, so nothing asserts and the symptom is a highlight on the
+// wrong row only after a wheel at a non-zero offset. That is the swappable-
+// parameter trap detail/dropdown.hpp passes a whole MarkGlyphs to avoid.
+[[nodiscard]] constexpr auto clamp_to_window(int scroll, int selected,
                                              int count,
                                              int visible_rows) noexcept -> int {
   if (selected < 0) return selected;
