@@ -6,6 +6,7 @@
 // Degradation and failure are modeled as *events* (see Event / ErrorEvent)
 // rather than silent downgrade, per the project design.
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <variant>
@@ -84,8 +85,37 @@ struct Pixel {
 class Image {
  public:
   Image() = default;
+
+  // The buffer is NORMALIZED to exactly width*height pixels: a short buffer is
+  // padded with default Pixels, a long one truncated, and any non-positive
+  // dimension collapses the image to empty.
+  //
+  // This is not politeness. `at()`, the region ops below, and the kitty
+  // transmit path all derive their extent from the *dimensions*, never from
+  // the vector's size (see image_hash / transmit in kitty_driver.cpp) — so a
+  // buffer that disagrees with them is an out-of-bounds read whose bytes get
+  // base64'd to the terminal. The drivers' `empty()` guard does not catch it:
+  // a short-but-non-empty buffer sails straight past. And a constructor is the
+  // only place the invariant can be established, because there is no mutable
+  // access to the buffer afterwards.
+  //
+  // Padding uses a default Pixel (opaque black) rather than transparent on
+  // purpose: a short buffer is a caller bug, and a visible black band is
+  // diagnosable where invisible transparency is not.
   Image(int width, int height, std::vector<Pixel> pixels)
-      : m_width(width), m_height(height), m_pixels(std::move(pixels)) {}
+      : m_width(width > 0 ? width : 0),
+        m_height(height > 0 ? height : 0),
+        m_pixels(std::move(pixels)) {
+    const auto need = static_cast<std::size_t>(m_width) *
+                      static_cast<std::size_t>(m_height);
+    if (need == 0) {
+      m_width = 0;
+      m_height = 0;
+      m_pixels.clear();
+    } else if (m_pixels.size() != need) {
+      m_pixels.resize(need);
+    }
+  }
 
   [[nodiscard]] auto width() const noexcept -> int { return m_width; }
   [[nodiscard]] auto height() const noexcept -> int { return m_height; }
