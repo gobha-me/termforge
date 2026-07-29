@@ -26,10 +26,22 @@
 // list the MenuBar last (topmost) in route_mouse. Click-away close is the
 // parent's call (check dropdown_open() + hit_test before routing).
 
+// The open dropdown states its selection TWICE (#76): inverted colours, and a
+// marker glyph in the two columns the item labels were already indented by.
+// Colour alone was the whole affordance until v0.1.12, and
+// FallbackDriver::draw_text discards colour — so on the tier the framework
+// promises always works, an open menu's highlighted item was byte-for-byte
+// identical to the rest of the list. That is sharper here than it was for
+// ListWidget (#72), because a dropdown is modal and commits: Up/Down moved a
+// cursor the user could not see and Enter fired whichever action it happened to
+// be on. The marker is drawn by the shared detail/dropdown.hpp skeleton, so
+// Select cannot drift away from it.
+
 #include <functional>
 #include <string>
 #include <vector>
 
+#include "termforge/widgets/glyphs.hpp"
 #include "termforge/widgets/widget.hpp"
 #include "termforge/widgets/theme.hpp"
 
@@ -74,6 +86,16 @@ class MenuBar final : public Widget {
 
   [[nodiscard]] auto active_menu() const noexcept -> int { return m_active; }
 
+  // Which glyph family the dropdown's selection marker comes from (#76) — the
+  // same knob Select, Frame and ListWidget take, so an app holding one
+  // BorderStyle passes it here too and BorderStyle::Ascii keeps a bare TTY
+  // 7-bit. MenuBar draws no box, so this is its only use for a style.
+  auto set_style(BorderStyle style) -> void {
+    m_style = style;
+    mark_dirty();
+  }
+  [[nodiscard]] auto style() const noexcept -> BorderStyle { return m_style; }
+
  private:
   // Compute the x position and width of each menu title.
   auto layout_menus() const -> std::vector<std::pair<int, int>>;
@@ -98,6 +120,9 @@ class MenuBar final : public Widget {
   // open, see dropdown_open()) -- the Select m_highlight pattern (#42/4).
   int m_selected{-1};
   int m_screen_rows{0};  // memoized from draw(); 0 = no frame yet (unclamped)
+
+  // #76: the affordance that survives a driver which drops colour.
+  BorderStyle m_style{BorderStyle::Single};
 
   Rgb m_fg{theme::kFg};
   Rgb m_bg{0x20, 0x20, 0x40};

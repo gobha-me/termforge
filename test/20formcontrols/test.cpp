@@ -21,9 +21,12 @@
 #include <vector>
 
 #include "detail/width.hpp"
+#include "termforge/core/renderer.hpp"
 #include "termforge/core/screen.hpp"
 #include "termforge/core/types.hpp"
+#include "termforge/drivers/fallback_driver.hpp"
 #include "termforge/widgets/checkbox.hpp"
+#include "termforge/widgets/detail/dropdown.hpp"
 #include "termforge/widgets/focus_ring.hpp"
 #include "termforge/widgets/glyphs.hpp"
 #include "termforge/widgets/radio_group.hpp"
@@ -35,6 +38,7 @@ using termforge::BorderStyle;
 using namespace tfsupport;
 using termforge::Checkbox;
 using termforge::Event;
+using termforge::FallbackDriver;
 using termforge::FocusRing;
 using termforge::is_ascii;
 using termforge::Key;
@@ -44,6 +48,8 @@ using termforge::mark_glyphs;
 using termforge::MouseEvent;
 using termforge::RadioGroup;
 using termforge::Rect;
+using termforge::Renderer;
+using termforge::Rgb;
 using termforge::Screen;
 using termforge::Select;
 using termforge::Widget;
@@ -769,10 +775,11 @@ TEST_CASE("Select: the open list draws below the rect at dropdown_rect",
   sel.draw(s);
   REQUIRE(row_text(s, 0, 0, 14) == "[ ansi-rgb ▾ ]");
   REQUIRE(row_text(s, 1, 0, 9) == " kitty   ");
-  REQUIRE(row_text(s, 2, 0, 9) == " ansi-rgb");
+  REQUIRE(row_text(s, 2, 0, 9) == "▸ansi-rgb");  // highlighted: marker (#76)
   REQUIRE(row_text(s, 3, 0, 9) == " fallback");
   REQUIRE(s.at(0, 4).blank());  // nothing past the last option
-  // The highlight starts on the current selection, not at the top.
+  // The highlight starts on the current selection, not at the top -- said
+  // twice, in the marker above and in the colour here.
   REQUIRE(sel.highlighted() == 1);
   REQUIRE_FALSE(s.at(0, 2).bg == s.at(0, 1).bg);
 }
@@ -1007,7 +1014,9 @@ TEST_CASE("Select: the dropdown anchors below a taller rect",
 
   sel.draw(s);
   REQUIRE(row_text(s, 1, 0, 14) == "[ kitty    ▾ ]");   // box intact
-  REQUIRE(row_text(s, 2, 0, 9) == " kitty   ");        // list starts at y+h
+  // List starts at y+h, and the highlighted row wears the #76 marker in the
+  // pad column the labels were already indented by.
+  REQUIRE(row_text(s, 2, 0, 9) == "▸kitty   ");
   REQUIRE(sel.hit_test(3, 2));
   REQUIRE_FALSE(sel.hit_test(3, 5));  // one past the last option
 
@@ -1220,4 +1229,175 @@ TEST_CASE("Select: on_change may call set_options and replace its handler",
   REQUIRE(calls == 1);
   REQUIRE(seen == "ansi-rgb");  // the option the user picked, not freed memory
   REQUIRE(sel.option_count() == 1);
+}
+
+// ── The dropdown's selection marker (#76) ───────────────────────────────────
+//
+// Until v0.1.12 an open dropdown stated its highlight exactly once, in colour,
+// and FallbackDriver::draw_text discards colour. So on the bottom tier the
+// highlighted option was byte-for-byte identical to every other option -- and
+// unlike a list, a dropdown is modal and COMMITS: Up/Down moved a cursor the
+// user could not see and Enter picked whatever it happened to be on.
+//
+// The marker lives in detail/dropdown.hpp, not here, because #38 was a fix that
+// landed in Select and not in MenuBar. These cases pin Select's half; the
+// MenuBar half is pinned in 12primitives, and both must pass or the skeleton is
+// not doing its job.
+
+TEST_CASE("Select: the open list marks its highlight with a glyph, not only "
+          "colour (#76)", "[form][select][glyphs]") {
+  Screen s{20, 6};
+  Select sel;
+  make_select(sel);
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
+
+  // Row 1 is the highlight (selection starts at option 0); 2 and 3 are not.
+  REQUIRE(s.at(0, 1).text == "▸");
+  REQUIRE(s.at(0, 2).text.empty());
+  REQUIRE(s.at(0, 3).text.empty());
+  // And the labels did NOT move: label_pad already reserved column 0, so this
+  // is the same geometry as before #76.
+  REQUIRE(s.at(1, 1).text == "k");
+  REQUIRE(s.at(1, 2).text == "a");
+}
+
+TEST_CASE("Select: the marker follows the highlight without committing (#76)",
+          "[form][select][glyphs]") {
+  Screen s{20, 6};
+  Select sel;
+  make_select(sel);
+  int calls = 0;
+  sel.on_change([&](int, const std::string&) { ++calls; });
+
+  REQUIRE(sel.on_event(key(Key::Enter)));  // open
+  REQUIRE(sel.on_event(key(Key::Down)));   // move the highlight
+  sel.draw(s);
+
+  REQUIRE(s.at(0, 1).text.empty());
+  REQUIRE(s.at(0, 2).text == "▸");
+  REQUIRE(calls == 0);  // arrows still do not commit
+}
+
+TEST_CASE("Select: a hover moves the marker too (#76)",
+          "[form][select][glyphs][mouse]") {
+  // The highlight has two drivers, keys and the pointer. A marker that only
+  // tracked one of them would be worse than none on the tier that needs it.
+  Screen s{20, 6};
+  Select sel;
+  make_select(sel);
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(sel.on_event(motion(3, 3)));  // third option row
+  sel.draw(s);
+
+  REQUIRE(s.at(0, 3).text == "▸");
+  REQUIRE(s.at(0, 1).text.empty());
+}
+
+TEST_CASE("Select: BorderStyle::Ascii keeps the OPEN list 7-bit too (#76)",
+          "[form][select][glyphs]") {
+  // The closed box already swept clean; the dropdown is new surface, and a
+  // Unicode ▸ left in it would break exactly the tier Ascii exists for.
+  Screen s{20, 6};
+  Select sel;
+  make_select(sel);
+  sel.set_style(BorderStyle::Ascii);
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
+
+  REQUIRE(s.at(0, 1).text == ">");
+  REQUIRE(rect_is_ascii(s, Rect{0, 0, 20, 6}));
+}
+
+TEST_CASE("Select: the highlight survives a driver that drops colour (#76)",
+          "[form][select][failure]") {
+  // The acceptance case. Two options with IDENTICAL text, so colour is the
+  // only thing that could tell the rows apart -- then rendered through the
+  // driver that throws colour away. What reaches the TERMINAL must still
+  // differ, which a Screen-level assertion alone would not prove: the whole
+  // bug was a difference that existed in Screen and died in the driver.
+  Screen s{10, 3};
+  Select sel;
+  sel.set_options({"same", "same"});
+  sel.set_geometry({0, 0, 10, 1});
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
+
+  REQUIRE(row_text(s, 1, 0, 6) != row_text(s, 2, 0, 6));  // in CELL TEXT
+
+  FallbackDriver d;
+  std::string out;
+  d.set_output(&out);
+  Renderer r(d);
+  r.present(s);  // first frame: the renderer diffs, so assert on this one
+  d.flush();
+  REQUIRE(out.find("▸") != std::string::npos);
+}
+
+TEST_CASE("Select: the marker is dropped, never the label, when it will not "
+          "fit (#76)", "[form][select][failure][glyphs]") {
+  // Driven against the skeleton directly. Both in-tree callers pass a
+  // one-column glyph into a pad of 1 (Select) or 2 (MenuBar), so no widget can
+  // reach this branch today -- but the guard is the reason a third dropdown, or
+  // a wider mark in a future glyph family, cannot silently eat the first
+  // columns of every highlighted label. Untested defensive code is how that
+  // guarantee rots.
+  const Rect dr{0, 0, 10, 2};
+  const Rgb c{0, 0, 0};
+  auto label = [](int) -> const std::string& {
+    static const std::string s = "abcdef";
+    return s;
+  };
+
+  {  // A two-column mark in a one-column pad: label intact, no mark.
+    Screen s{10, 2};
+    termforge::detail::draw_dropdown_rows(s, dr, 2, 0, /*label_pad=*/1, c, c, c,
+                                          c, "»»", label);
+    REQUIRE(row_text(s, 0, 0, 7) == " abcdef");
+  }
+  {  // The same mark in a pad that fits it: drawn.
+    Screen s{10, 2};
+    termforge::detail::draw_dropdown_rows(s, dr, 2, 0, /*label_pad=*/2, c, c, c,
+                                          c, "»»", label);
+    REQUIRE(row_text(s, 0, 0, 8) == "»»abcdef");
+  }
+  {  // Zero-width: write_text would paint nothing, so reserve nothing.
+    Screen s{10, 2};
+    termforge::detail::draw_dropdown_rows(s, dr, 2, 0, /*label_pad=*/2, c, c, c,
+                                          c, "́", label);
+    REQUIRE(row_text(s, 0, 0, 8) == "  abcdef");
+  }
+  {  // The third condition: a pad wider than the dropdown itself. Neither
+     // in-tree caller can produce it (pads of 1 and 2, against a rect at least
+     // as wide), so it is only reachable from here -- which is the point of
+     // driving the skeleton directly rather than letting it go unasserted.
+    Screen s{10, 2};
+    termforge::detail::draw_dropdown_rows(s, Rect{0, 0, 1, 2}, 2, 0,
+                                          /*label_pad=*/2, c, c, c, c, "»»",
+                                          label);
+    REQUIRE(s.at(0, 0).text.empty());  // nothing spilled into the one column
+  }
+}
+
+TEST_CASE("dropdown: the measured marker is the painted marker (#76)",
+          "[form][select][failure][glyphs]") {
+  // write_text sanitizes whatever it is handed, so a skeleton that measured the
+  // caller's RAW view would fit-test a different string than it paints.
+  // "\033[7m>\033[0m" is one visible column but seven raw ones: measured raw it
+  // fails every in-tree pad and the highlighted row comes out identical to the
+  // others -- the #76 bug back again, silently. ListWidget::set_marker
+  // normalises at the setter; the skeleton has no setter, so it normalises in
+  // the draw. This is the case that pins the two strings as one.
+  const Rect dr{0, 0, 10, 2};
+  const Rgb c{0, 0, 0};
+  auto label = [](int) -> const std::string& {
+    static const std::string s = "abcdef";
+    return s;
+  };
+
+  Screen s{10, 2};
+  termforge::detail::draw_dropdown_rows(s, dr, 2, 0, /*label_pad=*/1, c, c, c, c,
+                                        "\033[7m>\033[0m", label);
+  REQUIRE(row_text(s, 0, 0, 7) == ">abcdef");  // marked, and NOT indented
+  REQUIRE(row_text(s, 1, 0, 7) == " abcdef");  // and still distinguishable
 }
