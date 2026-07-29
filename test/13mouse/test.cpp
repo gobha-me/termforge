@@ -3,6 +3,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <string>
 #include <variant>
 
 #include "termforge/core/app.hpp"
@@ -18,6 +19,7 @@ using namespace tfsupport;
 using termforge::Button;
 using termforge::Column;
 using termforge::Event;
+using termforge::Menu;
 using termforge::MenuBar;
 using termforge::MouseEvent;
 using termforge::Screen;
@@ -161,11 +163,77 @@ TEST_CASE("MenuBar: wheel over an open dropdown does not drag the selection",
   mb.on_event(open);
   REQUIRE(mb.dropdown_open());
 
+  // No frame has painted, so the window is the whole 2-item menu (#48 item 3's
+  // unclamped pre-frame leg) and there is nowhere to scroll: the wheel cannot
+  // move the selection even now that it has a job (#85).
   Event tick = wheel(2, 2);  // over "Open": would highlight row 1 ungated
-  REQUIRE(mb.on_event(tick));  // consumed while open, but inert
+  REQUIRE(mb.on_event(tick));  // consumed while open
 
   mb.on_event(key(Key::Enter));
   REQUIRE(which == 0);  // selection stayed on "New"
+}
+
+TEST_CASE("MenuBar: a scrolling wheel carries the selection, it does not pick "
+          "the pointer's row (#85, #38)", "[mouse][menu][failure]") {
+  // #38's guarantee restated for a wheel that now does something. The bug was
+  // the wheel falling into the hover branch and setting m_selected from the row
+  // under the POINTER; moving the selection because the WINDOW moved under it
+  // is categorically different, and it is what keeps Enter from firing an
+  // action that was never painted (#53).
+  //
+  // The pointer is parked on the LAST dropdown row throughout. If the wheel
+  // ever picked the pointer's row, the fired item would be that row's -- so the
+  // assertion below distinguishes the two directly.
+  Screen s{40, 5};
+  MenuBar mb;
+  mb.set_geometry({0, 0, 40, 1});
+  int which = -1;
+  Menu m{"File", {}};
+  for (int i = 0; i < 10; ++i)
+    m.items.push_back({"item" + std::to_string(i), [&, i] { which = i; }});
+  mb.add_menu(std::move(m));
+
+  mb.on_event(press(1, 0));  // open
+  mb.draw(s);                // 4 rows fit (y=1..4) of 10
+  REQUIRE(mb.dropdown_open());
+
+  // One tick down: window [1,5), selection carried 0 -> 1. The pointer sits on
+  // y=4, the last row, which holds item4 -- NOT item1.
+  REQUIRE(mb.on_event(wheel(2, 4)));
+  mb.draw(s);
+  mb.on_event(key(Key::Enter));
+  REQUIRE(which == 1);  // carried, not picked
+}
+
+TEST_CASE("MenuBar: a two-row bar anchors its dropdown BELOW itself (#85)",
+          "[mouse][menu][failure]") {
+  // dropdown_rect hardcoded rect().y + 1, which assumes a one-row bar. draw()
+  // fills the whole rect, so h >= 2 is supported -- and there the first
+  // dropdown row landed INSIDE rect(), where handle_mouse's rect().contains
+  // gate claims the press before the dropdown-row branch ever runs. The row
+  // painted, and clicking it closed the menu instead of firing the item.
+  //
+  // This is Select's #36 item 1, which Select fixed (r.y + r.h) and MenuBar did
+  // not: the exact drift detail/dropdown.hpp exists to end. Every other MenuBar
+  // test in the tree uses h == 1, where the two spellings are identical, so
+  // without this case the fix would ship entirely unproven.
+  MenuBar mb;
+  mb.set_geometry({0, 0, 40, 2});  // TWO rows
+  int which = -1;
+  mb.add_menu({"File", {{"New", [&] { which = 0; }},
+                        {"Open", [&] { which = 1; }}}});
+  mb.on_event(press(1, 0));  // open
+  REQUIRE(mb.dropdown_open());
+
+  // Row 1 is still the bar; the dropdown starts at row 2 and both its rows are
+  // reachable. Under the old anchor the first row sat at y=1, inside rect().
+  REQUIRE(mb.hit_test(2, 2));
+  REQUIRE(mb.hit_test(2, 3));
+  REQUIRE_FALSE(mb.hit_test(2, 4));   // and no further
+
+  REQUIRE(mb.on_event(press(2, 2)));  // first dropdown row
+  REQUIRE(which == 0);                // fired, NOT swallowed as a bar click
+  REQUIRE_FALSE(mb.dropdown_open());
 }
 
 TEST_CASE("MenuBar: a non-left press on the CLOSED bar is declined (#48)",

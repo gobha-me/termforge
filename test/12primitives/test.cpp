@@ -60,6 +60,17 @@ auto border_ring(const Screen& s, termforge::Rect r) -> std::string {
 }
 
 
+// Read back part of a row as one string. A blank cell holds "" (Cell::blank),
+// rendered as a space so the expectations stay fixed-width and legible.
+auto row_text(const Screen& s, int y, int x0, int w) -> std::string {
+  std::string out;
+  for (int x = x0; x < x0 + w; ++x) {
+    const std::string& t = s.at(x, y).text;
+    out += t.empty() ? " " : t;
+  }
+  return out;
+}
+
 // The continuation cell the renderer writes after a width-2 glyph.
 const std::string kWide{"\0", 1};
 
@@ -952,11 +963,85 @@ TEST_CASE("MenuBar: off-screen dropdown rows are unreachable and uncommittable (
   // 20-item unclamped menu would have painted through row 20+.
   REQUIRE(s.at(2, 5).text == "i");  // item4 on the last visible row
 
-  // Hammering Down must clamp to the last VISIBLE row (index 4), not item 19.
+  // Hammering Down walks the whole menu (#85) -- the window is 5 rows, but the
+  // ITEMS are 20 and all of them are reachable. What #53 still guarantees is
+  // the part that matters: whatever Enter fires has been scrolled into view
+  // first, so it is painted and marked rather than committed blind.
   Event down = KeyEvent{Key::Down};
   for (int i = 0; i < 25; ++i) mb.on_event(down);
+  mb.draw(s);
+
+  // The window followed the selection to the tail: items 15..19 on rows 1..5,
+  // and item19 -- the one about to fire -- on the last row. This is also the
+  // hit-span agreement (#10) at a non-zero offset: the rows the draw loop
+  // painted are the rows the press path would resolve.
+  REQUIRE(row_text(s, 1, 2, 6) == "item15");
+  REQUIRE(row_text(s, 5, 2, 6) == "item19");
+
   mb.on_event(enter);
-  REQUIRE(fired == 4);
+  REQUIRE(fired == 19);
+}
+
+TEST_CASE("MenuBar: set_menus resets a scrolled window (#85)",
+          "[primitives][menu][failure]") {
+  // set_menus assigns m_selected = -1 inline instead of calling
+  // close_dropdown(), so it is the one teardown path that does not inherit the
+  // scroll reset for free. Miss it and the next menu opens scrolled into the
+  // middle of a list it knows nothing about -- or, if the new menu is shorter,
+  // past its end.
+  Screen s{40, 6};
+  MenuBar mb;
+  mb.set_geometry({0, 0, 40, 1});
+  Menu big{"File", {}};
+  for (int i = 0; i < 20; ++i)
+    big.items.push_back({"item" + std::to_string(i), [] {}});
+  mb.add_menu(std::move(big));
+
+  Event enter = KeyEvent{Key::Enter};
+  mb.on_event(enter);
+  mb.draw(s);
+  mb.on_event(Event{KeyEvent{Key::End}});  // scrolled to the tail
+  mb.draw(s);
+  REQUIRE(row_text(s, 5, 2, 6) == "item19");
+
+  int fired = -1;
+  mb.set_menus({{"New", {{"alpha", [&] { fired = 0; }},
+                         {"beta", [&] { fired = 1; }}}}});
+  mb.on_event(enter);  // reopen: must start at the top of the NEW menu
+  mb.draw(s);
+  REQUIRE(row_text(s, 1, 2, 5) == "alpha");
+  mb.on_event(enter);
+  REQUIRE(fired == 0);
+}
+
+TEST_CASE("MenuBar: Home and End jump to the ends and reveal them (#85)",
+          "[primitives][menu][failure]") {
+  // MenuBar had neither key until #85 -- Select has had both since #19, and
+  // landing them in one dropdown and not the other is the drift
+  // detail/dropdown.hpp exists to end. They matter more here than they ever did
+  // in Select: a 20-item menu in a 5-row window is 19 Downs away from its end.
+  Screen s{40, 6};
+  MenuBar mb;
+  mb.set_geometry({0, 0, 40, 1});
+  int fired = -1;
+  Menu big{"File", {}};
+  for (int i = 0; i < 20; ++i)
+    big.items.push_back({"item" + std::to_string(i), [&, i] { fired = i; }});
+  mb.add_menu(std::move(big));
+
+  Event enter = KeyEvent{Key::Enter};
+  mb.on_event(enter);
+  mb.draw(s);  // 5 rows fit, y=1..5
+
+  REQUIRE(mb.on_event(Event{KeyEvent{Key::End}}));
+  mb.draw(s);
+  REQUIRE(row_text(s, 5, 2, 6) == "item19");  // scrolled into view
+
+  REQUIRE(mb.on_event(Event{KeyEvent{Key::Home}}));
+  mb.draw(s);
+  REQUIRE(row_text(s, 1, 2, 5) == "item0");  // and back to the top
+  mb.on_event(enter);
+  REQUIRE(fired == 0);
 }
 
 TEST_CASE("MenuBar: a menu opened before any frame cannot commit off-screen (#53)",

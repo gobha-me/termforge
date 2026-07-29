@@ -924,8 +924,12 @@ TEST_CASE("Dialog: a press on the dialog chrome is consumed and inert",
 // shape. Defined once for the residuals it pins.
 class DropdownOverScrollDialog final : public Dialog {
  public:
+  // Six options, not four: on a short screen the window no longer holds them
+  // all, which is what the #85 scrolling case needs. The extras are appended,
+  // so "three" is still index 2 on the row the hover case points at.
   DropdownOverScrollDialog()
-      : Dialog("S"), select{{"one", "two", "three", "four"}} {
+      : Dialog("S"),
+        select{{"one", "two", "three", "four", "five", "six"}} {
     add_child(&select);
     add_child(&under);
   }
@@ -967,6 +971,32 @@ TEST_CASE("Dialog: wheel over an open dropdown routes to the Select, not the wid
   d.under.mice = 0;
   REQUIRE(d.on_event(wheel(sr.x + 1, row_y)));
   REQUIRE(d.under.mice == 0);  // the wheel did NOT scroll the child beneath
+
+  // All four options fit on a 12-row screen, so there is nothing to scroll and
+  // the highlight cannot move either -- this case is about containment only.
+  // The scrolling half is the sibling below, which needs a shorter screen.
+  REQUIRE(d.select.highlighted() == 0);
+}
+
+TEST_CASE("Dialog: the routed wheel scrolls the dropdown itself (#85, #47)",
+          "[dialog][mouse][failure]") {
+  // The route exists so the wheel cannot leak to the child underneath (#47
+  // item 1). Since #85 it also has to DELIVER: the open list is what the user
+  // is pointing at, so it is what must scroll. Same fixture on a screen short
+  // enough that four options no longer fit.
+  DropdownOverScrollDialog d;
+  Screen s{40, 6};
+  d.draw(s);
+
+  const Rect sr = d.select.rect();
+  REQUIRE(d.on_event(press(sr.x + 1, sr.y)));  // open
+  REQUIRE(d.select.dropdown_open());
+  REQUIRE(d.select.highlighted() == 0);
+
+  d.under.mice = 0;
+  REQUIRE(d.on_event(wheel(sr.x + 1, sr.y + 1)));
+  REQUIRE(d.under.mice == 0);        // still contained
+  REQUIRE(d.select.highlighted() == 1);  // and carried into the moved window
 }
 
 TEST_CASE("Dialog: hover over an open dropdown moves the Select highlight (#47)",

@@ -106,6 +106,15 @@ struct BorderGlyphs {
 //   [ ansi-rgb ▾ ]  check_open              check_close  arrow_down
 //   ▸ Snake                                              selector
 //
+// arrow_up is arrow_down's pair, added by #85 for the dropdown overflow
+// indicators: a scrolled dropdown marks each end its window is cut off at, in
+// the one column label_pad already reserved. ▴ U+25B4 is the small triangle
+// matching ▾ U+25BE, for the same reason ▸ is not ▶ -- the large forms get an
+// emoji presentation and render double-width in many terminals. #21's shared
+// scrollbar is the eventual owner of that column and of a real │/█ thumb; these
+// two glyphs are the placeholder it replaces, which is why they join this table
+// rather than starting the second family the header note contemplates.
+//
 // There is no field for the *unset* state: it is a space in every family, and
 // a family that wanted a glyph there would add one rather than have four
 // families carry a redundant " ".
@@ -114,15 +123,15 @@ struct MarkGlyphs {
   std::string_view check_mark;
   std::string_view radio_open, radio_close;
   std::string_view radio_mark;
-  std::string_view arrow_down;
+  std::string_view arrow_down, arrow_up;
   std::string_view selector;
 
   // Every field once, so a sweep does not have to name them. See the
   // static_asserts under the tables for what this is really for.
   [[nodiscard]] constexpr auto all() const noexcept
-      -> std::array<std::string_view, 8> {
-    return {check_open,  check_close, check_mark, radio_open,
-            radio_close, radio_mark,  arrow_down, selector};
+      -> std::array<std::string_view, 9> {
+    return {check_open,  check_close, check_mark, radio_open, radio_close,
+            radio_mark,  arrow_down,  arrow_up,   selector};
   }
 };
 
@@ -139,8 +148,10 @@ struct MarkGlyphs {
 // about. The two static_asserts below close that — the first makes "you added a
 // field and forgot all()" a build error, the second makes "you added it to one
 // table only" a build error. Neither needs a test to run.
-inline constexpr MarkGlyphs kUnicodeMarks{"[", "]", "x", "(", ")", "•", "▾", "▸"};
-inline constexpr MarkGlyphs kAsciiMarks{"[", "]", "x", "(", ")", "*", "v", ">"};
+inline constexpr MarkGlyphs kUnicodeMarks{"[", "]", "x", "(", ")",
+                                          "•", "▾", "▴", "▸"};
+inline constexpr MarkGlyphs kAsciiMarks{"[", "]", "x", "(", ")",
+                                        "*", "v", "^", ">"};
 
 // All members are string_view, so the size is exactly the field count -- which
 // makes this the tripwire on all()'s hardcoded extent.

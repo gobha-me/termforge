@@ -8,14 +8,15 @@
 // existed the four mutators maintaining that invariant were byte-identical
 // copies in three widgets (modulo member names), and they had already
 // diverged once (clear() resetting scroll in two widgets, not the third).
-// The scroll-window half of the family lives in src/lib/detail/scroll.hpp
-// (clamp_scroll). This header is public because the three widget headers
+// The scroll-window half of the family lives in detail/scroll.hpp
+// (clamp_scroll) -- also public since #85. This header is public because the three widget headers
 // inline accessors against it; treat it like detail/callback.hpp -- usable
 // by app code, but documented as a building block, not a widget.
 //
 // Deliberate divergences stay with the widget, in the widget:
 //  - reset_scroll: ListWidget/RadioGroup rewind their own m_scroll on
-//    set_all/clear; Select has no scroll offset.
+//    set_all/clear; Select rewinds its dropdown offset (#85) via the
+//    close_dropdown() below, which is already on that path.
 //  - teardown: Select closes its dropdown after replacing the list (#36) by
 //    calling close_dropdown() itself after set_all/clear -- no on_reset
 //    hook overloads here (they served exactly one caller, #56 item 6).

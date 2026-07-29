@@ -50,10 +50,17 @@
 //   //    since focus_at and route_mouse both iterate last-added-first
 //   if (sel.dropdown_open() && sel.hit_test(m->x, m->y)) { sel.on_event(ev); return; }
 //
-// See examples/forms.cpp for the raw-app form. Known limit, inherited from MenuBar: the
-// dropdown does not scroll, so a very long list opened near the bottom of the
-// screen clamps to the screen bottom (#48 item 3) and the off-screen options
-// are unreachable until #21 (shared scrollbar) revisits the height cap.
+// See examples/forms.cpp for the raw-app form.
+//
+// The dropdown scrolls (#85). Its height is still capped to the rows that fit
+// below the box (#48 item 3), but that cap now sizes a WINDOW onto the options
+// rather than truncating them: arrows, Home/End and the wheel move the window,
+// and every option is reachable however short the terminal is. Two invariants
+// hold at any offset -- what Enter commits is always painted and marked (#53),
+// and a click resolves to the option drawn on that row (#10), because draw,
+// hover and press share one mapper in detail/dropdown.hpp. #21 still owns the
+// real scrollbar; the ▴/▾ overflow hints in the rightmost column are its
+// placeholder.
 
 #include <cstddef>
 #include <functional>
@@ -115,8 +122,11 @@ class Select final : public Widget {
   }
   auto close_dropdown() -> void;
 
-  // Row the arrows are on while open; -1 when closed. Not the selection —
-  // the selection only moves on commit.
+  // Option the arrows are on while open; -1 when closed. Not the selection —
+  // the selection only moves on commit. An OPTION index, not a visual row:
+  // before #85 a highlight past the last row that fit was clamped to the
+  // window, so this could differ from the option the user was on. It cannot
+  // now — the window scrolls instead.
   [[nodiscard]] auto highlighted() const noexcept -> int { return m_highlight; }
 
   // Columns "[ " + " ▾ ]" costs on top of the value. A parent sizing a Select
@@ -130,8 +140,10 @@ class Select final : public Widget {
   // The single geometry source draw(), hit_test() and on_event() share;
   // {0,0,0,0} when closed or empty. Height is clamped to the screen bottom
   // (from the last draw) so off-screen rows are neither painted NOR
-  // keyboard-committable (#48 item 3); the full height-cap/scroll story is
-  // #21's.
+  // keyboard-committable (#48 item 3). Since #85 that height is the visible
+  // window over the options, offset by m_scroll -- const, so it cannot
+  // re-clamp; the clamp lives in draw() and on every path that moves the
+  // highlight or the window.
   [[nodiscard]] auto dropdown_rect() const -> Rect;
   auto open_dropdown() -> void;
   // Selects `index` and closes. Fires on_change only when the value actually
@@ -145,6 +157,9 @@ class Select final : public Widget {
   // open flag: >= 0 iff the dropdown is open (see dropdown_open()).
   detail::OptionsList m_list;
   int m_highlight{-1};
+  // First option of the visible window (#85). Reset by close_dropdown(), which
+  // every teardown path already runs through, so a reopen never inherits it.
+  int m_scroll{0};
   // The box's truncated value text, rebuilt in draw() when the selection,
   // options, style, or inner width change (#42 item 5). m_line_inner is the
   // ONLY staleness sentinel (#56 item 3): -1 = stale, else the width the

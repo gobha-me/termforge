@@ -970,7 +970,12 @@ TEST_CASE("Select: the dropdown clamps to the screen bottom (#48 item 3)",
   // A Select near the screen bottom: Screen clips the off-screen option rows
   // out of the paint, but unclamped Down/Down/Enter still committed an option
   // the user never saw. The dropdown rect (and therefore hit_test, hover,
-  // arrows and Enter) is now capped to the visible rows.
+  // arrows and Enter) is capped to the visible rows.
+  //
+  // #85 kept every assertion here and changed none of them: the WINDOW is still
+  // exactly two rows and nothing outside it is clickable. What changed is that
+  // the options past it now scroll into view instead of being lost, which is
+  // the sibling case below.
   Screen s{20, 7};
   Select sel;
   sel.set_options({"a", "b", "c", "d", "e"});
@@ -985,16 +990,51 @@ TEST_CASE("Select: the dropdown clamps to the screen bottom (#48 item 3)",
   REQUIRE(sel.hit_test(2, 6));        // the last visible row ("b")
   REQUIRE_FALSE(sel.hit_test(2, 7));  // past the screen: dead, not committable
 
-  // Arrows cannot walk the highlight onto a clipped row...
-  REQUIRE(sel.on_event(key(Key::End)));
-  REQUIRE(sel.highlighted() == 1);  // clamped to the last VISIBLE row
-  // ...and a click past the bottom is declined, so nothing invisible commits.
+  // A click past the bottom is declined, so nothing off-screen commits.
   REQUIRE_FALSE(sel.on_event(press(2, 8)));
   REQUIRE(sel.dropdown_open());
   REQUIRE(picked == -1);
 
-  REQUIRE(sel.on_event(key(Key::Enter)));  // commits the visible highlight
-  REQUIRE(picked == 1);                    // "b", not the off-screen "e"
+  // And an option that has not been scrolled into view is not committable
+  // either -- #53's invariant, which scrolling must not weaken: "e" is item 4,
+  // the window is [0,2), so nothing reaches it without a scroll first.
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(sel.selected() == 0);  // the highlight: painted, marked, and item 0
+  REQUIRE_FALSE(sel.dropdown_open());
+  // Still -1: committing the value already selected fires nothing, the
+  // no-op-silence rule (#36 item 3). The commit is observed via selected().
+  REQUIRE(picked == -1);
+}
+
+TEST_CASE("Select: End scrolls the last option into view and commits IT (#85)",
+          "[form][select][failure]") {
+  // The other half of the case above. Before #85 the arrows were bounded by the
+  // window rather than the list, so End parked on the last VISIBLE row and
+  // Enter committed "b" -- with "c", "d" and "e" unreachable by keyboard, by
+  // mouse and by wheel for as long as the terminal stayed that short. This is
+  // the headline acceptance criterion: every option is reachable.
+  Screen s{20, 7};
+  Select sel;
+  sel.set_options({"a", "b", "c", "d", "e"});
+  sel.set_geometry({0, 4, 10, 1});  // 2 of 5 rows fit, at y=5 and y=6
+
+  int picked = -1;
+  sel.on_change([&](int i, const std::string&) { picked = i; });
+  REQUIRE(sel.on_event(press(2, 4)));  // open
+  sel.draw(s);
+  REQUIRE(row_text(s, 5, 1, 1) == "a");
+  REQUIRE(row_text(s, 6, 1, 1) == "b");
+
+  REQUIRE(sel.on_event(key(Key::End)));
+  REQUIRE(sel.highlighted() == 4);  // the last OPTION, not the last row
+
+  // The window moved with it, so what Enter is about to commit is on screen.
+  sel.draw(s);
+  REQUIRE(row_text(s, 5, 1, 1) == "d");
+  REQUIRE(row_text(s, 6, 1, 1) == "e");
+
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(picked == 4);  // "e" -- the option that was painted and marked
 }
 
 TEST_CASE("Select: the dropdown anchors below a taller rect",
@@ -1072,12 +1112,18 @@ TEST_CASE("Select: hover over the open list moves the highlight",
   REQUIRE(sel.highlighted() == 2);
 }
 
-TEST_CASE("Select: the wheel moves nothing, even over the open list",
+TEST_CASE("Select: the wheel never picks the row under the pointer",
           "[form][select][mouse][failure]") {
   // A wheel report arrives with pressed == false, so it reaches the same
   // branch a hover does. Checking the wheel second let a scroll drag the
-  // highlight around; this pins that it does not. The highlight must be
-  // asserted, not just the selection — the selection was never at risk.
+  // highlight to the pointer's row; this pins that it does not. The highlight
+  // must be asserted, not just the selection — the selection was never at risk.
+  //
+  // #85 gave the wheel a job (scrolling the window), which makes this the case
+  // that keeps the two apart: a wheel may move the highlight only as a
+  // consequence of the WINDOW moving, never to wherever the mouse happens to
+  // be. Here nothing scrolls at all — three options, no frame painted, so the
+  // window is the whole list — and the highlight must sit still regardless.
   Select sel;
   make_select(sel);
   int calls = 0;
@@ -1085,8 +1131,9 @@ TEST_CASE("Select: the wheel moves nothing, even over the open list",
   REQUIRE(sel.on_event(key(Key::Enter)));
   REQUIRE(sel.highlighted() == 0);
 
-  // Over the open list: consumed, so it cannot reach the widget behind, but
-  // it must not move the highlight the way a hover at the same spot would.
+  // Over the open list, pointer parked on the THIRD row: consumed, so it
+  // cannot reach the widget behind, but the highlight stays on row 0 — a hover
+  // at this exact spot would move it to 2 (the case above).
   REQUIRE(sel.on_event(wheel(3, 3)));
   REQUIRE(sel.highlighted() == 0);
   REQUIRE(sel.on_event(wheel(3, 3, true)));
@@ -1097,6 +1144,288 @@ TEST_CASE("Select: the wheel moves nothing, even over the open list",
   // Closed: declined outright, so a parent can scroll its own panel.
   sel.close_dropdown();
   REQUIRE_FALSE(sel.on_event(wheel(3, 0)));
+}
+
+TEST_CASE("Select: a wheel with no frame painted cannot scroll (#85)",
+          "[form][select][mouse][failure]") {
+  // m_screen_rows == 0 means "no frame yet", which dropdown_visible_rows
+  // answers with the FULL item count (#48 item 3). The window is then the whole
+  // list and the offset is structurally pinned at 0 -- there is nowhere to
+  // scroll to. This pins that branch, because it is what makes the wheel tests
+  // that never call draw() honest rather than accidentally green.
+  Select sel;
+  sel.set_options({"a", "b", "c", "d", "e", "f", "g", "h"});
+  sel.set_geometry({0, 0, 10, 1});
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(sel.highlighted() == 0);
+
+  for (int i = 0; i < 5; ++i) REQUIRE(sel.on_event(wheel(3, 2)));
+  REQUIRE(sel.highlighted() == 0);  // no window movement, so no carry
+}
+
+TEST_CASE("Select: the wheel scrolls the window and carries the highlight (#85)",
+          "[form][select][mouse][failure]") {
+  // The wheel's actual job. Two things are asserted together on purpose,
+  // because either alone is a bug:
+  //  - the window moves, or the wheel is the dead gesture #85 was filed about;
+  //  - the highlight ends up INSIDE the moved window, or it is unpainted and
+  //    unmarked while Enter still commits it -- the blind commit #53 closed.
+  Screen s{20, 7};
+  Select sel;
+  sel.set_options({"a", "b", "c", "d", "e"});
+  sel.set_geometry({0, 4, 10, 1});  // 2 of 5 rows fit, at y=5 and y=6
+  int picked = -1;
+  sel.on_change([&](int i, const std::string&) { picked = i; });
+
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
+  REQUIRE(sel.highlighted() == 0);
+  REQUIRE(row_text(s, 5, 1, 1) == "a");
+
+  // One tick down: window [1,3), and the highlight is carried from 0 to 1
+  // because 0 is no longer inside it. The pointer is on the LOWER row (y=6),
+  // so a highlight of 1 also proves the carry is not a pointer pick.
+  REQUIRE(sel.on_event(wheel(3, 6)));
+  sel.draw(s);
+  REQUIRE(row_text(s, 5, 1, 1) == "b");
+  REQUIRE(row_text(s, 6, 1, 1) == "c");
+  REQUIRE(sel.highlighted() == 1);
+
+  // Wheeling back up returns the window and carries the highlight with it.
+  REQUIRE(sel.on_event(wheel(3, 6, true)));
+  sel.draw(s);
+  REQUIRE(row_text(s, 5, 1, 1) == "a");
+  REQUIRE(sel.highlighted() == 1);  // already inside [0,2): left alone
+
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(picked == 1);  // "b", which was painted and marked when Enter landed
+}
+
+TEST_CASE("Select: draw() does not snap a wheeled window back (#85)",
+          "[form][select][mouse][failure]") {
+  // The bug this test exists to prevent is live in another widget:
+  // TableWidget::draw feeds its selection into clamp_scroll on EVERY frame, so
+  // a wheel that moves the selected row off-screen is silently undone on the
+  // next paint and the wheel looks broken (#35 diagnosed it). The dropdown's
+  // draw-time re-clamp must therefore be bounds-only.
+  //
+  // Redrawing repeatedly must not move a window the wheel established.
+  Screen s{20, 8};
+  Select sel;
+  sel.set_options({"a", "b", "c", "d", "e", "f"});
+  sel.set_geometry({0, 4, 10, 1});  // 3 of 6 rows fit: y=5,6,7
+
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
+  REQUIRE(sel.on_event(wheel(3, 6)));
+  REQUIRE(sel.on_event(wheel(3, 6)));
+
+  sel.draw(s);
+  const std::string after_first = row_text(s, 5, 1, 1);
+  REQUIRE(after_first == "c");  // window [2,5)
+  for (int i = 0; i < 3; ++i) sel.draw(s);
+  REQUIRE(row_text(s, 5, 1, 1) == after_first);  // and it stayed there
+}
+
+TEST_CASE("Select: a click at a non-zero scroll commits the option DRAWN on "
+          "that row (#85, #10)", "[form][select][mouse][failure]") {
+  // The sharpest edge in the whole change, and the one the issue calls out: the
+  // draw loop and the press path each map a screen row to an option, and if
+  // they disagree by the scroll offset every click lands on the wrong option.
+  // That is #10's hit-span drift restated, and it is why both now resolve
+  // through the one shared mapper instead of two copies of `m.y - dr.y`.
+  //
+  // Asserted the only way that actually proves it: read the label off the
+  // screen, click that row, and require the committed option to be that label.
+  Screen s{20, 8};
+  Select sel;
+  sel.set_options({"a", "b", "c", "d", "e", "f"});
+  sel.set_geometry({0, 4, 10, 1});  // 3 of 6 rows fit: y=5,6,7
+
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
+  REQUIRE(sel.on_event(wheel(3, 6)));
+  REQUIRE(sel.on_event(wheel(3, 6)));
+  sel.draw(s);  // window is now [2,5): "c", "d", "e"
+
+  for (int y = 5; y <= 7; ++y) {
+    const std::string drawn = row_text(s, y, 1, 1);
+    Select probe;
+    probe.set_options({"a", "b", "c", "d", "e", "f"});
+    probe.set_geometry({0, 4, 10, 1});
+    std::string got;
+    probe.on_change([&](int, const std::string& t) { got = t; });
+    REQUIRE(probe.on_event(key(Key::Enter)));
+    probe.draw(s);
+    REQUIRE(probe.on_event(wheel(3, 6)));
+    REQUIRE(probe.on_event(wheel(3, 6)));
+    probe.draw(s);
+    REQUIRE(probe.on_event(press(3, y)));
+    REQUIRE(got == drawn);  // clicked row == painted label == committed option
+  }
+}
+
+TEST_CASE("Select: overflow indicators mark the ends the window is cut at "
+          "(#85)", "[form][select][glyphs][failure]") {
+  // Reachable is only half the fix: without a hint there is nothing on screen
+  // saying the other options exist, and a dropdown showing 3 of 6 looks
+  // identical to one showing 3 of 3. The hints go in the rightmost column,
+  // which `avail = dr.w - label_pad - 1` has always excluded from the label --
+  // and which #21's real scrollbar will claim in their place.
+  Screen s{20, 8};
+  Select sel;
+  sel.set_options({"a", "b", "c", "d", "e", "f"});
+  sel.set_geometry({0, 4, 12, 1});  // 3 of 6 rows fit: y=5,6,7
+  const int hint_x = 11;            // dr.x + dr.w - 1
+
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
+  // Top of the list: more below, nothing above.
+  REQUIRE(s.at(hint_x, 5).text != "▴");
+  REQUIRE(s.at(hint_x, 7).text == "▾");
+
+  REQUIRE(sel.on_event(wheel(3, 6)));  // window [1,4): cut at BOTH ends
+  sel.draw(s);
+  REQUIRE(s.at(hint_x, 5).text == "▴");
+  REQUIRE(s.at(hint_x, 7).text == "▾");
+
+  REQUIRE(sel.on_event(key(Key::End)));  // window [3,6): bottom of the list
+  sel.draw(s);
+  REQUIRE(s.at(hint_x, 5).text == "▴");
+  REQUIRE(s.at(hint_x, 7).text != "▾");
+}
+
+TEST_CASE("Select: a list that fits gets no indicators (#85)",
+          "[form][select][glyphs]") {
+  // The other half of the hint contract: they appear only when something is
+  // actually cut off, or every dropdown in every app grows permanent noise.
+  Screen s{20, 10};
+  Select sel;
+  sel.set_options({"a", "b", "c"});
+  sel.set_geometry({0, 0, 12, 1});  // 3 of 3 fit
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
+  for (int y = 1; y <= 3; ++y) {
+    REQUIRE(s.at(11, y).text != "▴");
+    REQUIRE(s.at(11, y).text != "▾");
+  }
+}
+
+TEST_CASE("Select: the Ascii family keeps a SCROLLED dropdown 7-bit (#85)",
+          "[form][select][glyphs][failure]") {
+  // The existing ASCII sweep uses a 3-option Select that never overflows, so
+  // it gives the indicators zero coverage -- and an indicator is exactly the
+  // kind of glyph that gets added as a bare "▴" and quietly breaks the bare-TTY
+  // tier. Drives a dropdown that IS cut at both ends, in Ascii.
+  Screen s{20, 8};
+  Select sel;
+  sel.set_style(BorderStyle::Ascii);
+  sel.set_options({"a", "b", "c", "d", "e", "f"});
+  sel.set_geometry({0, 4, 12, 1});
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
+  REQUIRE(sel.on_event(wheel(3, 6)));
+  sel.draw(s);
+
+  REQUIRE(s.at(11, 5).text == "^");
+  REQUIRE(s.at(11, 7).text == "v");
+  REQUIRE(rect_is_ascii(s, Rect{0, 0, 20, 8}));
+}
+
+TEST_CASE("Select: an indicator never eats a label column (#85)",
+          "[form][select][failure]") {
+  // The hints are free only because the label was already truncated to
+  // dr.w - label_pad - 1. If that ever stops being true they start overwriting
+  // the last character of every long option, which is a silent corruption --
+  // so this drives a label that exactly fills the available width.
+  Screen s{20, 8};
+  Select sel;
+  sel.set_options({"abcdefghij", "b", "c", "d", "e", "f"});
+  sel.set_geometry({0, 4, 12, 1});  // label_pad 1, avail 10 == the label
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
+  REQUIRE(row_text(s, 5, 1, 10) == "abcdefghij");  // intact
+  REQUIRE(s.at(11, 7).text == "▾");                // and the hint still fits
+}
+
+TEST_CASE("Select: a dropdown one column wide draws no indicator (#85)",
+          "[form][select][failure]") {
+  // dr.w == label_pad leaves no column that the marker does not already claim,
+  // and painting a hint there would put two glyphs in one cell -- the marker
+  // fit-test's mirror image. Neither in-tree caller can produce it (Select's
+  // pad is 1 against a rect at least as wide), so it is asserted through the
+  // skeleton directly, exactly like the marker's own third condition.
+  Screen s{4, 4};
+  const Rgb c{0, 0, 0};
+  auto label = [](int) -> const std::string& {
+    static const std::string t = "xy";
+    return t;
+  };
+  // Window [1,3) of 4 items: cut at both ends, so both hints WOULD apply.
+  termforge::detail::draw_dropdown_rows(s, Rect{0, 0, 1, 2}, /*count=*/4,
+                                        /*highlight=*/1, /*scroll=*/1,
+                                        /*label_pad=*/1, c, c, c, c,
+                                        termforge::kUnicodeMarks, label);
+  REQUIRE(s.at(0, 0).text != "▴");
+  REQUIRE(s.at(0, 1).text != "▾");
+}
+
+TEST_CASE("Select: a shrinking screen re-clamps a scrolled window (#85)",
+          "[form][select][failure]") {
+  // The path no setter runs on, and it breaks BOTH invariants at once. A resize
+  // changes the memoized screen height and therefore the window: m_scroll can
+  // land past the end of the list -- and the draw loop indexes options with
+  // operator[], so a stale offset is an overread, not a cosmetic slip (this is
+  // the sanitizer-toolchain regression test for that) -- and the highlight can
+  // end up outside the window, where it is unpainted, unmarked, and still what
+  // Enter commits. So the re-clamp must REVEAL, not merely bound: the assertion
+  // below is that the option Enter is about to take is the one on screen.
+  Screen tall{20, 12};
+  Select sel;
+  sel.set_options({"a", "b", "c", "d", "e", "f", "g", "h"});
+  sel.set_geometry({0, 4, 12, 1});
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(tall);
+  REQUIRE(sel.on_event(key(Key::End)));  // scrolled to the tail
+  sel.draw(tall);
+
+  Screen shortscreen{20, 6};  // only 1 row now fits below the box
+  sel.draw(shortscreen);      // must not read past the options
+  REQUIRE(row_text(shortscreen, 5, 1, 1) == "h");
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(sel.selected() == 7);
+}
+
+TEST_CASE("Select: every option is reachable however short the terminal (#85)",
+          "[form][select][failure]") {
+  // The headline acceptance criterion. 40 options anchored near the bottom of a
+  // short screen: before #85 the four that fit were the only four that existed
+  // as far as the user was concerned, and selected() could be programmatically
+  // set to one of the other 36 with no way back.
+  Screen s{20, 9};
+  Select sel;
+  std::vector<std::string> opts;
+  for (int i = 0; i < 40; ++i) opts.push_back("opt" + std::to_string(i));
+  sel.set_options(std::move(opts));
+  sel.set_geometry({0, 4, 12, 1});  // 4 of 40 rows fit: y=5..8
+
+  int picked = -1;
+  sel.on_change([&](int i, const std::string&) { picked = i; });
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
+  // Four rows painted, and only four: the cap still holds.
+  REQUIRE(row_text(s, 5, 1, 4) == "opt0");
+  REQUIRE(row_text(s, 8, 1, 4) == "opt3");
+
+  // Walk the whole list one row at a time; every option becomes the highlight.
+  for (int i = 1; i < 40; ++i) {
+    REQUIRE(sel.on_event(key(Key::Down)));
+    REQUIRE(sel.highlighted() == i);
+  }
+  sel.draw(s);
+  REQUIRE(row_text(s, 8, 1, 5) == "opt39");  // scrolled into view, and marked
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(picked == 39);
 }
 
 TEST_CASE("Select: an empty Select renders, is focusable, and will not open",
@@ -1348,23 +1677,34 @@ TEST_CASE("Select: the marker is dropped, never the label, when it will not "
     static const std::string s = "abcdef";
     return s;
   };
+  // The skeleton takes the whole glyph table (#85 needs three of its marks, and
+  // three loose string_views are swappable by mistake), so vary just the one
+  // field under test and leave the rest a real family.
+  auto marked = [](std::string_view sel) {
+    MarkGlyphs g = termforge::kUnicodeMarks;
+    g.selector = sel;
+    return g;
+  };
 
   {  // A two-column mark in a one-column pad: label intact, no mark.
     Screen s{10, 2};
-    termforge::detail::draw_dropdown_rows(s, dr, 2, 0, /*label_pad=*/1, c, c, c,
-                                          c, "»»", label);
+    termforge::detail::draw_dropdown_rows(s, dr, 2, /*highlight=*/0,
+                                          /*scroll=*/0, /*label_pad=*/1, c, c, c,
+                                          c, marked("»»"), label);
     REQUIRE(row_text(s, 0, 0, 7) == " abcdef");
   }
   {  // The same mark in a pad that fits it: drawn.
     Screen s{10, 2};
-    termforge::detail::draw_dropdown_rows(s, dr, 2, 0, /*label_pad=*/2, c, c, c,
-                                          c, "»»", label);
+    termforge::detail::draw_dropdown_rows(s, dr, 2, /*highlight=*/0,
+                                          /*scroll=*/0, /*label_pad=*/2, c, c, c,
+                                          c, marked("»»"), label);
     REQUIRE(row_text(s, 0, 0, 8) == "»»abcdef");
   }
   {  // Zero-width: write_text would paint nothing, so reserve nothing.
     Screen s{10, 2};
-    termforge::detail::draw_dropdown_rows(s, dr, 2, 0, /*label_pad=*/2, c, c, c,
-                                          c, "́", label);
+    termforge::detail::draw_dropdown_rows(s, dr, 2, /*highlight=*/0,
+                                          /*scroll=*/0, /*label_pad=*/2, c, c, c,
+                                          c, marked("́"), label);
     REQUIRE(row_text(s, 0, 0, 8) == "  abcdef");
   }
   {  // The third condition: a pad wider than the dropdown itself. Neither
@@ -1372,9 +1712,10 @@ TEST_CASE("Select: the marker is dropped, never the label, when it will not "
      // as wide), so it is only reachable from here -- which is the point of
      // driving the skeleton directly rather than letting it go unasserted.
     Screen s{10, 2};
-    termforge::detail::draw_dropdown_rows(s, Rect{0, 0, 1, 2}, 2, 0,
-                                          /*label_pad=*/2, c, c, c, c, "»»",
-                                          label);
+    termforge::detail::draw_dropdown_rows(s, Rect{0, 0, 1, 2}, 2,
+                                          /*highlight=*/0, /*scroll=*/0,
+                                          /*label_pad=*/2, c, c, c, c,
+                                          marked("»»"), label);
     REQUIRE(s.at(0, 0).text.empty());  // nothing spilled into the one column
   }
 }
@@ -1395,9 +1736,12 @@ TEST_CASE("dropdown: the measured marker is the painted marker (#76)",
     return s;
   };
 
+  MarkGlyphs g = termforge::kUnicodeMarks;
+  g.selector = "\033[7m>\033[0m";
+
   Screen s{10, 2};
-  termforge::detail::draw_dropdown_rows(s, dr, 2, 0, /*label_pad=*/1, c, c, c, c,
-                                        "\033[7m>\033[0m", label);
+  termforge::detail::draw_dropdown_rows(s, dr, 2, /*highlight=*/0, /*scroll=*/0,
+                                        /*label_pad=*/1, c, c, c, c, g, label);
   REQUIRE(row_text(s, 0, 0, 7) == ">abcdef");  // marked, and NOT indented
   REQUIRE(row_text(s, 1, 0, 7) == " abcdef");  // and still distinguishable
 }
