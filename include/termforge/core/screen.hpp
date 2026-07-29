@@ -22,6 +22,7 @@ struct Cell {
   std::string text;
   Rgb fg{0xE0, 0xE0, 0xF0};
   Rgb bg{0x0A, 0x0A, 0x14};
+  Attr attrs{Attr::None};  // per-cell display attributes (#62)
   int image_id{-1};  // >=0 references an image placement (graphics drivers)
 
   [[nodiscard]] auto blank() const noexcept -> bool {
@@ -52,12 +53,14 @@ class Screen {
   // clamped to the grid. This is how a widget repaints its whole rect() each
   // frame (see widget.hpp): it clears any prior glyph, wide-glyph continuation
   // cell, or stale image_id in the region. Negative/oversized rects are clipped.
-  auto fill_rect(int x, int y, int w, int h, Rgb fg, Rgb bg) -> void;
+  auto fill_rect(int x, int y, int w, int h, Rgb fg, Rgb bg,
+                 Attr attrs = Attr::None) -> void;
 
   // Write sanitized text starting at (x,y). Control characters and ESC are
   // stripped here — the sanitization boundary — so drivers can emit cells
   // verbatim. Returns the number of cells written (clipped at the right edge).
-  auto write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg) -> int;
+  auto write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
+                  Attr attrs = Attr::None) -> int;
 
   // Sanitize untrusted text: drop C0/C1 control chars and ESC, keep printable
   // + valid UTF-8 continuation bytes. Exposed for testing.

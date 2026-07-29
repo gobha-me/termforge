@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "detail/base64.hpp"
+#include "detail/sgr_attrs.hpp"
 
 namespace termforge {
 
@@ -112,9 +113,18 @@ auto KittyDriver::capabilities() const noexcept -> Capabilities {
 }
 
 void KittyDriver::draw_text(int x, int y, std::string_view text, Rgb fg,
-                            Rgb bg) {
+                            Rgb bg, Attr attrs) {
   // Text rendering is identical to AnsiRgbDriver — SGR truecolor.
   m_buf += std::format("\033[{};{}H", y + 1, x + 1);
+  const int attr_id = static_cast<int>(static_cast<std::uint8_t>(attrs));
+  if (attr_id != m_cur_attrs) {
+    // Attribute run break (#62): reset all SGR, re-enable the new set, and
+    // invalidate the color cache so colors re-emit after the reset.
+    m_buf += "\033[0m";
+    detail::append_sgr_attrs_enable(m_buf, attrs);
+    m_cur_attrs = attr_id;
+    m_cur_fg = m_cur_bg = -1;
+  }
   const int fg_id = rgb_id(fg), bg_id = rgb_id(bg);
   if (fg_id != m_cur_fg) {
     m_buf += std::format("\033[38;2;{};{};{}m", fg.r, fg.g, fg.b);
@@ -404,7 +414,7 @@ auto KittyDriver::place_unicode(const RegionSlot& slot, int x, int y,
 
   // Reset SGR to avoid bleeding the ID-as-color into subsequent text.
   m_buf += "\033[0m";
-  m_cur_fg = m_cur_bg = -1;
+  m_cur_fg = m_cur_bg = m_cur_attrs = -1;
 }
 
 auto KittyDriver::emit_id_as_sgr(std::uint32_t id) -> void {
@@ -423,6 +433,8 @@ auto KittyDriver::emit_id_as_sgr(std::uint32_t id) -> void {
     m_buf += std::format("\033[38;2;{};{};{}m", r, g, b);
   }
   m_cur_fg = -1;  // unknown to draw_text's rgb cache — force re-emit
+  m_cur_attrs = -1;  // the placeholder's SGR fg leaves draw_text's attr
+                     // tracking stale too — force a reset+re-emit next text
 }
 
 void KittyDriver::append_placeholder(std::string& buf, int row, int col) {

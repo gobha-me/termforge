@@ -45,7 +45,8 @@ class KittyDriver final : public TerminalDriver {
   ~KittyDriver() override;
 
   auto init() -> std::expected<void, ErrorEvent> override;
-  auto draw_text(int x, int y, std::string_view text, Rgb fg, Rgb bg) -> void override;
+  auto draw_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
+                 Attr attrs) -> void override;
   auto draw_image(int x, int y, const Image& image)
       -> std::expected<void, ErrorEvent> override;
   auto flush() -> void override;
@@ -121,6 +122,9 @@ class KittyDriver final : public TerminalDriver {
   std::string m_buf;
   int m_cur_fg{-1};
   int m_cur_bg{-1};
+  // Active SGR attributes (#62) as the Attr bitmask's underlying value, -1 =
+  // none emitted yet (see AnsiRgbDriver  text rendering is identical here).
+  int m_cur_attrs{-1};
 
   PlacementMode m_mode{PlacementMode::Classic};
   std::uint32_t m_next_image_id{1};

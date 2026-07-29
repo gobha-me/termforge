@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <format>
 
+#include "detail/sgr_attrs.hpp"
+
 namespace termforge {
 
 AnsiRgbDriver::AnsiRgbDriver() = default;
@@ -18,10 +20,24 @@ auto AnsiRgbDriver::capabilities() const noexcept -> Capabilities {
   return c;
 }
 
-void AnsiRgbDriver::draw_text(int x, int y, std::string_view text, Rgb fg, Rgb bg) {
+void AnsiRgbDriver::draw_text(int x, int y, std::string_view text, Rgb fg,
+                              Rgb bg, Attr attrs) {
   // NOTE: `text` must already be sanitized (no C0/C1/ESC) by the renderer;
   // drivers emit bytes verbatim.
   m_buf += std::format("\033[{};{}H", y + 1, x + 1);
+
+  const int attr_id = static_cast<int>(static_cast<std::uint8_t>(attrs));
+  if (attr_id != m_cur_attrs) {
+    // Attribute run break (#62). SGR has per-attribute *enable* codes but a
+    // plain reset (\033[0m) also clears color, so a break resets all SGR then
+    // re-enables the new set; the color cache is invalidated below so colors
+    // are re-emitted after the reset. A dropped attribute is thus actually
+    // cleared — a leaked SGR 1 is a visible bug that spreads down the line.
+    m_buf += "\033[0m";
+    detail::append_sgr_attrs_enable(m_buf, attrs);
+    m_cur_attrs = attr_id;
+    m_cur_fg = m_cur_bg = -1;  // the reset cleared the colors too
+  }
 
   // Emit SGR only when the color actually changes (run coalescing across
   // calls — the renderer visits cells left-to-right, top-to-bottom).
@@ -73,7 +89,7 @@ auto AnsiRgbDriver::draw_image(int x, int y, const Image& image)
     }
   }
   m_buf += "\033[0m";
-  m_cur_fg = m_cur_bg = -1;  // reset invalidated the tracked SGR state
+  m_cur_fg = m_cur_bg = m_cur_attrs = -1;  // reset invalidated the SGR state
   return {};
 }
 
