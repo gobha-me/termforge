@@ -73,10 +73,14 @@ auto main() -> int {
                       Rgb{0xFF, 0x40, 0x40}, dark, Attr::None);
   }
 
-  // Position the exit prompt below the image. Half-block drivers use
-  // height/2 rows; kitty uses the full height. Add a small margin.
-  const int prompt_row = 4 + (dcaps.kitty_graphics ? img.height()
-                                                    : (img.height() + 1) / 2) + 1;
+  // Position the exit prompt below the image. ONLY the half-block driver packs
+  // two image rows into one cell; kitty spends a row per pixel row, and so does
+  // the fallback ramp (one character per pixel). Testing kitty_graphics alone
+  // put the prompt on top of the image on the fallback tier -- found by the pty
+  // capture of examples/sprites.cpp, which had copied this expression.
+  const bool half_blocks = dcaps.truecolor && !dcaps.kitty_graphics;
+  const int rows_used = half_blocks ? (img.height() + 1) / 2 : img.height();
+  const int prompt_row = 4 + rows_used + 1;
   driver->draw_text(0, prompt_row, "Press any key to exit...", white, dark,
                     Attr::Dim);
   driver->flush();

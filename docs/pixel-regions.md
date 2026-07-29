@@ -119,6 +119,78 @@ The KittyDriver currently maps 1 pixel → 1 cell for simplicity. A future
 refinement will use the terminal's actual cell geometry (from `ioctl`
 or terminal query) for accurate sizing.
 
+## Alpha Convention and the Region Ops (#63)
+
+`Pixel` has always carried an alpha channel. As of #63 the library actually
+composites with it, via four ops on `Image`:
+
+| op | what it does with alpha |
+|---|---|
+| `sub(Rect)` | copies it — slicing a sprite sheet |
+| `blit(src[, src_rect], dx, dy)` | **copies it verbatim.** A copy, not a composite: `src` alpha is data being moved, not coverage |
+| `blend(src[, src_rect], dx, dy)` | **composites** source-over |
+| `fill(Rect, Pixel)` | **writes it verbatim.** A clear, not a composite: `fill(r, Pixel{0,0,0,0})` clears a region to transparent |
+
+All four **clip** at every edge: they never throw and never read or write
+outside either buffer, matching the defensive stance `Screen::at` takes. A rect
+that is degenerate or lands entirely outside is a legal input that produces no
+work. `sub` returns the dimensions of the *clipped overlap*, not of the rect
+asked for — padding a request back out to its asked-for size would be a border
+policy, and borders and scaling are out of scope.
+
+The `src_rect` overloads exist so a frame loop can read straight out of an
+atlas: `blend(atlas.sub(frame), …)` allocates and copies a whole sprite per
+draw per frame, `blend(atlas, frame, …)` allocates nothing.
+
+### Alpha is straight, not premultiplied
+
+`Pixel::r/g/b` are the colour **at full opacity** and `Pixel::a` is coverage.
+Nothing is premultiplied on the way in or the way out. This matches how
+`Pixel` has always been read, and how `ImageLoader` round-trips raw RGBA
+assets. Get this wrong in your own kernel and edges go dark.
+
+`blend` is Porter-Duff "over":
+
+```
+a_o = a_s + a_d*(1 - a_s)
+C_o = (C_s*a_s + C_d*a_d*(1 - a_s)) / a_o
+```
+
+in integers over 0..255, rounding to nearest at every step. Concretely
+(`src/lib/detail/blend.hpp`):
+
+```cpp
+div255(x) = { t = x + 128; (t + (t >> 8)) >> 8 }   // exact round(x/255), x <= 65535
+
+// destination opaque (the common case) — division-free
+C_o = div255(C_s*a_s + C_d*(255 - a_s));  a_o = 255
+
+// general
+dc  = div255(a_d * (255 - a_s));  a_o = a_s + dc
+C_o = (2*(C_s*a_s + C_d*dc) + a_o) / (2*a_o)      // round-half-up
+```
+
+### The fast path is a specialization, not an approximation
+
+The two forms agree **bit-for-bit** wherever `a_d == 255`. With `a_d == 255`,
+`dc = div255(255*(255-a_s))` is exactly `255-a_s`, so `a_o == 255` and the
+general channel reduces to `(2*num + 255) / 510` — round-half-up of `num/255`.
+Since 255 is odd, `num/255` is never exactly `.5` for integer `num`, so that is
+plain `round(num/255)`, which is `div255(num)`. One oracle, no seam. The
+`test/28image` suite pins the agreement across all 256 source alphas.
+
+This matters beyond tidiness: #90 replaces the scalar kernel with SIMD required
+to match it bit-exactly, so **the rounding above is contract, not an
+implementation detail.** Changing it is a breaking change to that oracle.
+
+### Why not assume an opaque destination
+
+It would be cheaper, and wrong in the case that matters. The layered pattern —
+blend several sprites into a transparent scratch `Image`, then blend the scratch
+onto the scene — is the normal way to build a sprite frame, and is what
+`docs/map-widget.md` commits the sprite tier to. Assuming opacity is silently
+wrong at every antialiased edge, with no diagnostic.
+
 ## Interaction with Diff Rendering
 
 Pixel regions are **not** diff-rendered. The cell diff skips them (the
