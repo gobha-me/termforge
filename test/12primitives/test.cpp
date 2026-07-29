@@ -985,10 +985,11 @@ TEST_CASE("MenuBar: off-screen dropdown rows are unreachable and uncommittable (
 TEST_CASE("MenuBar: set_menus resets a scrolled window (#85)",
           "[primitives][menu][failure]") {
   // set_menus assigns m_selected = -1 inline instead of calling
-  // close_dropdown(), so it is the one teardown path that does not inherit the
-  // scroll reset for free. Miss it and the next menu opens scrolled into the
-  // middle of a list it knows nothing about -- or, if the new menu is shorter,
-  // past its end.
+  // close_dropdown(), so it is the one teardown path that does not run through
+  // the close machinery. The offset is established by open_menu() rather than
+  // cleared on the way out, which is what makes that safe -- this pins it,
+  // because the failure is silent: the next menu would open scrolled into the
+  // middle of a list it knows nothing about, or past the end of a shorter one.
   Screen s{40, 6};
   MenuBar mb;
   mb.set_geometry({0, 0, 40, 1});

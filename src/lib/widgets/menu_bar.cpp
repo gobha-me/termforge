@@ -12,7 +12,6 @@ auto MenuBar::set_menus(std::vector<Menu> menus) -> void {
   m_menus = std::move(menus);
   m_active = 0;
   m_selected = -1;  // closed: dropdown_open() derives from m_selected (#56/7)
-  m_scroll = 0;     // this path does NOT run through close_dropdown()
   mark_dirty();
 }
 
@@ -23,7 +22,6 @@ auto MenuBar::add_menu(Menu menu) -> void {
 
 auto MenuBar::close_dropdown() -> void {
   m_selected = -1;  // the ONLY open/closed fact: dropdown_open() == >= 0
-  m_scroll = 0;     // never inherit an offset into the next menu (#85)
   mark_dirty();
 }
 
@@ -82,9 +80,12 @@ auto MenuBar::hit_test(int px, int py) const -> bool {
 
 auto MenuBar::open_menu(int index) -> void {
   m_active = index;
-  m_scroll = 0;  // a fresh menu always opens at its top (#85). Unlike Select
-                 // there is no selection to open onto, and m_active changes
-                 // here -- the offset belongs to the menu, not to the bar.
+  // A fresh menu always opens at its top (#85). This is the ONLY place that
+  // needs to say so: m_selected goes from -1 to >= 0 nowhere else, so this is
+  // the sole closed->open transition, and m_scroll is only ever read while
+  // open. Unlike Select there is no selection to open onto, and m_active
+  // changes here -- the offset belongs to the menu, not to the bar.
+  m_scroll = 0;
   if (!m_menus[static_cast<std::size_t>(index)].items.empty())
     m_selected = 0;  // selecting row 0 IS opening the dropdown (#56 item 7)
   mark_dirty();
@@ -143,7 +144,7 @@ auto MenuBar::draw(Screen& screen) -> void {
     // select.cpp's draw(): the wheel carries the selection into the window it
     // moved, so this is a no-op after a wheel and a reveal after a resize. It
     // is NOT the TableWidget snap-back #35 diagnosed.
-    m_scroll = detail::clamp_scroll(m_scroll, m_selected, count, ddr.h);
+    m_scroll = detail::dropdown_reveal(m_scroll, m_selected, count, ddr.h);
     // The marker (#76) goes in the two columns label_pad already reserved, so
     // no row moves and the item text stays where it was. MenuBar's dropdown is
     // modal and commits on Enter, so on a colour-dropping driver this is the
@@ -266,7 +267,7 @@ auto MenuBar::on_event(const Event& ev) -> bool {
     }
     if (visible <= 0) return true;  // nothing fits: only dismissal keys work
     const auto reveal = [this, count, visible] {
-      m_scroll = detail::clamp_scroll(m_scroll, m_selected, count, visible);
+      m_scroll = detail::dropdown_reveal(m_scroll, m_selected, count, visible);
       mark_dirty();
     };
     if (k->key == Key::Up) {

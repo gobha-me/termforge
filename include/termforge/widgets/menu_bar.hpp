@@ -130,9 +130,9 @@ class MenuBar final : public Widget {
   // open, see dropdown_open()) -- the Select m_highlight pattern (#42/4).
   // An ITEM index, not a visual row: before #85 it was clamped to the window.
   int m_selected{-1};
-  // First item of the visible window (#85). Reset by close_dropdown() and
-  // open_menu() -- and by set_menus(), which assigns m_selected inline and is
-  // the one teardown path that does NOT run through close_dropdown().
+  // First item of the visible window (#85). Established by open_menu(), which
+  // is the only closed->open transition there is, and only ever read while
+  // open -- so nothing on the closing side has to remember to clear it.
   int m_scroll{0};
   int m_screen_rows{0};  // memoized from draw(); 0 = no frame yet (unclamped)
 
