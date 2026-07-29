@@ -28,12 +28,15 @@
 namespace termforge::detail {
 
 // The exact bytes that leave the alternate screen and undo enter_screen():
-// disable button-event (1002) + SGR (1006) mouse tracking + bracketed paste
-// (2004), reset SGR, show cursor (25), return to the main screen (1049). Kept
-// as one constant so the signal path (which cannot build strings) and
-// Terminal::leave_screen() stay byte-for-byte in lockstep.
+// disable every mouse tracking mode enter_screen can have enabled (#75: any
+// of ?1000h/?1002h/?1003h — disabling one that was never set is a documented
+// no-op, and the signal path cannot branch on which mode was live), the SGR
+// mouse encoding (1006) and bracketed paste (2004), reset SGR, show cursor
+// (25), return to the main screen (1049). Kept as one constant so the signal
+// path (which cannot build strings) and Terminal::leave_screen() stay
+// byte-for-byte in lockstep.
 inline constexpr std::string_view kLeaveSequence =
-    "\033[?1002l\033[?1006l\033[?2004l\033[0m\033[?25h\033[?1049l";
+    "\033[?1003l\033[?1002l\033[?1000l\033[?1006l\033[?2004l\033[0m\033[?25h\033[?1049l";
 
 // Async-signal-safe restore context. Written by normal code before any signal
 // can fire and read from the handler: only volatile sig_atomic_t flags and

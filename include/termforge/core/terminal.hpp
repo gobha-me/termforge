@@ -83,6 +83,23 @@ class Terminal {
   auto enter_screen() -> void;
   auto leave_screen() -> void;
 
+  // ── mouse reporting (#75) ──
+  // Which tracking mode enter_screen() asks the terminal for. Default Drag,
+  // which is byte-for-byte what every TermForge version has emitted (?1002h).
+  // Set it before enter_screen() to choose a different mode from the start.
+  //
+  // Calling it while a screen is up switches the terminal live: the current
+  // mode's disable is emitted, then the new mode's enable — a mode change
+  // that only applied at the *next* enter_screen() would be invisible until
+  // then, which is exactly the class of surprise #75 was filed about.
+  // Switching to MouseMode::None releases the mouse entirely (the terminal's
+  // own click-drag selection works again); leave_screen() disables tracking
+  // regardless of mode.
+  auto set_mouse_mode(MouseMode mode) -> void;
+  [[nodiscard]] auto mouse_mode() const noexcept -> MouseMode {
+    return m_mouse_mode;
+  }
+
   // True when stdout is a console VT (no graphical terminal attached) — the
   // only case where the optional framebuffer driver is even considered.
   [[nodiscard]] auto is_console_vt() const noexcept -> bool;
@@ -90,9 +107,14 @@ class Terminal {
   [[nodiscard]] auto raw() const noexcept -> bool { return m_raw; }
 
  private:
+  // Emit the configured mode's enable sequences to out_fd (no-op for None).
+  // Shared by enter_screen() and a live set_mouse_mode() switch.
+  auto emit_mouse_mode() const -> void;
+
   struct Impl;
   std::unique_ptr<Impl> m_impl;
   bool m_raw{false};
+  MouseMode m_mouse_mode{MouseMode::Drag};  // #75: pre-v0.1.15 behaviour
 };
 
 }  // namespace termforge

@@ -94,6 +94,23 @@ class App {
   // from render counts.
   [[nodiscard]] auto running() const noexcept -> bool { return m_running; }
 
+  // ── mouse reporting (#75) ──
+  // Which mouse tracking mode the terminal is asked for on enter_screen().
+  // Default Drag (press/release + drag + wheel), byte-for-byte what every
+  // TermForge version has always emitted — set it before run() to choose
+  // another mode from the start:
+  //   Motion adds buttonless hover (a grid app whose keyboard cursor follows
+  //   the pointer needs it); Click is press/release only; None releases the
+  //   mouse entirely so the terminal's native click-drag selection (copy out
+  //   of the app) works while the app is up.
+  // Safe to call mid-run: the terminal is switched live (old mode disabled,
+  // new mode enabled). Input decoding is unchanged — it already handles
+  // buttonless motion (button == 3), which Motion now actually delivers.
+  auto set_mouse_mode(MouseMode mode) -> void { m_term.set_mouse_mode(mode); }
+  [[nodiscard]] auto mouse_mode() const noexcept -> MouseMode {
+    return m_term.mouse_mode();
+  }
+
   // ── override points ──
   // Handle one event (input, resize, error). Default: ESC / Ctrl+C quits.
   virtual auto on_event(const Event& ev) -> void;

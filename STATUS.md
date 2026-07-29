@@ -7,10 +7,49 @@ which holds standing conventions, not state).
 ## Where we are (2026-07-29)
 
 **Core framework, KittyDriver, and the full widget system are landed and
-tested.** 27 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
+tested.** 28 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
 clean.
 
-**Latest release: `v0.1.14`** (2026-07-29) — **#73, closed: `App::running()`
+**Latest release: `v0.1.15`** (2026-07-29) — **#75, closed: mouse tracking
+mode is selectable and can be turned off.**
+
+*What was wrong:* `Terminal::enter_screen()` emitted `\033[?1006h\033[?1002h`
+unconditionally — SGR encoding plus button-event (drag) tracking — with no
+knob to change or disable it. Two consequences, both from term-game's
+Minesweeper: no `?1003h` meant no buttonless hover, so a keyboard cursor
+could not follow the pointer; and no `None` meant the terminal's own
+click-drag selection (copy/paste out of the app) was unreachable while the
+app ran.
+
+*The fix:* the issue's own shape, verbatim — `enum class MouseMode { None,
+Click, Drag, Motion }` in `types.hpp`, `set_mouse_mode`/`mouse_mode` on both
+`Terminal` (which owns the emission) and `App` (the pass-through, settable
+before `run()`). Default `Drag` is byte-for-byte what every version has
+emitted, confirmed by replaying a pty capture of the widgets example:
+`?1006h ?1002h ?2004h` in the same order. SGR `?1006h` is the coordinate
+*encoding*, not a mode — it goes with every non-None mode and is absent only
+for `None` (nothing to encode when nothing is reported). Calling the setter
+mid-screen switches the terminal live — old mode's disable, then the new
+mode's enable — because a mode change that only applied at the *next*
+`enter_screen()` would be invisible until then. `leave_screen()` and the
+signal path now disable all three tracking modes (`?1003l?1002l?1000l`):
+disabling one that was never set is a documented no-op, and the crash path
+cannot branch on which mode was live. Input decoding is untouched — it
+already handled buttonless motion (`button == 3`); `Motion` just means the
+terminal now actually delivers it.
+
+*Pinned in `test/26mousemode`* on a real pty (Terminal refuses to emit when
+neither stream is a tty, so a pipe capture would see nothing — `openpty` +
+dup2 the slave onto stdout, armed only around the emitting window so Catch2's
+own output never lands in the capture): default `Drag` byte-for-byte,
+per-mode enable strings, `None` emits no tracking and no SGR, pre-screen
+setters only record, mid-screen switch emits disable-then-enable in order
+(and no-ops on a same-mode set), leave sequence disables all three modes,
+`App` forwards. Mutation-tested: hardcoding `Drag` in `enter_screen` fails 3
+cases, dropping the live switch fails the mid-screen case, dropping `?1003l`
+from `kLeaveSequence` fails both `26mousemode` and `16signals`.
+
+**Previous release: `v0.1.14`** (2026-07-29) — **#73, closed: `App::running()`
 accessor so tests observe `quit()` without counting renders.**
 
 *What was wrong:* the only way to assert "this key quits" headlessly was to
@@ -749,6 +788,7 @@ harness).
 
 ## Next session — start here
 
+v0.1.15 shipped #75 (`MouseMode`), closing the hardcoded mouse-tracking mode;
 v0.1.14 shipped #73 (`App::running()`), closing the testability gap that
 made every app reimplement quit-detection. Before that, v0.1.8 shipped #59
 (TG-02, `on_tick`), which closed the three-issue run
@@ -780,9 +820,9 @@ The open queue, in rough priority order:
   second) — the same bug class #59 retired one layer up, now one layer down.
   Fixing it properly means deciding how time reaches a **widget**, which is a
   public API call, not a one-line change.
-- **#75** (Terminal: mouse tracking mode hardcoded to ?1002h) — needs a
-  `MouseMode` enum + setter, with a suggested API shape already in the issue.
-  Default `Drag` preserves today's behaviour exactly.
+- ~~#75~~ **LANDED (v0.1.15)** — `MouseMode` enum + setter on `Terminal`/`App`,
+  default `Drag` byte-identical to before. term-game can now have hover
+  (`Motion`) or release the mouse for native selection (`None`).
 - **#35** (wheel vs arrow-key semantics) — **needs a user decision** (the
   proposed option 1: wheel scrolls the VIEW, not the selection, decoupling
   ListWidget's view offset from its selection). Everything else here is
