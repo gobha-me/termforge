@@ -10,7 +10,61 @@ which holds standing conventions, not state).
 tested.** 27 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
 clean.
 
-**Latest release: `v0.1.12`** (2026-07-29) — **#76: the same bug in the
+**Latest release: `v0.1.13`** (2026-07-29) — **#76, closed: the third site.
+`TableWidget`'s selection was invisible on the fallback tier.**
+
+*What was wrong:* the last of the three sites #76 names, deliberately left
+open by v0.1.12 because it is not a ride-along. `TableWidget::draw()` stated
+its selection as `is_sel ? m_selected_fg : m_row_fg` and nothing more, and
+`FallbackDriver::draw_text` discards colour — so on the bottom tier the
+selected row was byte-for-byte identical to every other row. The four row
+colours were private with **no setters**, so an app could not even work
+around it. Unlike the dropdowns there was no shared skeleton to fix and no
+gutter to reuse: `compute_widths()` lays columns out from `r.x` with only
+1-column gaps, so this site needed the full `ListWidget` treatment plus the
+geometry decision the issue left open.
+
+*The geometry decision.* The gutter costs the **columns collectively**: the
+rect's right edge absorbs the two columns through the existing
+`min(width, remaining)` clamp, so auto-width columns truncate one column
+earlier at the right edge only when space was already tight. Not the first
+column alone (a fixed-width first column would have been silently
+amputated) and not the inter-column gaps (a 2-column tax on a 3-column
+table's gaps would destroy the layout outright). The **header indents with
+its data** — a header that stayed flush left while its column moved right
+would misalign every column, a worse bug than the one the gutter fixes.
+`set_marker_enabled(false)` makes `gutter_cols()` return 0 and the layout
+is the pre-v0.1.13 one, byte-for-byte.
+
+*The fix itself* is the #72 shape, verbatim in spirit: `selector` from
+`mark_glyphs(m_style)` painted at `r.x` on the selected row only, in the
+row's own colours so the highlight reads as one unbroken band;
+`set_colors`/`set_selected_colors` for the previously-unsettable members;
+`set_style`; `set_marker` **sanitized at the setter** (the v0.1.12 review
+lesson — the measured string and the painted string must be the same
+string); `gutter_cols()` with the full contract — 0 when disabled, 0 for a
+zero-width marker, 0 when the rect cannot fit gutter + one text column,
+configured width before geometry.
+
+*Pinned in `test/08tablewidget`* with the #72 acceptance shape: two rows
+with **identical text** through a `FallbackDriver` sink must still differ
+in cell text; `BorderStyle::Ascii` leaves zero non-ASCII and uses `>`; the
+measured-marker-is-the-painted-marker case (`"\033[7m>\033[0m"` measures 7,
+paints 1); the narrow-rect drop; gutter-click selects; header indents with
+its column. Confirmed red on **both** mutations: stubbing the marker write
+fails 8 cases, un-indenting the header fails 3. Existing geometry
+assertions shifted +2 (the `s.at(0, …)` family) — the same suite update
+#72 required of `test/09listwidget`.
+
+*Verified end to end*, not just against a `Screen`: a probe `App` over
+`test_run_frames` — which installs a `FallbackDriver`, the tier in question
+— with three identical rows and the middle one selected shows `U+25B8` in
+the emitted byte stream at that row's first column and a blank at the
+other two, with zero colour SGR in the frame. `examples/dashboard.cpp`
+needed no sync: it never selects, so its gutter is simply blank, and it
+has no `BorderStyle` plumbing to contradict.
+
+**Previous release: `v0.1.12`** (2026-07-29) — **#76: the same bug in the
 dropdowns. `Select` and `MenuBar` highlighted a row in colour and nothing
 else.**
 

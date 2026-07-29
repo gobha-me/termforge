@@ -118,8 +118,22 @@ auto TableWidget::draw(Screen& screen) -> void {
 
   const auto widths = compute_widths();
 
+  // The selection marker's gutter (#76 -- the #72 bug's third site). Colour
+  // was this widget's whole selection affordance until v0.1.13, and
+  // FallbackDriver::draw_text discards colour, so on the tier AGENTS.md says
+  // must always work the selected row was byte-for-byte identical to every
+  // other row. The gutter indents the HEADER as well as the rows: a header
+  // that stayed flush left while its data moved right would misalign every
+  // column -- a worse bug than the one the gutter fixes. The columns
+  // collectively give the gutter its columns (the right edge absorbs the
+  // shrink through the same clamp that handles any overflow), not the first
+  // column alone and not the inter-column gaps; set_marker_enabled(false)
+  // makes gutter_cols() return 0 and the layout is the pre-v0.1.13 one,
+  // byte-for-byte.
+  const int gutter = gutter_cols();
+
   // Draw header row.
-  int cx = r.x;
+  int cx = r.x + gutter;
   for (std::size_t c = 0; c < m_columns.size() && cx < r.x + r.w; ++c) {
     const int w = std::min(widths[c], r.x + r.w - cx);
     render_cell(screen, cx, r.y, w, m_columns[c].header, m_columns[c].align,
@@ -138,7 +152,7 @@ auto TableWidget::draw(Screen& screen) -> void {
     const Rgb fg = is_sel ? m_selected_fg : m_row_fg;
     const Rgb bg = is_sel ? m_selected_bg
                           : (row_idx % 2 == 0 ? m_row_bg : m_alt_bg);
-    cx = r.x;
+    cx = r.x + gutter;
     for (std::size_t c = 0; c < m_columns.size() && cx < r.x + r.w; ++c) {
       const int w = std::min(widths[c], r.x + r.w - cx);
       const std::string& cell =
@@ -146,6 +160,11 @@ auto TableWidget::draw(Screen& screen) -> void {
       render_cell(screen, cx, r.y + 1 + vr, w, cell, m_columns[c].align,
                   fg, bg);
       cx += w + 1;
+    }
+    // The marker in the selected row's gutter, with the row's own colours so
+    // the highlight is one unbroken band across the full width.
+    if (gutter > 0 && is_sel) {
+      screen.write_text(r.x, r.y + 1 + vr, marker(), fg, bg);
     }
   }
 
