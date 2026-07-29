@@ -148,3 +148,30 @@ TEST_CASE("terminal: leave_raw is a no-op when raw mode was never entered",
 // Not covered here, and faking it would be worse than saying so: the
 // setup()-partial-failure path (enter_raw() succeeds, driver->init() fails).
 // Reaching it needs a pty plus an injected failing driver.
+
+// #73: a headless test can observe that quit() happened by calling running()
+// after test_run_frames, rather than counting render calls and reasoning
+// backwards through the escape grace window. The accessor is the whole fix;
+// the re-arm inside test_run_frames is unchanged because a quit() issued
+// *during* a frame is what the loop already honours \u2014 the frame check
+// `m_running` after each frame_step() catches it, and running() is false
+// when the call returns.
+TEST_CASE("running() observes a quit dispatched during a frame", "[teardown]") {
+  GuardProbe probe;
+  probe.quit_after = 2;  // quit() fires inside the second on_render
+
+  probe.go();
+  REQUIRE_FALSE(probe.running());
+  REQUIRE(probe.renders == 2);
+}
+
+// The companion: when no quit happens, running() stays true after the call.
+TEST_CASE("running() stays true when no quit was dispatched", "[teardown]") {
+  GuardProbe probe;
+  probe.quit_after = 100;  // never reached within 4 frames
+
+  // Drive just 2 frames via test_run_frames so quit_after is not hit.
+  probe.test_run_frames(2, 20, 5, nullptr);
+  REQUIRE(probe.running());
+  REQUIRE(probe.renders == 2);
+}
