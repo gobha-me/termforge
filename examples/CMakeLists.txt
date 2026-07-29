@@ -5,6 +5,7 @@ set(EXAMPLES
   hello
   colors
   image
+  sprites
   input
   chat
   low_level
