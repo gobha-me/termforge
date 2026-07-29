@@ -61,6 +61,38 @@ and a `▾`, `Down` scrolls `ASCII` into view with the `▸` marker on it and
 `forms` example's driver `Select` opens *already scrolled onto its
 selection* in a one-row window.
 
+**The limit scrolling does not remove:** a box on the **last screen row**
+has zero rows below it, so there is no window to scroll — the list opens,
+paints nothing, and consumes keys until Escape. That is the deliberate #53
+leg (an unpainted row must not be committable), not a scroll bug, and the
+real fix is to flip the dropdown **above** its anchor, which #48 item 3
+named and no issue has taken. Pinned by a test so the limit is deliberate
+rather than rediscovered.
+
+**Four edges came out of review, not the suite** — worth knowing as a class,
+because each is a case where the tests were green and the code was wrong.
+`draw_dropdown_rows` re-clamped the offset it was handed while
+`dropdown_item_at` trusted it, so the two did **not** share one mapping when
+a widget's stored offset was out of range for the current window — the exact
+claim the header makes, falsified by the helper that makes it (`set_geometry`
+is public and callable while the list is open, so an app relayouting in an
+event handler gets there). The wheel could drift an **unbounded** offset when
+the window height was 0, because `clamp_scroll`'s `visible_rows <= 0` leg
+preserves the scroll it is handed (#48 item 4) — which was the already-stepped
+value. `arrow_up` was first slotted in beside `arrow_down`, mid-struct, which
+kept an existing 8-element positional `MarkGlyphs` init **compiling** while
+shifting the selector out of it — #76 reinstated silently; append, never
+insert. And the overflow hint had no width fit-test where the marker opposite
+it has three. Each now has a test that was checked to fail without its fix.
+
+Spun out rather than scope-crept: **#94** (`row_text` is a 4th hand-copy
+across suites, none handling the wide-glyph continuation cell), **#95**
+(ListWidget/RadioGroup/TableWidget still open-code the row → item mapping —
+sequence with #35, which rewrites those three anyway), **#96** (a layout
+change while a dropdown is open desyncs the click from the last paint until
+the next frame; pre-existing, and "close the dropdown on `set_geometry`" is
+*not* the fix, because layout code calls it every frame).
+
 Behaviour changes that compile clean, for release notes:
 `Select::highlighted()` returns a true item index rather than one clamped to
 the visible window; a wheel over an open dropdown scrolls instead of doing
