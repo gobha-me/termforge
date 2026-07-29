@@ -3,9 +3,9 @@
 #include <algorithm>
 #include <string_view>
 
-#include "detail/scroll.hpp"
 #include "detail/width.hpp"
 #include "termforge/widgets/detail/callback.hpp"
+#include "termforge/widgets/detail/scroll.hpp"
 
 namespace termforge {
 

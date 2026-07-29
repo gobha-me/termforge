@@ -2,9 +2,9 @@
 
 #include <string_view>
 
-#include "detail/scroll.hpp"
 #include "detail/utf8.hpp"
 #include "detail/width.hpp"
+#include "termforge/widgets/detail/scroll.hpp"
 
 // ── #10: terminal display-width measurement (pure) ──────────────────────────
 //

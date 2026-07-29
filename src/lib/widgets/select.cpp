@@ -63,8 +63,9 @@ auto Select::dropdown_rect() const -> Rect {
   // starting BELOW the whole rect -- not r.y + 1, which overlaps the box line
   // draw() centers at r.y + r.h/2 for any h >= 2 (#36 item 1). Clamped to the
   // screen bottom once a frame has painted: rows that would fall off-screen
-  // are unreachable and must not be keyboard-committable (#48 item 3). The
-  // full height-cap/scroll story stays with #21.
+  // are unreachable and must not be keyboard-committable (#48 item 3). Since
+  // #85 that clamp sizes the visible WINDOW -- the options past it scroll into
+  // view via m_scroll rather than being lost.
   const int h = detail::dropdown_visible_rows(m_list.count(), r.y + r.h,
                                               m_screen_rows);
   return {r.x, r.y + r.h, r.w, h};
@@ -77,12 +78,22 @@ auto Select::hit_test(int px, int py) const -> bool {
 auto Select::open_dropdown() -> void {
   if (dropdown_open() || m_list.empty()) return;
   m_highlight = std::max(0, m_list.selected());
+  // Open ON the selection, scrolled if it is deeper than one window (#85).
+  // Order is load-bearing: dropdown_rect() returns {0,0,0,0} while the list is
+  // closed, and "closed" is m_highlight < 0 -- so the highlight must be set
+  // before the window height can be read.
+  m_scroll = detail::clamp_scroll(0, m_highlight, m_list.count(),
+                                  dropdown_rect().h);
   mark_dirty();
 }
 
 auto Select::close_dropdown() -> void {
   if (!dropdown_open()) return;
   m_highlight = -1;
+  // The single scroll reset: every path that closes the list runs through here
+  // (set_options, clear, set_selected, commit, focus loss), so the next open
+  // never inherits a stale offset.
+  m_scroll = 0;
   mark_dirty();
 }
 
@@ -168,10 +179,26 @@ auto Select::draw(Screen& screen) -> void {
   // The marker (#76) rides in the label_pad gutter the skeleton already
   // reserved, so the rows do not move; g is this widget's own glyph family, so
   // BorderStyle::Ascii keeps the open list 7-bit along with the closed box.
+  const Rect ddr = dropdown_rect();
+  // Re-clamp for the path no key or click runs on: a resize changes
+  // m_screen_rows and therefore the window height, which can strand m_scroll
+  // past the end (the #41 class) AND leave the highlight outside the window --
+  // where it is unpainted, unmarked, and still what Enter commits (#53).
+  //
+  // Passing m_highlight rather than -1 looks like the live TableWidget bug #35
+  // diagnosed (draw() dragging the window back onto the selection every frame,
+  // so the wheel appears dead), and it would be, but for one thing: this
+  // dropdown's wheel CARRIES the highlight into the window it moved. So after
+  // any wheel the highlight is already inside, this call returns m_scroll
+  // untouched, and the only way to reach it with the highlight outside is a
+  // resize -- which is precisely the case that needs the reveal. TableWidget
+  // cannot do this because its wheel leaves the selection behind.
+  m_scroll = detail::clamp_scroll(m_scroll, m_highlight, m_list.count(), ddr.h);
   detail::draw_dropdown_rows(
-      screen, dropdown_rect(), m_list.count(), m_highlight, /*label_pad=*/1,
-      m_dropdown_fg, m_dropdown_bg, m_highlight_fg, m_highlight_bg, g.selector,
-      [this](int vi) -> const std::string& { return m_list.at(vi); });
+      screen, ddr, m_list.count(), /*highlight=*/m_highlight,
+      /*scroll=*/m_scroll, /*label_pad=*/1, m_dropdown_fg, m_dropdown_bg,
+      m_highlight_fg, m_highlight_bg, g,
+      [this](int i) -> const std::string& { return m_list.at(i); });
 
   clear_dirty();
 }
@@ -180,15 +207,21 @@ auto Select::handle_mouse(const MouseEvent& m) -> bool {
   const Rect dr = dropdown_rect();
 
   // Wheel FIRST, then hover -- the #38 ordering trap both widgets now share
-  // via detail/dropdown.hpp (#42 item 2). A stray scroll must not change a
-  // form value; consumed while open so it cannot reach the widget behind.
-  if (detail::dropdown_wheel(m, dropdown_open(), *this)) return true;
+  // via detail/dropdown.hpp (#42 item 2). A stray scroll must not pick a form
+  // value; consumed while open so it cannot reach the widget behind, even at an
+  // end stop where nothing moves.
+  const auto wheeled = detail::dropdown_wheel(m, dropdown_open(), *this,
+                                              m_scroll, m_highlight,
+                                              m_list.count(), dr.h);
+  if (wheeled == detail::WheelResult::Scrolled) mark_dirty();
+  if (wheeled != detail::WheelResult::Declined) return true;
   if (m.scroll_up || m.scroll_down) return false;  // wheel outside: decline
 
   // Hover over the open list moves the highlight (MenuBar's behavior).
   if (!m.pressed) {
     int row = m_highlight;
-    if (detail::dropdown_hover_row(m, dropdown_open(), dr, m_highlight, row)) {
+    if (detail::dropdown_hover_row(m, dropdown_open(), dr, m_scroll,
+                                   m_list.count(), m_highlight, row)) {
       if (row != m_highlight) {
         m_highlight = row;
         mark_dirty();
@@ -215,7 +248,12 @@ auto Select::handle_mouse(const MouseEvent& m) -> bool {
   }
 
   if (dropdown_open() && dr.contains(m.x, m.y)) {
-    commit(m.y - dr.y);
+    // Through the shared mapper, not m.y - dr.y: the press path and the draw
+    // loop must resolve a screen row to the same option at any offset, and two
+    // hand-copies of that arithmetic is how #10's hit-span drift happened.
+    // -1 (a painted but empty tail row) commits nothing but stays consumed.
+    const int item = detail::dropdown_item_at(dr, m_scroll, m_list.count(), m.y);
+    if (item >= 0) commit(item);
     return true;
   }
 
@@ -241,9 +279,10 @@ auto Select::on_event(const Event& ev) -> bool {
   }
 
   // ── open ──
-  // Clamp the highlight to what is actually on screen: rows past the screen
-  // bottom are clipped out of the dropdown rect (#48 item 3), so arrows must
-  // not park the highlight on a row the user cannot see and Enter commit it.
+  // `visible` is the height of the WINDOW, not the reach of the arrows (#85).
+  // Every option is reachable; the window follows the highlight so that what
+  // Enter commits is always painted and marked, which is how #48 item 3 and
+  // #53's "invisible rows are not committable" invariant survives scrolling.
   const int visible = dropdown_rect().h;
   if (visible <= 0) {
     // No row fits below the box at all: only dismissal keys still work.
@@ -251,7 +290,6 @@ auto Select::on_event(const Event& ev) -> bool {
     if (k->key == Key::Escape) { close_dropdown(); return true; }
     return true;  // still mini-modal: nothing else may leak through
   }
-  if (m_highlight >= visible) m_highlight = visible - 1;
   if (k->key == Key::Tab) {
     // Close and DECLINE, so FocusRing::handle_key cycles on the same press.
     // See the divergence from MenuBar in the header.
@@ -266,25 +304,32 @@ auto Select::on_event(const Event& ev) -> bool {
     commit(m_highlight);
     return true;
   }
-  const int last = std::max(0, visible - 1);  // clamped row count, not option count
+  // Option count, not row count: the arrows walk the whole list and the window
+  // is dragged after them by reveal() below (#85).
+  const int last = std::max(0, m_list.count() - 1);
+  const auto reveal = [this, visible] {
+    m_scroll = detail::clamp_scroll(m_scroll, m_highlight, m_list.count(),
+                                    visible);
+    mark_dirty();
+  };
   if (k->key == Key::Up) {
     m_highlight = std::max(0, m_highlight - 1);
-    mark_dirty();
+    reveal();
     return true;
   }
   if (k->key == Key::Down) {
     m_highlight = std::min(last, m_highlight + 1);
-    mark_dirty();
+    reveal();
     return true;
   }
   if (k->key == Key::Home) {
     m_highlight = 0;
-    mark_dirty();
+    reveal();
     return true;
   }
   if (k->key == Key::End) {
     m_highlight = last;
-    mark_dirty();
+    reveal();
     return true;
   }
 

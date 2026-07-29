@@ -12,6 +12,7 @@ auto MenuBar::set_menus(std::vector<Menu> menus) -> void {
   m_menus = std::move(menus);
   m_active = 0;
   m_selected = -1;  // closed: dropdown_open() derives from m_selected (#56/7)
+  m_scroll = 0;     // this path does NOT run through close_dropdown()
   mark_dirty();
 }
 
@@ -22,6 +23,7 @@ auto MenuBar::add_menu(Menu menu) -> void {
 
 auto MenuBar::close_dropdown() -> void {
   m_selected = -1;  // the ONLY open/closed fact: dropdown_open() == >= 0
+  m_scroll = 0;     // never inherit an offset into the next menu (#85)
   mark_dirty();
 }
 
@@ -54,13 +56,23 @@ auto MenuBar::dropdown_rect(const TitleLayout* layout) const -> Rect {
   const auto fallback = layout ? TitleLayout{} : layout_menus();
   const auto [mx, mw] =
       (layout ? *layout : fallback)[static_cast<std::size_t>(m_active)];
+  // Hangs below the WHOLE bar, not rect().y + 1 (#85). The old form assumed a
+  // one-row bar: for any h >= 2 it put the first dropdown row inside rect(),
+  // where handle_mouse's rect().contains gate claims the press before the row
+  // branch ever runs -- so that row painted, but clicking it closed the menu
+  // instead of firing the item. draw() fills the whole rect (see below), so
+  // h >= 2 is a supported bar. This is Select's #36 item 1, which Select fixed
+  // and MenuBar did not: the exact drift detail/dropdown.hpp exists to end.
+  // The two spellings must stay equal or the height is computed for a
+  // different anchor than the rect uses.
+  const int anchor = rect().y + rect().h;
   // Clamp to the screen bottom exactly like Select (#48 item 3), via the
   // SHARED skeleton helper so the two dropdowns can never drift again (#53):
-  // a row that was clipped out of the rect must not be arrow-reachable or
-  // Enter-committable.
+  // a row that was clipped out of the rect is not painted -- and since #85 it
+  // scrolls into view rather than being unreachable for good.
   const int h = detail::dropdown_visible_rows(
-      static_cast<int>(menu.items.size()), rect().y + 1, m_screen_rows);
-  return {mx, rect().y + 1, dropdown_width(menu, mw), h};
+      static_cast<int>(menu.items.size()), anchor, m_screen_rows);
+  return {mx, anchor, dropdown_width(menu, mw), h};
 }
 
 auto MenuBar::hit_test(int px, int py) const -> bool {
@@ -70,6 +82,9 @@ auto MenuBar::hit_test(int px, int py) const -> bool {
 
 auto MenuBar::open_menu(int index) -> void {
   m_active = index;
+  m_scroll = 0;  // a fresh menu always opens at its top (#85). Unlike Select
+                 // there is no selection to open onto, and m_active changes
+                 // here -- the offset belongs to the menu, not to the bar.
   if (!m_menus[static_cast<std::size_t>(index)].items.empty())
     m_selected = 0;  // selecting row 0 IS opening the dropdown (#56 item 7)
   mark_dirty();
@@ -117,16 +132,28 @@ auto MenuBar::draw(Screen& screen) -> void {
   // dr.w/dr.h > 0 guard was what kept this block off m_menus (#52).
   if (dropdown_open()) {
     const auto& menu = m_menus[static_cast<std::size_t>(m_active)];
+    const int count = static_cast<int>(menu.items.size());
+    const Rect ddr = dropdown_rect(&layout);
+    // Re-clamp for the path no key or click runs on: a resize changes
+    // m_screen_rows and therefore the window height, which can strand m_scroll
+    // past the end -- and the lambda below indexes with operator[], so that is
+    // an overread, not a cosmetic slip -- and can leave m_selected outside the
+    // window, where Enter would fire an action the user cannot see (#53).
+    // Passing m_selected is safe here for the reason spelled out in
+    // select.cpp's draw(): the wheel carries the selection into the window it
+    // moved, so this is a no-op after a wheel and a reveal after a resize. It
+    // is NOT the TableWidget snap-back #35 diagnosed.
+    m_scroll = detail::clamp_scroll(m_scroll, m_selected, count, ddr.h);
     // The marker (#76) goes in the two columns label_pad already reserved, so
     // no row moves and the item text stays where it was. MenuBar's dropdown is
     // modal and commits on Enter, so on a colour-dropping driver this is the
     // difference between navigating and guessing.
     detail::draw_dropdown_rows(
-        screen, dropdown_rect(&layout), static_cast<int>(menu.items.size()),
-        m_selected, /*label_pad=*/2, m_dropdown_fg, m_dropdown_bg,
-        m_selected_fg, m_selected_bg, mark_glyphs(m_style).selector,
-        [&](int vi) -> const std::string& {
-          return menu.items[static_cast<std::size_t>(vi)].label;
+        screen, ddr, count, /*highlight=*/m_selected, /*scroll=*/m_scroll,
+        /*label_pad=*/2, m_dropdown_fg, m_dropdown_bg, m_selected_fg,
+        m_selected_bg, mark_glyphs(m_style),
+        [&](int i) -> const std::string& {
+          return menu.items[static_cast<std::size_t>(i)].label;
         });
   }
 
@@ -135,17 +162,24 @@ auto MenuBar::draw(Screen& screen) -> void {
 
 auto MenuBar::handle_mouse(const MouseEvent& m) -> bool {
   const Rect dr = dropdown_rect();
+  const int count = item_count();
 
   // Wheel FIRST, then hover -- the #38 ordering trap, now shared with Select
-  // via detail/dropdown.hpp (#42 item 2). Ignored like RadioGroup's, but
-  // consumed while a dropdown is open so it cannot reach the widget behind.
-  if (detail::dropdown_wheel(m, dropdown_open(), *this)) return true;
+  // via detail/dropdown.hpp (#42 item 2). Scrolls the open dropdown's window
+  // (#85), and is consumed even at an end stop so it cannot reach the widget
+  // behind.
+  const auto wheeled = detail::dropdown_wheel(m, dropdown_open(), *this,
+                                              m_scroll, m_selected, count,
+                                              dr.h);
+  if (wheeled == detail::WheelResult::Scrolled) mark_dirty();
+  if (wheeled != detail::WheelResult::Declined) return true;
   if (m.scroll_up || m.scroll_down) return false;  // wheel outside: decline
 
   // Hover over the open dropdown moves the selection highlight.
   if (!m.pressed) {
     int row = m_selected;
-    if (detail::dropdown_hover_row(m, dropdown_open(), dr, m_selected, row)) {
+    if (detail::dropdown_hover_row(m, dropdown_open(), dr, m_scroll, count,
+                                   m_selected, row)) {
       if (row != m_selected) {
         m_selected = row;
         mark_dirty();
@@ -187,13 +221,16 @@ auto MenuBar::handle_mouse(const MouseEvent& m) -> bool {
 
   // Click on an open dropdown row: activate that item.
   if (dropdown_open() && dr.contains(m.x, m.y)) {
-    const int vi = m.y - dr.y;
+    // Through the shared mapper, not m.y - dr.y: press and paint must resolve a
+    // screen row to the same item at any offset, and two hand-copies of that
+    // arithmetic in two widgets is how #10's hit-span drift happened.
+    const int item = detail::dropdown_item_at(dr, m_scroll, count, m.y);
     const auto& menu = m_menus[static_cast<std::size_t>(m_active)];
-    if (vi >= 0 && vi < static_cast<int>(menu.items.size())) {
+    if (item >= 0) {
       // Detach the action before closing — the action may mutate the menus.
       // The copy IS the detach, so call it directly (#56 item 5): routing a
       // local through invoke_copy would copy it a second time for nothing.
-      auto action = menu.items[static_cast<std::size_t>(vi)].action;
+      auto action = menu.items[static_cast<std::size_t>(item)].action;
       close_dropdown();
       if (action) action();
     }
@@ -215,30 +252,44 @@ auto MenuBar::on_event(const Event& ev) -> bool {
 
   if (dropdown_open()) {
     auto& menu = m_menus[static_cast<std::size_t>(m_active)];
-    const int item_count = static_cast<int>(menu.items.size());
-    // Bound navigation by what is actually on screen, not the item count:
-    // rows past the screen bottom are clipped out of the rect (#48 item 3),
-    // so arrows must not park the selection there and Enter commit an
-    // invisible item (#53).
-    const int visible = std::min(item_count, dropdown_rect().h);
+    const int count = static_cast<int>(menu.items.size());
+    // The height of the visible WINDOW, not the reach of the arrows (#85).
+    // Every item is reachable; the window follows the selection so that what
+    // Enter fires is always painted and marked -- which is how #48 item 3 and
+    // #53's "invisible items are not committable" invariant survives
+    // scrolling.
+    const int visible = std::min(count, dropdown_rect().h);
 
     if (k->key == Key::Escape) {
       close_dropdown();
       return true;
     }
     if (visible <= 0) return true;  // nothing fits: only dismissal keys work
-    if (m_selected >= visible) {
-      m_selected = visible - 1;
+    const auto reveal = [this, count, visible] {
+      m_scroll = detail::clamp_scroll(m_scroll, m_selected, count, visible);
       mark_dirty();
-    }
+    };
     if (k->key == Key::Up) {
       m_selected = std::max(0, m_selected - 1);
-      mark_dirty();
+      reveal();
       return true;
     }
     if (k->key == Key::Down) {
-      m_selected = std::min(visible - 1, m_selected + 1);
-      mark_dirty();
+      m_selected = std::min(count - 1, m_selected + 1);
+      reveal();
+      return true;
+    }
+    // Home/End: MenuBar had neither until #85. Landing them in Select alone
+    // would be the drift detail/dropdown.hpp exists to end, and a 20-item menu
+    // in a 5-row window needs them more than a short one ever did.
+    if (k->key == Key::Home) {
+      m_selected = 0;
+      reveal();
+      return true;
+    }
+    if (k->key == Key::End) {
+      m_selected = std::max(0, count - 1);
+      reveal();
       return true;
     }
     if (k->key == Key::Left) {
@@ -254,7 +305,10 @@ auto MenuBar::on_event(const Event& ev) -> bool {
       return true;
     }
     if (k->key == Key::Enter) {
-      if (m_selected >= 0 && m_selected < visible) {
+      // Bound by the item count, not the window: every item is reachable now,
+      // and the reveal above guarantees the selection is inside the painted
+      // window whenever it moved (#85).
+      if (m_selected >= 0 && m_selected < count) {
         // Detach the action before closing, exactly like the mouse path:
         // the action may call set_menus()/add_menu(), and a vector
         // reallocation would destroy the std::function mid-call. The copy

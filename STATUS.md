@@ -10,7 +10,64 @@ which holds standing conventions, not state).
 tested.** 29 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
 clean.
 
-**Latest release: `v0.1.16`** (2026-07-29) — **#62, closed: `Cell` carries
+**Latest release: `v0.1.17`** (2026-07-29) — **#85, closed: `Select` and
+`MenuBar` dropdowns scroll, so every option is reachable.**
+
+*What was wrong:* neither dropdown had a scroll offset at all. The shared
+skeleton capped the painted rows to whatever fit below the anchor and
+nothing gave the rest a way back — a `Select` with 40 options anchored four
+rows above the bottom of the screen showed four options and the other 36
+were unreachable by keyboard, by mouse and by wheel, with `selected()`
+still settable to one of them through the API. This was the unintended half
+of a correct fix: #48 item 3 and #53 established that an unpainted row must
+not be arrow-reachable or Enter-committable, which is right, but "not
+painted" was meant to be a temporary state a scroll could change.
+
+*The fix:* an offset in each widget, with the discipline in
+`detail/dropdown.hpp` so the two cannot drift again. `clamp_scroll` moved
+from the private `src/lib/detail/` to the public
+`include/termforge/widgets/detail/` (a public header may not include a
+private one — `test/22headers` fails the build on it), and gained
+`clamp_to_window`, its deliberate inverse: `clamp_scroll` pulls the window
+onto the selection when an arrow moves it, `clamp_to_window` pulls the
+selection into the window when the wheel moves that. One new
+`dropdown_item_at` is the single screen-row → item mapping shared by draw,
+hover and both press paths, so a click cannot land on a row other than the
+one painted (#10's hit-span drift, which the two open-coded `m.y - dr.y`
+copies were one edit away from reviving).
+
+Two invariants hold at any offset: **what Enter commits is always painted
+and marked** (#53 — so the wheel *carries* the highlight into the window it
+moved rather than leaving it behind, and the draw-time re-clamp reveals it
+after a resize), and **a click resolves to the option drawn on that row**
+(#10). #38 survives structurally rather than by convention: `dropdown_wheel`
+receives no highlight and no `m.y`-derived row, so it cannot pick the row
+under the pointer even if someone reorders the handler.
+
+Ride-alongs, both in the path this rewrote: **`MenuBar::dropdown_rect` now
+anchors at `rect().y + rect().h`** instead of a hardcoded `rect().y + 1`
+(with bar `h >= 2` the first dropdown row landed inside `rect()`, where the
+press gate swallowed the click — Select's #36 item 1, which Select fixed and
+MenuBar did not), and **MenuBar gained `Home`/`End`**, which it never had.
+New `MarkGlyphs::arrow_up` (`▴`/`^`) pairs with `arrow_down` for the
+overflow indicators, drawn in the rightmost column `avail` already
+reserved — deliberately dumb, since #21's `draw_scrollbar` claims that same
+strip.
+
+Verified in a pty on the FallbackDriver tier, not just in the suite: the
+`widgets` example's 5-item Border menu on a 5-row terminal shows four items
+and a `▾`, `Down` scrolls `ASCII` into view with the `▸` marker on it and
+`▴` replacing `▾`, and `Enter` fires it (the frame turns `+--+`). The
+`forms` example's driver `Select` opens *already scrolled onto its
+selection* in a one-row window.
+
+Behaviour changes that compile clean, for release notes:
+`Select::highlighted()` returns a true item index rather than one clamped to
+the visible window; a wheel over an open dropdown scrolls instead of doing
+nothing; MenuBar's dropdown anchors below the whole bar (no effect at the
+default `h == 1`).
+
+**Previous release: `v0.1.16`** (2026-07-29) — **#62, closed: `Cell` carries
 text attributes (bold/dim/italic/underline/reverse/strike).**
 
 *What was wrong:* `Cell` carried `{text, fg, bg, image_id}` and nothing
@@ -827,6 +884,11 @@ harness).
 
 ## Next session — start here
 
+v0.1.17 shipped #85 (dropdown scroll \u2014 Select and MenuBar dropdowns are
+viewports now, so a long list on a short terminal is navigable instead of
+truncated; it jumped the queue as a correctness bug, the way #71 and #72 did,
+and carried two ride-alongs in the code it rewrote: MenuBar's `rect().y + 1`
+anchor and MenuBar's missing `Home`/`End`).
 v0.1.16 shipped #62 (`Cell` text attributes \u2014 the `Attr` bitmask now reaches
 the terminal through the SGR run-coalescing, and is the type #25 styled spans
 was waiting for); v0.1.15 shipped #75 (`MouseMode`), closing the hardcoded
@@ -970,7 +1032,8 @@ the radio and fire, the Select opens below its box / commits / reopens, Tab whil
 open both closes it and moves focus in one press leaving no trail, and F1 cycles
 all five families with `Ascii` emitting **zero** bytes ≥ 0x80 (`(*)` and `v`).
 What is owed is a **real-terminal** pass on the one thing a pty cannot answer:
-**do `•` U+2022, `▾` U+25BE and (since #72) `▸` U+25B8 actually occupy one
+**do `•` U+2022, `▾` U+25BE, (since #72) `▸` U+25B8 and (since #85) `▴`
+U+25B4 actually occupy one
 column** in the user's kitty? They are UAX #11 *Ambiguous*, so a terminal
 configured ambiguous-as-wide shifts the Select box and the radio rows by a
 column — run `build/examples/termforge_example_forms` and check the `]` still

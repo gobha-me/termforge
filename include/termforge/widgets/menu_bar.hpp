@@ -114,11 +114,26 @@ class MenuBar final : public Widget {
   auto handle_mouse(const MouseEvent& m) -> bool;
   auto open_menu(int index) -> void;
 
+  // Items in the active menu, or 0 when there is no valid active menu. The
+  // bounds check is the point: an empty (or not-yet-populated) bar still has
+  // m_active == 0 with no m_menus[0] to index (#52), and the scroll arithmetic
+  // needs a count on paths that run before that guard.
+  [[nodiscard]] auto item_count() const noexcept -> int {
+    if (m_active < 0 || m_active >= static_cast<int>(m_menus.size())) return 0;
+    return static_cast<int>(m_menus[static_cast<std::size_t>(m_active)]
+                                .items.size());
+  }
+
   std::vector<Menu> m_menus;
   int m_active{0};       // which menu is highlighted/open
   // Selected item in the open dropdown; doubles as the open flag (>= 0 iff
   // open, see dropdown_open()) -- the Select m_highlight pattern (#42/4).
+  // An ITEM index, not a visual row: before #85 it was clamped to the window.
   int m_selected{-1};
+  // First item of the visible window (#85). Reset by close_dropdown() and
+  // open_menu() -- and by set_menus(), which assigns m_selected inline and is
+  // the one teardown path that does NOT run through close_dropdown().
+  int m_scroll{0};
   int m_screen_rows{0};  // memoized from draw(); 0 = no frame yet (unclamped)
 
   // #76: the affordance that survives a driver which drops colour.
