@@ -3,6 +3,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "support/image.hpp"
 #include "termforge/drivers/ansi_rgb_driver.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
 #include "termforge/drivers/kitty_driver.hpp"
@@ -20,19 +21,13 @@ using termforge::Pixel;
 using termforge::Rect;
 using termforge::Rgb;
 using termforge::Severity;
+using tfsupport::checker;
+using tfsupport::solid;
 
 // The DriverImpl concept must hold for concrete drivers (compile-time check).
 static_assert(DriverImpl<AnsiRgbDriver>);
 static_assert(DriverImpl<FallbackDriver>);
 static_assert(DriverImpl<KittyDriver>);
-
-namespace {
-
-auto make_image(int w, int h, Pixel p) -> Image {
-  return Image{w, h, std::vector<Pixel>(static_cast<std::size_t>(w) * h, p)};
-}
-
-}  // namespace
 
 TEST_CASE("AnsiRgbDriver: empty image is a warning event, not silent", "[drivers][failure]") {
   AnsiRgbDriver d;
@@ -64,7 +59,7 @@ TEST_CASE("AnsiRgbDriver: identical color runs coalesce SGR sequences", "[driver
   std::string out;
   d.set_output(&out);
   // 2x2 solid red -> the fg SGR should be issued once, not per-cell
-  auto img = make_image(2, 2, Pixel{255, 0, 0, 255});
+  auto img = solid(2, 2, Pixel{255, 0, 0, 255});
   REQUIRE(d.draw_image(Rect{0, 0, 2, 1}, img).has_value());
   d.flush();
   // solid color: fg SGR issued once, not per-cell
@@ -313,7 +308,7 @@ TEST_CASE("KittyDriver: large image chunks at 4096 bytes", "[drivers][kitty]") {
   std::string out;
   d.set_output(&out);
   // 64x64 RGBA = 16384 bytes raw -> ~21848 base64 chars -> 6 chunks at 4096.
-  auto img = make_image(64, 64, Pixel{0xAB, 0xCD, 0xEF, 0xFF});
+  auto img = solid(64, 64, Pixel{0xAB, 0xCD, 0xEF, 0xFF});
   REQUIRE(d.draw_image(Rect{0, 0, 64, 64}, img).has_value());
   d.flush();
   // First chunk has m=1 (more follow); intermediate chunks have m=1;
@@ -517,7 +512,7 @@ TEST_CASE("KittyDriver: c=/r= follow the destination rect, not the image",
   d.set_output(&out);
 
   SECTION("image larger than its destination") {
-    auto img = make_image(4, 4, Pixel{255, 0, 0, 255});
+    auto img = solid(4, 4, Pixel{255, 0, 0, 255});
     REQUIRE(d.draw_image(Rect{0, 0, 2, 2}, img).has_value());
     d.flush();
     REQUIRE(out.find("s=4") != std::string::npos);   // transmitted at 4x4
@@ -527,7 +522,7 @@ TEST_CASE("KittyDriver: c=/r= follow the destination rect, not the image",
   }
 
   SECTION("image smaller than its destination") {
-    auto img = make_image(2, 2, Pixel{255, 0, 0, 255});
+    auto img = solid(2, 2, Pixel{255, 0, 0, 255});
     REQUIRE(d.draw_image(Rect{0, 0, 8, 4}, img).has_value());
     d.flush();
     REQUIRE(out.find("s=2") != std::string::npos);
@@ -536,7 +531,7 @@ TEST_CASE("KittyDriver: c=/r= follow the destination rect, not the image",
   }
 
   SECTION("non-square destination catches an axis swap") {
-    auto img = make_image(4, 4, Pixel{255, 0, 0, 255});
+    auto img = solid(4, 4, Pixel{255, 0, 0, 255});
     REQUIRE(d.draw_image(Rect{0, 0, 7, 3}, img).has_value());
     d.flush();
     REQUIRE(out.find("c=7") != std::string::npos);
@@ -569,8 +564,10 @@ TEST_CASE("FallbackDriver: samples the image into the destination rect",
   }
 
   SECTION("non-square destination emits exactly h rows of w glyphs") {
-    auto solid = make_image(4, 4, Pixel{255, 255, 255, 255});
-    REQUIRE(d.draw_image(Rect{0, 0, 7, 3}, solid).has_value());
+    // Named flat, not solid: `auto solid = solid(...)` would name the
+    // variable under construction, not tfsupport::solid.
+    auto flat = solid(4, 4, Pixel{255, 255, 255, 255});
+    REQUIRE(d.draw_image(Rect{0, 0, 7, 3}, flat).has_value());
     d.flush();
     int rows = 0;
     for (std::size_t p = out.find("\033["); p != std::string::npos;
@@ -614,6 +611,105 @@ TEST_CASE("AnsiRgbDriver: samples the image into the destination rect",
       ++blocks;
     REQUIRE(blocks == 12);  // 3 cols x 4 rows
   }
+}
+
+// ── #101: the drivers meet a checkerboard ───────────────────────────────────
+//
+// Every image case above this line feeds a driver a solid, or a source whose
+// rows are solid, and that leaves holes. Measured, not assumed — each of
+// these was injected into a driver and the suite re-run:
+//
+//   fallback, rows emitted bottom-to-top   -> 31/31 cases above still PASS
+//   ansi, columns emitted right-to-left    -> 31/31 cases above still PASS
+//   ansi, half-block pairing swapped       -> 3 above fail (the 1x2 red/blue
+//                                             source is not a solid)
+//   fallback, columns right-to-left        -> 2 above fail (two substring
+//                                             checks pin within-row order)
+//
+// So two of the four were invisible to the entire suite by construction: a
+// solid cannot witness an ordering. checker() is what makes it observable,
+// which is why #101 hoisted it out of test/28image — the suite that needed it
+// least. All four fail against the cases below.
+//
+// Three rules the cases below follow, each one of them found by breaking a
+// driver on purpose and watching what stayed green:
+//   - the image is never square, and its width is EVEN. A checker row of odd
+//     width is a palindrome ("@ @"), so a driver that emitted its columns
+//     right-to-left passed the first draft of these cases. Width 4 makes each
+//     row "@ @ " -- asymmetric -- and a non-square image kills an axis swap.
+//   - the assertion is the WHOLE emitted string (or, for kitty, the whole
+//     APC frame). out.find("▀") or out.find("a=t") passes on any image at
+//     all and pins nothing.
+//   - the destination is chosen so no two emitted rows are byte-identical.
+
+TEST_CASE("FallbackDriver: a checkerboard comes out in the right order",
+          "[drivers][image][order]") {
+  FallbackDriver d;
+  std::string out;
+  d.set_output(&out);
+  // 4x2 into 4x2 cells is 1:1 (sample_index(i, n, n) == i), so the emitted
+  // picture is the image: white -> lum 255 -> ramp[9] == '@', black -> ' '.
+  auto img = checker(4, 2, Pixel{255, 255, 255, 255}, Pixel{0, 0, 0, 255});
+  REQUIRE(d.draw_image(Rect{0, 0, 4, 2}, img).has_value());
+  d.flush();
+  // Row 0 is "@ @ " (parity even at x=0), row 1 is " @ @", each preceded by
+  // its own 1-based cursor address. Full equality: this is the entire frame.
+  REQUIRE(out == "\033[1;1H@ @ \033[2;1H @ @");
+}
+
+TEST_CASE("AnsiRgbDriver: a checkerboard pairs upper->fg, lower->bg, row by row",
+          "[drivers][image][order]") {
+  AnsiRgbDriver d;
+  std::string out;
+  d.set_output(&out);
+  // 4x6 into 4x2 cells, NOT 4x4 — and that is the whole trick. This tier
+  // packs two pixel rows into one cell, so with a 1:1 checker every cell row
+  // would pair source rows 2k and 2k+1, which have the same parity for every
+  // k: all the cell rows would come out byte-identical and a driver that
+  // emitted them in reverse order would pass. Sampling 6 source rows into
+  // dst.h == 4 gives sample_index -> 0,1,3,4, so cell row 0 pairs rows 0/1
+  // and cell row 1 pairs rows 3/4 — opposite parity, colour-inverted rows.
+  auto img = checker(4, 6, Pixel{255, 0, 0, 255}, Pixel{0, 0, 255, 255});
+  REQUIRE(d.draw_image(Rect{0, 0, 4, 2}, img).has_value());
+  d.flush();
+
+  const std::string kRed = "\033[38;2;255;0;0m";
+  const std::string kBlueFg = "\033[38;2;0;0;255m";
+  const std::string kRedBg = "\033[48;2;255;0;0m";
+  const std::string kBlue = "\033[48;2;0;0;255m";
+  const std::string kBlock = "\xE2\x96\x80";  // ▀
+  // Both SGRs change at every cell, so the run-coalescer in the driver hides
+  // nothing here — every colour it computes appears in the output.
+  const std::string kUpper = kRed + kBlue + kBlock;      // red over blue
+  const std::string kLower = kBlueFg + kRedBg + kBlock;  // blue over red
+  // Row 1's FIRST cell carries no SGR at all: the coalescer's state survives
+  // the cursor move, and row 0 ended on the same pair row 1 opens with. That
+  // bare block is not noise to be papered over — it is only in that position
+  // if both rows came out in the order and the phase they should have, so
+  // asserting it is asserting the boundary between them.
+  const std::string expected = "\033[1;1H" + kUpper + kLower + kUpper + kLower +
+                               "\033[2;1H" + kBlock + kUpper + kLower + kUpper +
+                               "\033[0m";
+  REQUIRE(out == expected);
+}
+
+TEST_CASE("KittyDriver: the transmitted payload is row-major, and s=/v= match",
+          "[drivers][kitty][image][order]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  // The terminal does the scaling here, so nothing about row order is
+  // observable from the placement — the base64 payload is the only witness,
+  // and the driver's job is to ship the buffer verbatim (4x2 RGBA = 32 bytes).
+  auto img = checker(4, 2, Pixel{10, 20, 30, 255}, Pixel{200, 150, 100, 255});
+  REQUIRE(d.draw_image(Rect{0, 0, 4, 2}, img).has_value());
+  d.flush();
+  // Asserting the whole frame, not just the payload: s=4,v=2 is what catches
+  // a width/height transpose, which a payload match alone would let through
+  // (a driver that mislabelled the dimensions would still ship these bytes).
+  REQUIRE(out.find("\033_Ga=t,t=d,f=32,i=1,s=4,v=2,m=0,q=2;"
+                   "ChQe/8iWZP8KFB7/yJZk/8iWZP8KFB7/yJZk/woUHv8=\033\\") !=
+          std::string::npos);
 }
 
 // ── #83: preferred_pixel_extent ─────────────────────────────────────────────
@@ -676,7 +772,7 @@ TEST_CASE("Drivers: image_cell_extent matches the rows actually emitted",
   // The assertion that would have caught the shipped bug: both examples used
   // to derive this from capability flags, which describe colour and not
   // packing, and got the fallback tier wrong.
-  auto img = make_image(8, 9, Pixel{255, 255, 255, 255});
+  auto img = solid(8, 9, Pixel{255, 255, 255, 255});
 
   SECTION("fallback: one glyph per cell, so h rows of w glyphs") {
     FallbackDriver d;
@@ -735,7 +831,7 @@ TEST_CASE("Drivers: image_cell_extent matches the rows actually emitted",
 
 TEST_CASE("Drivers: an empty destination rect is a warning, not a crash",
           "[drivers][failure]") {
-  auto img = make_image(2, 2, Pixel{255, 0, 0, 255});
+  auto img = solid(2, 2, Pixel{255, 0, 0, 255});
   FallbackDriver fb;
   AnsiRgbDriver ansi;
   KittyDriver kitty;
