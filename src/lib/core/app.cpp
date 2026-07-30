@@ -530,8 +530,14 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
   if (!m_driver || !m_driver->capabilities().kitty_graphics) return;
 
   for (const auto& region : widget.pixel_regions()) {
-    if (auto img = widget.draw_pixels(region)) {
-      m_pixel_regions.push_back({region, std::move(*img)});
+    // The widget cannot ask the driver itself, so hand it the answer.
+    const Extent px = m_driver->preferred_pixel_extent(region);
+    // Non-empty as well as non-null: an engaged optional holding an Image{}
+    // used to blank the covered cells here and then be rejected by the driver
+    // as "draw_image: empty image", leaving a hole in the UI.
+    if (const Image* img = widget.draw_pixels(region, px);
+        img != nullptr && !img->empty()) {
+      m_pixel_regions.push_back({region, img});
 
       // Clear the Screen cells in this region so the cell diff doesn't
       // emit text that would compete with the placeholder cells. The
@@ -545,7 +551,7 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
 
 auto App::flush_pixel_regions() -> void {
   for (const auto& pr : m_pixel_regions) {
-    m_driver->draw_image(pr.rect, pr.image);
+    m_driver->draw_image(pr.rect, *pr.image);
   }
   if (!m_pixel_regions.empty()) m_driver->flush();
 }

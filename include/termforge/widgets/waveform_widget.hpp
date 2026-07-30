@@ -39,7 +39,7 @@ class WaveformWidget final : public Widget {
 
   // ── pixel regions (kitty path) ───────────────────────────────────────
   auto pixel_regions() -> std::vector<Rect> override;
-  auto draw_pixels(Rect region) -> std::optional<Image> override;
+  auto draw_pixels(Rect region, Extent pixels) -> const Image* override;
 
   [[nodiscard]] auto sample_count() const noexcept -> std::size_t {
     return m_samples.size();
@@ -59,8 +59,23 @@ class WaveformWidget final : public Widget {
   bool m_auto_range{true};
   float m_min{0.0f}, m_max{1.0f};  // fixed range when !m_auto_range
 
+  // Bumped by every mutation that changes what the plot looks like. This is
+  // the pixel cache's key, NOT dirty(): dirty() is advisory, and draw() clears
+  // it, so a cache keyed on it goes stale the moment the cell and pixel passes
+  // interleave.
+  std::uint64_t m_gen{0};
+
   Rgb m_fg{0x00, 0xFF, 0x80};  // waveform color
   Rgb m_bg{theme::kBg};  // background
+
+  // The buffer draw_pixels hands out, owned here for the lifetime the contract
+  // in widget.hpp requires. Also the memo: rasterizing 640x384 pixels is real
+  // work, and re-doing it for an unchanged plot is the cost #84 exists to
+  // make avoidable.
+  Image m_raster;
+  Extent m_raster_extent{};
+  std::uint64_t m_raster_gen{0};
+  bool m_raster_valid{false};
 };
 
 }  // namespace termforge
