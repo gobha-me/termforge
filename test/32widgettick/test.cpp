@@ -15,6 +15,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -212,6 +213,42 @@ TEST_CASE("tick_widgets skips a null entry", "[widgettick]") {
 
   app.tick(Seconds{50ms});
   REQUIRE(app.w.dts.size() == 1);
+}
+
+TEST_CASE("tick_widgets forwards from a container (#123)", "[widgettick]") {
+  // The braced form is an initializer_list, which cannot be built from a
+  // vector -- so an app that keeps its widgets in a container (a generated row
+  // of Buttons, one ProgressBar per item) could not call the forwarder at all,
+  // and looped calling on_tick directly. That spelling bypasses the null-skip
+  // below, which is exactly why it should not be the one such apps are pushed
+  // toward. Same forward order, same contract, through a std::vector.
+  struct Probe : App {
+    std::string log;
+    TickRecorder a, b, c;
+    Probe() {
+      a.log = &log; a.id = 'a';
+      b.log = &log; b.id = 'b';
+      c.log = &log; c.id = 'c';
+    }
+    auto on_render(Screen&) -> void override {}
+    auto tick(Seconds dt, std::span<Widget* const> ws) -> void {
+      tick_widgets(dt, ws);
+    }
+  } app;
+
+  std::vector<Widget*> ws{&app.a, &app.b, &app.c};
+  app.tick(Seconds{100ms}, ws);
+  REQUIRE(app.log == "abc");  // same forward order as the braced form
+  REQUIRE(app.a.dts.size() == 1);
+  REQUIRE(app.a.dts[0] == Seconds{100ms});
+  REQUIRE(app.c.dts[0] == Seconds{100ms});
+
+  // The null contract survives the widening -- it lives in the span overload,
+  // which is the one that holds the loop.
+  ws.push_back(nullptr);
+  app.tick(Seconds{50ms}, ws);
+  REQUIRE(app.b.dts.size() == 2);
+  REQUIRE(app.b.dts[1] == Seconds{50ms});
 }
 
 // ── the frame-rate coupling this issue exists to remove ─────────────────────
