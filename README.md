@@ -65,8 +65,9 @@ Landed and verified:
   switches to a fixed timestep for deterministic, replayable physics, and the
   `set_max_tick_dt` clamp keeps a stall from teleporting objects through walls.
   Widgets get the same hook — `Widget::on_tick(dt)`, forwarded by the app with
-  `tick_widgets(dt, {…})` — so a ProgressBar's pulse and a Button's press flash
-  are measured in seconds too. See `examples/motion.cpp`.
+  `tick_widgets(dt, {…})`, or a `std::span` of them when they live in a
+  container — so a ProgressBar's pulse and a Button's press flash are measured
+  in seconds too. See `examples/motion.cpp`.
 
 Deferred per the roadmap: `SixelDriver` (Epic 5), the MapWidget sprite tier +
 game example, SIMD waveform rasterization, framebuffer driver.
