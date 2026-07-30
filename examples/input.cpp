@@ -5,9 +5,16 @@
 //   - Handle KeyEvent, MouseEvent, and ResizeEvent
 //   - Display live input state on screen
 //   - Use std::visit for event dispatch
+//   - Opt into the kitty keyboard protocol and see press/repeat/release (#60)
+//
+// Press "k" to cycle KeyboardMode live. On a terminal without the protocol
+// the tier line still changes but every key keeps arriving as a press, and
+// the Info ErrorEvent saying so shows up in the "Last key" line at startup --
+// that is the degradation-is-an-event contract, visible.
 
 #include <format>
 #include <string>
+#include <string_view>
 
 #include "termforge/core/app.hpp"
 
@@ -32,6 +39,16 @@ class InputApp final : public App {
     screen.write_text(2, y++, "Keyboard:", Rgb{0xC0, 0xC0, 0xC0}, {});
     screen.write_text(4, y++, "Last key: " + m_last_key, Rgb{0x00, 0xFF, 0x80}, {});
     screen.write_text(4, y++, "Modifiers: " + m_modifiers, Rgb{0x00, 0xFF, 0x80}, {});
+    screen.write_text(4, y++, "Action: " + m_action, Rgb{0x00, 0xFF, 0x80}, {});
+    y++;
+
+    screen.write_text(2, y++, "Keyboard protocol (#60):", Rgb{0xC0, 0xC0, 0xC0}, {});
+    screen.write_text(4, y++, "Tier: " + std::string{mode_name(keyboard_mode())},
+                      Rgb{0x00, 0xFF, 0x80}, {});
+    screen.write_text(4, y++,
+                      std::string{"Terminal supports it: "} +
+                          (capabilities().kitty_keyboard ? "yes" : "no"),
+                      Rgb{0x00, 0xFF, 0x80}, {});
     y++;
 
     screen.write_text(2, y++, "Mouse:", Rgb{0xC0, 0xC0, 0xC0}, {});
@@ -43,11 +60,21 @@ class InputApp final : public App {
     screen.write_text(4, y, std::format("Size: {}x{}", W, screen.rows()), Rgb{0x00, 0xFF, 0x80}, {});
     y += 2;
 
-    screen.write_text(0, screen.rows() - 1, "Press ESC to quit", Rgb{0x80, 0x80, 0x80}, {});
+    screen.write_text(0, screen.rows() - 1,
+                      "Press k to cycle the keyboard tier, ESC to quit",
+                      Rgb{0x80, 0x80, 0x80}, {});
   }
 
  private:
   auto handle(const KeyEvent& k) -> void {
+    // Cycle the tier live. Only presses act -- under Enhanced this key also
+    // arrives as a repeat and a release, and acting on those would cycle
+    // three times per keystroke.
+    if (k.key == Key::Char && k.ch == U'k' && !k.ctrl &&
+        k.action == KeyAction::Press) {
+      set_keyboard_mode(next_mode(keyboard_mode()));
+    }
+    m_action = action_name(k.action);
     m_last_key = key_name(k.key);
     if (k.key == Key::Char) {
       if (k.ch < 0x80) m_last_key += std::format(" ('{}')", static_cast<char>(k.ch));
@@ -70,16 +97,46 @@ class InputApp final : public App {
   auto handle(const PasteEvent& p) -> void {
     m_last_key = std::format("paste ({} bytes)", p.text.size());
     m_modifiers = "";
+    m_action = "";
   }
 
   auto handle(const ResizeEvent& r) -> void {
     m_last_key = std::format("resize to {}x{}", r.cols, r.rows);
     m_modifiers = "";
+    m_action = "";
   }
 
   auto handle(const ErrorEvent& e) -> void {
     m_last_key = "error: " + e.message;
     m_modifiers = "";
+    m_action = "";
+  }
+
+  static auto action_name(KeyAction a) -> std::string {
+    switch (a) {
+      case KeyAction::Press: return "press";
+      case KeyAction::Repeat: return "repeat";
+      case KeyAction::Release: return "release";
+    }
+    return "?";
+  }
+
+  static auto mode_name(KeyboardMode m) -> std::string_view {
+    switch (m) {
+      case KeyboardMode::Legacy: return "Legacy (presses only)";
+      case KeyboardMode::Disambiguate: return "Disambiguate (flags 3)";
+      case KeyboardMode::Enhanced: return "Enhanced (flags 27)";
+    }
+    return "?";
+  }
+
+  static auto next_mode(KeyboardMode m) -> KeyboardMode {
+    switch (m) {
+      case KeyboardMode::Legacy: return KeyboardMode::Disambiguate;
+      case KeyboardMode::Disambiguate: return KeyboardMode::Enhanced;
+      case KeyboardMode::Enhanced: return KeyboardMode::Legacy;
+    }
+    return KeyboardMode::Legacy;
   }
 
   static auto key_name(Key k) -> std::string {
@@ -117,6 +174,7 @@ class InputApp final : public App {
 
   std::string m_last_key = "none";
   std::string m_modifiers = "";
+  std::string m_action = "";
   std::string m_mouse_pos = "(0, 0)";
   std::string m_mouse_btn = "none";
 };
