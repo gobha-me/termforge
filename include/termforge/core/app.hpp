@@ -193,9 +193,11 @@ class App {
   // needs two pops.
   //
   // Overlays are NOT ticked either (#69). The stack is a draw/dispatch order,
-  // not ownership, so the app that owns the dialog owns its tick — keep the
-  // tick_widgets call unconditional rather than gating it on what is currently
-  // pushed, so a dialog that was dismissed mid-flash still finishes it.
+  // not ownership, so the app that owns the dialog owns its tick: forward one
+  // while the dialog is up if it holds something that animates. You do not
+  // have to keep ticking a dialog you have popped — a Dialog resets its
+  // children's transient state at each showing boundary (#122), so one you
+  // stopped ticking mid-flash does not re-open stale.
   auto push_overlay(Widget& w, OverlayOptions opts = {}) -> void;
   // Remove the top overlay. No-op on an empty stack.
   auto pop_overlay() -> void;

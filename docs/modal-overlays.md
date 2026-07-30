@@ -115,10 +115,9 @@ each turn; and non-owning storage means a pop cannot destroy a live frame.
 ownership, so `Widget::on_tick` reaches a dialog only if the app forwards it —
 `tick_widgets(dt, {&m_confirm})`, from the app's own `on_tick`. `Dialog`
 forwards from there to its children, which is how a control inside a dialog
-animates. Do it unconditionally rather than only while the dialog is pushed: a
-dialog button closes its dialog on activation, so its press flash is still
-burning down after the pop, and a dialog that stops receiving ticks mid-flash
-re-opens with that button lit (#69).
+animates (#69). Forward one only while the dialog is up, and only if it holds
+something that animates: the three standard dialogs hold Buttons and
+TextInputs, and need no ticks at all.
 
 **Closing.** `widgets/` must not include `core/app.hpp`, so a dialog cannot
 pop itself. It calls `on_close`, and the app decides what that means:
@@ -138,6 +137,16 @@ so the next frame that draws it is necessarily a new push. Latching forever
 instead would make an app that holds its dialogs as members — the documented
 way to hold them — get exactly one use out of each, and then a modal that
 swallows every key and cannot be dismissed.
+
+That boundary is also where a `Dialog` calls `Widget::reset_transient()` on
+every child, dropping visual feedback that outlived the moment it was feedback
+for: a press flash, an animation phase, an open dropdown (#122). It is what
+makes a re-shown dialog correct no matter what the app forwards — a dialog
+button closes its dialog on activation, so its flash is armed and the overlay
+popped in the same dispatch and never renders at all. Before #122 that flash
+survived into the next showing unless the app kept ticking a dialog that was no
+longer pushed. The hook fires **before** `on_show()`, and resets only visual
+state: never text, a value, a selection or a scroll offset.
 
 ## Interaction with pixel regions
 
