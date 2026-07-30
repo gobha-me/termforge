@@ -129,6 +129,11 @@ class Select final : public Widget {
   }
   auto close_dropdown() -> void;
 
+  // An open dropdown is transient sub-state, so a re-showing closes it (#122).
+  // Not the selection — that is the value, and it survives. close_dropdown()
+  // is already a no-op when closed, so this is edge-guarded for free.
+  auto reset_transient() -> void override { close_dropdown(); }
+
   // Option the arrows are on while open; -1 when closed. Not the selection —
   // the selection only moves on commit. An OPTION index, not a visual row:
   // before #85 a highlight past the last row that fit was clamped to the

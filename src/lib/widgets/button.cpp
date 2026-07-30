@@ -74,6 +74,18 @@ auto Button::on_tick(std::chrono::duration<double> dt) -> void {
   }
 }
 
+auto Button::reset_transient() -> void {
+  // The press flash is the whole of this widget's transient state (#122). Not
+  // focus: that is the ring's business and survives a re-showing.
+  //
+  // Edge-guarded, like on_tick above — a button whose flash is already out
+  // must not report a change, or every dialog holding a button would come up
+  // dirty at every showing.
+  if (m_flash_left <= std::chrono::duration<double>::zero()) return;
+  m_flash_left = std::chrono::duration<double>::zero();
+  mark_dirty();
+}
+
 auto Button::on_event(const Event& ev) -> bool {
   if (const auto* k = std::get_if<KeyEvent>(&ev)) {
     if (k->key == Key::Enter ||

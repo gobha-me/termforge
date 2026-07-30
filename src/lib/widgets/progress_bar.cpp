@@ -48,6 +48,19 @@ auto ProgressBar::on_tick(std::chrono::duration<double> dt) -> void {
   if (std::floor(m_pulse_cells) != std::floor(before)) mark_dirty();
 }
 
+auto ProgressBar::reset_transient() -> void {
+  // The pulse phase is the transient half; the value and the mode are what the
+  // bar is FOR and stay put (#122). Deliberately not gated on m_indeterminate:
+  // a bar switched to determinate mid-sweep still holds a stale phase that
+  // set_indeterminate(true) would only clear on the false->true edge.
+  //
+  // Edge-guarded so a determinate, paused, or already-rewound bar reports no
+  // change — the same rule on_tick's floor comparison follows.
+  if (m_pulse_cells == 0.0) return;
+  m_pulse_cells = 0.0;
+  mark_dirty();
+}
+
 auto ProgressBar::draw(Screen& screen) -> void {
   const Rect r = rect();
   if (r.w <= 0 || r.h <= 0) {

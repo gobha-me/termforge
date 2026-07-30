@@ -138,7 +138,21 @@ auto Dialog::draw(Screen& screen) -> void {
   const bool new_showing = m_reported || !m_shown_once;
   m_reported = false;
   m_shown_once = true;
-  if (new_showing) on_show();
+  if (new_showing) {
+    // Transient visual state does not survive a showing (#122). This is what
+    // makes a re-shown dialog correct regardless of what the app forwards: a
+    // dialog's button closes the dialog on activation, so its press flash is
+    // armed and the overlay popped in the same dispatch, and without this the
+    // next showing opens with that button lit for good.
+    //
+    // Called VIRTUALLY on this, not through a private loop, so a Dialog
+    // subclass that overrides reset_transient() participates in its own
+    // boundary. Before on_show(), so state a subclass establishes there --
+    // FilePickerDialog seeds a field, asserts focus and may raise an overlay
+    // -- survives.
+    reset_transient();
+    on_show();
+  }
 
   layout(screen.cols(), screen.rows());
 
@@ -183,6 +197,19 @@ auto Dialog::on_tick(std::chrono::duration<double> dt) -> void {
   // children of its own, and its override forwards further down.
   for (Widget* child : m_children)
     if (child != nullptr) child->on_tick(dt);
+}
+
+auto Dialog::reset_transient() -> void {
+  // Third member of the on_tick/hit_test_tree family: forward order, every
+  // child, recursive through composites that own children of their own.
+  //
+  // A Dialog added as a child is reached both here and by its own boundary
+  // when it is drawn. Neither is redundant — an inner dialog that has not
+  // itself reported never fires its own boundary — and reset_transient is
+  // required to be idempotent, so the overlap costs nothing. Do not
+  // "optimise" either away.
+  for (Widget* child : m_children)
+    if (child != nullptr) child->reset_transient();
 }
 
 auto Dialog::on_event(const Event& ev) -> bool {

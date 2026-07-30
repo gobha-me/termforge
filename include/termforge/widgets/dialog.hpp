@@ -110,13 +110,25 @@ class Dialog : public Widget {
 
   // Forwards the tick to every child, so a control inside a dialog animates
   // (#69). The app still has to tick the DIALOG — App ticks nothing by itself,
-  // and an overlay is no exception. Tick it whether or not it is currently
-  // pushed: a dialog whose button was just activated is popped in that same
-  // dispatch, and the press flash it is still holding needs ticks to expire.
-  // Skip that and the button renders pressed from the first frame of the next
-  // showing, which is the one failure of this design that is not obvious on
-  // first use.
+  // and an overlay is no exception. Only worth doing while the dialog is up,
+  // and only if it holds something that animates: the standard dialogs hold
+  // Buttons and TextInputs, which need no ticks at all (see reset_transient
+  // below for why the press flash is not a reason).
   auto on_tick(std::chrono::duration<double> dt) -> void override;
+
+  // Forwards to every child at the per-showing boundary, so a dialog re-opens
+  // clean (#122). This is what closed the one failure of #69's design that was
+  // not obvious on first use: a dialog's button closes the dialog on
+  // activation, so the flash is armed and the overlay popped in the same
+  // dispatch — it never renders, and before this it stayed lit into the next
+  // showing unless the app kept ticking a dialog that was no longer pushed.
+  //
+  // Same family as on_tick and hit_test_tree: forward order, every child,
+  // recursive. Fired from draw(), BEFORE on_show() and before layout(), so an
+  // override may not trust rect(). An override that forwards further (the
+  // shape FilePickerDialog uses for on_tick) must call
+  // Dialog::reset_transient() or its children stop being reset.
+  auto reset_transient() -> void override;
 
   // Covers the dialog's rect plus every child's hit area -- including a
   // Select's open dropdown, which paints below the dialog's bottom border
@@ -141,6 +153,12 @@ class Dialog : public Widget {
   // the next draw(), and that same transition (latched -> cleared) is what
   // fires on_show(): a dialog that reported a result closed and was popped,
   // so the next frame that draws it is a new showing.
+  //
+  // So calling this ENDS THE SHOWING, whether or not you also close(): the
+  // next draw clears the latch, resets every child's transient state (#122)
+  // and fires on_show(). A control that acts without finishing the dialog --
+  // an "Apply" that stays up -- must NOT call this, or it re-runs the dialog's
+  // per-showing work and wipes its own press flash before it can render.
   auto begin_result() -> bool;
 
   // Extra size the subclass's controls need, inside the border and below the
@@ -163,7 +181,8 @@ class Dialog : public Widget {
   // seed a field, assert a starting focus): draw() itself runs EVERY frame
   // (~10 Hz idle), so work placed there repeats or, worse, fights the user --
   // a refresh that resets a list's selection every frame makes navigation
-  // impossible (issue #45). The base does nothing.
+  // impossible (issue #45). The base does nothing. Runs AFTER the boundary's
+  // reset_transient() pass, so whatever it establishes survives.
   virtual auto on_show() -> void {}
 
   // Fire on_close (copying the callback first — a callback may replace the

@@ -84,6 +84,14 @@ class MenuBar final : public Widget {
   // Close the dropdown (parent can call on Escape or click-away).
   auto close_dropdown() -> void;
 
+  // An open dropdown is transient sub-state, so a re-showing closes it (#122).
+  // Same call Select's override makes — the two must not drift again (#76).
+  // close_dropdown() marks dirty unconditionally, so the guard is here.
+  auto reset_transient() -> void override {
+    if (!dropdown_open()) return;
+    close_dropdown();
+  }
+
   [[nodiscard]] auto active_menu() const noexcept -> int { return m_active; }
 
   // Which glyph family the dropdown's selection marker comes from (#76) — the

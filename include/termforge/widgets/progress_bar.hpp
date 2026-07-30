@@ -51,6 +51,10 @@ class ProgressBar final : public Widget {
 
   auto on_tick(std::chrono::duration<double> dt) -> void override;
 
+  // Rewinds the pulse to its start. Not the value or the mode — those are
+  // content (#122).
+  auto reset_transient() -> void override;
+
   // Optional label text drawn centered over the bar.
   auto set_label(std::string label) -> void {
     m_label = std::move(label);

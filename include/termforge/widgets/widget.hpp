@@ -75,6 +75,24 @@ class Widget {
   // "once per tick" is not "once per frame".
   virtual auto on_tick(std::chrono::duration<double> /*dt*/) -> void {}
 
+  // Drop transient visual feedback that has outlived the moment it was
+  // feedback FOR: a press flash, an animation phase, an open popup (#122). A
+  // container calls it when it decides this widget is being shown afresh —
+  // Dialog does so at its per-showing boundary, so a dialog re-opens clean
+  // whether or not the app kept ticking it after the pop.
+  //
+  // NEVER content or position. Not text, not a value, not a selection, not a
+  // scroll offset. Those are what the widget is *for*, and this can fire
+  // before the app has drawn even once (a Dialog's very first draw is a
+  // showing boundary), so a body that cleared them would silently undo the
+  // set_value()/set_start_dir() an app did while wiring things up.
+  //
+  // Three obligations. Like on_tick, it may NOT trust rect() — Dialog calls it
+  // before layout(). It must be IDEMPOTENT: it can fire twice for one showing
+  // (a nested dialog is reached both by its own boundary and by its parent's
+  // forward). And it must not invoke app callbacks — it runs inside draw().
+  virtual auto reset_transient() -> void {}
+
   // ── pixel regions ────────────────────────────────────────────────────
   // Declare rect(s) where this widget can provide pixel data. Called each
   // frame before the pixel pass. Empty (default) = no pixel rendering.
@@ -138,7 +156,10 @@ class Widget {
   // painted. A self-animating widget is dirty because TIME passed, not because
   // it was drawn — on_tick() is what re-marks it (#69). So two draw()s with no
   // tick between them settle to not-dirty, which is the honest answer: with no
-  // elapsed time there is nothing new to show.
+  // elapsed time there is nothing new to show. reset_transient() is the third
+  // writer and obeys the same edge rule: it marks dirty when it actually
+  // cleared something, and is silent when there was nothing to clear —
+  // otherwise every dialog holding a button would be dirty at every showing.
   [[nodiscard]] auto dirty() const noexcept -> bool { return m_dirty; }
   auto mark_dirty() -> void { m_dirty = true; }
 
