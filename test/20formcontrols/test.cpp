@@ -33,6 +33,7 @@
 #include "termforge/widgets/select.hpp"
 #include "termforge/widgets/widget.hpp"
 #include "support/events.hpp"
+#include "support/screen.hpp"
 
 using termforge::BorderStyle;
 using namespace tfsupport;
@@ -57,19 +58,6 @@ using termforge::Widget;
 namespace {
 
 
-// Read back one row of a screen as a string. A blank cell holds "" (see
-// Cell::blank), so it is rendered as a space here to keep the expectations
-// fixed-width and legible.
-auto row_text(const Screen& s, int y, int x0, int w) -> std::string {
-  std::string out;
-  for (int x = x0; x < x0 + w; ++x) {
-    const std::string& t = s.at(x, y).text;
-    out += t.empty() ? " " : t;
-  }
-  return out;
-}
-
-
 // Every cell of a rect is 7-bit — the bare-TTY tier check.
 auto rect_is_ascii(const Screen& s, Rect r) -> bool {
   for (int y = r.y; y < r.y + r.h; ++y)
@@ -77,9 +65,6 @@ auto rect_is_ascii(const Screen& s, Rect r) -> bool {
       if (!all_seven_bit(s.at(x, y).text)) return false;
   return true;
 }
-
-// The continuation cell the renderer writes after a width-2 glyph.
-const std::string kWide{"\0", 1};
 
 // A minimal ring member to cycle focus onto.
 class Probe final : public Widget {
@@ -284,7 +269,7 @@ TEST_CASE("Checkbox: a wide label glyph is never split",
   c.set_geometry({0, 0, 6, 1});
   c.draw(s);
   REQUIRE(s.at(4, 0).text == "日");
-  REQUIRE(s.at(5, 0).text == kWide);  // continuation cell, not a second glyph
+  REQUIRE(s.at(5, 0).text == kContinuation);  // continuation cell, not a second glyph
 
   Screen s2{10, 1};
   c.set_geometry({0, 0, 5, 1});
@@ -635,7 +620,7 @@ TEST_CASE("RadioGroup: a wide option glyph is never split",
   g.set_geometry({0, 0, 6, 1});
   g.draw(s);
   REQUIRE(s.at(4, 0).text == "日");
-  REQUIRE(s.at(5, 0).text == kWide);
+  REQUIRE(s.at(5, 0).text == kContinuation);
 
   Screen s2{10, 1};
   g.set_geometry({0, 0, 5, 1});
@@ -1598,9 +1583,9 @@ TEST_CASE("Select: a wide value glyph is never split",
   sel.set_geometry({0, 0, 10, 1});
   sel.draw(s);
   REQUIRE(s.at(2, 0).text == "日");
-  REQUIRE(s.at(3, 0).text == kWide);
+  REQUIRE(s.at(3, 0).text == kContinuation);
   REQUIRE(s.at(4, 0).text == "本");
-  REQUIRE(s.at(5, 0).text == kWide);
+  REQUIRE(s.at(5, 0).text == kContinuation);
   REQUIRE(s.at(9, 0).text == "]");  // chrome still lands on the last column
 }
 

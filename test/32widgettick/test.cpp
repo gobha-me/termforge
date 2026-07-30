@@ -30,6 +30,7 @@
 #include "termforge/widgets/widget.hpp"
 
 #include "support/events.hpp"
+#include "support/screen.hpp"
 
 using namespace termforge;
 using namespace std::chrono_literals;
@@ -166,24 +167,6 @@ class WidgetTickProbe : public App {
   std::string m_sink;
 };
 
-// Read a screen row back as a string. Local, like the other four copies in
-// test/ — hoisting them all is #94.
-auto row_text(const Screen& s, int y, int x0, int w) -> std::string {
-  std::string out;
-  for (int x = x0; x < x0 + w; ++x) {
-    const auto& c = s.at(x, y);
-    out += c.text.empty() ? " " : c.text;
-  }
-  return out;
-}
-
-// The whole row. A widget inside a dialog wants the 4-arg form instead: the
-// chrome shares its row, so a full-row compare answers a question about the
-// border rather than about the widget.
-auto row_text(const Screen& s, int y, int w) -> std::string {
-  return row_text(s, y, 0, w);
-}
-
 // Does anything on screen carry Button's pressed background?
 auto any_pressed_cell(const Screen& s) -> bool {
   constexpr Rgb kPressedBg{0x80, 0x40, 0xFF};
@@ -279,7 +262,7 @@ TEST_CASE("an indeterminate bar sweeps at the same rate at every frame budget",
                                  budget_ms * frames}});
     Screen s{20, 2};
     app.bar.draw(s);
-    return row_text(s, 0, 20);
+    return row_text(s, 0, 0, 20);
   };
 
   // (frames - 1) * budget = 450ms of ticked time in each case: the frame that
@@ -308,7 +291,7 @@ TEST_CASE("a widget the app never ticks does not animate", "[widgettick][progres
   app.bar.draw(s);
   // The pulse enters from off-screen left, so an un-ticked bar shows only its
   // empty track however long the loop runs.
-  REQUIRE(row_text(s, 0, 20).find("█") == std::string::npos);
+  REQUIRE(row_text(s, 0, 0, 20).find("█") == std::string::npos);
 }
 
 // ── Button: a flash measured in seconds ─────────────────────────────────────
@@ -371,7 +354,7 @@ TEST_CASE("a bar inside a dialog animates when the dialog is ticked",
   Screen after{20, 1};
   bar.draw(after);
 
-  REQUIRE(row_text(before, 0, 20) != row_text(after, 0, 20));
+  REQUIRE(row_text(before, 0, 0, 20) != row_text(after, 0, 0, 20));
 }
 
 // ── the showing boundary resets transient state (#122) ──────────────────────
