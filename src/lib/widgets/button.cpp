@@ -43,7 +43,11 @@ auto Button::draw(Screen& screen) -> void {
 }
 
 auto Button::set_flash_duration(std::chrono::duration<double> d) -> void {
-  m_flash_duration = std::max(d, std::chrono::duration<double>::zero());
+  // Zero first: std::max returns the second argument only on a true
+  // comparison, so this spelling also filters a NaN duration, which would
+  // otherwise make every comparison in draw() and on_tick() false and leave
+  // the button unable to flash ever again.
+  m_flash_duration = std::max(std::chrono::duration<double>::zero(), d);
   // A lit flash cannot outlive the new duration, so set_flash_duration({})
   // takes effect now rather than after one more press's worth of ticks.
   if (m_flash_left > m_flash_duration) {
@@ -55,7 +59,9 @@ auto Button::set_flash_duration(std::chrono::duration<double> d) -> void {
 auto Button::on_tick(std::chrono::duration<double> dt) -> void {
   // App clamps dt to non-negative, but on_tick is public and a caller of its
   // own can hand this anything; a negative delta must not extend the flash.
-  if (dt <= std::chrono::duration<double>::zero()) return;
+  // Negated positive test, so NaN is rejected here rather than poisoning
+  // m_flash_left into a state where no comparison is ever true again.
+  if (!(dt > std::chrono::duration<double>::zero())) return;
   if (m_flash_left <= std::chrono::duration<double>::zero()) return;
   m_flash_left -= dt;
   // Dirty only on the edge, unlike ProgressBar which marks on every tick that

@@ -22,6 +22,7 @@
 #include "termforge/widgets/button.hpp"
 #include "termforge/widgets/dialog.hpp"
 #include "termforge/widgets/dialogs.hpp"
+#include "termforge/widgets/file_picker_dialog.hpp"
 #include "termforge/widgets/progress_bar.hpp"
 #include "termforge/widgets/widget.hpp"
 
@@ -290,13 +291,13 @@ TEST_CASE("a bar inside a dialog animates when the dialog is ticked",
   REQUIRE(row_text(before, 0, 20) != row_text(after, 0, 20));
 }
 
-TEST_CASE("re-showing a dialog does not show a stale press flash",
+TEST_CASE("a popped dialog's flash goes out only if it keeps getting ticks",
           "[widgettick][dialog][regression]") {
   // The one failure of the forward-by-hand design that is NOT loud on first
   // use: a standard dialog's button closes the dialog, so the flash never
-  // renders — and then the dialog is shown again with the button still lit.
-  // The fix is that the app ticks the dialog whether or not it is up, which is
-  // what the dialogs example does; this pins the consequence either way.
+  // renders — and unless the app keeps ticking the dialog after the pop, the
+  // next showing opens with that button lit. Both halves are asserted here,
+  // because the first half is the trap and the second is the fix.
   MessageDialog dlg{"Title", "Body"};
   bool closed = false;
   dlg.on_close([&] { closed = true; });
@@ -313,6 +314,36 @@ TEST_CASE("re-showing a dialog does not show a stale press flash",
   dlg.on_tick(Seconds{200ms});   // the app kept ticking it after the pop
   s.clear();
   dlg.draw(s);
+  REQUIRE_FALSE(any_pressed_cell(s));
+}
+
+TEST_CASE("FilePickerDialog ticks its own error dialog",
+          "[widgettick][dialog][regression]") {
+  // m_error is a member pushed as its own overlay, not an add_child, and the
+  // app has no handle on it — so Dialog::on_tick cannot reach it and neither
+  // can the app's tick list. Without FilePickerDialog::on_tick forwarding, its
+  // OK button holds a flash nothing can ever end: it re-opens lit, and because
+  // draw() prefers the flash palette over the focus one, that button also
+  // stops rendering focus for the life of the process.
+  FilePickerDialog picker{"Open"};
+  Dialog* raised = nullptr;
+  picker.on_error_overlay([&](Dialog& d) { raised = &d; });
+  picker.set_start_dir("/nonexistent-termforge-test-dir");
+
+  Screen s{60, 20};
+  picker.layout(s.cols(), s.rows());
+  picker.draw(s);  // the first frame of a showing runs on_show -> report_error
+  REQUIRE(raised != nullptr);
+
+  raised->layout(s.cols(), s.rows());
+  REQUIRE(raised->on_event(key(Key::Enter)));  // OK: arms the flash, closes
+  s.clear();
+  raised->draw(s);
+  REQUIRE(any_pressed_cell(s));
+
+  picker.on_tick(Seconds{200ms});  // the app ticks the PICKER, not the error
+  s.clear();
+  raised->draw(s);
   REQUIRE_FALSE(any_pressed_cell(s));
 }
 
