@@ -6,27 +6,44 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-30)
 
-**Latest release: `v0.5.1` — #123, the forwarders take a span.** `App::route_mouse`
-and `App::tick_widgets` gain a `std::span<Widget* const>` overload beside the
-`std::initializer_list` one, and `route_mouse` now skips a null entry the way
-`tick_widgets` always has. Closes the last of #69's spun-out pair.
+**Latest release: `v0.5.1` — #123, the forwarders take a container.**
+`App::route_mouse` and `App::tick_widgets` accept any contiguous range of
+`Widget*` beside the braced list, and `route_mouse` now skips a null entry the
+way `tick_widgets` always has. Closes the last of #69's spun-out pair.
 
-**Span is an addition, not a replacement, and that was forced rather than
-chosen — record it so nobody re-derives it.** A braced list *is* an
+**The container form is an addition, not a replacement, and that was forced
+rather than chosen — record it so nobody re-derives it.** A braced list *is* an
 `initializer_list`, and `std::span` gains a constructor from one only in
-**C++26** (P2447); under this project's C++23 the conversion is ill-formed.
-Verified with the repo's g++ 14.2: `could not convert '{(& a), (& b), (& c)}' …
-to 'std::span<W* const>'`, and `__cpp_lib_span_initializer_list` undefined.
-Replacing the parameter would have broken all nine braced call sites. With both
-overloads present, every braced arity — three, two, one, and even `{}` —
-resolves to `initializer_list` with no ambiguity ([over.ics.list]/2 makes it the
-identity conversion where span needs a user-defined one), so the nine sites are
-byte-for-byte unaffected. The 2-element case is the one worth naming: it would
-otherwise have been a silent `(iterator, sentinel)` match.
+**C++26** (P2447); under this project's C++23 the conversion is ill-formed
+(verified with the repo's g++ 14.2; `__cpp_lib_span_initializer_list` is
+undefined). Replacing the parameter would have broken all nine braced sites.
 
-The span overload **holds the loop** and the `initializer_list` one forwards to
-it, so the contract lives in exactly one place and the null and reverse-order
-rules cannot drift between spellings.
+**But the obvious spelling — a plain `std::span<Widget* const>` overload, which
+is what the issue asked for — is a trap, and the review caught it.** `std::span`'s
+`(iterator, sentinel)` constructor is **not explicit** at dynamic extent, so a
+**two-element** braced list of `Widget**` binds it silently. An app holding
+`Widget* m_page_a, *m_page_b` that writes `route_mouse(ev, {&m_page_a,
+&m_page_b})` — a plain slip, the members are already pointers — was a *compile
+error* before, and through a raw span parameter becomes `span(first, last)`: one
+widget routed, the rest dropped, and a garbage length if the members are not
+adjacent. **Exactly two is the dangerous arity**; one and three-or-more find no
+constructor and stay hard errors.
+
+So the parameter is a **constrained template**, `detail::WidgetRange` —
+`contiguous_range` + `sized_range` + `same_as<range_value_t<R>, Widget*>` — and
+the `std::span` implementation is **private**. A braced-init-list is a
+non-deduced context, so it can never reach the template; the hazard is a compile
+error again. Two further payoffs: `same_as` (not `convertible_to`) means
+`std::vector<Button*>` fails with a diagnostic that *names* `Button*` vs
+`Widget*` instead of a wall of span constructor candidates — element types do
+not convert through a range, so hold `std::vector<Widget*>` — and `{}` still
+works. Braced lists still resolve to `initializer_list` at every arity.
+
+Both spellings funnel into one private `*_span` implementation, so the null
+contract and the reverse-iteration order are written once and cannot drift.
+The braced forwarders use span's **range** constructor, not `(begin(), size())`:
+an empty braced list has a **null** `begin()`, and the two-argument form would
+rest its precondition on `nullptr + 0`.
 
 **The null half was the sharper bug.** `tick_widgets` skipped nulls and its doc
 *advised* passing a sometimes-populated pointer; `route_mouse` dereferenced
@@ -36,14 +53,19 @@ sees, so it also leaves the terminal raw. A null is now **absent, not opaque**:
 it contributes no hit and routing continues to the widget *below* it. It is not
 a floor, and that — not the existence of the skip — is what the doc gained.
 
-Validated 34/34 under gcc, clang and ASan/UBSan. Both control runs done: the
-span tests fail at **build** time against the pre-#123 `App` ("cannot convert
-`std::span<Widget* const>` to `std::initializer_list<Widget*>`"), and the null
-test fails as an **ASan SEGV at `app.cpp:518`**, not a `REQUIRE` — the correct
-proof for a UB fix, since a `REQUIRE` failure would have meant the old behaviour
-was defined and merely wrong. End-to-end: `examples/widgets.cpp` under a pty
-shows the ProgressBar advancing through 34 distinct states and wrapping, i.e.
-the tick still reaches the widget through the new forwarder chain.
+Validated 34/34 under gcc, clang, ASan/UBSan and `-Werror`; all three
+`tools/consume` paths OK. Both control runs done, and their failure modes differ,
+which is the point: the container tests fail at **build** time against the
+pre-#123 `App`, and the null test fails as a **SIGSEGV** — in the *ordinary*
+build, reported through Catch2's signal handler, not only under a sanitizer. A
+`REQUIRE` failure would have meant the old behaviour was defined and merely
+wrong. The three null claims are **separate `TEST_CASE`s** because a SIGSEGV
+aborts the case at its first `REQUIRE`; folded together, two of them would have
+looked covered while never executing. The hazard and the `vector<Button*>`
+rejection are pinned as `static_assert`s on the concept — they are compile-time
+claims and cannot be written in a running test. End-to-end: `examples/widgets.cpp`
+under a pty shows the ProgressBar advancing through 34 distinct states and
+wrapping, so the tick still reaches the widget through the new chain.
 
 **Previous release: `v0.5.0` — #122, a dialog re-opens clean.** `Widget` gains
 `reset_transient()` — a second non-pure virtual with an empty body, next to
