@@ -41,6 +41,15 @@ auto FocusRing::handle_key(const Event& ev) -> bool {
   // an app can pass every event through without double-routing clicks.
   if (std::holds_alternative<MouseEvent>(ev)) return false;
 
+  // Key releases are not routed to widgets (#60). None of them can interpret
+  // one, and a widget that treats "a key event arrived" as "act on it" would
+  // insert twice per keystroke under KeyboardMode::Enhanced. Repeat is routed
+  // normally — the protocol sends it instead of a second press, so dropping it
+  // would break hold-to-scroll.
+  if (const auto* k = std::get_if<KeyEvent>(&ev)) {
+    if (k->action == KeyAction::Release) return false;
+  }
+
   if (Widget* cur = current(); cur != nullptr && cur->on_event(ev)) return true;
 
   if (const auto* k = std::get_if<KeyEvent>(&ev)) {

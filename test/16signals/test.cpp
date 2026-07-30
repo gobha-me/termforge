@@ -28,9 +28,12 @@ TEST_CASE("tty_restore: leave sequence undoes exactly what enter_screen set",
   REQUIRE(seq.find("\033[?1003l") != std::string_view::npos);  // any-event (#75)
   REQUIRE(seq.find("\033[?1006l") != std::string_view::npos);  // SGR mouse
   REQUIRE(seq.find("\033[?2004l") != std::string_view::npos);  // paste
+  REQUIRE(seq.find("\033[<u") != std::string_view::npos);      // keyboard (#60)
   // …and it must not accidentally *enable* anything (no high-set toggles).
   REQUIRE(seq.find("\033[?1049h") == std::string_view::npos);
   REQUIRE(seq.find("\033[?2004h") == std::string_view::npos);
+  REQUIRE(seq.find("\033[>") == std::string_view::npos);  // no keyboard push
+  REQUIRE(seq.find("\033[=") == std::string_view::npos);  // no flags overwrite
 }
 
 TEST_CASE("tty_restore: restore_terminal emits the leave sequence to out_fd",

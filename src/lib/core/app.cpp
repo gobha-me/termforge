@@ -11,6 +11,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
+#include "detail/keyboard.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
 
 namespace termforge {
@@ -36,10 +37,21 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
   if (auto r = m_term.enter_raw(); !r) return r;
   // Probe once, then select the driver from that single result. A probe
   // failure isn't fatal: degrade to the fallback driver on empty caps.
-  Capabilities caps;
-  if (auto r = m_term.query_capabilities(); r) caps = *r;
-  m_driver = m_term.select_driver(caps);
+  m_caps = {};
+  if (auto r = m_term.query_capabilities(); r) m_caps = *r;
+  m_driver = m_term.select_driver(m_caps);
   if (auto r = m_driver->init(); !r) return r;
+
+  // Degradation is an event: an app that asked for the kitty keyboard
+  // protocol on a terminal that hasn't got it is told so, rather than
+  // waiting forever for releases that will never arrive (#60). Queued, not
+  // returned — this is not a setup failure — so it drains on the first frame
+  // through the ordinary pump, and dispatch_event routes ErrorEvent past the
+  // overlay stack, so even an app that opens a dialog immediately sees it.
+  if (auto e = detail::keyboard_fallback_event(m_term.keyboard_mode(),
+                                               m_caps.kitty_keyboard)) {
+    m_input.push_error(std::move(*e));
+  }
 
   const auto size = current_size();
   m_screen = std::make_unique<Screen>(size.cols, size.rows);
@@ -323,7 +335,11 @@ auto App::pump_input() -> void {
 
 auto App::on_event(const Event& ev) -> void {
   // Default behavior: ESC or Ctrl+C quits. Subclasses override for real input.
+  // A release does not re-fire it (#60): under KeyboardMode::Enhanced every
+  // Escape press is followed by an Escape release, and quitting twice on one
+  // keystroke is at best confusing and at worst a double teardown.
   if (const auto* k = std::get_if<KeyEvent>(&ev)) {
+    if (k->action != KeyAction::Press) return;
     if (k->key == Key::Escape || (k->ctrl && (k->ch == 'c' || k->ch == 'C'))) quit();
   }
 }
@@ -345,6 +361,18 @@ auto App::dispatch_event(const Event& ev) -> void {
       std::holds_alternative<ErrorEvent>(ev)) {
     on_event(ev);
     return;
+  }
+  // Nor does a key *release* (#60). An overlay that ate one would leave the
+  // app beneath holding a key forever — press captured before the dialog
+  // opened, release captured by the dialog — which is the stuck-key bug every
+  // game with a pause menu hits. Repeat is deliberately NOT in this class: the
+  // protocol sends it *instead of* a second press, so an overlay that never
+  // saw one would lose hold-to-scroll and hold-to-type.
+  if (const auto* rel = std::get_if<KeyEvent>(&ev)) {
+    if (rel->action == KeyAction::Release) {
+      on_event(ev);
+      return;
+    }
   }
   // Ctrl+C is the break-glass. Raw mode turned it from a signal into an
   // ordinary key, so if an overlay could swallow it, an app whose dialog has

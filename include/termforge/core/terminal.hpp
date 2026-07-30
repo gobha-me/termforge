@@ -100,6 +100,25 @@ class Terminal {
     return m_mouse_mode;
   }
 
+  // ── keyboard protocol (#60) ──
+  // Which kitty keyboard-protocol tier enter_screen() asks the terminal for.
+  // Default Legacy — nothing is pushed, so the emitted bytes are identical to
+  // every TermForge before #60. Opt in to get KeyAction::Repeat/Release.
+  //
+  // Like set_mouse_mode, calling it while a screen is up switches live; unlike
+  // it, a live switch *overwrites* our stack entry rather than pushing another
+  // (see detail/keyboard.hpp — CSI > u pushes every time, and an unbalanced
+  // stack outlives the process). Switching back to Legacy sets flags 0 rather
+  // than popping, so leave_screen()'s single pop is always the right one.
+  //
+  // The push does not consult Capabilities::kitty_keyboard: a terminal without
+  // the protocol ignores it, and the probe can time out on a slow but capable
+  // one. Support drives the fallback ErrorEvent (App::setup), not the bytes.
+  auto set_keyboard_mode(KeyboardMode mode) -> void;
+  [[nodiscard]] auto keyboard_mode() const noexcept -> KeyboardMode {
+    return m_keyboard_mode;
+  }
+
   // True when stdout is a console VT (no graphical terminal attached) — the
   // only case where the optional framebuffer driver is even considered.
   [[nodiscard]] auto is_console_vt() const noexcept -> bool;
@@ -111,10 +130,16 @@ class Terminal {
   // Shared by enter_screen() and a live set_mouse_mode() switch.
   auto emit_mouse_mode() const -> void;
 
+  // Push the configured keyboard tier, once. Non-const: it latches the "we
+  // have an entry on the stack" witness that decides push vs. overwrite.
+  auto emit_keyboard_mode() -> void;
+
   struct Impl;
   std::unique_ptr<Impl> m_impl;
   bool m_raw{false};
   MouseMode m_mouse_mode{MouseMode::Drag};  // #75: pre-v0.1.15 behaviour
+  KeyboardMode m_keyboard_mode{KeyboardMode::Legacy};  // #60: opt-in
+  bool m_kb_pushed{false};  // an entry of ours is on the terminal's stack
 };
 
 }  // namespace termforge

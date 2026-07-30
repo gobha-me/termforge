@@ -27,14 +27,24 @@ using termforge::MouseEvent;
 // event the terminal can never deliver is a green suite != real input (#55).
 // The "Decoder round-trip" test in 13mouse pins builder == decoder, so a
 // decoder change that drags a builder out of sync fails there, not silently.
-inline auto key(Key k, char32_t ch = 0, bool shift = false) -> Event {
+inline auto key(Key k, char32_t ch = 0, bool shift = false,
+                termforge::KeyAction action = termforge::KeyAction::Press)
+    -> Event {
   KeyEvent e;
   e.key = k;
   e.ch = ch;
   e.shift = shift;
+  e.action = action;
   return Event{e};
 }
 inline auto ch(char32_t c) -> Event { return key(Key::Char, c); }
+
+// A key release (#60), as KeyboardMode::Enhanced delivers it: ESC[<code>;1:3u
+// for a text key, ESC[1;1:3A for an arrow. Only reachable when the app opted
+// into the protocol -- a Legacy app can never see one.
+inline auto release(Key k, char32_t ch = 0) -> Event {
+  return key(k, ch, false, termforge::KeyAction::Release);
+}
 
 // Left press: SGR "ESC[<b;x;yM", button bits b & 0x03, pressed = (final ==
 // 'M') (input.cpp:231-233).
