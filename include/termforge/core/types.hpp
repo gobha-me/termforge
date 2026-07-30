@@ -125,6 +125,23 @@ struct Rect {
   constexpr auto operator==(const Rect&) const noexcept -> bool = default;
 };
 
+// A size in *pixels*, as opposed to Rect's cells. The two units were the same
+// thing until #83 — draw_image was handed an Image's pixel dimensions and used
+// them as a cell count — which is exactly why they now have distinct types: a
+// mix-up between them is the bug the cell-rect contract exists to make
+// impossible to write.
+//
+// An aggregate for the same reason Rect is one, and for symmetry with it.
+struct Extent {
+  int w{0}, h{0};
+
+  [[nodiscard]] constexpr auto empty() const noexcept -> bool {
+    return w <= 0 || h <= 0;
+  }
+
+  constexpr auto operator==(const Extent&) const noexcept -> bool = default;
+};
+
 // ── image ────────────────────────────────────────────────────────────────
 // Raw 32-bit RGBA pixel buffer. Loaded from raw-RGB assets (PNG/JPEG are
 // deliberately out of scope for the core; decode elsewhere and hand us RGBA).
