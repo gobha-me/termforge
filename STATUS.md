@@ -6,7 +6,49 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-30)
 
-**Latest release: `v0.3.0` — #83 + #84, the pixel path stops being one pixel
+**Latest release: `v0.4.0` — #69, time reaches a widget.** `Widget` gains
+`on_tick(std::chrono::duration<double>)` — a non-pure virtual with an empty
+body, so all ~32 subclasses compile untouched — and `App` gains a protected
+`tick_widgets(dt, {…})` forwarder. `ProgressBar`'s indeterminate pulse and
+`Button`'s press flash were the two widgets that animated by counting `draw()`
+calls; both are wall-clock now (`set_pulse_rate`, default 30 cells/s;
+`set_flash_duration`, default 120 ms).
+
+**The API is additive and the behaviour break is silent**, which is why it took
+a minor bump. Nothing fails to compile; an app that does not forward ticks gets
+a stationary bar and a button whose flash never goes out. That is the accepted
+cost of "App keeps no widget registry" — the same deal `route_mouse` already
+makes, and the failure is loud on the first run.
+
+Four things worth carrying forward. (1) **A tick cannot trust `rect()`.**
+Parents lay out during `on_render`, which runs *after* the tick, so during
+`on_tick` the rect is last frame's, or all-zero before the first draw.
+`ProgressBar` therefore accumulates *cells travelled* (a `double`, not seconds
+— a rate change then bends the curve from here rather than retroactively
+rescaling history) and reduces it modulo the period inside `draw()`, against
+the width it is actually being drawn into. Reduce first, cast second: the `int`
+counter this replaced overflowed after ~2 years. (2) **`dirty()`'s contract
+flipped, deliberately.** `draw()` now clears unconditionally and `on_tick` is
+what re-marks, so two draws with no tick between them settle to not-dirty —
+`test/14audit` was rewritten to assert that rather than quietly adjusted. (3)
+**The flash default is 120 ms, not one budget's worth.** A flash shorter than
+the frame budget can be armed and expire between two renders and never be seen
+at all; that failure mode is created by making it wall-clock and did not exist
+when it was frame-counted. (4) **The one failure that is *not* loud** is a
+standard dialog: its buttons close the dialog on activation, so an unforwarded
+flash never renders — and the next showing opens with the button lit. Hence
+`Dialog::on_tick` forwarding to `m_children`, and `examples/dialogs.cpp`
+ticking its dialogs *unconditionally*, pushed or not.
+
+Validated `-Werror` on g++ + clang, 34/34, plus pty captures on the truecolor
+tier: the pulse advances ~7.5 cells per 0.25 s (30 cells/s as configured), the
+press flash is lit at +60 ms and out at +180 ms, and re-opening the Message
+dialog shows no stale flash. Each new assertion was also run against the old
+frame-counted behaviour restored, and the four that make timing claims went
+red. `examples/widgets.cpp` carries the blessed pattern and a View > Progress
+mode toggle so the pulse is actually demoed.
+
+**Previous release: `v0.3.0` — #83 + #84, the pixel path stops being one pixel
 per cell** (PR #107). `TerminalDriver::draw_image` now takes a destination **cell `Rect`**
 instead of a bare `(x, y)`, and `Widget::draw_pixels(Rect, Extent)` returns a
 borrowed `const Image*` the widget owns. Both are breaking; they ship together
@@ -1121,6 +1163,10 @@ through. Landed so far, each with regression tests:
   input row when `h>1`), ProgressBar, MenuBar; Label/Button/ListWidget refactored
   onto `fill_rect`. **ProgressBar** now stays dirty while indeterminate (the old
   `mark_dirty()`+unconditional `clear_dirty()` self-negated the animation).
+  *(#69/v0.4.0 reversed that last part: once the pulse moved out of `draw()`
+  the bar has nothing new to show unless time passed, so `clear_dirty()` is
+  unconditional again and `on_tick` is what re-marks. The reasoning here was
+  right for the code as it stood.)*
   **MenuBar** clips overflowing titles to the bar's right edge (they were visible
   but dead to clicks). `dirty()` redefined as an advisory hint (framework never
   skips `draw()`). Two documented exceptions: Frame (border only) and MenuBar's
@@ -1180,10 +1226,10 @@ The open queue, in rough priority order:
   key release + repeat), **#64**
   (MapWidget — a **design doc** is the deliverable, and it is the last
   unchecked Epic 3 item, transitively blocking Epic 4.2 `game.cpp`).
-- **#69** (ProgressBar's indeterminate pulse animates per *frame*, not per
-  second) — the same bug class #59 retired one layer up, now one layer down.
-  Fixing it properly means deciding how time reaches a **widget**, which is a
-  public API call, not a one-line change.
+- ~~#69~~ **LANDED (v0.4.0)** — `Widget::on_tick(dt)` + `App::tick_widgets`.
+  The public API call it was waiting on got made: option A, the app forwards.
+  `Button`'s one-frame press flash turned out to be the same bug and shipped
+  with it.
 - ~~#75~~ **LANDED (v0.1.15)** — `MouseMode` enum + setter on `Terminal`/`App`,
   default `Drag` byte-identical to before. term-game can now have hover
   (`Motion`) or release the mouse for native selection (`None`).

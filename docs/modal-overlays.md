@@ -111,6 +111,15 @@ copies the widget pointer and options out of the vector before dispatching and
 never touches the stack again; the draw pass indexes with a fresh `size()`
 each turn; and non-owning storage means a pop cannot destroy a live frame.
 
+**Overlays are not ticked.** The stack is a draw and dispatch order, not
+ownership, so `Widget::on_tick` reaches a dialog only if the app forwards it —
+`tick_widgets(dt, {&m_confirm})`, from the app's own `on_tick`. `Dialog`
+forwards from there to its children, which is how a control inside a dialog
+animates. Do it unconditionally rather than only while the dialog is pushed: a
+dialog button closes its dialog on activation, so its press flash is still
+burning down after the pop, and a dialog that stops receiving ticks mid-flash
+re-opens with that button lit (#69).
+
 **Closing.** `widgets/` must not include `core/app.hpp`, so a dialog cannot
 pop itself. It calls `on_close`, and the app decides what that means:
 
