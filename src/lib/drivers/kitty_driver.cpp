@@ -201,33 +201,56 @@ auto KittyDriver::region_slot(std::uint64_t key) -> RegionSlot& {
   return m_regions.emplace(key, slot).first->second;
 }
 
-auto KittyDriver::draw_image(int x, int y, const Image& image)
+auto KittyDriver::preferred_pixel_extent(Rect cells) const noexcept -> Extent {
+  if (cells.empty()) return Extent{};
+  return Extent{cells.w * m_cell_px.w, cells.h * m_cell_px.h};
+}
+
+auto KittyDriver::set_cell_pixel_size(Extent cell) noexcept -> void {
+  m_cell_px = (cell.w > 0 && cell.h > 0) ? cell : kNominalCellPixels;
+}
+
+auto KittyDriver::draw_image(Rect cells, const Image& image)
     -> std::expected<void, ErrorEvent> {
   if (image.empty()) {
     return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
                                       "draw_image: empty image"}};
   }
+  if (cells.empty()) {
+    return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
+                                      "draw_image: empty destination rect"}};
+  }
 
-  // Unicode placeholders index cells through a 297-entry diacritic table;
-  // crop so the transmitted geometry matches the placeable cell grid
-  // exactly. Classic placements have no such limit.
-  bool cropped = false;
-  Image cropped_img;
-  const Image* img = &image;
-  if (m_mode == PlacementMode::UnicodePlaceholders &&
-      (image.width() > kDiacriticCount || image.height() > kDiacriticCount)) {
-    cropped_img = image.sub(Rect{0, 0, kDiacriticCount, kDiacriticCount});
-    img = &cropped_img;
-    cropped = true;
+  // Unicode placeholders index cells through a 297-entry diacritic table, so
+  // the *placement* cannot exceed that in either axis. Clamp the destination
+  // rect; the image still transmits at full resolution and the terminal
+  // squeezes it into what is left.
+  //
+  // Before #83 this cropped the IMAGE to 297x297 pixels, which was the same
+  // thing back when a pixel was a cell. It no longer is: the caller expresses
+  // nothing in pixels now, so discarding authored content would be a silent
+  // loss for a reason the caller cannot see. Classic placements have no such
+  // limit.
+  Rect dest = cells;
+  bool clamped = false;
+  if (m_mode == PlacementMode::UnicodePlaceholders) {
+    if (dest.w > kDiacriticCount) { dest.w = kDiacriticCount; clamped = true; }
+    if (dest.h > kDiacriticCount) { dest.h = kDiacriticCount; clamped = true; }
   }
 
   // Each region keeps one stable image id; changed content is retransmitted
   // under that id (the terminal replaces the stored data), so animation
   // doesn't accumulate images terminal-side.
-  auto& slot = region_slot(region_key(x, y, img->width(), img->height()));
+  //
+  // The key is the destination in CELLS. It has to be: c=/r= are baked into a
+  // classic placement and only re-emitted when !placed, so the same pixels in
+  // a different cell box are genuinely a different placement. Keying on pixel
+  // dims also let two images collide -- region_key truncates each field to
+  // uint16, and pixel dimensions can exceed that where cell counts cannot.
+  auto& slot = region_slot(region_key(dest.x, dest.y, dest.w, dest.h));
   bool content_changed = false;
-  if (const auto hash = image_hash(*img); hash != slot.content_hash) {
-    transmit(*img, slot.image_id);
+  if (const auto hash = image_hash(image); hash != slot.content_hash) {
+    transmit(image, slot.image_id);
     slot.content_hash = hash;
     content_changed = true;
   }
@@ -245,21 +268,21 @@ auto KittyDriver::draw_image(int x, int y, const Image& image)
       slot.placed = false;
     }
     if (!slot.placed) {
-      place_classic(slot, x, y, img->width(), img->height());
+      place_classic(slot, dest.x, dest.y, dest.w, dest.h);
       slot.placed = true;
     }
   } else {
     // Placeholder cells are re-emitted every frame (the cell grid is the
     // placement); the virtual placement itself is created once.
-    place_unicode(slot, x, y, img->width(), img->height());
+    place_unicode(slot, dest.x, dest.y, dest.w, dest.h);
     slot.placed = true;
   }
 
-  if (cropped && !m_warned_crop) {
-    m_warned_crop = true;
+  if (clamped && !m_warned_clamp) {
+    m_warned_clamp = true;
     return std::unexpected{ErrorEvent{
         Severity::Warning, "kitty",
-        "draw_image: image cropped to the 297-cell placeholder limit"}};
+        "draw_image: destination clamped to the 297-cell placeholder limit"}};
   }
   return {};
 }
@@ -358,9 +381,9 @@ auto KittyDriver::place_classic(const RegionSlot& slot, int x, int y,
                                 int cols, int rows) -> void {
   // Position the cursor, then place. a=p displays a transmitted image at
   // the cursor; C=1 keeps the cursor where it is. c=/r= scale the image to
-  // the region's cell grid (one image pixel per cell) — without them the
-  // terminal would render at natural pixel size, ~1 cell. Emitted once per
-  // slot; retransmitting the image data refreshes the placement in-place.
+  // the destination cell rect — the terminal does the resampling, which is
+  // the spec-intended usage and costs us nothing. Emitted once per slot;
+  // retransmitting the image data refreshes the placement in-place.
   m_buf += std::format("\033[{};{}H", y + 1, x + 1);
   m_buf += std::format("\033_Ga=p,i={},p={},c={},r={},C=1,q=2\033\\",
                        slot.image_id, slot.placement_id, cols, rows);
@@ -368,8 +391,8 @@ auto KittyDriver::place_classic(const RegionSlot& slot, int x, int y,
 
 auto KittyDriver::place_unicode(const RegionSlot& slot, int x, int y,
                                 int cols, int rows) -> void {
-  // draw_image cropped the image to the diacritic table's extent, so
-  // cols/rows are already <= kDiacriticCount and the declared geometry
+  // draw_image clamped the destination rect to the diacritic table's extent,
+  // so cols/rows are already <= kDiacriticCount and the declared geometry
   // matches the emitted cell grid exactly.
 
   // Create the virtual placement once per slot.

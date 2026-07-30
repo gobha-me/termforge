@@ -20,8 +20,11 @@ class FallbackDriver final : public TerminalDriver {
   auto init() -> std::expected<void, ErrorEvent> override;
   auto draw_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
                  Attr attrs) -> void override;
-  auto draw_image(int x, int y, const Image& image)
+  auto draw_image(Rect cells, const Image& image)
       -> std::expected<void, ErrorEvent> override;
+  // One glyph per cell: the destination pixel grid is the cell grid.
+  [[nodiscard]] auto preferred_pixel_extent(Rect cells) const noexcept
+      -> Extent override;
   auto flush() -> void override;
   [[nodiscard]] auto capabilities() const noexcept -> Capabilities override;
 

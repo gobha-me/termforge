@@ -22,8 +22,11 @@ class AnsiRgbDriver final : public TerminalDriver {
   auto init() -> std::expected<void, ErrorEvent> override;
   auto draw_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
                  Attr attrs) -> void override;
-  auto draw_image(int x, int y, const Image& image)
+  auto draw_image(Rect cells, const Image& image)
       -> std::expected<void, ErrorEvent> override;
+  // Two pixel rows per cell (the half-block split), one pixel per column.
+  [[nodiscard]] auto preferred_pixel_extent(Rect cells) const noexcept
+      -> Extent override;
   auto flush() -> void override;
   [[nodiscard]] auto capabilities() const noexcept -> Capabilities override;
 

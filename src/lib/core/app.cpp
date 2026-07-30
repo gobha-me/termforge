@@ -56,6 +56,7 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
   const auto size = current_size();
   m_screen = std::make_unique<Screen>(size.cols, size.rows);
   m_renderer = std::make_unique<Renderer>(*m_driver);
+  push_cell_pixel_size(size);
 
   m_term.enter_screen();
   m_in_screen = true;
@@ -162,6 +163,10 @@ auto App::frame_step() -> void {
     const auto size = current_size();
     m_screen->resize(size.cols, size.rows);
     m_renderer->invalidate();
+    // Before the dispatch, and so before this frame's collect pass: push it
+    // after and the first frame of every resize rasterizes at the old cell
+    // geometry, which under kitty is a visibly wrong scale.
+    push_cell_pixel_size(size);
     dispatch_event(ResizeEvent{size.cols, size.rows});
   }
   pump_input();
@@ -540,7 +545,7 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
 
 auto App::flush_pixel_regions() -> void {
   for (const auto& pr : m_pixel_regions) {
-    m_driver->draw_image(pr.rect.x, pr.rect.y, pr.image);
+    m_driver->draw_image(pr.rect, pr.image);
   }
   if (!m_pixel_regions.empty()) m_driver->flush();
 }
@@ -548,8 +553,23 @@ auto App::flush_pixel_regions() -> void {
 auto App::current_size() const -> Size {
   winsize ws{};
   if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0 && ws.ws_row > 0)
-    return {ws.ws_col, ws.ws_row};
+    return {ws.ws_col, ws.ws_row, ws.ws_xpixel, ws.ws_ypixel};
   return {80, 24};  // sane default if ioctl fails
+}
+
+auto App::push_cell_pixel_size(Size size) -> void {
+  if (!m_driver) return;
+  // Divide the text area by the cell grid. A terminal that reports no pixel
+  // geometry (0 is common: tmux, the Linux console, several emulators) leaves
+  // this at Extent{}, and the driver keeps its own nominal cell size — the
+  // division is never attempted with a zero denominator, and "unknown" is
+  // deliberately not an ErrorEvent: a nominal cell is a correctly-shaped
+  // guess, not a degraded capability.
+  Extent cell{};
+  if (size.px_w > 0 && size.px_h > 0 && size.cols > 0 && size.rows > 0) {
+    cell = Extent{size.px_w / size.cols, size.px_h / size.rows};
+  }
+  m_driver->set_cell_pixel_size(cell);
 }
 
 }  // namespace termforge

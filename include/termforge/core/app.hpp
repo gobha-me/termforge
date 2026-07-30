@@ -343,7 +343,11 @@ class App {
   // whose undo writes nothing to a terminal.
   [[nodiscard]] auto test_winch_hooked() const -> bool { return m_winch_hooked; }
 
-  struct Size { int cols; int rows; };
+  // The terminal size in cells, plus the pixel size of the whole text area
+  // when the terminal reports one (TIOCGWINSZ ws_xpixel/ws_ypixel). Zero means
+  // "it would not say", which is the common case under tmux and on the Linux
+  // console. Appended fields, so existing aggregate init still compiles.
+  struct Size { int cols; int rows; int px_w{0}; int px_h{0}; };
 
  protected:
   [[nodiscard]] auto screen() -> Screen& { return *m_screen; }
@@ -501,6 +505,11 @@ class App {
   std::chrono::duration<double> m_max_tick_dt{kDefaultMaxTickDt};
 
   [[nodiscard]] auto current_size() const -> Size;
+
+  // Push the terminal's cell geometry to the driver, so a rasterizing widget
+  // can be told what resolution to render at (#83). Called at setup and again
+  // on every resize, *before* the frame that would use it.
+  auto push_cell_pixel_size(Size size) -> void;
 };
 
 }  // namespace termforge
