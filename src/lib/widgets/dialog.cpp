@@ -176,6 +176,15 @@ auto Dialog::hit_test_tree(int px, int py) const -> bool {
   return false;
 }
 
+auto Dialog::on_tick(std::chrono::duration<double> dt) -> void {
+  // Forward order and every child, unlike the reverse pass on_event uses:
+  // z-order picks who receives an event, but time reaches all of them.
+  // Recursive for the same reason hit_test_tree is — a composite child owns
+  // children of its own, and its override forwards further down.
+  for (Widget* child : m_children)
+    if (child != nullptr) child->on_tick(dt);
+}
+
 auto Dialog::on_event(const Event& ev) -> bool {
   if (const auto* k = std::get_if<KeyEvent>(&ev)) {
     // The focused child gets first refusal (issue #33): a control with a

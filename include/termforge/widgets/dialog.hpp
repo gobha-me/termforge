@@ -42,6 +42,7 @@
 // dialog object. A callback must not destroy the dialog it was invoked from —
 // pop the overlay (which only drops a pointer) and destroy later if you must.
 
+#include <chrono>
 #include <functional>
 #include <string>
 #include <vector>
@@ -106,6 +107,16 @@ class Dialog : public Widget {
 
   auto draw(Screen& screen) -> void override;
   auto on_event(const Event& ev) -> bool override;
+
+  // Forwards the tick to every child, so a control inside a dialog animates
+  // (#69). The app still has to tick the DIALOG — App ticks nothing by itself,
+  // and an overlay is no exception. Tick it whether or not it is currently
+  // pushed: a dialog whose button was just activated is popped in that same
+  // dispatch, and the press flash it is still holding needs ticks to expire.
+  // Skip that and the button renders pressed from the first frame of the next
+  // showing, which is the one failure of this design that is not obvious on
+  // first use.
+  auto on_tick(std::chrono::duration<double> dt) -> void override;
 
   // Covers the dialog's rect plus every child's hit area -- including a
   // Select's open dropdown, which paints below the dialog's bottom border

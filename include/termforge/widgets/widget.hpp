@@ -30,6 +30,7 @@
 // driver supports images. The cell-based draw() is the always-present
 // fallback; draw_pixels() is the enhancement.
 
+#include <chrono>
 #include <optional>
 #include <vector>
 
@@ -54,6 +55,25 @@ class Widget {
 
   // Handle an event routed to this widget. Return true if consumed.
   virtual auto on_event(const Event& /*ev*/) -> bool { return false; }
+
+  // Advance whatever this widget animates by dt seconds of wall-clock time.
+  // Animation belongs HERE, never in draw(): a widget that advances itself in
+  // draw() is counting frames, so its speed follows set_frame_ms and a slow
+  // terminal (#69). App::on_tick's contract applies verbatim one layer down —
+  // see app.hpp.
+  //
+  // The framework does NOT find widgets to tick; App keeps no widget registry.
+  // The app forwards from its own on_tick override via App::tick_widgets(dt,
+  // {…}), exactly as it forwards mouse events via route_mouse. A widget that
+  // never receives a tick simply never animates.
+  //
+  // Two things a tick may NOT assume. rect() holds LAST frame's geometry (all
+  // zero before the first draw), because parents lay out during on_render,
+  // which runs after the tick — so anything geometry-dependent belongs in
+  // draw(), computed from the rect it is being drawn into. And this may fire
+  // zero or several times per frame under set_tick_hz's fixed timestep, so
+  // "once per tick" is not "once per frame".
+  virtual auto on_tick(std::chrono::duration<double> /*dt*/) -> void {}
 
   // ── pixel regions ────────────────────────────────────────────────────
   // Declare rect(s) where this widget can provide pixel data. Called each
@@ -114,8 +134,11 @@ class Widget {
   // above — draw() runs and fully repaints every frame). It is a hint an app's
   // own loop may read to decide whether to run a render pass at all, e.g. an
   // event-driven app that idles until something changes. Setters call
-  // mark_dirty(); draw() calls clear_dirty() once it has painted the current
-  // content (a self-animating widget stays dirty — see ProgressBar).
+  // mark_dirty(); draw() calls clear_dirty() UNCONDITIONALLY once it has
+  // painted. A self-animating widget is dirty because TIME passed, not because
+  // it was drawn — on_tick() is what re-marks it (#69). So two draw()s with no
+  // tick between them settle to not-dirty, which is the honest answer: with no
+  // elapsed time there is nothing new to show.
   [[nodiscard]] auto dirty() const noexcept -> bool { return m_dirty; }
   auto mark_dirty() -> void { m_dirty = true; }
 
