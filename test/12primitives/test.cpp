@@ -3,6 +3,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <string>
 
 #include "detail/width.hpp"
@@ -272,14 +273,131 @@ TEST_CASE("ProgressBar: indeterminate mode animates", "[primitives][progress]") 
   ProgressBar p;
   p.set_geometry({0, 0, 20, 1});
   p.set_indeterminate();
-  // Draw several frames — the pulse starts off-screen and moves in.
+
+  // Rewritten for #69: this used to advance the pulse by calling draw() 20
+  // times, which is precisely the frame-counting the issue removed. Time
+  // moves it now, so the loop feeds ticks; draw() only paints.
   bool has_block = false;
-  for (int frame = 0; frame < 20 && !has_block; ++frame) {
+  for (int step = 0; step < 20 && !has_block; ++step) {
+    p.on_tick(std::chrono::duration<double>{1.0 / 30.0});
     p.draw(s);
     for (int x = 0; x < 20; ++x)
       if (s.at(x, 0).text == "█") has_block = true;
   }
   REQUIRE(has_block);
+}
+
+TEST_CASE("ProgressBar: drawing alone does not animate it (#69)",
+          "[primitives][progress]") {
+  Screen s{20, 1};
+  ProgressBar p;
+  p.set_geometry({0, 0, 20, 1});
+  p.set_indeterminate();
+
+  // The pulse enters from off-screen left, so an un-ticked bar shows nothing
+  // however many times it is drawn. That "nothing" IS the loud failure the
+  // design accepts for an app that forgets to forward ticks.
+  const auto row = [&] {
+    std::string out;
+    for (int x = 0; x < 20; ++x) out += s.at(x, 0).text;
+    return out;
+  };
+  p.draw(s);
+  const std::string first = row();
+  for (int i = 0; i < 20; ++i) p.draw(s);
+  REQUIRE(row() == first);
+
+  // Half a second at the default 30 cells/s carries the pulse into the bar.
+  p.on_tick(std::chrono::duration<double>{0.5});
+  p.draw(s);
+  REQUIRE(row() != first);
+}
+
+TEST_CASE("ProgressBar: the sweep is wall-clock, not per-draw (#69)",
+          "[primitives][progress]") {
+  // The same elapsed time in one big tick and in many small ones lands the
+  // pulse in the same place — the property that makes the animation
+  // independent of how often the app happens to draw.
+  const auto painted = [](const Screen& s) {
+    std::string out;
+    for (int x = 0; x < 20; ++x) out += s.at(x, 0).text;
+    return out;
+  };
+
+  Screen a_screen{20, 1};
+  ProgressBar coarse;
+  coarse.set_geometry({0, 0, 20, 1});
+  coarse.set_indeterminate();
+  coarse.on_tick(std::chrono::duration<double>{0.5});
+  coarse.draw(a_screen);
+
+  Screen b_screen{20, 1};
+  ProgressBar fine;
+  fine.set_geometry({0, 0, 20, 1});
+  fine.set_indeterminate();
+  for (int i = 0; i < 30; ++i)
+    fine.on_tick(std::chrono::duration<double>{0.5 / 30.0});
+  fine.draw(b_screen);
+
+  REQUIRE(painted(a_screen) == painted(b_screen));
+}
+
+TEST_CASE("Button: the press flash is a duration, not a frame (#69)",
+          "[primitives][button]") {
+  Screen s{10, 1};
+  Button b{"Go"};
+  b.set_geometry({0, 0, 10, 1});
+  b.draw(s);
+  const auto idle_bg = s.at(0, 0).bg;
+
+  REQUIRE(b.on_event(key(Key::Enter)));
+  // Before #69 the flash was consumed by the first draw(). It now survives
+  // every draw until the time it was given has actually been ticked away.
+  for (int frame = 0; frame < 5; ++frame) {
+    b.draw(s);
+    REQUIRE(s.at(0, 0).bg != idle_bg);
+  }
+
+  b.on_tick(b.flash_duration());
+  b.draw(s);
+  REQUIRE(s.at(0, 0).bg == idle_bg);
+}
+
+TEST_CASE("Button: pressing again mid-flash restarts it",
+          "[primitives][button]") {
+  Screen s{10, 1};
+  Button b{"Go"};
+  b.set_geometry({0, 0, 10, 1});
+  b.draw(s);
+  const auto idle_bg = s.at(0, 0).bg;
+
+  REQUIRE(b.on_event(key(Key::Enter)));
+  b.on_tick(b.flash_duration() * 0.75);
+  REQUIRE(b.on_event(key(Key::Enter)));
+
+  // Assignment, not accumulation: the remaining quarter is discarded and a
+  // full flash starts, so the second press reads as its own press.
+  b.on_tick(b.flash_duration() * 0.75);
+  b.draw(s);
+  REQUIRE(s.at(0, 0).bg != idle_bg);
+
+  b.on_tick(b.flash_duration() * 0.25);
+  b.draw(s);
+  REQUIRE(s.at(0, 0).bg == idle_bg);
+}
+
+TEST_CASE("Button: set_flash_duration({}) puts a lit flash out now",
+          "[primitives][button]") {
+  Screen s{10, 1};
+  Button b{"Go"};
+  b.set_geometry({0, 0, 10, 1});
+  b.draw(s);
+  const auto idle_bg = s.at(0, 0).bg;
+
+  REQUIRE(b.on_event(key(Key::Enter)));
+  b.set_flash_duration({});
+  b.draw(s);
+  REQUIRE(s.at(0, 0).bg == idle_bg);
 }
 
 // ── TextInput ───────────────────────────────────────────────────────────────

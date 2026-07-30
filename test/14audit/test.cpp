@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <deque>
 #include <string>
 #include <vector>
@@ -402,21 +403,37 @@ TEST_CASE("TextInput: a tall rect blanks rows other than the input row",
   }
 }
 
-TEST_CASE("ProgressBar: an indeterminate bar stays dirty; a determinate one settles",
+TEST_CASE("ProgressBar: time makes it dirty, drawing settles it",
           "[widgets][progressbar][regression][dirty]") {
+  // DELIBERATE CONTRACT CHANGE (#69). This case used to require that an
+  // indeterminate bar was permanently dirty, which was true only because
+  // draw() itself advanced the pulse. on_tick advances it now, so dirty means
+  // the same thing here as for every other widget: something changed since the
+  // last paint. A bar with no time passing genuinely has nothing new to show.
   Screen s{20, 1};
   ProgressBar pb;
   pb.set_geometry({0, 0, 20, 1});
 
   pb.set_indeterminate(true);
+  REQUIRE(pb.dirty());        // the mode switch is itself a content change
   pb.draw(s);
-  REQUIRE(pb.dirty());  // animating → content differs next frame
+  REQUIRE_FALSE(pb.dirty());  // painted, and no time has passed since
   pb.draw(s);
-  REQUIRE(pb.dirty());  // and the frame after that (the self-negation bug)
+  REQUIRE_FALSE(pb.dirty());  // ...and it STAYS settled — this is the flip
 
-  pb.set_value(0.5f);   // switches to determinate
+  pb.on_tick(std::chrono::milliseconds{100});
+  REQUIRE(pb.dirty());        // time moved the pulse
+  pb.draw(s);
+  REQUIRE_FALSE(pb.dirty());
+
+  pb.on_tick({});             // a tick carrying no time is not a change
+  REQUIRE_FALSE(pb.dirty());
+
+  pb.set_value(0.5f);         // switches to determinate
   pb.draw(s);
   REQUIRE_FALSE(pb.dirty());  // settled once painted
+  pb.on_tick(std::chrono::milliseconds{100});
+  REQUIRE_FALSE(pb.dirty());  // a determinate bar does not animate
 }
 
 TEST_CASE("MenuBar: an overflowing title is clipped to the bar's right edge",

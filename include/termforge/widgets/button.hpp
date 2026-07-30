@@ -6,9 +6,15 @@
 // Enter/Space (keyboard) or mouse click. Shows visual feedback: focused
 // (highlighted border/bg) and pressed (inverted colors briefly).
 //
+// "Briefly" is a DURATION, counted down in on_tick (#69). It used to be one
+// draw() call, i.e. one frame — so the flash was 16 ms or 100 ms depending on
+// set_frame_ms, and a blur at set_frame_ms(0). A button the app never ticks
+// therefore keeps its flash lit; forward ticks with App::tick_widgets.
+//
 // The callback fires on activation. Buttons are focusable — the parent
 // app manages which button has focus (Tab to cycle).
 
+#include <chrono>
 #include <functional>
 #include <string>
 
@@ -38,12 +44,31 @@ class Button final : public Widget {
     m_on_activate = std::move(cb);
   }
 
+  // How long the activation flash lasts. The default is deliberately several
+  // frames wide: a flash shorter than the frame budget can expire between two
+  // renders and never be seen at all, which is the failure mode a wall-clock
+  // flash introduces and a frame-counted one could not have.
+  //
+  // Lowering it while a flash is lit clamps that flash, so set_flash_duration
+  // ({}) turns the feedback off immediately rather than leaving one last one.
+  auto set_flash_duration(std::chrono::duration<double> d) -> void;
+  [[nodiscard]] auto flash_duration() const noexcept
+      -> std::chrono::duration<double> {
+    return m_flash_duration;
+  }
+
   auto draw(Screen& screen) -> void override;
   auto on_event(const Event& ev) -> bool override;
+  auto on_tick(std::chrono::duration<double> dt) -> void override;
 
  private:
+  static constexpr std::chrono::duration<double> kDefaultFlash{0.12};
+
   std::string m_label;
-  bool m_pressed{false};  // visual feedback on activation frame
+  // Time left on the activation flash. An activation ASSIGNS the full
+  // duration, so pressing again mid-flash restarts it rather than stacking.
+  std::chrono::duration<double> m_flash_left{};
+  std::chrono::duration<double> m_flash_duration{kDefaultFlash};
 
   Rgb m_fg{theme::kFg};
   Rgb m_bg{theme::kBg};
