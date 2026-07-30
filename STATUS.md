@@ -4,13 +4,68 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-07-29)
+## Where we are (2026-07-30)
 
 **Core framework, KittyDriver, and the full widget system are landed and
-tested.** 29 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
+tested.** 30 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
 clean.
 
-**Latest release: `v0.1.17`** (2026-07-29) — **#85, closed: `Select` and
+**Latest release: `v0.1.18`** (2026-07-30) — **#63, closed: `Image` gains
+`sub`/`blit`/`blend`/`fill`, and the alpha channel finally means something.**
+
+*What was wrong:* `Pixel` had carried an alpha channel since the beginning and
+nothing in the library ever read it — the type promised compositing the library
+did not offer. So every consumer of `draw_pixels` had to hand-roll a nested
+per-pixel loop with its own alpha blend, every frame: the exact code everyone
+writes identically and gets subtly wrong (premultiplied vs straight, edge
+clipping, row stride).
+
+*The fix:* four clipped, allocation-light region ops on `Image`, plus a
+`pixels()` span so callers get the buffer length **from the object** instead of
+recomputing it. `Rect` moved from `widgets/widget.hpp` into `core/types.hpp`
+(source- and ABI-neutral; it is cell geometry, and #83 will want it in the
+driver headers) and gained `empty()`, `intersect()` and `operator==`. The kitty
+driver's `crop_image` and both of its `reinterpret_cast` + recomputed-length
+pairs are gone.
+
+*The blend is a permanent oracle, deliberately.* #90 will replace the scalar
+kernel with SIMD required to match it **bit-exactly**, so the rounding in
+`src/lib/detail/blend.hpp` is contract, not implementation detail. It is the
+exact rational Porter-Duff value rounded **once**; the division-free
+opaque-destination fast path is a *provable algebraic specialization* of the
+general path, not a second rounding regime, and the suite pins the agreement
+across all 256 source alphas. Straight (non-premultiplied) alpha throughout;
+`blit` and `fill` copy alpha verbatim because they are a copy and a clear.
+
+*Two bugs this issue found in code it did not add.* The `Image` constructor
+never checked `pixels.size() == width*height` while `at()` and the kitty
+transmit path both derive their extent from the *dimensions* — a heap over-read
+whose bytes were base64'd to the terminal, reachable through the public
+`draw_pixels` hook and not caught by the drivers' `empty()` guard. And both
+examples inferred "how many rows did the image occupy" from `kitty_graphics`
+alone, when only the *half-block* driver halves it — so on the fallback tier the
+prompt drew on top of the image. The second was found by a pty capture, not by
+the suite.
+
+*An adversarial review then found four more, in the new code.* A moved-from
+`Image` broke the very invariant this issue establishes (defaulted move empties
+the buffer but keeps the dimensions → null-pointer write); `blit`/`blend` were
+UB or silently wrong when the source **is** the destination, which is how a
+framebuffer scrolls in place; and `clip_placement` plus `Rect::contains` each
+overflowed `int` one line away from arithmetic deliberately widened to `int64`.
+All four are pinned by tests verified to fail without their fix — three of them
+via ASan/UBSan traps rather than assertions. The review also caught the general
+blend path dividing by an 8-bit-rounded weight, off by up to `4/255` on 8.13% of
+inputs; fixing it *before* #90 froze the imprecise form was the whole point.
+
+**Spun out, not fixed here:** `AnsiRgbDriver`/`FallbackDriver` discard alpha with
+no `ErrorEvent` (newly visible now that alpha means something); the examples'
+prompt-row arithmetic infers driver cell geometry with no library query to ask
+for it; `Screen::fill_rect` still hand-rolls the clip `Rect::intersect` now
+provides; and `test/28image`'s `solid()`/`checker()` builders want hoisting into
+`test/support/` beside #94.
+
+**Previous release: `v0.1.17`** (2026-07-29) — **#85, closed: `Select` and
 `MenuBar` dropdowns scroll, so every option is reachable.**
 
 *What was wrong:* neither dropdown had a scroll offset at all. The shared
