@@ -68,19 +68,20 @@ auto main() -> int {
                   img.height()),
       white, dark, Attr::None);
 
-  if (auto res = driver->draw_image(0, 4, img); !res) {
+  // Ask the driver how many cells this image wants at its native resolution,
+  // then name that rect as the destination. The answer and the placement are
+  // now the same number by construction (#100): this example used to derive
+  // rows_used from capability flags, which is not what determines the packing
+  // -- the flags describe colour -- and the first version of that expression
+  // put the prompt on top of the image on the fallback tier.
+  const Extent extent = driver->image_cell_extent(img);
+  const Rect dest{0, 4, extent.w, extent.h};
+  if (auto res = driver->draw_image(dest, img); !res) {
     driver->draw_text(0, 4, "Image render failed: " + res.error().message,
                       Rgb{0xFF, 0x40, 0x40}, dark, Attr::None);
   }
 
-  // Position the exit prompt below the image. ONLY the half-block driver packs
-  // two image rows into one cell; kitty spends a row per pixel row, and so does
-  // the fallback ramp (one character per pixel). Testing kitty_graphics alone
-  // put the prompt on top of the image on the fallback tier -- found by the pty
-  // capture of examples/sprites.cpp, which had copied this expression.
-  const bool half_blocks = dcaps.truecolor && !dcaps.kitty_graphics;
-  const int rows_used = half_blocks ? (img.height() + 1) / 2 : img.height();
-  const int prompt_row = 4 + rows_used + 1;
+  const int prompt_row = dest.y + dest.h + 1;
   driver->draw_text(0, prompt_row, "Press any key to exit...", white, dark,
                     Attr::Dim);
   driver->flush();

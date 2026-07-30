@@ -47,8 +47,12 @@ class KittyDriver final : public TerminalDriver {
   auto init() -> std::expected<void, ErrorEvent> override;
   auto draw_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
                  Attr attrs) -> void override;
-  auto draw_image(int x, int y, const Image& image)
+  auto draw_image(Rect cells, const Image& image)
       -> std::expected<void, ErrorEvent> override;
+  // The terminal's real cell geometry (see set_cell_pixels), so a widget can
+  // rasterize at native resolution instead of guessing.
+  [[nodiscard]] auto preferred_pixel_extent(Rect cells) const noexcept
+      -> Extent override;
   auto flush() -> void override;
   [[nodiscard]] auto capabilities() const noexcept -> Capabilities override;
 
@@ -64,6 +68,19 @@ class KittyDriver final : public TerminalDriver {
 
   // Test hook: redirect output away from stdout.
   void set_output(std::string* sink);
+
+  // One cell's size in pixels. Kitty is the only tier whose answer depends on
+  // the font, so it is the only driver that overrides this. A non-positive
+  // dimension (the terminal reports 0 for ws_xpixel/ws_ypixel under tmux, on
+  // the Linux console, and in plenty of emulators that never bothered) keeps
+  // the nominal 8x16 rather than propagating a zero into a divisor.
+  auto set_cell_pixel_size(Extent cell) noexcept -> void override;
+  [[nodiscard]] auto cell_pixel_size() const noexcept -> Extent {
+    return m_cell_px;
+  }
+
+  // The nominal cell size assumed when the terminal will not say.
+  static constexpr Extent kNominalCellPixels{8, 16};
 
  private:
   // Pack an Rgb into a single int for fast inequality checks (-1 = unset).
@@ -144,7 +161,8 @@ class KittyDriver final : public TerminalDriver {
   // Region key (packed x,y,w,h) -> slot. Bounded: LRU-evicted past
   // kMaxRegionSlots, freeing the terminal-side image data too.
   std::unordered_map<std::uint64_t, RegionSlot> m_regions;
-  bool m_warned_crop{false};
+  bool m_warned_clamp{false};
+  Extent m_cell_px{kNominalCellPixels};
 };
 
 }  // namespace termforge

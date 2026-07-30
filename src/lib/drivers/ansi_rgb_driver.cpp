@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <format>
 
+#include "detail/sample.hpp"
 #include "detail/sgr_attrs.hpp"
 
 namespace termforge {
@@ -53,11 +54,21 @@ void AnsiRgbDriver::draw_text(int x, int y, std::string_view text, Rgb fg,
   m_buf += text;
 }
 
-auto AnsiRgbDriver::draw_image(int x, int y, const Image& image)
+auto AnsiRgbDriver::preferred_pixel_extent(Rect cells) const noexcept
+    -> Extent {
+  if (cells.empty()) return Extent{};
+  return Extent{cells.w, cells.h * 2};  // two pixel rows per half-block cell
+}
+
+auto AnsiRgbDriver::draw_image(Rect cells, const Image& image)
     -> std::expected<void, ErrorEvent> {
   if (image.empty()) {
     return std::unexpected{ErrorEvent{Severity::Warning, "ansi_rgb",
                                       "draw_image: empty image"}};
+  }
+  if (cells.empty()) {
+    return std::unexpected{ErrorEvent{Severity::Warning, "ansi_rgb",
+                                      "draw_image: empty destination rect"}};
   }
 
   // Track the active SGR to coalesce runs of identical color.
@@ -66,16 +77,26 @@ auto AnsiRgbDriver::draw_image(int x, int y, const Image& image)
     return (static_cast<int>(p.r) << 16) | (static_cast<int>(p.g) << 8) | p.b;
   };
 
-  // Render two rows per cell (upper/lower half-block). For an odd-height
-  // image the final row pairs with a transparent-black lower half so no row
-  // is silently dropped.
-  for (int row = 0; row < image.height(); row += 2) {
-    m_buf += std::format("\033[{};{}H", y + row / 2 + 1, x + 1);
-    for (int col = 0; col < image.width(); ++col) {
-      const Pixel& up = image.at(col, row);
-      static const Pixel kTransparent{0, 0, 0, 0};
-      const Pixel& lo = (row + 1 < image.height()) ? image.at(col, row + 1)
-                                                   : kTransparent;
+  // The destination is a cell rect, so the pixel grid we fill is this tier's
+  // preferred extent for it: one pixel per column, two rows per cell. Each
+  // destination pixel samples the nearest source pixel (#83) -- when the image
+  // already matches the extent every index maps to itself, which is why the
+  // pre-#83 1:1 expectations still hold.
+  const Extent dst = preferred_pixel_extent(cells);
+
+  // Render two rows per cell (upper/lower half-block). The destination height
+  // is 2 * cells.h and therefore always even, so the odd-height pairing with a
+  // transparent lower half that this loop used to need is gone: an image with
+  // an odd pixel height is now *sampled* into an even grid rather than
+  // bottom-padded.
+  for (int row = 0; row < dst.h; row += 2) {
+    m_buf += std::format("\033[{};{}H", cells.y + row / 2 + 1, cells.x + 1);
+    const int sy_up = detail::sample_index(row, image.height(), dst.h);
+    const int sy_lo = detail::sample_index(row + 1, image.height(), dst.h);
+    for (int col = 0; col < dst.w; ++col) {
+      const int sx = detail::sample_index(col, image.width(), dst.w);
+      const Pixel& up = image.at(sx, sy_up);
+      const Pixel& lo = image.at(sx, sy_lo);
       const int fg = rgb_id(up), bg = rgb_id(lo);
       if (fg != cur_fg) {
         m_buf += std::format("\033[38;2;{};{};{}m", up.r, up.g, up.b);

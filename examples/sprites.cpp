@@ -191,23 +191,20 @@ auto main() -> int {
                     "  Row 2: clipped at all four edges.",
                     white, bg, Attr::Dim);
 
+  // The driver knows how many cells the scene occupies at its native
+  // resolution; ask it, and draw into exactly that rect (#83/#100). The old
+  // form here re-derived it from capability flags and got the fallback tier
+  // wrong, dropping the prompt on top of the scene.
   constexpr int kImageRow = 5;
-  if (auto res = driver->draw_image(0, kImageRow, scene); !res) {
+  const Extent extent = driver->image_cell_extent(scene);
+  const Rect dest{0, kImageRow, extent.w, extent.h};
+  if (auto res = driver->draw_image(dest, scene); !res) {
     driver->draw_text(0, kImageRow,
                       "Scene render failed: " + res.error().message,
                       Rgb{0xFF, 0x40, 0x40}, bg, Attr::None);
   }
 
-  // How many terminal rows the scene actually occupied. ONLY the half-block
-  // driver halves it: it packs two image rows into one cell. Kitty spends a row
-  // per pixel row (the pixel path is one image pixel per cell today, see #83)
-  // and so does the fallback ramp, which emits one character per pixel. Testing
-  // kitty_graphics alone gets the fallback tier wrong and drops the prompt on
-  // top of the scene — which is what the first pty capture of this example did.
-  const bool half_blocks = dcaps.truecolor && !dcaps.kitty_graphics;
-  const int rows_used =
-      half_blocks ? (scene.height() + 1) / 2 : scene.height();
-  const int prompt_row = kImageRow + rows_used + 1;
+  const int prompt_row = dest.y + dest.h + 1;
   driver->draw_text(0, prompt_row, "Press any key to exit...", white, bg,
                     Attr::Dim);
   driver->flush();
