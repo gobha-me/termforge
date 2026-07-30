@@ -1,4 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
+
+#include <climits>
+
 #include "termforge/core/screen.hpp"
 
 using termforge::Rgb;
@@ -188,6 +191,39 @@ TEST_CASE("Screen: fill_rect clips negative and oversized rects safely",
   s.fill_rect(1, 1, 0, 5, Rgb{}, Rgb{});
   s.fill_rect(1, 1, 5, -2, Rgb{}, Rgb{});
   REQUIRE(s.at(1, 1).text == "z");
+}
+
+TEST_CASE("Screen: fill_rect does not lose a rect to signed overflow",
+          "[screen][fill_rect][failure]") {
+  // #102. The old longhand computed x + w in int and handed it to std::min:
+  // for x near INT_MAX that is signed overflow, and the wrapped value won the
+  // min, so the loop never ran. The visible symptom is not a sanitizer report
+  // but a wrong answer — a rect that genuinely covers most of the screen is
+  // silently dropped — which is why this case fails as an ordinary REQUIRE in
+  // a plain build as well as under -fsanitize=undefined.
+  //
+  // This is the cell-grid half of what #63 did for the pixel grid; the same
+  // argument, and the same int64 arithmetic, now via Rect::intersect.
+  const Rgb bg{0x11, 0x22, 0x33};
+  Screen s{5, 4};
+  s.fill_rect(1, 1, INT_MAX, INT_MAX, Rgb{}, bg);
+  REQUIRE(s.at(1, 1).bg == bg);  // the clipped rect is cols 1..4, rows 1..3
+  REQUIRE(s.at(4, 3).bg == bg);
+  REQUIRE(s.at(0, 0).bg != bg);  // ... and nothing outside it
+
+  // The same overflow in the direction that must stay a no-op: entirely off
+  // the right edge, and entirely off the bottom.
+  Screen t{5, 4};
+  t.at(0, 0).text = "keep";
+  t.at(1, 1).text = "also";
+  t.fill_rect(INT_MAX - 2, 0, 100, 1, Rgb{}, bg);
+  t.fill_rect(0, INT_MAX - 2, 1, 100, Rgb{}, bg);
+  REQUIRE(t.at(0, 0).text == "keep");
+  REQUIRE(t.at(1, 1).text == "also");
+
+  // The underflow direction is deliberately not asserted: reaching it needs a
+  // negative w, and both the old code and intersect() reject that before any
+  // arithmetic. A case there would be theatre, not coverage.
 }
 
 TEST_CASE("Screen: resize preserves top-left content", "[screen]") {
