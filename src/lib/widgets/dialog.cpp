@@ -268,6 +268,7 @@ auto Dialog::on_event(const Event& ev) -> bool {
     if (activating_press) m_ring.focus_at(m->x, m->y);
     // Topmost-first, matching App::route_mouse: last added wins.
     for (auto it = m_children.rbegin(); it != m_children.rend(); ++it) {
+      if (*it == nullptr) continue;
       if ((*it)->hit_test(m->x, m->y)) {
         (*it)->on_event(ev);
         return true;
