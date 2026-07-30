@@ -719,3 +719,21 @@ TEST_CASE("Input: a hostile CSI-u parameter run is bounded and yields one event"
   auto big = in.decode("\033[99999999999999999999;2u");
   REQUIRE(big.size() <= 1);  // clamped garbage, no UB
 }
+
+TEST_CASE("Input: an unencodable associated text falls back to the key code",
+          "[input][keyboard][security]") {
+  // Every other route to KeyEvent::ch goes through the UTF-8 decoder, which
+  // validates. CSI-u is the one path where a code point arrives as a decimal
+  // parameter straight off the wire, so a surrogate or an out-of-range value
+  // must not reach an app that will try to encode it.
+  Input in;
+  auto surrogate = in.decode("\033[97;1;55296u");  // U+D800, a lone surrogate
+  REQUIRE(surrogate.size() == 1);
+  REQUIRE(first_key(surrogate).ch == U'a');  // the vetted key code instead
+  auto too_big = in.decode("\033[97;1;1114112u");  // one past U+10FFFF
+  REQUIRE(too_big.size() == 1);
+  REQUIRE(first_key(too_big).ch == U'a');
+  // A legitimate astral code point still survives the parameter cap.
+  auto emoji = in.decode("\033[97;1;128512u");  // U+1F600
+  REQUIRE(first_key(emoji).ch == U'\U0001F600');
+}
