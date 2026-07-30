@@ -11,11 +11,14 @@
 #include <vector>
 
 #include "detail/blend.hpp"
+#include "support/image.hpp"
 #include "termforge/core/types.hpp"
 
 using termforge::Image;
 using termforge::Pixel;
 using termforge::Rect;
+using tfsupport::checker;
+using tfsupport::solid;
 
 namespace {
 
@@ -28,24 +31,6 @@ constexpr Pixel kMark{255, 0, 255, 255};
 struct Case4 {
   int dx, dy;
 };
-
-auto solid(int w, int h, Pixel p) -> Image {
-  return Image{w, h,
-               std::vector<Pixel>(
-                   static_cast<std::size_t>(w) * static_cast<std::size_t>(h),
-                   p)};
-}
-
-// Alternating pixels. A solid source cannot detect a row-stride bug — every
-// wrong pixel looks like every right one — so the region ops are tested
-// against this.
-auto checker(int w, int h, Pixel a, Pixel b) -> Image {
-  std::vector<Pixel> px;
-  px.reserve(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
-  for (int y = 0; y < h; ++y)
-    for (int x = 0; x < w; ++x) px.push_back((x + y) % 2 == 0 ? a : b);
-  return Image{w, h, std::move(px)};
-}
 
 auto same(const Image& l, const Image& r) -> bool {
   if (l.width() != r.width() || l.height() != r.height()) return false;
