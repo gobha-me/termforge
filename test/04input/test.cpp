@@ -5,6 +5,7 @@
 using termforge::Event;
 using termforge::Input;
 using termforge::Key;
+using termforge::KeyAction;
 using termforge::KeyEvent;
 using termforge::MouseEvent;
 using termforge::PasteEvent;
@@ -472,3 +473,249 @@ TEST_CASE("Input: a stray paste-end with no open paste is swallowed",
   REQUIRE(ev.empty());  // no spurious key, no crash
 }
 
+
+// ── kitty keyboard protocol (CSI-u) — issue #60 ────────────────────────────
+//
+// Under KeyboardMode::Disambiguate/Enhanced the terminal reports keys as
+//   CSI <key>[:<alt>] ; <mods>[:<event>] [; <text>] u
+// and attaches the same event sub-parameter to the keys that keep their
+// legacy encoding (arrows, the "~" family). Nothing here depends on the mode
+// having been pushed: the parser decodes what arrives.
+
+TEST_CASE("Input: CSI-u named keys decode", "[input][keyboard]") {
+  Input in;
+  const struct { const char* seq; Key key; } cases[] = {
+    {"\033[9u", Key::Tab},   {"\033[13u", Key::Enter},
+    {"\033[27u", Key::Escape}, {"\033[127u", Key::Backspace},
+  };
+  for (const auto& c : cases) {
+    auto ev = in.decode(c.seq);
+    REQUIRE(ev.size() == 1);
+    auto k = first_key(ev);
+    REQUIRE(k.key == c.key);
+    REQUIRE(k.ch == 0);  // named keys carry no character
+    REQUIRE(k.action == KeyAction::Press);
+  }
+}
+
+TEST_CASE("Input: CSI-u text keys decode to Key::Char", "[input][keyboard]") {
+  Input in;
+  auto a = in.decode("\033[97u");
+  REQUIRE(a.size() == 1);
+  REQUIRE(first_key(a).key == Key::Char);
+  REQUIRE(first_key(a).ch == U'a');
+  auto sp = in.decode("\033[32u");
+  REQUIRE(first_key(sp).ch == U' ');
+}
+
+TEST_CASE("Input: the event sub-parameter decodes press/repeat/release",
+          "[input][keyboard]") {
+  Input in;
+  auto press = in.decode("\033[97;1:1u");
+  REQUIRE(press.size() == 1);
+  REQUIRE(first_key(press).action == KeyAction::Press);
+  auto rep = in.decode("\033[97;1:2u");
+  REQUIRE(rep.size() == 1);
+  REQUIRE(first_key(rep).action == KeyAction::Repeat);
+  auto rel = in.decode("\033[97;1:3u");
+  REQUIRE(rel.size() == 1);
+  REQUIRE(first_key(rel).action == KeyAction::Release);
+  // No sub-parameter at all is a press — the whole default-compatibility bet.
+  auto bare = in.decode("\033[97u");
+  REQUIRE(first_key(bare).action == KeyAction::Press);
+}
+
+TEST_CASE("Input: an unrecognized event type degrades to a press",
+          "[input][keyboard][failure]") {
+  // Inventing a release the user never made is the worse failure mode.
+  Input in;
+  auto ev = in.decode("\033[97;1:9u");
+  REQUIRE(ev.size() == 1);
+  REQUIRE(first_key(ev).action == KeyAction::Press);
+}
+
+TEST_CASE("Input: Ctrl+I is no longer indistinguishable from Tab",
+          "[input][keyboard][mods]") {
+  // The acceptance criterion of #60: the ambiguity the protocol exists to fix.
+  Input in;
+  auto ctrl_i = in.decode("\033[105;5u");
+  REQUIRE(ctrl_i.size() == 1);
+  auto k = first_key(ctrl_i);
+  REQUIRE(k.key == Key::Char);
+  REQUIRE(k.ch == U'i');
+  REQUIRE(k.ctrl);
+  auto tab = in.decode("\t");
+  REQUIRE(first_key(tab).key == Key::Tab);
+}
+
+TEST_CASE("Input: Ctrl+M is no longer indistinguishable from Enter",
+          "[input][keyboard][mods]") {
+  Input in;
+  auto ctrl_m = in.decode("\033[109;5u");
+  auto k = first_key(ctrl_m);
+  REQUIRE(k.key == Key::Char);
+  REQUIRE(k.ch == U'm');
+  REQUIRE(k.ctrl);
+  auto enter = in.decode("\r");
+  REQUIRE(first_key(enter).key == Key::Enter);
+}
+
+TEST_CASE("Input: Ctrl+C still carries ch=='c' when reported as CSI-u",
+          "[input][keyboard][regression]") {
+  // App's break-glass quit tests (ctrl && ch == 'c'). Kitty omits the
+  // associated text while Ctrl is held, so the key code has to carry it.
+  Input in;
+  auto ev = in.decode("\033[99;5u");
+  auto k = first_key(ev);
+  REQUIRE(k.ch == U'c');
+  REQUIRE(k.ctrl);
+}
+
+TEST_CASE("Input: CSI-u modifiers use the same 1+bitmask as xterm",
+          "[input][keyboard][mods]") {
+  Input in;
+  auto shift = in.decode("\033[97;2u");
+  REQUIRE(first_key(shift).shift);
+  REQUIRE_FALSE(first_key(shift).ctrl);
+  auto alt = in.decode("\033[97;3u");
+  REQUIRE(first_key(alt).alt);
+  auto ctrl = in.decode("\033[97;5u");
+  REQUIRE(first_key(ctrl).ctrl);
+  auto ctrl_alt = in.decode("\033[97;7u");
+  REQUIRE(first_key(ctrl_alt).ctrl);
+  REQUIRE(first_key(ctrl_alt).alt);
+  // Modifiers and an event type together.
+  auto both = in.decode("\033[97;6:3u");
+  auto k = first_key(both);
+  REQUIRE(k.ctrl);
+  REQUIRE(k.shift);
+  REQUIRE(k.action == KeyAction::Release);
+}
+
+TEST_CASE("Input: associated text wins over the unshifted key code",
+          "[input][keyboard]") {
+  // Flag 8 reports the *unshifted* key, so Shift+a is (97, shift). Deriving
+  // 'A' from that would mean guessing the layout; flag 16's text field is
+  // what the terminal actually produced.
+  Input in;
+  auto ev = in.decode("\033[97;2;65u");
+  auto k = first_key(ev);
+  REQUIRE(k.key == Key::Char);
+  REQUIRE(k.ch == U'A');
+  REQUIRE(k.shift);
+}
+
+TEST_CASE("Input: an empty modifier field is no modifiers", "[input][keyboard]") {
+  Input in;
+  auto ev = in.decode("\033[97;;97u");
+  REQUIRE(ev.size() == 1);
+  auto k = first_key(ev);
+  REQUIRE(k.ch == U'a');
+  REQUIRE_FALSE(k.ctrl);
+  REQUIRE_FALSE(k.alt);
+  REQUIRE_FALSE(k.shift);
+  REQUIRE(k.action == KeyAction::Press);
+}
+
+TEST_CASE("Input: alternate-key sub-parameters are discarded, not decoded",
+          "[input][keyboard]") {
+  // We never request flag 4, but a terminal may send it anyway and it must
+  // not corrupt the stream into extra events.
+  Input in;
+  auto ev = in.decode("\033[97:65;2u");
+  REQUIRE(ev.size() == 1);
+  auto k = first_key(ev);
+  REQUIRE(k.ch == U'a');
+  REQUIRE(k.shift);
+}
+
+TEST_CASE("Input: legacy-encoded keys carry the event type too",
+          "[input][keyboard][regression]") {
+  // Kitty keeps arrows and the "~" family on their legacy encodings even
+  // under "report all keys as escape codes", attaching the event type as a
+  // sub-parameter of the modifiers. Before #60 the scan stopped at the ':'
+  // and each of these decoded as *three* events.
+  Input in;
+  const struct { const char* seq; Key key; KeyAction action; bool ctrl; } cases[] = {
+    {"\033[1;1:3A", Key::Up,     KeyAction::Release, false},
+    {"\033[1;5:2C", Key::Right,  KeyAction::Repeat,  true},
+    {"\033[3;1:3~", Key::Delete, KeyAction::Release, false},
+    {"\033[15;5:3~", Key::F5,    KeyAction::Release, true},
+  };
+  for (const auto& c : cases) {
+    auto ev = in.decode(c.seq);
+    REQUIRE(ev.size() == 1);
+    auto k = first_key(ev);
+    REQUIRE(k.key == c.key);
+    REQUIRE(k.action == c.action);
+    REQUIRE(k.ctrl == c.ctrl);
+  }
+}
+
+TEST_CASE("Input: modifier and lock keys report nothing at all",
+          "[input][keyboard][regression]") {
+  // Under Enhanced a bare Shift press arrives on every shifted keystroke.
+  // Reporting Key::Unknown for it would be an Unknown storm on ordinary
+  // typing, which is worse than the gap.
+  Input in;
+  REQUIRE(in.decode("\033[57441;1:1u").empty());  // LeftShift press
+  REQUIRE(in.decode("\033[57441;1:3u").empty());  // LeftShift release
+  REQUIRE(in.decode("\033[57442u").empty());      // LeftControl
+  REQUIRE(in.decode("\033[57358u").empty());      // CapsLock
+  REQUIRE(in.decode("\033[57428u").empty());      // MediaPlay
+}
+
+TEST_CASE("Input: a real key with no Key enumerator stays Unknown",
+          "[input][keyboard]") {
+  // Insert and F13+ are keys TermForge cannot name — same disposition as
+  // ESC[2~ has always had, and deliberately *not* the silent drop above.
+  Input in;
+  auto ins = in.decode("\033[57348u");
+  REQUIRE(ins.size() == 1);
+  REQUIRE(first_key(ins).key == Key::Unknown);
+  auto f13 = in.decode("\033[57376u");
+  REQUIRE(f13.size() == 1);
+  REQUIRE(first_key(f13).key == Key::Unknown);
+}
+
+TEST_CASE("Input: keypad keys resolve to the key the user pressed",
+          "[input][keyboard]") {
+  Input in;
+  auto zero = in.decode("\033[57399u");
+  REQUIRE(first_key(zero).key == Key::Char);
+  REQUIRE(first_key(zero).ch == U'0');
+  auto seven = in.decode("\033[57406u");
+  REQUIRE(first_key(seven).ch == U'7');
+  auto plus = in.decode("\033[57413u");
+  REQUIRE(first_key(plus).ch == U'+');
+  auto kp_enter = in.decode("\033[57414u");
+  REQUIRE(first_key(kp_enter).key == Key::Enter);
+  auto kp_up = in.decode("\033[57419u");
+  REQUIRE(first_key(kp_up).key == Key::Up);
+  auto kp_del = in.decode("\033[57426u");
+  REQUIRE(first_key(kp_del).key == Key::Delete);
+}
+
+TEST_CASE("Input: a CSI-u report split across feeds decodes once",
+          "[input][keyboard][regression]") {
+  // A 256-byte read can split anywhere, including inside a sub-parameter.
+  Input in;
+  in.feed("\033[97;2");
+  REQUIRE(in.poll().empty());  // no final byte yet
+  in.feed(":3u");
+  auto ev = in.poll();
+  REQUIRE(ev.size() == 1);
+  auto k = first_key(ev);
+  REQUIRE(k.ch == U'a');
+  REQUIRE(k.shift);
+  REQUIRE(k.action == KeyAction::Release);
+}
+
+TEST_CASE("Input: a hostile CSI-u parameter run is bounded and yields one event",
+          "[input][keyboard][security]") {
+  Input in;
+  auto ev = in.decode("\033[1:2:3:4:5;6;7;8;9u");
+  REQUIRE(ev.size() <= 1);  // key code 1 is a control code: dropped
+  auto big = in.decode("\033[99999999999999999999;2u");
+  REQUIRE(big.size() <= 1);  // clamped garbage, no UB
+}

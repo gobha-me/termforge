@@ -57,12 +57,160 @@ auto map_tilde_key(int n) -> Key {
 
 // Apply an xterm modifier parameter (1 + bitmask: 1=shift, 2=alt, 4=ctrl) to a
 // key event. The parameter is the second CSI/SS3 param — the 5 in ESC[1;5C.
+// Kitty extends the same bitmask upward (8=super, 16=hyper, 32=meta,
+// 64=caps_lock, 128=num_lock); KeyEvent models the low three, so the rest are
+// dropped rather than misreported.
 void apply_key_mods(KeyEvent& ev, int mod_param) {
   const int m = mod_param - 1;
   if (m <= 0) return;
   ev.shift = (m & 1) != 0;
   ev.alt   = (m & 2) != 0;
   ev.ctrl  = (m & 4) != 0;
+}
+
+// Apply a kitty event-type sub-parameter (#60): the 3 in ESC[1;1:3A. Absent
+// (0) and 1 are both a press; anything unrecognized degrades to a press,
+// because inventing a release the user never made is the worse failure.
+void apply_key_action(KeyEvent& ev, int event_param) {
+  switch (event_param) {
+    case 2:  ev.action = KeyAction::Repeat; break;
+    case 3:  ev.action = KeyAction::Release; break;
+    default: ev.action = KeyAction::Press; break;
+  }
+}
+
+// What a CSI-u key code means (#60). Kitty reports text keys as their
+// *unshifted* code point and functional keys as code points in the Unicode
+// private-use area; a few of those are keys TermForge cannot represent, and a
+// few must produce nothing at all.
+enum class CsiUKind {
+  Drop,     // emit no event — see map_csi_u_key for why this is not Unknown
+  Named,    // a Key enumerator; ch stays 0
+  Text,     // Key::Char with the resolved code point
+  Unknown,  // a real key TermForge has no enumerator for
+};
+struct CsiUKey {
+  CsiUKind kind{CsiUKind::Unknown};
+  Key key{Key::Unknown};
+  // Text only, and only when the produced character is *not* what the key
+  // code says — the keypad, whose codes are private-use. 0 means "resolve it
+  // from the report": the terminal's associated text if it sent any, else the
+  // key code itself.
+  char32_t ch{0};
+};
+
+// Classify a CSI-u key code. The three-way split matters:
+//
+//   Drop    — a bare modifier press (LeftShift is 57441) arrives on every
+//             shifted keystroke under KeyboardMode::Enhanced, and control
+//             codes below 32 are never legitimate key codes. Emitting
+//             Key::Unknown for those would mean an Unknown storm on ordinary
+//             typing, so they produce nothing.
+//   Unknown — a real key the app could plausibly want but Key cannot name
+//             (Insert, F13+, keypad Begin). Consistent with map_tilde_key,
+//             which already leaves ESC[2~ (Insert) Unknown.
+//
+// Arrows, Home/End, PageUp/Down, Delete and Insert are absent on purpose:
+// kitty keeps their legacy CSI encodings even under "report all keys as
+// escape codes", so they arrive through the letter-final and "~" paths (with
+// modifiers and event type attached) and never as CSI-u.
+auto map_csi_u_key(char32_t code) -> CsiUKey {
+  switch (code) {
+    case 9:   return {CsiUKind::Named, Key::Tab, 0};
+    case 13:  return {CsiUKind::Named, Key::Enter, 0};
+    case 27:  return {CsiUKind::Named, Key::Escape, 0};
+    case 127: return {CsiUKind::Named, Key::Backspace, 0};
+    // Keypad: kitty gives these their own code points so an app *can* tell
+    // them apart. TermForge cannot name them, so they resolve to the key the
+    // user pressed — a keypad 7 is a 7, keypad Up is Up.
+    case 57414: return {CsiUKind::Named, Key::Enter, 0};      // KP_ENTER
+    case 57417: return {CsiUKind::Named, Key::Left, 0};
+    case 57418: return {CsiUKind::Named, Key::Right, 0};
+    case 57419: return {CsiUKind::Named, Key::Up, 0};
+    case 57420: return {CsiUKind::Named, Key::Down, 0};
+    case 57421: return {CsiUKind::Named, Key::PageUp, 0};
+    case 57422: return {CsiUKind::Named, Key::PageDown, 0};
+    case 57423: return {CsiUKind::Named, Key::Home, 0};
+    case 57424: return {CsiUKind::Named, Key::End, 0};
+    case 57426: return {CsiUKind::Named, Key::Delete, 0};     // KP_DELETE
+    case 57409: return {CsiUKind::Text, Key::Char, U'.'};
+    case 57410: return {CsiUKind::Text, Key::Char, U'/'};
+    case 57411: return {CsiUKind::Text, Key::Char, U'*'};
+    case 57412: return {CsiUKind::Text, Key::Char, U'-'};
+    case 57413: return {CsiUKind::Text, Key::Char, U'+'};
+    case 57415: return {CsiUKind::Text, Key::Char, U'='};
+    case 57416: return {CsiUKind::Text, Key::Char, U','};
+    default: break;
+  }
+  if (code >= 57399 && code <= 57408) {  // KP_0 … KP_9
+    return {CsiUKind::Text, Key::Char, U'0' + (code - 57399)};
+  }
+  // Locks, PrintScreen/Pause/Menu, the media keys, and the modifier keys
+  // themselves. All are physically real and all are unrepresentable *and*
+  // high-frequency, so they are dropped rather than reported as Unknown.
+  if ((code >= 57358 && code <= 57363) || (code >= 57428 && code <= 57454)) {
+    return {CsiUKind::Drop, Key::Unknown, 0};
+  }
+  // Control codes (other than the four named above), lone surrogates and
+  // anything past the Unicode range are not key codes any terminal should
+  // send; a clamped garbage parameter lands here too.
+  if (code < 32 || (code >= 0xD800 && code <= 0xDFFF) || code > 0x10FFFF) {
+    return {CsiUKind::Drop, Key::Unknown, 0};
+  }
+  if (code >= 57344 && code <= 63743) {  // remaining private-use functionals
+    return {CsiUKind::Unknown, Key::Unknown, 0};
+  }
+  return {CsiUKind::Text, Key::Char, 0};  // ch resolved from text / key code
+}
+
+// A CSI parameter list with sub-parameters (#60). Sub-params are a *generic*
+// CSI concern, not a CSI-u one: kitty attaches the event type to the modifier
+// parameter of keys that keep their legacy encoding, so Up-release is
+// ESC[1;1:3A and Delete-release is ESC[3;1:3~. Before this existed the scan
+// stopped at the ':' and took it for the final byte, exploding one key into
+// three events.
+//
+// Three params and two sub-params is exactly what the protocol asks of us:
+// key;modifiers;text, with the event type as modifiers' sub-param. Anything
+// beyond that (alternate-key sub-params, which we never request) is consumed
+// and discarded so it cannot corrupt the stream.
+struct CsiParams {
+  static constexpr int kParams = 3;
+  static constexpr int kSubs = 2;
+  // Accumulation ceiling. Above the Unicode range, so a legitimate astral
+  // code point in the text parameter survives intact; the point is bounding
+  // the value long before int overflows (which was UB).
+  static constexpr int kMax = 0x110000;
+  int v[kParams][kSubs]{};
+};
+
+// Scan a CSI body from `i` up to its final byte, leaving `i` on that byte.
+// Returns false when the final byte has not arrived yet — the caller answers
+// "need more data" with 0, exactly as the old inline scan did.
+auto scan_csi_params(std::string_view buf, std::size_t& i, CsiParams& out) -> bool {
+  int pi = 0, si = 0;
+  while (i < buf.size()) {
+    const char c = buf[i];
+    if (c == ';') {
+      if (pi < CsiParams::kParams) ++pi;
+      si = 0;
+      ++i;
+      continue;
+    }
+    if (c == ':') {
+      if (si < CsiParams::kSubs) ++si;
+      ++i;
+      continue;
+    }
+    if (c == '<') { ++i; continue; }  // SGR marker that fell through to here
+    if (std::isdigit(static_cast<unsigned char>(c)) == 0) break;
+    if (pi < CsiParams::kParams && si < CsiParams::kSubs) {
+      int& v = out.v[pi][si];
+      if (v < CsiParams::kMax) v = v * 10 + (c - '0');
+    }
+    ++i;
+  }
+  return i < buf.size();
 }
 
 }  // namespace
@@ -270,30 +418,25 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
     return 0;  // no final byte yet — wait for the rest of the report
   }
 
-  // Generic CSI: params (0-9;) + final byte.
+  // Generic CSI: params (0-9 ; :) + final byte.
   std::size_t i = 2;
-  int p1 = 0, p2 = 0;
-  bool have_p2 = false;
-  while (i < buf.size() && (std::isdigit(static_cast<unsigned char>(buf[i])) || buf[i] == ';' || buf[i] == '<')) {
-    if (buf[i] == '<') { ++i; continue; }
-    if (buf[i] == ';') {
-      have_p2 = true;
-      ++i;
-      continue;
-    }
-    if (!have_p2) { if (p1 < 100000) p1 = p1 * 10 + (buf[i] - '0'); }
-    else { if (p2 < 100000) p2 = p2 * 10 + (buf[i] - '0'); }
-    ++i;
-  }
-  if (i >= buf.size()) return 0;  // incomplete
+  CsiParams p;
+  if (!scan_csi_params(buf, i, p)) return 0;  // incomplete
   const char fin = buf[i];
   ++i;
 
+  const int p1 = p.v[0][0];
+  const int mods = p.v[1][0];   // xterm 1+bitmask: the 5 in ESC[1;5C
+  const int event = p.v[1][1];  // kitty event type: the 3 in ESC[1;1:3A
+
   // Letter finals shared with SS3 (arrows, Home/End, F1–F4). A modifier rides
-  // in the second param: ESC[1;5C = Ctrl+Right, ESC[1;2A = Shift+Up.
+  // in the second param: ESC[1;5C = Ctrl+Right, ESC[1;2A = Shift+Up. These
+  // keep their legacy encoding under the kitty keyboard protocol too, which is
+  // why the event type reaches them here rather than through the 'u' path.
   if (const Key k = map_final_key(fin); k != Key::Unknown) {
     KeyEvent ev{k};
-    if (have_p2) apply_key_mods(ev, p2);
+    apply_key_mods(ev, mods);
+    apply_key_action(ev, event);
     m_events.push_back(ev);
     return i;
   }
@@ -307,10 +450,33 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
       if (p1 == 201) break;
       {
         KeyEvent ev{map_tilde_key(p1)};
-        if (have_p2) apply_key_mods(ev, p2);
+        apply_key_mods(ev, mods);
+        apply_key_action(ev, event);
         m_events.push_back(ev);
       }
       break;
+    case 'u': {
+      // Kitty keyboard protocol key report (#60):
+      //   CSI <key>[:<shifted>:<base>] ; <mods>[:<event>] [; <text>] u
+      // The key field's sub-params (alternate keys) are deliberately
+      // discarded — we never request flag 4, and the text parameter already
+      // carries what the terminal computed for this keystroke. `text` is what
+      // makes Shift+a arrive as 'A' without us guessing the user's layout;
+      // kitty omits it when Ctrl is held, so the key code is the fallback
+      // (which is what keeps App's Ctrl+C break-glass working).
+      const auto resolved = map_csi_u_key(static_cast<char32_t>(p1));
+      if (resolved.kind == CsiUKind::Drop) break;
+      KeyEvent ev{resolved.key};
+      if (resolved.kind == CsiUKind::Text) {
+        const auto text = static_cast<char32_t>(p.v[2][0]);
+        ev.ch = resolved.ch != 0 ? resolved.ch : text != 0 ? text
+                                                           : static_cast<char32_t>(p1);
+      }
+      apply_key_mods(ev, mods);
+      apply_key_action(ev, event);
+      m_events.push_back(ev);
+      break;
+    }
     default:
       m_events.push_back(KeyEvent{Key::Unknown});
       break;
