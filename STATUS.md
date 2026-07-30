@@ -6,7 +6,55 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-30)
 
-**Latest release: `v0.5.1` — #123, the forwarders take a container.**
+**Latest release: `v0.5.2` — #94 + #101 + #102, the cleanup batch.** Three
+spun-out review cleanups, a batch cut rather than the usual single-issue one
+(the v0.1.5 cadence). Sequenced ahead of the feature queue on purpose: #22's
+TabBar tests will read rows off a `Screen`, and shipping it first would have
+added a **sixth** hand-copy of `row_text`.
+
+**#94** — `test/support/screen.hpp`, beside `events.hpp`. Five copies of
+`row_text` (not the four the issue counted; #123 added the fifth) become one,
+and it now **skips the width-2 continuation cell** the way `renderer.cpp:27-36`
+does. So the result's *display width* is `w` while its `size()` and cell count
+are not — `test/12primitives` pins that on the 日本語 frame title, the only
+row_text assertion in the tree that reads a wide glyph. Deliberately **two
+arities**: the 3-arg `(s, y, w)` form 32widgettick had is gone, because a
+middle argument meaning "width" in one suite and reading as "start column" to
+the next author is #123's silent misresolution all over again. Three arguments
+is a compile error now. `kWide` became `tfsupport::kContinuation`
+(`termforge::detail::kWide` is a width table).
+
+**#101** — `test/support/image.hpp` with `solid()` and `checker()`. The hoist is
+the small half. **`test/01drivers` fed the drivers solids, and a solid cannot
+witness an ordering** — measured by injecting the bug and re-running: *rows
+emitted bottom-to-top on the fallback tier, and columns right-to-left on the
+ansi tier, both left all 31 existing cases green*. (A swapped half-block pairing
+and reversed fallback columns did fail 3 and 2 cases respectively — the 1x2
+red/blue source is not a solid.) Three new cases assert the **whole emitted
+frame**; all four injected bugs fail against them. Dimension rules worth
+keeping: **even width** (an odd-width checker row is a palindrome — the first
+draft let right-to-left columns through), non-square (kills an axis swap), and
+the ansi case samples **6 source rows into 4** because at 1:1 every cell row
+pairs rows 2k/2k+1, same parity for every k, so all the rows come out
+byte-identical and a reversed order passes. Its expectation includes a bare `▀`
+with no SGR at the start of row 1: the coalescer's state survives the cursor
+move, and that block is only in that position if both rows came out in the
+right order and phase.
+
+**#102** — `Screen::fill_rect` clips through `Rect::intersect`. It computed
+`x + w` in `int`, so `fill_rect(1, 1, INT_MAX, INT_MAX)` wrapped, lost the min,
+and **filled nothing** — after #63 the pixel grid clipped in int64 and the cell
+grid did not, the reverse of what moving `Rect` into `core/types.hpp` was
+justified by. The new case fails two ways against the old code: an ordinary
+`REQUIRE` (the symptom is a wrong answer, not a crash) *and* a UBSan report.
+`<algorithm>` stays — the issue was wrong, `clear()` and `resize()` still use
+it. **No widget clip pair converted**: the ~40 `max`/`min` hits are 1-D scalar
+clamps, and the one rect-shaped near-miss, `map_widget.cpp:151-154`, is left
+deliberately — `clamp_camera()` supplies its lower bound and the loop indexes
+`cells[ty * m_map_w + tx]`, so an `intersect()` would turn an ASan-detectable
+OOB read into a silently wrong picture.
+
+**Previous release: `v0.5.1` — #123, the forwarders take a container.**
 `App::route_mouse` and `App::tick_widgets` accept any contiguous range of
 `Widget*` beside the braced list, and `route_mouse` now skips a null entry the
 way `tick_widgets` always has. Closes the last of #69's spun-out pair.
