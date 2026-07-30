@@ -266,6 +266,10 @@ struct Capabilities {
   bool sixel{false};
   bool truecolor{false};
   int color_levels{0};  // 0 = unknown, else 24 / 256 / 16
+  // The terminal answered our kitty keyboard-flags query (#60). A *terminal*
+  // property, not a driver one: the drivers' self-described capabilities()
+  // leave it false, and it does not affect driver selection.
+  bool kitty_keyboard{false};
 };
 
 // ── events ───────────────────────────────────────────────────────────────
