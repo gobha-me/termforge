@@ -55,6 +55,43 @@ TEST_CASE("probe_da1_complete: false until the DA1 terminator arrives",
   REQUIRE(detail::probe_da1_complete("\033_Gi=31;OK\033\\\033[?62c"));
 }
 
+// ── #60: the keyboard-flags reply shares DA1's "\033[?" prefix ──────────────
+
+TEST_CASE("find_da1: a CSI ? report with another final byte is not DA1",
+          "[probe][da1][keyboard]") {
+  // The whole reason find_da1 exists: CSI ? <flags> u (the kitty keyboard
+  // reply, #60) starts exactly like DA1 and must not be mistaken for it.
+  REQUIRE(detail::find_da1("\033[?1u") == std::string_view::npos);
+  REQUIRE_FALSE(detail::probe_da1_complete("\033[?1u"));
+  // …and the real DA1 behind it is still found, at its own offset.
+  REQUIRE(detail::find_da1("\033[?1u\033[?62;22c") == 5);
+  REQUIRE(detail::probe_da1_complete("\033[?1u\033[?62;22c"));
+}
+
+TEST_CASE("probe_kitty_ok: a keyboard reply before the graphics reply is not DA1",
+          "[probe][kitty][keyboard][regression]") {
+  // Adding the keyboard query (#60) must not cost us the KittyDriver. With a
+  // bare find("\033[?") as the DA1 locator, the keyboard reply lands first,
+  // g < da1 fails, and kitty_graphics silently degrades to false.
+  REQUIRE(detail::probe_kitty_ok(
+      "\033[?1u\033_Gi=31;OK\033\\\033[?62;4;22c"));
+  // The genuine late-graphics case still does not count.
+  REQUIRE_FALSE(detail::probe_kitty_ok("\033[?1u\033[?62c\033_Gi=31;OK\033\\"));
+}
+
+TEST_CASE("probe_kitty_keyboard: any flags report means the protocol is there",
+          "[probe][keyboard]") {
+  REQUIRE(detail::probe_kitty_keyboard("\033[?1u"));
+  REQUIRE(detail::probe_kitty_keyboard("\033[?0u"));  // 0 flags: still an answer
+  REQUIRE(detail::probe_kitty_keyboard("\033[?27u\033[?62;22c"));
+  REQUIRE(detail::probe_kitty_keyboard("\033_Gi=31;OK\033\\\033[?1u\033[?62c"));
+  // Silence is the "no" — a terminal without the protocol ignores the query.
+  REQUIRE_FALSE(detail::probe_kitty_keyboard(""));
+  REQUIRE_FALSE(detail::probe_kitty_keyboard("\033[?62;4;22c"));
+  REQUIRE_FALSE(detail::probe_kitty_keyboard("\033[?1"));   // unterminated
+  REQUIRE_FALSE(detail::probe_kitty_keyboard("\033[?u"));   // no flag digits
+}
+
 TEST_CASE("probe_sixel: DA1 advertises attribute 4", "[probe][sixel]") {
   REQUIRE(detail::probe_sixel("\033[?62;4;22c"));
   REQUIRE(detail::probe_sixel("\033[?4c"));
@@ -127,6 +164,14 @@ TEST_CASE("Input: DA2 and DECRPM private-marker reports are also dropped",
           "[probe][input]") {
   REQUIRE(count_events("\033[>0;276;0c").total == 0);   // DA2
   REQUIRE(count_events("\033[?2026;2$y").total == 0);    // DECRPM
+}
+
+TEST_CASE("Input: the keyboard-flags reply is a report, not a keypress",
+          "[probe][input][keyboard]") {
+  // CSI ? <flags> u answers our own query. It must stay in the private-marker
+  // branch and never reach the new CSI-u key path (#60).
+  REQUIRE(count_events("\033[?1u").total == 0);
+  REQUIRE(count_events("\033[?27u").total == 0);
 }
 
 TEST_CASE("Input: a real arrow key still decodes after the hardening",

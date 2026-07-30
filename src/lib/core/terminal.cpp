@@ -216,11 +216,20 @@ auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
 
   const int in_fd = m_impl->tty_fd;
 
-  // 1. Kitty graphics query, then DA1. Write both, then read.
-  //    i=31 is an arbitrary image id for the probe; a=q asks for support.
+  // 1. Kitty graphics query, keyboard-flags query, then DA1. Write all three,
+  //    then read. i=31 is an arbitrary image id for the probe; a=q asks for
+  //    support. Order matters twice: the graphics query stays first so its
+  //    reply precedes DA1 (probe_kitty_ok's ordering guard), and DA1 stays
+  //    last so it remains the read terminator — which is what makes the extra
+  //    keyboard query cost zero latency. A terminal that lacks the keyboard
+  //    protocol ignores CSI ? u and says nothing; a terminal that answers
+  //    *after* DA1 is missed by the early exit, which we accept rather than
+  //    stall every non-supporting terminal for the full 150ms.
   const char* kitty_query = "\033_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\033\\";
+  const char* keyboard_query = "\033[?u";
   const char* da1 = "\033[c";
   emit(m_impl->out_fd, kitty_query);
+  emit(m_impl->out_fd, keyboard_query);
   emit(m_impl->out_fd, da1);
 
   const std::string reply = read_available(in_fd, 150);
@@ -232,6 +241,10 @@ auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
 
   // Sixel: advertised in the DA1 attribute list (attribute "4").
   if (detail::probe_sixel(reply)) caps.sixel = true;
+
+  // Kitty keyboard protocol (#60): the terminal answered CSI ? u with a flags
+  // report. Drives the fallback ErrorEvent, never the bytes we push.
+  if (detail::probe_kitty_keyboard(reply)) caps.kitty_keyboard = true;
 
   // Truecolor via env corroboration.
   if (env_has("COLORTERM", "truecolor") || env_has("COLORTERM", "24bit")) {
