@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "support/events.hpp"
+#include "support/screen.hpp"
 #include "termforge/core/renderer.hpp"
 #include "termforge/core/screen.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
@@ -19,21 +20,7 @@ using termforge::Renderer;
 using termforge::Rgb;
 using termforge::Screen;
 using tfsupport::all_seven_bit;
-
-namespace {
-
-// One screen row as a string. A blank cell holds "" (Cell::blank), rendered
-// here as a space so a row reads the way the terminal shows it.
-auto row_text(const Screen& s, int y) -> std::string {
-  std::string out;
-  for (int x = 0; x < s.cols(); ++x) {
-    const std::string& t = s.at(x, y).text;
-    out += t.empty() ? " " : t;
-  }
-  return out;
-}
-
-}  // namespace
+using tfsupport::row_text;
 
 TEST_CASE("ListWidget: empty list doesn't crash", "[listwidget][failure]") {
   Screen s{20, 5};

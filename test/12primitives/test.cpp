@@ -18,6 +18,7 @@
 #include "termforge/widgets/progress_bar.hpp"
 #include "termforge/widgets/text_input.hpp"
 #include "support/events.hpp"
+#include "support/screen.hpp"
 
 using termforge::BorderGlyphs;
 using namespace tfsupport;
@@ -59,21 +60,6 @@ auto border_ring(const Screen& s, termforge::Rect r) -> std::string {
   }
   return out;
 }
-
-
-// Read back part of a row as one string. A blank cell holds "" (Cell::blank),
-// rendered as a space so the expectations stay fixed-width and legible.
-auto row_text(const Screen& s, int y, int x0, int w) -> std::string {
-  std::string out;
-  for (int x = x0; x < x0 + w; ++x) {
-    const std::string& t = s.at(x, y).text;
-    out += t.empty() ? " " : t;
-  }
-  return out;
-}
-
-// The continuation cell the renderer writes after a width-2 glyph.
-const std::string kWide{"\0", 1};
 
 }  // namespace
 
@@ -794,13 +780,21 @@ TEST_CASE("Frame: a wide-glyph title is not split by truncation",
   f.draw(s);
   REQUIRE(s.at(1, 0).text == "┤");
   REQUIRE(s.at(3, 0).text == "日");
-  REQUIRE(s.at(4, 0).text == kWide);
+  REQUIRE(s.at(4, 0).text == kContinuation);
   REQUIRE(s.at(5, 0).text == "本");
-  REQUIRE(s.at(6, 0).text == kWide);
+  REQUIRE(s.at(6, 0).text == kContinuation);
   REQUIRE(s.at(7, 0).text == " ");
   REQUIRE(s.at(8, 0).text == "├");
   REQUIRE(s.at(9, 0).text == "─");
   REQUIRE(s.at(10, 0).text == "┐");
+
+  // The same row read back the way the terminal shows it (#94). This is the
+  // only assertion in the suite that reads a row containing a width-2 glyph,
+  // and it is why row_text is shared: each of the five local copies it
+  // replaced appended the continuation cell's NUL byte, so this expectation
+  // could not have been written without embedding two NULs in it. Eleven
+  // columns, nine cells of string.
+  REQUIRE(row_text(s, 0) == "┌┤ 日本 ├─┐");
 }
 
 TEST_CASE("Frame: a shorter title leaves no stale glyphs",
