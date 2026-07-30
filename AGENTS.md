@@ -32,6 +32,13 @@ file is the tactical version.
   Don't convert drivers to a closed `std::variant`.
 - **Capability detection queries the terminal**, never the display server. Pin
   capability *requirements*, never emulator version numbers.
+- **Pixel destinations are named in cells, never in pixels** (#83).
+  `draw_image` takes a `Rect` of cells and each driver resolves the scale
+  natively; a widget that rasterizes renders to the `Extent` the driver hands
+  it via `preferred_pixel_extent`, and asks `image_cell_extent` rather than
+  re-deriving a footprint from capability flags — a new tier implements one
+  function and gets the rest right for free. `draw_pixels` returns a borrowed
+  `const Image*` the *widget* owns, one buffer per declared region.
 - **Raw mode is RAII** — `Terminal` restores termios on destruction. Never
   leave the terminal in raw mode on any exit path, **including one an exception
   takes**: a destructor is not a guarantee (an exception escaping `main`

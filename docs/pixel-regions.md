@@ -53,8 +53,11 @@ it.
 │  2. renderer->present(screen) ─ diff + emit │
 │  3. for each pixel region:                  │
 │       if driver supports images:            │
-│         widget->draw_pixels(region) → Image │
-│         driver->draw_image(x, y, image)     │
+│         ext = driver->preferred_pixel_      │
+│                 extent(region)              │
+│         img = widget->draw_pixels(region,   │
+│                 ext)          ─ borrowed    │
+│         driver->draw_image(region, *img)    │
 └─────────────────────────────────────────────┘
 ```
 
@@ -73,14 +76,32 @@ class Widget {
   // before draw_pixels. Empty = no pixel rendering.
   virtual auto pixel_regions() -> std::vector<Rect> { return {}; }
 
-  // Provide pixel data for a region. Called only if the active driver
-  // supports images AND the region was declared. Return nullopt to fall
+  // Provide pixel data for a region, rasterized at `pixels` — the
+  // resolution the active driver asked for. Called only if the driver
+  // supports images AND the region was declared. Return nullptr to fall
   // back to cells for this frame.
-  virtual auto draw_pixels(Rect region) -> std::optional<Image> {
-    return std::nullopt;
+  virtual auto draw_pixels(Rect region, Extent pixels) -> const Image* {
+    return nullptr;
   }
 };
 ```
+
+**The widget owns the buffer; the App borrows it** (#84). The returned
+pixels must stay valid and unmodified until this widget's next
+`draw_pixels()` call or its destruction. Returning the address of a member
+satisfies that, and a widget that builds a fresh image every frame simply
+keeps a scratch member.
+
+A widget declaring *N* regions must own *N* distinct buffers: the App
+calls `draw_pixels` once per region and holds every view at once, so two
+regions served from one scratch member leave the first pointer valid and
+its contents overwritten. That is the one sharp edge in this contract that
+no type catches.
+
+The return was `std::optional<Image>` by value until #84. That cost
+nothing while the path ran at one pixel per cell — an 80×24 region was
+7.7 KB — but at device resolution it is ~983 KB, and `draw_pixels` is
+called every frame.
 
 ### Why This Works
 
@@ -106,18 +127,83 @@ as pixels. This is correct, not a deficiency: they are fundamentally
 different rendering strategies, not the same code with different output.
 The cell path is the specification; the pixel path is the optimization.
 
-## Image Dimensions
+## Image Dimensions: cells are logical, pixels are physical (#83)
 
-`draw_pixels` returns an `Image` sized in pixels. The driver maps pixel
-dimensions to cell dimensions when placing the image. The recommended
-approach:
+`draw_image` names its destination in **cells** — the same currency as
+every other layout decision — and the image arrives at whatever pixel
+resolution its author chose. The two are different units and, since #83,
+different types: `Rect` is cells, `Extent` is pixels.
 
-- **Width:** `region.w * cell_pixel_width` (typically 8-10 px per cell)
-- **Height:** `region.h * cell_pixel_height` (typically 16-20 px per cell)
+```cpp
+auto draw_image(Rect cells, const Image& image)
+    -> std::expected<void, ErrorEvent>;
+[[nodiscard]] auto preferred_pixel_extent(Rect cells) const noexcept
+    -> Extent;
+```
 
-The KittyDriver currently maps 1 pixel → 1 cell for simplicity. A future
-refinement will use the terminal's actual cell geometry (from `ioctl`
-or terminal query) for accurate sizing.
+Each driver resolves the mismatch natively:
+
+| tier | how it fills a cell rect | `preferred_pixel_extent({w,h})` |
+|---|---|---|
+| Kitty | `c=`/`r=` — the *terminal* scales the placement. Zero CPU, spec-intended. | `{w × cell_px_w, h × cell_px_h}` |
+| AnsiRgb | nearest-neighbour sample into a `w × 2h` grid of half-blocks | `{w, h × 2}` |
+| Fallback | nearest-neighbour sample, one ramp glyph per cell | `{w, h}` |
+
+**Stretch-to-fill, nearest neighbour, and nothing else.** Letterboxing is
+a border policy and resampling quality is a filter library; both are out
+of scope, for the same reason `Image::sub` returns the clipped overlap
+rather than padding it back out. Scaling is the *contract*, so it is not
+a degradation and raises no `ErrorEvent`.
+
+This is the standard DPI pattern: cells are logical units and
+`preferred_pixel_extent` is `devicePixelRatio`. A caller that merely
+*displays* an image ignores it and lets the driver scale; a widget that
+*rasterizes* asks once per resize and renders exactly to the answer, so
+it gets native resolution and correct aspect with no per-driver branching.
+
+Kitty's cell geometry comes from `TIOCGWINSZ` `ws_xpixel`/`ws_ypixel`
+divided by the cell grid, pushed in by `App` (the library's only ioctl
+reader) at setup and again on every resize, *before* the frame that would
+use it. A terminal reporting `0` — common under tmux, on the Linux
+console, and in emulators that never bothered — keeps a nominal **8×16**.
+That is not an `ErrorEvent`: a nominal cell is a correctly-shaped guess,
+not a degraded capability.
+
+### Why this mattered more than a missing feature
+
+One image pixel per cell is *exactly one solid colour per cell*, which is
+precisely what a `Cell` with a background colour already renders on every
+tier including `FallbackDriver`. Until #83 the flagship kitty path could
+not draw anything the cell renderer could not — so a sprite tier built
+against it would have been a strictly worse cell renderer that also
+allocated an image every frame.
+
+### The inverse: how many cells did that image occupy?
+
+```cpp
+[[nodiscard]] auto image_cell_extent(const Image& image) const -> Extent;
+```
+
+Non-virtual, derived from `preferred_pixel_extent`, and the answer an app
+drawing *below* an image needs. Both examples used to re-derive it from
+capability flags (`truecolor && !kitty_graphics ? h/2 : h`), which is not
+what determines the packing — the flags describe colour — and that
+expression put the prompt on top of the image on the fallback tier. A new
+driver implements one function and gets this right for free (#100).
+
+### The sampling map
+
+```
+src = i * src_dim / dst_dim        // integer, truncating
+```
+
+Integer, not float, and that is load-bearing rather than stylistic.
+`Image::at()` is unchecked, and this form is in range *by construction*:
+for `0 ≤ i < dst`, `i*src < dst*src`, so the quotient is always `< src`.
+The float spelling can round the ratio up and index one past the last
+row. It is also exact across compilers and optimization levels, and it
+reduces to the identity when the dimensions match — which is why every
+1:1 expectation written before #83 still holds byte for byte.
 
 ## Alpha Convention and the Region Ops (#63)
 
@@ -242,8 +328,10 @@ one byte — required by the placeholder path's `38;5;<id>` encoding.
   text cells carrying row/column diacritics. Survives tmux pane
   operations, but needs terminal placeholder support (kitty ≥ 0.28) and,
   under tmux, APC passthrough that TermForge does not emit yet. Limited
-  to 297×297 cells by the diacritic table (larger images are cropped and
-  surfaced as a `Warning` event).
+  to 297×297 cells by the diacritic table. A **destination rect** larger
+  than that is clamped and surfaced as a `Warning` event; the image itself
+  transmits at full resolution. (Before #83 this cropped the *image* to
+  297×297 pixels, which was the same thing when a pixel was a cell.)
 
 ## Example: WaveformWidget
 
@@ -258,14 +346,21 @@ auto WaveformWidget::pixel_regions() -> std::vector<Rect> {
   return {rect()};
 }
 
-auto WaveformWidget::draw_pixels(Rect region) -> std::optional<Image> {
-  // Rasterize a proper line chart:
-  // anti-aliased line, thickness, color gradient, grid lines.
-  const int w = region.w;    // cells (kitty maps 1:1 for now)
-  const int h = region.h;
-  Image img(w, h, std::vector<Pixel>(w * h));
-  // ... draw waveform into img ...
-  return img;
+auto WaveformWidget::draw_pixels(Rect region, Extent pixels)
+    -> const Image* {
+  // Skip the work when neither the data nor the resolution moved. The key
+  // is a generation counter, NOT dirty(): dirty() is advisory and draw()
+  // clears it, so a cache keyed on it goes stale as soon as the cell and
+  // pixel passes interleave.
+  if (m_raster_valid && m_raster_gen == m_gen && m_raster_extent == pixels)
+    return &m_raster;
+
+  // Rasterize a proper line chart at DEVICE resolution.
+  const int w = pixels.w;    // pixels, not cells
+  const int h = pixels.h;
+  // ... rasterize the waveform into m_raster at w x h ...
+  m_raster = Image{w, h, std::move(buf)};
+  return &m_raster;   // owned here; the App only borrows it
 }
 ```
 
@@ -274,8 +369,13 @@ bars. Same widget, same code, no branching.
 
 ## Future Work
 
-- **Cell geometry query** — accurate pixel-per-cell dimensions from the
-  terminal (kitty reports this; others can be approximated).
+- **Widen the capability gate** — `App::collect_pixel_regions` still
+  selects widget pixel regions only when `kitty_graphics` is set, so the
+  half-block and ASCII tiers' `preferred_pixel_extent` is exercised only
+  by direct `draw_image` callers. Widening it also changes which widgets
+  get their cells blanked, so it is its own behaviour change.
+- **Letterbox / fit modes** — deliberately deferred; #83 v1 is
+  stretch-to-fill only.
 - **MapWidget** — tile-based maps fit naturally: `draw_pixels` renders
   the tile grid, `draw` provides the half-block approximation.
 - **Animation** — frame-based image replacement for animated widgets
