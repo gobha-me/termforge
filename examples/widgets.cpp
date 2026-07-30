@@ -17,13 +17,21 @@
 //   └────────────────────────────────────────────────────────────┘
 //   Status bar
 //
-// Keyboard: Tab cycles focus, ESC quits.
+// Keyboard: Tab cycles focus, ESC quits. View > Progress mode swaps the bar
+// between a determinate percentage and an indeterminate pulse.
+//
+// It is also the reference for the tick split at widget level (#69): the demo
+// data is advanced in on_tick against the wall clock, and the widgets that
+// animate themselves are handed the same dt via tick_widgets. Nothing here
+// counts frames, so the bar and the wave run at the same speed whatever the
+// frame budget is.
 //
 // The Border menu is also the answer to "how do I style a whole app?": there is
 // no global default style — the app holds one BorderStyle and hands it to each
 // frame (see set_border below). Border > ASCII is what an app on the
 // FallbackDriver tier wants.
 
+#include <chrono>
 #include <cmath>
 #include <format>
 
@@ -57,7 +65,8 @@ class WidgetsDemo final : public App {
     m_menu.add_menu({"View",
                      {{"Zoom In", [this] { set_status("View > Zoom In"); }},
                       {"Zoom Out", [this] { set_status("View > Zoom Out"); }},
-                      {"Reset", [this] { set_status("View > Reset"); }}}});
+                      {"Reset", [this] { set_status("View > Reset"); }},
+                      {"Progress mode", [this] { toggle_progress_mode(); }}}});
     m_menu.add_menu(
         {"Border",
          {{"Single", [this] { set_border(BorderStyle::Single, "Single"); }},
@@ -133,18 +142,32 @@ class WidgetsDemo final : public App {
     App::on_event(ev);
   }
 
+  auto on_tick(std::chrono::duration<double> dt) -> void override {
+    m_elapsed += dt.count();
+
+    // Simulate live data. Both rates are per SECOND — 1.5 rad/s for the wave
+    // and 30%/s for the bar, which is what the old frame counter happened to
+    // produce at the default 33ms budget, now stated in the units it meant.
+    // (One sample per tick, not per frame: identical here, since this app
+    // leaves set_tick_hz at its variable-timestep default.)
+    m_wave.push(std::sin(m_elapsed * 1.5) * 0.5f + 0.5f);
+    if (!m_progress.indeterminate()) {
+      const auto pct = static_cast<int>(m_elapsed * 30.0) % 100;
+      m_progress.set_value(static_cast<float>(pct) / 100.0f);
+      m_progress.set_label(std::format("{}%", pct));
+    }
+
+    // The widgets that animate themselves get the same dt. App keeps no
+    // registry, so this list is the app's job — the same deal as route_mouse
+    // above. Miss a widget out and it simply stops moving.
+    tick_widgets(dt, {&m_progress, &m_btn_ok, &m_btn_cancel});
+  }
+
   auto on_render(Screen& screen) -> void override {
     screen.clear();
 
     const int W = screen.cols();
     const int H = screen.rows();
-
-    // Simulate live data.
-    const float t = static_cast<float>(m_frame) * 0.05f;
-    m_wave.push(std::sin(t) * 0.5f + 0.5f);
-    const auto pct = m_frame % 100;
-    m_progress.set_value(static_cast<float>(pct) / 100.0f);
-    m_progress.set_label(std::format("{}%", pct));
 
     // Layout.
     const int menu_h = 1;
@@ -211,12 +234,24 @@ class WidgetsDemo final : public App {
     // (and listed last in route_mouse above so it's topmost for clicks).
     m_menu.set_geometry({0, 0, W, menu_h});
     m_menu.draw(screen);
-
-    ++m_frame;
   }
 
  private:
   auto set_status(std::string msg) -> void { m_status_text = std::move(msg); }
+
+  // The indeterminate pulse is the widget-level tick made visible: it moves at
+  // a rate in cells per second, so it sweeps at the same speed at any frame
+  // budget — and it stands still if the app stops forwarding ticks.
+  auto toggle_progress_mode() -> void {
+    if (m_progress.indeterminate()) {
+      m_progress.set_value(0.0f);  // set_value returns it to determinate
+      set_status("Progress: determinate (percentage)");
+    } else {
+      m_progress.set_indeterminate();
+      m_progress.set_label("Working...");
+      set_status("Progress: indeterminate (wall-clock pulse)");
+    }
+  }
 
   // One style, applied to every frame the app owns. There is no global default
   // in the library on purpose (widgets/glyphs.hpp) — this three-line helper is
@@ -255,7 +290,7 @@ class WidgetsDemo final : public App {
   FocusRing m_ring;
 
   std::string m_status_text;
-  int m_frame{0};
+  double m_elapsed{0.0};
 };
 
 auto main() -> int {
