@@ -59,6 +59,15 @@ class ListWidget final : public Widget {
     m_on_select = std::move(cb);
   }
 
+  // Scrollbar colours (#21): the │ track and the █ thumb. The thumb defaults
+  // to the selection highlight so the two position markers read as one
+  // language; the track defaults to theme::kDim, the muted-slate role.
+  auto set_scrollbar_colors(Rgb track_fg, Rgb thumb_fg) -> void {
+    m_track_fg = track_fg;
+    m_thumb_fg = thumb_fg;
+    mark_dirty();
+  }
+
   // Row colours. Selected rows use the second pair (#72 -- both were private
   // with no way to override them).
   auto set_colors(Rgb fg, Rgb bg) -> void {
@@ -129,11 +138,23 @@ class ListWidget final : public Widget {
     // write_text then drops, denting every row permanently.
     if (w <= 0) return 0;
     const int rw = rect().w;
-    // The right-hand column stays reserved as it always was (#21's scrollbar),
-    // hence the extra -1: the marker must never be the reason a list has no
-    // room for its items.
+    // The right-hand column stays reserved for #21's scrollbar, hence the
+    // extra -1: the marker must never be the reason a list has no room for
+    // its items.
     if (rw > 0 && rw - (w + 1) - 1 <= 0) return 0;
     return w + 1;
+  }
+
+  // Whether draw() paints #21's scrollbar in the reserved right-hand column:
+  // only when the content overflows the view (a bar on a short list would be
+  // a permanent full-height thumb saying nothing), and only when there is a
+  // text column left beside it. The column stays reserved either way -- its
+  // absence never gives the text budget a column back, so geometry is stable
+  // as content grows past the view.
+  [[nodiscard]] auto scrollbar_visible() const noexcept -> bool {
+    const Rect r = rect();
+    if (r.w <= 0 || r.h <= 0) return false;
+    return m_list.count() > r.h && r.w - gutter_cols() - 1 > 0;
   }
 
   auto draw(Screen& screen) -> void override;
@@ -162,6 +183,10 @@ class ListWidget final : public Widget {
   BorderStyle m_style{BorderStyle::Single};
   bool m_marker_enabled{true};
   std::string m_marker;  // empty == use the style's glyph
+
+  // #21: the scrollbar strip's colours (see set_scrollbar_colors).
+  Rgb m_track_fg{theme::kDim};
+  Rgb m_thumb_fg{theme::kFocusBg};
 
   std::function<void(int, const std::string&)> m_on_select;
 };

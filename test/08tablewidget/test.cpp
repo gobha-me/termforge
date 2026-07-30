@@ -9,6 +9,7 @@
 #include "termforge/core/screen.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
 #include "termforge/widgets/table_widget.hpp"
+#include "termforge/widgets/theme.hpp"
 
 using termforge::Align;
 using termforge::Column;
@@ -587,4 +588,107 @@ TEST_CASE("TableWidget: clear_rows resets the selection (#12)", "[tablewidget][f
   t.add_row({"c", "3"});
   t.draw(s);
   REQUIRE(t.selected() == -1);
+}
+
+TEST_CASE("TableWidget: scrollbar appears only when rows overflow (#21)",
+          "[tablewidget]") {
+  // A table's right edge was never padded (unlike ListWidget's reserved
+  // margin), so the bar costs the overflow-truncated tail one column only
+  // while it is actually up -- nothing reflows when it is not.
+  Screen s{12, 4};
+  TableWidget t;
+  t.set_geometry({0, 0, 12, 4});
+  t.set_columns({{"n"}});
+  t.add_row({"0"});
+  t.draw(s);
+  REQUIRE_FALSE(t.scrollbar_visible());
+  REQUIRE(s.at(11, 1).text != "█");
+  for (int i = 1; i < 6; ++i) t.add_row({std::to_string(i)});
+  t.draw(s);
+  REQUIRE(t.scrollbar_visible());
+  // 6 rows in a 3-row view: the thumb covers half the track (1 of the 3
+  // data rows rounds to 2 here -- (3*3 + 3) / 6), pinned at the top.
+  REQUIRE(s.at(11, 1).text == "█");
+  REQUIRE(s.at(11, 2).text == "█");
+  REQUIRE(s.at(11, 3).text == "│");
+  // The strip covers the data rows only: the header cell above it keeps the
+  // header's own colours and text -- a bar cell there would read as a sort
+  // affordance.
+  REQUIRE(s.at(11, 0).text != "█");
+  REQUIRE(s.at(11, 0).text != "│");
+}
+
+TEST_CASE("TableWidget: scrollbar thumb tracks the view offset (#21)",
+          "[tablewidget]") {
+  Screen s{12, 4};
+  TableWidget t;
+  t.set_geometry({0, 0, 12, 4});
+  t.set_columns({{"n"}});
+  for (int i = 0; i < 12; ++i) t.add_row({std::to_string(i)});
+  t.draw(s);
+  REQUIRE(s.at(11, 1).text == "█");
+  // Wheel to the bottom (12 rows, 3 visible -> max offset 9).
+  for (int i = 0; i < 3; ++i) t.on_event(tfsupport::wheel(1, 2, /*up=*/false));
+  t.draw(s);
+  REQUIRE(s.at(11, 3).text == "█");  // thumb pinned at the bottom data row
+  REQUIRE(s.at(11, 1).text == "│");
+}
+
+TEST_CASE("TableWidget: scrollbar glyphs follow the ascii style (#21)",
+          "[tablewidget]") {
+  Screen s{12, 4};
+  TableWidget t;
+  t.set_geometry({0, 0, 12, 4});
+  t.set_style(termforge::BorderStyle::Ascii);
+  t.set_columns({{"n"}});
+  for (int i = 0; i < 8; ++i) t.add_row({std::to_string(i)});
+  t.draw(s);
+  REQUIRE(s.at(11, 1).text == "#");
+  REQUIRE(s.at(11, 2).text == "|");
+}
+
+TEST_CASE("TableWidget: click on the scrollbar track page-jumps the view (#21)",
+          "[tablewidget]") {
+  Screen s{12, 4};
+  TableWidget t;
+  t.set_geometry({0, 0, 12, 4});
+  t.set_columns({{"n"}});
+  for (int i = 0; i < 12; ++i) t.add_row({std::to_string(i)});
+  t.draw(s);  // bar up, offset 0
+  // Click the last data row of the track (below the thumb): page down (3).
+  REQUIRE(t.on_event(tfsupport::press(11, 3)));
+  REQUIRE(t.scroll_offset() == 3);
+  // The VIEW moved, not the selection: nothing is selected by a track click
+  // (the click must not fall through to the row mapping).
+  REQUIRE(t.selected() == -1);
+  // Click above the thumb: page back up.
+  t.draw(s);
+  REQUIRE(t.on_event(tfsupport::press(11, 1)));
+  REQUIRE(t.scroll_offset() == 0);
+  // A click on the header cell directly above the strip stays inert.
+  t.draw(s);
+  REQUIRE(t.on_event(tfsupport::press(11, 0)));
+  REQUIRE(t.scroll_offset() == 0);
+}
+
+TEST_CASE("TableWidget: a narrow rect drops the bar before the columns (#21)",
+          "[tablewidget][failure]") {
+  // Marker gutter (2) + bar column + at least one data column: w must exceed
+  // 3. At w == 3 the bar stays off and the data keeps the columns it has.
+  Screen s{3, 3};
+  TableWidget t;
+  t.set_geometry({0, 0, 3, 3});
+  t.set_columns({{"n"}});
+  for (int i = 0; i < 6; ++i) t.add_row({std::to_string(i)});
+  t.draw(s);
+  REQUIRE_FALSE(t.scrollbar_visible());
+  REQUIRE(s.at(2, 1).text != "█");
+  Screen s2{4, 3};
+  TableWidget t2;
+  t2.set_geometry({0, 0, 4, 3});
+  t2.set_columns({{"n"}});
+  for (int i = 0; i < 6; ++i) t2.add_row({std::to_string(i)});
+  t2.draw(s2);
+  REQUIRE(t2.scrollbar_visible());
+  REQUIRE(s2.at(3, 1).text == "█");
 }

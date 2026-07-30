@@ -6,6 +6,7 @@
 #include "detail/width.hpp"
 #include "termforge/widgets/detail/callback.hpp"
 #include "termforge/widgets/detail/scroll.hpp"
+#include "termforge/widgets/detail/scrollbar.hpp"
 #include "termforge/widgets/detail/viewport.hpp"
 
 namespace termforge {
@@ -180,6 +181,22 @@ auto TableWidget::draw(Screen& screen) -> void {
     }
   }
 
+  // #21: the scrollbar claims the LAST column over the data rows when the
+  // content overflows -- the header row above it is left alone (a bar cell on
+  // the header would read as a sort affordance, which the header click
+  // comment reserves for the future). Drawn after the rows, with the widget's
+  // own row background, for the same reason as ListWidget: the alternating /
+  // selected row colours already painted this column, and the strip must not
+  // pick up a blue or alt-row tint. The column loops above stop at
+  // r.x + r.w as they always did; with the bar up, the rightmost column's
+  // tail is simply overpainted (the same absorption the gutter relies on).
+  if (scrollbar_visible()) {
+    detail::draw_scrollbar(screen, {r.x + r.w - 1, r.y + 1, 1, r.h - 1},
+                           static_cast<int>(m_rows.size()), m_scroll, r.h - 1,
+                           scrollbar_glyphs(m_style), m_track_fg, m_thumb_fg,
+                           m_row_bg);
+  }
+
   clear_dirty();
 }
 
@@ -223,6 +240,28 @@ auto TableWidget::on_event(const Event& ev) -> bool {
     if (m->pressed && m->button == 0 && rect().contains(m->x, m->y)) {
       // Header row: consumed but inert (reserved for future sorting).
       if (m->y == rect().y) return true;
+      // #21: a press on the scrollbar's column page-jumps the VIEW (the wheel
+      // direction, not a selection -- a scrollbar click must not select a row
+      // by accident, so this runs BEFORE the row mapping).
+      if (m->x == rect().x + rect().w - 1 && scrollbar_visible()) {
+        const int data_rows = rect().h - 1;
+        const int page = std::max(1, data_rows);
+        const auto [top, thumb_h] =
+            detail::thumb_window(data_rows, static_cast<int>(m_rows.size()),
+                                 m_scroll, data_rows);
+        const int row = m->y - rect().y - 1;
+        if (row < top) {
+          m_scroll = detail::clamp_offset(
+              m_scroll - page, static_cast<int>(m_rows.size()), data_rows);
+        } else if (row >= top + thumb_h) {
+          m_scroll = detail::clamp_offset(
+              m_scroll + page, static_cast<int>(m_rows.size()), data_rows);
+        } else {
+          return true;  // on the thumb: consumed, no movement
+        }
+        mark_dirty();
+        return true;
+      }
       const int clicked = m_scroll + (m->y - rect().y - 1);
       if (clicked >= 0 && clicked < static_cast<int>(m_rows.size())) {
         m_selected = clicked;

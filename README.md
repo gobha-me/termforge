@@ -40,6 +40,9 @@ Landed and verified:
   camera + layers), and the primitives Label, Button,
   ProgressBar, TextInput, Frame, MenuBar. Mouse event routing via
   `Widget::hit_test` (topmost-first); `FocusRing` owns the Tab order.
+  The scrollable three paint a shared one-column scrollbar (track + thumb,
+  click-to-page-jump) when their content overflows, so a viewport never hides
+  that there's more (`widgets/detail/scrollbar.hpp`).
 - **Form controls** — `Checkbox`, `RadioGroup` (one tab stop for the whole
   group, arrows move the selection) and `Select` (a dropdown that closes on
   focus loss, and closes-then-declines Tab so one press both dismisses it and

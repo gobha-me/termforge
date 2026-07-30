@@ -6,7 +6,34 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-30)
 
-**Latest work: #35 — wheel vs arrow-key semantics unified (option 1).**
+**Latest work: #21 — the shared scrollbar indicator.** Scrolling is now
+*visible*: `ListWidget`, `TableWidget` and `TextBox` paint a one-column
+`│`/`█` track+thumb strip (`|`/`#` under `BorderStyle::Ascii`) when their
+content overflows, so a 10-row table no longer looks like a 10,000-row one.
+New `include/termforge/widgets/detail/scrollbar.hpp` holds the geometry and
+the paint as pure free functions (`thumb_window` + `draw_scrollbar`), fed by
+#35's `(total, offset, visible)` triple; the glyph table lives in
+`glyphs.hpp` as `ScrollGlyphs` (keyed off `is_ascii`, same tripwire asserts
+as `MarkGlyphs`), exactly where the reviewer's #21 comment asked. Per widget:
+ListWidget finally gives its long-reserved right margin its job; TableWidget
+takes the last column over the data rows only while overflowing (the header
+cell above the strip stays header); TextBox wraps at a bar-aware
+`content_w()` so an appearing bar never covers text, and keeps the `[more]`
+chip (it marks the follow *latch*, the bar marks the *position*). A click on
+the track page-jumps the view (the #35 wheel direction, never the selection);
+drag stays out — it's #96's mid-press relayout class. The thumb rides the
+widget's selection colour, the track `theme::kDim`, and the glyph carries the
+affordance when `FallbackDriver` drops the colour (the #72/#76 bet). Each
+widget exposes `scrollbar_visible()` (the accessor `draw()` actually uses)
+and `set_scrollbar_colors`. Narrow-rect rules pinned and *debated in
+comments*: ListWidget w==2 gives the strip the last column, TextBox w==1
+keeps its text instead — the divergence is deliberate and documented at both
+sites. Tests: `test/30scrollbar` (geometry + paint + glyph table) plus
+per-widget cases in 05/08/09 (appear/disappear, thumb-vs-offset, ascii,
+click-jump, narrow, chip coexistence, wrap-under-bar). Validated `-Werror`
+Release on g++ (CI shape) + g++-13 + clang + ASan/UBSan, 32/32 on each.
+
+**Previous: #35 — wheel vs arrow-key semantics unified (option 1).**
 **BREAKING for TableWidget:** the arrow keys now move the *selection* (and
 reveal it), they no longer scroll the view — "arrows scroll, mouse selects"
 was the odd convention out. Across the scrollable widgets the wheel now

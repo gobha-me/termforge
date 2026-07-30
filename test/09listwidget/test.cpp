@@ -7,6 +7,7 @@
 #include "termforge/core/screen.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
 #include "termforge/widgets/list_widget.hpp"
+#include "termforge/widgets/theme.hpp"
 
 using termforge::Event;
 using termforge::FallbackDriver;
@@ -479,4 +480,122 @@ TEST_CASE("ListWidget: selection survives a driver that drops colour (#72)",
   r.present(s);  // first frame: the renderer diffs, so assert on this one
   d.flush();
   REQUIRE(out.find("▸") != std::string::npos);
+}
+
+TEST_CASE("ListWidget: scrollbar appears only when content overflows (#21)",
+          "[listwidget]") {
+  // The reserved right column does double duty: blank margin when the
+  // content fits, scrollbar when it does not. The text budget is the same
+  // either way -- a list growing past its view must not reflow its rows.
+  Screen s{10, 3};
+  ListWidget l;
+  l.set_geometry({0, 0, 10, 3});
+  l.set_items({"a", "b", "c"});
+  l.draw(s);
+  REQUIRE_FALSE(l.scrollbar_visible());
+  REQUIRE(s.at(9, 0).text != "█");  // no thumb on a list that fits
+  l.add_item("d");
+  l.draw(s);
+  REQUIRE(l.scrollbar_visible());
+  // 4 items in a 3-row view: the thumb covers 3/4 of the track (2 rows),
+  // pinned at the top for offset 0.
+  REQUIRE(s.at(9, 0).text == "█");
+  REQUIRE(s.at(9, 1).text == "█");
+  REQUIRE(s.at(9, 2).text == "│");
+}
+
+TEST_CASE("ListWidget: scrollbar thumb tracks the view offset (#21)",
+          "[listwidget]") {
+  Screen s{10, 3};
+  ListWidget l;
+  l.set_geometry({0, 0, 10, 3});
+  l.set_items({"0", "1", "2", "3", "4", "5", "6", "7"});
+  l.draw(s);
+  REQUIRE(s.at(9, 0).text == "█");
+  // Wheel to the bottom (8 items, 3 visible -> max offset 5; two wheels).
+  l.on_event(tfsupport::wheel(1, 1, /*up=*/false));
+  l.on_event(tfsupport::wheel(1, 1, /*up=*/false));
+  l.draw(s);
+  REQUIRE(s.at(9, 2).text == "█");  // thumb pinned at the bottom
+  REQUIRE(s.at(9, 0).text == "│");
+}
+
+TEST_CASE("ListWidget: scrollbar glyphs follow the ascii style (#21)",
+          "[listwidget]") {
+  Screen s{10, 3};
+  ListWidget l;
+  l.set_geometry({0, 0, 10, 3});
+  l.set_style(termforge::BorderStyle::Ascii);
+  l.set_items({"0", "1", "2", "3", "4", "5", "6", "7"});
+  l.draw(s);
+  REQUIRE(s.at(9, 0).text == "#");
+  REQUIRE(s.at(9, 1).text == "|");
+}
+
+TEST_CASE("ListWidget: scrollbar is drawn on the list's own background (#21)",
+          "[listwidget]") {
+  // The strip re-paints the column AFTER the rows filled it -- including the
+  // selected row's highlight band -- with the widget's plain background, so
+  // the thumb doesn't pick up a blue tint on the selected row.
+  Screen s{10, 3};
+  ListWidget l;
+  l.set_geometry({0, 0, 10, 3});
+  l.set_items({"0", "1", "2", "3", "4"});
+  l.draw(s);
+  for (int y = 0; y < 3; ++y) {
+    REQUIRE(s.at(9, y).bg == termforge::theme::kBg);
+  }
+}
+
+TEST_CASE("ListWidget: click on the scrollbar track page-jumps the view (#21)",
+          "[listwidget]") {
+  Screen s{10, 3};
+  ListWidget l;
+  l.set_geometry({0, 0, 10, 3});
+  l.set_items({"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"});
+  l.draw(s);  // establish the bar (offset 0, thumb at the top)
+  // Click the bottom row of the track (below the thumb): page down.
+  REQUIRE(l.on_event(tfsupport::press(9, 2)));
+  REQUIRE(l.scroll_offset() == 3);
+  // The VIEW moved, not the selection (#35 Q1): row 0 is still selected and
+  // is now scrolled out of view.
+  REQUIRE(l.selected() == 0);
+  // Click the top row (above the thumb now): page back up.
+  l.draw(s);
+  REQUIRE(l.on_event(tfsupport::press(9, 0)));
+  REQUIRE(l.scroll_offset() == 0);
+}
+
+TEST_CASE("ListWidget: a narrow rect drops the bar before the text (#21)",
+          "[listwidget][failure]") {
+  // w == 2, marker on: the gutter's own narrow-rect rule has already dropped
+  // the marker (no room for gutter + reserved column + text). The bar's rule
+  // then sees r.w - 1 == 1 text column and CONSUMES the last one -- so the
+  // narrowest overflow case shows position and no text rather than text and
+  // no position. Debatable, but deliberate: a 1-wide list renders one
+  // truncated column with no scrolling affordance at all, which is the worse
+  // half of the trade (and the row below it already said nothing useful).
+  Screen s{2, 2};
+  ListWidget l;
+  l.set_geometry({0, 0, 2, 2});
+  l.set_items({"0", "1", "2", "3"});
+  l.draw(s);
+  REQUIRE(l.scrollbar_visible());
+  REQUIRE(s.at(1, 0).text == "█");
+  // A one-wide rect has no column to give: the bar stays off (and the draw
+  // does not crash).
+  Screen s1{1, 2};
+  ListWidget l1;
+  l1.set_geometry({0, 0, 1, 2});
+  l1.set_items({"0", "1", "2", "3"});
+  l1.draw(s1);
+  REQUIRE_FALSE(l1.scrollbar_visible());
+  // w == 4 leaves one text column beside gutter + bar: the bar appears.
+  Screen s2{4, 2};
+  ListWidget l2;
+  l2.set_geometry({0, 0, 4, 2});
+  l2.set_items({"0", "1", "2", "3"});
+  l2.draw(s2);
+  REQUIRE(l2.scrollbar_visible());
+  REQUIRE(s2.at(3, 0).text == "█");
 }

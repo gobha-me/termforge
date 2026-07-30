@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "detail/wrap.hpp"
+#include "termforge/widgets/detail/scrollbar.hpp"
 #include "termforge/widgets/detail/viewport.hpp"
 #include "termforge/widgets/theme.hpp"
 
@@ -57,8 +58,40 @@ auto TextBox::on_event(const Event& ev) -> bool {
     // step is the shared kWheelStep; scroll() owns the sign inversion.
     if (m->scroll_up) { scroll(-detail::kWheelStep); return true; }
     if (m->scroll_down) { scroll(detail::kWheelStep); return true; }
+    // #21: a press on the scrollbar's column page-jumps the view. TextBox
+    // can't know the wrapped total without drawing, so it can't locate the
+    // thumb here -- the jump is directional instead: upper half of the strip
+    // pages toward older, lower half toward newer, which is the convention
+    // every clicking user already expects from a track. scroll() owns the
+    // sign inversion and the follow latch.
+    if (m->pressed && m->button == 0 && rect().contains(m->x, m->y) &&
+        m->x == rect().x + rect().w - 1 && rect().w > 1) {
+      const int page = std::max(1, rect().h > 1 ? rect().h - 1 : 1);
+      const int mid = rect().y + rect().h / 2;
+      scroll(m->y < mid ? -page : page);
+      return true;
+    }
   }
   return false;
+}
+
+auto TextBox::content_w() const noexcept -> int {
+  const int w = rect().w;
+  if (w <= 0) return 0;
+  // The bar's existence depends on the WRAPPED row count, which only draw()
+  // computes -- so the width it will claim is decided in two passes there
+  // (wrap at full width, and if the content then overflows, keep the bar and
+  // the text keeps this narrower width on the NEXT wrap). To avoid a
+  // one-frame oscillation where the bar toggles the wrap width every frame,
+  // content_w() reports the bar-aware width whenever the bar COULD be up:
+  // logical lines alone already exceeding the view is a stable lower bound
+  // (wrapping never shrinks the row count). A single short logical line that
+  // wraps to exactly the view height is the edge where the two passes
+  // disagree for one frame; the bar then appears with the text already
+  // wrapped for it, which is the harmless direction.
+  const bool bar_possible =
+      rect().h > 0 && static_cast<int>(m_lines.size()) > rect().h;
+  return std::max(0, w - (bar_possible ? 1 : 0));
 }
 
 auto TextBox::wrap_into(std::vector<std::string>& out, const std::string& line, int width) -> void {
@@ -76,10 +109,18 @@ auto TextBox::draw(Screen& screen) -> void {
   // leave stale text behind (immediate-mode contract, see widget.hpp).
   screen.fill_rect(r.x, r.y, r.w, r.h, fg, {});
 
-  // Build the wrapped view of all lines.
+  // Wrap at the bar-aware width (see content_w()): when the bar is possible
+  // the text already leaves its column free, so an appearing bar covers no
+  // text and the wrap is stable frame to frame.
+  //
+  // A cw of 0 still wraps: wrap_into(width <= 0) means "don't wrap", so the
+  // logical lines pass through and the paint loop clips them to the columns
+  // that exist. (Skipping the wrap here produced total == 0: a blank box
+  // with no bar -- erasing the content AND the bar's reason to exist.)
+  const int cw = content_w();
   std::vector<std::string> wrapped;
   wrapped.reserve(m_lines.size());
-  for (const auto& l : m_lines) wrap_into(wrapped, l, r.w);
+  for (const auto& l : m_lines) wrap_into(wrapped, l, cw);
 
   // The visible window: last h rows, offset up by m_scroll.
   const int total = static_cast<int>(wrapped.size());
@@ -103,6 +144,27 @@ auto TextBox::draw(Screen& screen) -> void {
   // scroll indicator when not at the bottom
   if (m_scroll > 0 && r.w > 8) {
     screen.write_text(r.x + r.w - 7, r.y, "[more]", theme::kDim, {});
+  }
+
+  // #21: the scrollbar claims the last column when the wrapped content
+  // overflows the view. The [more] chip stays: it marks the follow LATCH
+  // (auto-scroll armed or not), the bar marks the viewport POSITION -- a box
+  // pinned to the bottom has a thumb at the bottom and no chip, and both
+  // facts are worth showing. Sign converted at the boundary, per
+  // detail/viewport.hpp: the helper's offset is rows past the TOP, while
+  // m_scroll counts UP from the bottom.
+  //
+  // The cw > 0 guard is the NARROW exception, and it resolves the other way
+  // from ListWidget's w == 2 (which gives the strip the last column): a
+  // 1-wide TextBox keeps its text and drops the bar. The guard exists for
+  // the normal case -- a box wide enough for text keeps the strip out of it
+  // -- and at 1 wide a position-only box is the worse half of the trade for
+  // a widget whose whole job is text (its caller can give it two columns).
+  if (total > r.h && cw > 0) {
+    const int offset = total - m_scroll - r.h;
+    detail::draw_scrollbar(screen, {r.x + r.w - 1, r.y, 1, r.h}, total, offset,
+                           r.h, scrollbar_glyphs(m_style), m_track_fg,
+                           m_thumb_fg, Rgb{});
   }
   clear_dirty();
 }
