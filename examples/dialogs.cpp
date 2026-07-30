@@ -27,6 +27,7 @@
 // Keyboard: Tab cycles focus, Enter/Space activates, ESC quits (or cancels
 // the dialog, when one is open). Inside a confirm: Y/N are hotkeys.
 
+#include <chrono>
 #include <filesystem>
 #include <string>
 
@@ -110,6 +111,19 @@ class DialogsDemo final : public App {
     }
     if (m_ring.handle_key(ev)) return;
     App::on_event(ev);  // ESC / Ctrl+C quits
+  }
+
+  auto on_tick(std::chrono::duration<double> dt) -> void override {
+    // Every widget that animates, including the four dialogs — a Dialog
+    // forwards the tick to its own children, which is how their OK/Cancel
+    // buttons get one.
+    //
+    // Unconditionally, NOT "only what is currently pushed". A dialog button
+    // closes its dialog on activation, so the press flash it is holding is
+    // still burning down after the overlay has been popped; stop ticking it
+    // there and the next showing opens with that button already lit.
+    tick_widgets(dt, {&m_btn_message, &m_btn_confirm, &m_btn_prompt,
+                      &m_btn_open, &m_message, &m_confirm, &m_prompt, &m_open});
   }
 
   auto on_render(Screen& screen) -> void override {

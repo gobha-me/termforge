@@ -31,6 +31,7 @@
 // the (•)/(*) and ▾/v marks. F1 to ASCII is what an app on the FallbackDriver
 // tier (a bare TTY with no box drawing in its font) wants.
 
+#include <chrono>
 #include <format>
 #include <string>
 
@@ -135,6 +136,12 @@ class FormsDemo final : public App {
     if (m_ring.handle_key(ev)) return;
 
     App::on_event(ev);  // Escape quits
+  }
+
+  auto on_tick(std::chrono::duration<double> dt) -> void override {
+    // The buttons are the only controls here that animate: their press flash
+    // is a duration now, and it is these ticks that end it (#69).
+    tick_widgets(dt, {&m_ok, &m_cancel});
   }
 
   auto on_render(Screen& screen) -> void override {
