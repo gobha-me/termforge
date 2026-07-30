@@ -6,7 +6,46 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-30)
 
-**Latest release: `v0.5.0` — #122, a dialog re-opens clean.** `Widget` gains
+**Latest release: `v0.5.1` — #123, the forwarders take a span.** `App::route_mouse`
+and `App::tick_widgets` gain a `std::span<Widget* const>` overload beside the
+`std::initializer_list` one, and `route_mouse` now skips a null entry the way
+`tick_widgets` always has. Closes the last of #69's spun-out pair.
+
+**Span is an addition, not a replacement, and that was forced rather than
+chosen — record it so nobody re-derives it.** A braced list *is* an
+`initializer_list`, and `std::span` gains a constructor from one only in
+**C++26** (P2447); under this project's C++23 the conversion is ill-formed.
+Verified with the repo's g++ 14.2: `could not convert '{(& a), (& b), (& c)}' …
+to 'std::span<W* const>'`, and `__cpp_lib_span_initializer_list` undefined.
+Replacing the parameter would have broken all nine braced call sites. With both
+overloads present, every braced arity — three, two, one, and even `{}` —
+resolves to `initializer_list` with no ambiguity ([over.ics.list]/2 makes it the
+identity conversion where span needs a user-defined one), so the nine sites are
+byte-for-byte unaffected. The 2-element case is the one worth naming: it would
+otherwise have been a silent `(iterator, sentinel)` match.
+
+The span overload **holds the loop** and the `initializer_list` one forwards to
+it, so the contract lives in exactly one place and the null and reverse-order
+rules cannot drift between spellings.
+
+**The null half was the sharper bug.** `tick_widgets` skipped nulls and its doc
+*advised* passing a sometimes-populated pointer; `route_mouse` dereferenced
+unchecked, and in every example the two lists are the same widgets ~40 lines
+apart. An app that believed that doc got a SEGV — which `run_loop`'s guard never
+sees, so it also leaves the terminal raw. A null is now **absent, not opaque**:
+it contributes no hit and routing continues to the widget *below* it. It is not
+a floor, and that — not the existence of the skip — is what the doc gained.
+
+Validated 34/34 under gcc, clang and ASan/UBSan. Both control runs done: the
+span tests fail at **build** time against the pre-#123 `App` ("cannot convert
+`std::span<Widget* const>` to `std::initializer_list<Widget*>`"), and the null
+test fails as an **ASan SEGV at `app.cpp:518`**, not a `REQUIRE` — the correct
+proof for a UB fix, since a `REQUIRE` failure would have meant the old behaviour
+was defined and merely wrong. End-to-end: `examples/widgets.cpp` under a pty
+shows the ProgressBar advancing through 34 distinct states and wrapping, i.e.
+the tick still reaches the widget through the new forwarder chain.
+
+**Previous release: `v0.5.0` — #122, a dialog re-opens clean.** `Widget` gains
 `reset_transient()` — a second non-pure virtual with an empty body, next to
 `on_tick` — and `Dialog::draw` calls it on every child at the per-showing
 boundary it already computed for `on_show()`. `Button` puts out its press
@@ -44,7 +83,7 @@ call commented out — all four went red, and the one that asserts a flash *does
 still render on an ordinary frame passed both ways, which is what stops a
 reset-every-draw implementation from sneaking through.
 
-**Previous release: `v0.4.0` — #69, time reaches a widget.** `Widget` gains
+**Before that: `v0.4.0` — #69, time reaches a widget.** `Widget` gains
 `on_tick(std::chrono::duration<double>)` — a non-pure virtual with an empty
 body, so all ~32 subclasses compile untouched — and `App` gains a protected
 `tick_widgets(dt, {…})` forwarder. `ProgressBar`'s indeterminate pulse and
