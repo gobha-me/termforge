@@ -33,9 +33,19 @@ auto ProgressBar::set_pulse_rate(float cells_per_second) -> void {
 auto ProgressBar::on_tick(std::chrono::duration<double> dt) -> void {
   // A determinate bar has nothing to advance, and a tick carrying no time is
   // not a content change — the first frame of a run delivers dt == 0.
-  if (!m_indeterminate || dt <= std::chrono::duration<double>::zero()) return;
+  // Spelled as a negated positive test so a NaN delta is rejected too: NaN
+  // fails every comparison, and one that got through would make m_pulse_cells
+  // NaN permanently — std::fmod(NaN, period) is NaN and the cast in draw() is
+  // then undefined behaviour, so the bar would never animate again.
+  if (!m_indeterminate || !(dt > std::chrono::duration<double>::zero())) return;
+  const double before = m_pulse_cells;
   m_pulse_cells += dt.count() * static_cast<double>(m_pulse_rate);
-  mark_dirty();
+  // Dirty only when the pulse crossed into a new CELL — the bar is painted in
+  // whole cells, so sub-cell motion changes nothing on screen. Marking every
+  // tick would make a slow (or set_pulse_rate(0), which is legal) bar
+  // permanently dirty and the idle-loop hint worthless, which is the same rule
+  // Button::on_tick follows.
+  if (std::floor(m_pulse_cells) != std::floor(before)) mark_dirty();
 }
 
 auto ProgressBar::draw(Screen& screen) -> void {

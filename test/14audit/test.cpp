@@ -429,6 +429,21 @@ TEST_CASE("ProgressBar: time makes it dirty, drawing settles it",
   pb.on_tick({});             // a tick carrying no time is not a change
   REQUIRE_FALSE(pb.dirty());
 
+  // Nor is sub-cell motion: the bar is painted in whole cells, so a tick that
+  // does not carry the pulse into a new one has nothing to show. At the
+  // default 30 cells/s that is anything under ~33ms.
+  pb.on_tick(std::chrono::milliseconds{5});
+  REQUIRE_FALSE(pb.dirty());
+  pb.on_tick(std::chrono::milliseconds{60});
+  REQUIRE(pb.dirty());
+  pb.draw(s);
+
+  // A paused bar is a legal configuration and must be able to settle.
+  pb.set_pulse_rate(0.0f);
+  pb.draw(s);
+  pb.on_tick(std::chrono::seconds{1});
+  REQUIRE_FALSE(pb.dirty());
+
   pb.set_value(0.5f);         // switches to determinate
   pb.draw(s);
   REQUIRE_FALSE(pb.dirty());  // settled once painted

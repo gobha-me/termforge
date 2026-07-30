@@ -10,6 +10,13 @@
 // sweeps at the same speed whatever the frame budget is (#69). It moved there
 // from draw(), which made the speed a function of set_frame_ms and of how well
 // the terminal was keeping up.
+//
+// "Whatever the frame budget is" means whatever the app's dt says, and App
+// clamps that (set_max_tick_dt, 250 ms by default). A frame that genuinely
+// took longer than the clamp hands the widget less time than the wall clock
+// spent — deliberately, since banking that time teleports a simulation — so a
+// bar animating behind a multi-second blocking call runs slow. The clamp is a
+// property of the delta, not of this widget.
 
 #include <chrono>
 #include <string>

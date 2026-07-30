@@ -411,6 +411,14 @@ class App {
   // decides who gets an event, but time reaches everything, so there is no
   // topmost and nothing to stop at. Null entries are skipped, which lets an
   // app pass a pointer that is only sometimes populated.
+  //
+  // Two ways the route_mouse analogy stops holding, both because a tick
+  // accumulates where a route does not. A widget listed twice — or listed
+  // alongside a Dialog that owns it — is advanced TWICE, so its animation runs
+  // at double speed; route_mouse stops at the first hit and cannot do that.
+  // And a widget you tick must outlive every tick, which is stricter than the
+  // overlay rule above: popping only drops a pointer, but this list still
+  // holds one, so drop it here before you destroy the widget.
   auto tick_widgets(std::chrono::duration<double> dt,
                     std::initializer_list<Widget*> widgets) -> void;
 

@@ -121,6 +121,17 @@ class FilePickerDialog final : public Dialog {
   // headless frame) can paint one frame without a tty.
   auto draw(Screen& screen) -> void override { Dialog::draw(screen); }
 
+  // Dialog::on_tick reaches the four add_child()ren, but NOT m_error: it is a
+  // member pushed as its own overlay rather than a child, and the app has no
+  // handle on it (same shape as the style-propagation problem #72 fixed). Its
+  // OK button holds a timed press flash like any other, so without this the
+  // picker's own error dialog is the one widget in the library nobody can
+  // tick — and a second read error would re-open it with OK lit for good.
+  auto on_tick(std::chrono::duration<double> dt) -> void override {
+    Dialog::on_tick(dt);
+    m_error.on_tick(dt);
+  }
+
  protected:
   // Once per SHOWING (not per frame, #45): seed the path field, re-read the
   // directory, and assert the list as the starting focus.

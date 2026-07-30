@@ -152,7 +152,10 @@ class WidgetsDemo final : public App {
     // leaves set_tick_hz at its variable-timestep default.)
     m_wave.push(std::sin(m_elapsed * 1.5) * 0.5f + 0.5f);
     if (!m_progress.indeterminate()) {
-      const auto pct = static_cast<int>(m_elapsed * 30.0) % 100;
+      // Reduce before the cast, not after: m_elapsed grows without bound, and
+      // double -> int is UB once it passes INT_MAX. Same rule the library
+      // follows for the pulse.
+      const auto pct = static_cast<int>(std::fmod(m_elapsed * 30.0, 100.0));
       m_progress.set_value(static_cast<float>(pct) / 100.0f);
       m_progress.set_label(std::format("{}%", pct));
     }
