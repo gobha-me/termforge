@@ -37,6 +37,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -402,6 +403,21 @@ class App {
   // false (a click on an inert part of a widget must not activate a
   // hidden one below it). Returns that widget's on_event result.
   // The subclass calls this from on_event for MouseEvents.
+  //
+  // A null entry is ABSENT, not opaque: it contributes no hit and routing
+  // continues to the widget BELOW it — it is not a floor. Same contract as
+  // tick_widgets, and it exists for the same reason: an app may hold a pointer
+  // that is only sometimes populated, and one that took that advice from
+  // tick_widgets's doc used to dereference it here (#123).
+  //
+  // Two overloads, and the braced form is still the idiom. A braced list IS an
+  // initializer_list and cannot bind to a span until P2447 (C++26), so the span
+  // form is an ADDITION, for an app that keeps its widgets in a vector or an
+  // array rather than writing them out. route_mouse(ev, {&a, &b}) still picks
+  // the initializer_list overload, which forwards to the span one: one loop,
+  // one contract, no way for the two to drift.
+  auto route_mouse(const MouseEvent& ev,
+                   std::span<Widget* const> widgets) -> bool;
   auto route_mouse(const MouseEvent& ev,
                    std::initializer_list<Widget*> widgets) -> bool;
 
@@ -412,7 +428,8 @@ class App {
   // Unlike route_mouse this walks FORWARD and visits every widget: z-order
   // decides who gets an event, but time reaches everything, so there is no
   // topmost and nothing to stop at. Null entries are skipped, which lets an
-  // app pass a pointer that is only sometimes populated.
+  // app pass a pointer that is only sometimes populated — the same contract
+  // route_mouse now honours (#123).
   //
   // Two ways the route_mouse analogy stops holding, both because a tick
   // accumulates where a route does not. A widget listed twice — or listed
@@ -421,6 +438,11 @@ class App {
   // And a widget you tick must outlive every tick, which is stricter than the
   // overlay rule above: popping only drops a pointer, but this list still
   // holds one, so drop it here before you destroy the widget.
+  //
+  // Two overloads, same contract; see route_mouse above for why the span form
+  // is an addition and the braced form is still the blessed one.
+  auto tick_widgets(std::chrono::duration<double> dt,
+                    std::span<Widget* const> widgets) -> void;
   auto tick_widgets(std::chrono::duration<double> dt,
                     std::initializer_list<Widget*> widgets) -> void;
 

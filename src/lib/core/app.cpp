@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <initializer_list>
+#include <span>
 #include <variant>
 
 #include <sys/ioctl.h>
@@ -506,8 +507,11 @@ auto App::dim_screen(Screen& screen) -> void {
   }
 }
 
+// The span overloads hold the loops; the initializer_list ones forward. A
+// braced list cannot bind to a span until P2447 (C++26), so both spellings have
+// to exist -- but only one of them gets to define the contract (#123).
 auto App::route_mouse(const MouseEvent& ev,
-                      std::initializer_list<Widget*> widgets) -> bool {
+                      std::span<Widget* const> widgets) -> bool {
   // Check in reverse order (last registered = topmost).
   for (auto it = widgets.end(); it != widgets.begin();) {
     --it;
@@ -518,10 +522,22 @@ auto App::route_mouse(const MouseEvent& ev,
   return false;
 }
 
+auto App::route_mouse(const MouseEvent& ev,
+                      std::initializer_list<Widget*> widgets) -> bool {
+  const std::span<Widget* const> ws{widgets.begin(), widgets.size()};
+  return route_mouse(ev, ws);
+}
+
 auto App::tick_widgets(std::chrono::duration<double> dt,
-                       std::initializer_list<Widget*> widgets) -> void {
+                       std::span<Widget* const> widgets) -> void {
   for (Widget* w : widgets)
     if (w != nullptr) w->on_tick(dt);
+}
+
+auto App::tick_widgets(std::chrono::duration<double> dt,
+                       std::initializer_list<Widget*> widgets) -> void {
+  const std::span<Widget* const> ws{widgets.begin(), widgets.size()};
+  tick_widgets(dt, ws);
 }
 
 auto App::render_pixel_regions(Widget& widget) -> void {
