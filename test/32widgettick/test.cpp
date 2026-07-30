@@ -1,5 +1,7 @@
 // Widget-level tick tests (#69): Widget::on_tick, App::tick_widgets, and the
-// two widgets that used to animate by counting draw() calls.
+// two widgets that used to animate by counting draw() calls. Plus the other
+// end of the same state (#122): Widget::reset_transient, and the Dialog
+// showing boundary that fires it.
 //
 // Two altitudes here, deliberately. Most of the claims need no clock at all —
 // that is the payoff of putting the tick on Widget rather than having widgets
@@ -60,7 +62,9 @@ struct LegacyWidget : Widget {
   }
 };
 
-// A Dialog that owns one child, to pin the forwarding.
+// A Dialog that owns one child, to pin the forwarding. Lays out and draws
+// nothing, so the child is never on screen — fine for the forwarding claims,
+// useless for the #122 ones, which is why ShowingDialog exists below.
 class ChildDialog final : public Dialog {
  public:
   explicit ChildDialog(Widget* child) { add_child(child); }
@@ -70,6 +74,29 @@ class ChildDialog final : public Dialog {
   [[nodiscard]] auto content_cols() const -> int override { return 10; }
   auto layout_content(Rect) -> void override {}
   auto draw_content(Screen&) -> void override {}
+};
+
+// A Dialog that actually PLACES and PAINTS its one child, so the #122 claims
+// can be asserted against the rendered screen rather than internal state (#45:
+// a green suite is not a working screen). report() ends the showing without
+// closing anything, which is what a dialog button's activation does to it.
+template <typename ChildT>
+class ShowingDialog final : public Dialog {
+ public:
+  ShowingDialog() : Dialog("T") { add_child(&child); }
+  ChildT child;
+  auto report() -> void { (void)begin_result(); }
+
+ protected:
+  [[nodiscard]] auto content_rows() const -> int override { return 1; }
+  [[nodiscard]] auto content_cols() const -> int override { return kChildW; }
+  auto layout_content(Rect area) -> void override {
+    child.set_geometry({area.x, area.y, kChildW, 1});
+  }
+  auto draw_content(Screen& s) -> void override { child.draw(s); }
+
+ private:
+  static constexpr int kChildW = 20;
 };
 
 // The app half: a real frame loop over a fake clock, forwarding ticks the way
@@ -122,13 +149,20 @@ class WidgetTickProbe : public App {
 
 // Read a screen row back as a string. Local, like the other four copies in
 // test/ — hoisting them all is #94.
-auto row_text(const Screen& s, int y, int w) -> std::string {
+auto row_text(const Screen& s, int y, int x0, int w) -> std::string {
   std::string out;
-  for (int x = 0; x < w; ++x) {
+  for (int x = x0; x < x0 + w; ++x) {
     const auto& c = s.at(x, y);
     out += c.text.empty() ? " " : c.text;
   }
   return out;
+}
+
+// The whole row. A widget inside a dialog wants the 4-arg form instead: the
+// chrome shares its row, so a full-row compare answers a question about the
+// border rather than about the widget.
+auto row_text(const Screen& s, int y, int w) -> std::string {
+  return row_text(s, y, 0, w);
 }
 
 // Does anything on screen carry Button's pressed background?
@@ -291,40 +325,98 @@ TEST_CASE("a bar inside a dialog animates when the dialog is ticked",
   REQUIRE(row_text(before, 0, 20) != row_text(after, 0, 20));
 }
 
-TEST_CASE("a popped dialog's flash goes out only if it keeps getting ticks",
+// ── the showing boundary resets transient state (#122) ──────────────────────
+
+TEST_CASE("a re-shown dialog opens with no flash left over",
           "[widgettick][dialog][regression]") {
-  // The one failure of the forward-by-hand design that is NOT loud on first
-  // use: a standard dialog's button closes the dialog, so the flash never
-  // renders — and unless the app keeps ticking the dialog after the pop, the
-  // next showing opens with that button lit. Both halves are asserted here,
-  // because the first half is the trap and the second is the fix.
+  // The one failure of #69's forward-by-hand design that was NOT loud on first
+  // use: a standard dialog's button closes the dialog, so the flash is armed
+  // and the overlay popped in the same dispatch. It never renders — and before
+  // #122 it stayed lit into the next showing unless the app kept ticking a
+  // dialog that was no longer pushed. Nothing ticks anything here.
   MessageDialog dlg{"Title", "Body"};
   bool closed = false;
   dlg.on_close([&] { closed = true; });
 
   Screen s{40, 12};
   dlg.layout(s.cols(), s.rows());
-  REQUIRE(dlg.on_event(key(Key::Enter)));
+  dlg.draw(s);  // consume the first showing, so the next one is the claim
+  REQUIRE_FALSE(any_pressed_cell(s));
+
+  REQUIRE(dlg.on_event(key(Key::Enter)));  // arms, reports, closes: one dispatch
   REQUIRE(closed);
 
   s.clear();
-  dlg.draw(s);
-  REQUIRE(any_pressed_cell(s));  // still holding the flash it never showed
+  dlg.draw(s);  // the re-showing
+  REQUIRE_FALSE(any_pressed_cell(s));
+}
 
-  dlg.on_tick(Seconds{200ms});   // the app kept ticking it after the pop
+TEST_CASE("a flash inside a dialog still renders on an ordinary frame",
+          "[widgettick][dialog][regression]") {
+  // The anti-over-reset half, and the reason the REQUIRE_FALSEs above are not
+  // vacuous: a reset that fired on every draw() rather than on the boundary
+  // would pass every one of them while making the flash unrenderable. This
+  // button closes nothing, so its showing does not end.
+  ShowingDialog<Button> dlg;
+  dlg.child.set_label("[ OK ]");
+
+  Screen s{40, 12};
+  dlg.layout(s.cols(), s.rows());
+  dlg.draw(s);  // consume the first showing
+  REQUIRE_FALSE(any_pressed_cell(s));
+
+  REQUIRE(dlg.child.on_event(key(Key::Enter)));
+  s.clear();
+  dlg.draw(s);
+  REQUIRE(any_pressed_cell(s));  // an ordinary frame: the flash is on screen
+
+  dlg.report();  // now end the showing, the way an activation would
   s.clear();
   dlg.draw(s);
   REQUIRE_FALSE(any_pressed_cell(s));
 }
 
-TEST_CASE("FilePickerDialog ticks its own error dialog",
+TEST_CASE("a re-shown dialog rewinds its bar's pulse",
+          "[widgettick][dialog][regression]") {
+  // The generality claim: reset_transient is not a Button special case. Asserts
+  // against rendered rows, and against a never-ticked twin rather than a
+  // remembered string, so it cannot pass by comparing a row to itself.
+  ShowingDialog<ProgressBar> dlg;
+  dlg.child.set_indeterminate();
+
+  Screen s{40, 12};
+  dlg.layout(s.cols(), s.rows());
+  dlg.draw(s);  // consume the first showing; also places the bar
+
+  const Rect r = dlg.child.rect();
+  ProgressBar twin;
+  twin.set_indeterminate();
+  twin.set_geometry(r);
+  Screen fresh{40, 12};
+  twin.draw(fresh);
+
+  dlg.on_tick(Seconds{500ms});
+  s.clear();
+  dlg.draw(s);
+  REQUIRE(row_text(s, r.y, r.x, r.w) != row_text(fresh, r.y, r.x, r.w));
+
+  dlg.report();
+  s.clear();
+  dlg.draw(s);
+  REQUIRE(row_text(s, r.y, r.x, r.w) == row_text(fresh, r.y, r.x, r.w));
+}
+
+TEST_CASE("FilePickerDialog's error dialog heals itself on its next showing",
           "[widgettick][dialog][regression]") {
   // m_error is a member pushed as its own overlay, not an add_child, and the
-  // app has no handle on it — so Dialog::on_tick cannot reach it and neither
-  // can the app's tick list. Without FilePickerDialog::on_tick forwarding, its
-  // OK button holds a flash nothing can ever end: it re-opens lit, and because
-  // draw() prefers the flash palette over the focus one, that button also
-  // stops rendering focus for the life of the process.
+  // app has no handle on it — so neither Dialog::on_tick nor the app's tick
+  // list can reach it. #69 had to give the picker a bespoke on_tick override
+  // for exactly this one member; #122 deleted it, because arming that OK
+  // button's flash necessarily latches m_error's own result, so the next
+  // raise is a new showing and the boundary puts the flash out.
+  //
+  // Nothing is ticked anywhere in this test. That is the point: re-adding an
+  // on_tick forward would NOT make it pass.
   FilePickerDialog picker{"Open"};
   Dialog* raised = nullptr;
   picker.on_error_overlay([&](Dialog& d) { raised = &d; });
@@ -336,12 +428,17 @@ TEST_CASE("FilePickerDialog ticks its own error dialog",
   REQUIRE(raised != nullptr);
 
   raised->layout(s.cols(), s.rows());
-  REQUIRE(raised->on_event(key(Key::Enter)));  // OK: arms the flash, closes
   s.clear();
-  raised->draw(s);
-  REQUIRE(any_pressed_cell(s));
+  raised->draw(s);  // the error dialog's own first showing
+  REQUIRE_FALSE(any_pressed_cell(s));
 
-  picker.on_tick(Seconds{200ms});  // the app ticks the PICKER, not the error
+  REQUIRE(raised->on_event(key(Key::Enter)));  // OK: arms the flash, closes
+
+  // Cancel the picker, which latches ITS result, so its next draw is a new
+  // showing -> on_show -> refresh -> report_error raises the same dialog again.
+  REQUIRE(picker.on_event(key(Key::Escape)));
+  picker.draw(s);
+  raised->layout(s.cols(), s.rows());
   s.clear();
   raised->draw(s);
   REQUIRE_FALSE(any_pressed_cell(s));
@@ -351,14 +448,15 @@ TEST_CASE("FilePickerDialog ticks its own error dialog",
 
 TEST_CASE("a Widget that never heard of on_tick still builds and draws",
           "[widgettick]") {
-  // on_tick is a non-pure virtual with a no-op body precisely so that every
-  // existing Widget subclass — 18 in the library, more in this suite and in
-  // apps — keeps compiling untouched.
+  // on_tick and reset_transient are non-pure virtuals with no-op bodies
+  // precisely so that every existing Widget subclass — 18 in the library, more
+  // in this suite and in apps — keeps compiling untouched.
   LegacyWidget w;
   w.set_geometry({0, 0, 1, 1});
   Screen s{4, 1};
   w.draw(s);
-  w.on_tick(Seconds{100ms});  // reaches Widget's default, does nothing
+  w.on_tick(Seconds{100ms});   // reaches Widget's default, does nothing
+  w.reset_transient();         // ditto (#122)
   w.draw(s);
 
   REQUIRE(w.draws == 2);
