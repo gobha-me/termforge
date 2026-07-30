@@ -6,7 +6,60 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-30)
 
-**Latest release: `v0.2.2` — #60, the kitty keyboard protocol.** An app can now opt into
+**In flight: `v0.3.0` — #83 + #84, the pixel path stops being one pixel per
+cell.** `TerminalDriver::draw_image` now takes a destination **cell `Rect`**
+instead of a bare `(x, y)`, and `Widget::draw_pixels(Rect, Extent)` returns a
+borrowed `const Image*` the widget owns. Both are breaking; they ship together
+because they are the same virtual and the same consumer migration
+(`term-game`). #100 closes with them — with a cell rect the occupied extent is
+known by construction, and the new `image_cell_extent()` is the honest inverse
+of `preferred_pixel_extent()`, so both examples ask instead of guessing.
+
+What this actually fixed is not a missing feature. `KittyDriver` passed an
+`Image`'s **pixel** dimensions as the placement's **cell** dimensions, and one
+pixel per cell is exactly one solid colour per cell — which a `Cell` with a
+background colour already renders on every tier including `FallbackDriver`. The
+flagship graphics path could not draw anything the cell renderer could not.
+Hand it a 1280×720 painting and kitty was told to place it across 1280 columns
+and 720 rows.
+
+Five things worth carrying forward. (1) **The 297-cell placeholder limit
+changed axis.** It belongs to the diacritic table that indexes *cells*, so it
+now clamps the destination rect and the image transmits whole; cropping the
+image was the same thing back when a pixel was a cell, and is a silent loss of
+authored content now that it is not. (2) **`region_key` had to move to cell
+dims** — `c=`/`r=` are baked into a classic placement and only re-emitted when
+`!placed` — which also closes a latent aliasing bug, since the key truncates
+each field to `uint16` and pixel dimensions can exceed that where cell counts
+cannot. (3) **The sampler is integer, and that is a safety invariant**:
+`Image::at()` is unchecked, and `(i * src) / dst` is in range by construction
+where the float spelling can round up and index one past the last row. (4)
+**`WaveformWidget` was a rasterizer rewrite, not a rename** — at 640 columns
+against 256 samples the sample-to-column relationship inverts, so the
+per-column pixel poke became a span between consecutive columns; a poke at that
+scale draws a dotted scatter, not a curve. (5) **The cache key is a generation
+counter, not `dirty()`** — `dirty()` is advisory and `draw()` clears it, so a
+cache keyed on it goes stale the moment the cell and pixel passes interleave.
+
+Also here: `App` is still the library's only `TIOCGWINSZ` reader and now pushes
+cell geometry to the driver, on resize *before* the frame that would use it —
+push it after and every resize renders one frame at the wrong scale. A terminal
+reporting `ws_xpixel == 0` (tmux, the Linux console, plenty of emulators) keeps
+a nominal 8×16, which is deliberately not an `ErrorEvent`: a nominal cell is a
+correctly-shaped guess, not a degraded capability. One bug fixed in passing —
+`collect_pixel_regions` now requires a non-*empty* image, where an engaged
+optional holding an `Image{}` used to blank the covered cells and then be
+rejected by the driver, leaving a hole in the UI.
+
+Validated `-Werror` on g++ + clang + ASan/UBSan, 33/33 on each, and both
+examples captured under a pty on the fallback and half-block tiers (32×16 image
+→ 16 rows and 8 rows respectively, prompt below the image on both). **The kitty
+tier is the one thing this sandbox cannot check**, and it is where the change
+actually bites: `App`'s borrow-then-flush plumbing has no unit pin either,
+because `m_pixel_regions` is private and the collect pass gates on
+`kitty_graphics`. Both ride on the capture named in the PR.
+
+**Previous release: `v0.2.2` — #60, the kitty keyboard protocol.** An app can now opt into
 key **repeat and release**: `KeyEvent` gains `action`
 (`KeyAction::{Press,Repeat,Release}`, defaulting to `Press`), and
 `KeyboardMode` picks how much of the protocol the terminal is asked for —
