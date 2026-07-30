@@ -34,9 +34,11 @@
 
 #include <atomic>
 #include <chrono>
+#include <concepts>
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <vector>
@@ -49,6 +51,39 @@
 #include "termforge/widgets/widget.hpp"
 
 namespace termforge {
+
+namespace detail {
+
+// What route_mouse and tick_widgets accept besides a braced list: any
+// contiguous range holding exactly Widget* — vector, array, span, C array.
+//
+// A CONSTRAINED TEMPLATE rather than a plain std::span parameter, and the
+// constraint is load-bearing twice over (#123).
+//
+// It keeps a braced list out. A braced-init-list is a non-deduced context, so
+// this never competes with the initializer_list overload — which matters
+// because std::span's (iterator, sentinel) constructor is NOT explicit at
+// dynamic extent, and would otherwise swallow a two-element braced list of
+// Widget**. An app holding `Widget* m_page_a, *m_page_b` that writes
+// `route_mouse(ev, {&m_page_a, &m_page_b})` — a plain slip, the members are
+// already pointers — got a compile error before the container support existed.
+// Through a raw span parameter it silently becomes span(first, last): one
+// widget routed, the rest dropped, and garbage length if the members are not
+// adjacent. Exactly two elements is the dangerous arity; one and three or more
+// find no constructor. So the braced form stays with initializer_list and this
+// takes containers only.
+//
+// And same_as rather than convertible_to, because element types do not convert
+// through a range: std::vector<Button*> is NOT a std::vector<Widget*>, and
+// span<Widget* const> would reject it with a wall of constructor candidates.
+// Named here, the diagnostic says Button* is not Widget*. Hold widgets as
+// std::vector<Widget*> — the pointers convert on insert.
+template <class R>
+concept WidgetRange = std::ranges::contiguous_range<R> &&
+                      std::ranges::sized_range<R> &&
+                      std::same_as<std::ranges::range_value_t<R>, Widget*>;
+
+}  // namespace detail
 
 // What an overlay does to the frame beneath it before it draws.
 //   None — draw straight over the existing frame (a dropdown, a toast).
@@ -411,13 +446,19 @@ class App {
   // tick_widgets's doc used to dereference it here (#123).
   //
   // Two overloads, and the braced form is still the idiom. A braced list IS an
-  // initializer_list and cannot bind to a span until P2447 (C++26), so the span
-  // form is an ADDITION, for an app that keeps its widgets in a vector or an
-  // array rather than writing them out. route_mouse(ev, {&a, &b}) still picks
-  // the initializer_list overload, which forwards to the span one: one loop,
-  // one contract, no way for the two to drift.
-  auto route_mouse(const MouseEvent& ev,
-                   std::span<Widget* const> widgets) -> bool;
+  // initializer_list and cannot bind to a span until P2447 (C++26), so the
+  // container form is an ADDITION, for an app that keeps its hit targets in a
+  // std::vector<Widget*> rather than writing them out. route_mouse(ev, {&a,&b})
+  // still picks the initializer_list overload. Both funnel into one private
+  // implementation: one loop, one contract, no way for the two to drift.
+  //
+  // See detail::WidgetRange for why the container form is a constrained
+  // template and not a plain std::span parameter — a raw span would silently
+  // eat a two-element braced list of Widget**.
+  template <detail::WidgetRange R>
+  auto route_mouse(const MouseEvent& ev, const R& widgets) -> bool {
+    return route_mouse_span(ev, std::span<Widget* const>{widgets});
+  }
   auto route_mouse(const MouseEvent& ev,
                    std::initializer_list<Widget*> widgets) -> bool;
 
@@ -439,14 +480,32 @@ class App {
   // overlay rule above: popping only drops a pointer, but this list still
   // holds one, so drop it here before you destroy the widget.
   //
-  // Two overloads, same contract; see route_mouse above for why the span form
-  // is an addition and the braced form is still the blessed one.
-  auto tick_widgets(std::chrono::duration<double> dt,
-                    std::span<Widget* const> widgets) -> void;
+  // Two overloads, same contract; see route_mouse above for why the container
+  // form is a constrained template and the braced form is still the blessed
+  // one. One more caveat that only the container form has: the range is read
+  // as the tick runs, so a widget whose on_tick appends to the very container
+  // being ticked reallocates it underneath this loop. A braced list could not
+  // do that — it is a temporary array nobody else holds. Tick from a container
+  // you do not mutate during the tick.
+  template <detail::WidgetRange R>
+  auto tick_widgets(std::chrono::duration<double> dt, const R& widgets)
+      -> void {
+    tick_widgets_span(dt, std::span<Widget* const>{widgets});
+  }
   auto tick_widgets(std::chrono::duration<double> dt,
                     std::initializer_list<Widget*> widgets) -> void;
 
  private:
+  // The one loop each. Both public spellings funnel here, so the null contract
+  // and the iteration order are written once (#123). Private rather than
+  // protected: a subclass reaches them through the two forwarders above, and
+  // keeping the span out of the callable surface is what stops the
+  // (iterator, sentinel) hazard detail::WidgetRange exists to prevent.
+  auto route_mouse_span(const MouseEvent& ev,
+                        std::span<Widget* const> widgets) -> bool;
+  auto tick_widgets_span(std::chrono::duration<double> dt,
+                         std::span<Widget* const> widgets) -> void;
+
   // Flush collected pixel-region images to the driver. Called by run()
   // after renderer->present so images overlay cells.
   auto flush_pixel_regions() -> void;

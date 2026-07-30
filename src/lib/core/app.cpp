@@ -507,11 +507,11 @@ auto App::dim_screen(Screen& screen) -> void {
   }
 }
 
-// The span overloads hold the loops; the initializer_list ones forward. A
-// braced list cannot bind to a span until P2447 (C++26), so both spellings have
-// to exist -- but only one of them gets to define the contract (#123).
-auto App::route_mouse(const MouseEvent& ev,
-                      std::span<Widget* const> widgets) -> bool {
+// These two hold the loops; both public spellings forward here. A braced list
+// cannot bind to a span until P2447 (C++26), so both spellings have to exist --
+// but only one of them gets to define the contract (#123).
+auto App::route_mouse_span(const MouseEvent& ev,
+                           std::span<Widget* const> widgets) -> bool {
   // Check in reverse order (last registered = topmost). A null entry is
   // ABSENT, not opaque: skip it and keep descending, so a sometimes-populated
   // pointer behaves here the way it already does in tick_widgets (#123).
@@ -525,22 +525,24 @@ auto App::route_mouse(const MouseEvent& ev,
   return false;
 }
 
-auto App::route_mouse(const MouseEvent& ev,
-                      std::initializer_list<Widget*> widgets) -> bool {
-  const std::span<Widget* const> ws{widgets.begin(), widgets.size()};
-  return route_mouse(ev, ws);
-}
-
-auto App::tick_widgets(std::chrono::duration<double> dt,
-                       std::span<Widget* const> widgets) -> void {
+auto App::tick_widgets_span(std::chrono::duration<double> dt,
+                            std::span<Widget* const> widgets) -> void {
   for (Widget* w : widgets)
     if (w != nullptr) w->on_tick(dt);
 }
 
+// The braced spellings. span's range constructor, not (begin(), size()): an
+// empty braced list has a NULL begin(), and the two-argument form would rest
+// its "[first, first + count) is a valid range" precondition on nullptr + 0.
+// The range form asks no such question, and route_mouse(ev, {}) is legal.
+auto App::route_mouse(const MouseEvent& ev,
+                      std::initializer_list<Widget*> widgets) -> bool {
+  return route_mouse_span(ev, std::span<Widget* const>{widgets});
+}
+
 auto App::tick_widgets(std::chrono::duration<double> dt,
                        std::initializer_list<Widget*> widgets) -> void {
-  const std::span<Widget* const> ws{widgets.begin(), widgets.size()};
-  tick_widgets(dt, ws);
+  tick_widgets_span(dt, std::span<Widget* const>{widgets});
 }
 
 auto App::render_pixel_regions(Widget& widget) -> void {
