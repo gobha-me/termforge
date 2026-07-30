@@ -512,9 +512,12 @@ auto App::dim_screen(Screen& screen) -> void {
 // to exist -- but only one of them gets to define the contract (#123).
 auto App::route_mouse(const MouseEvent& ev,
                       std::span<Widget* const> widgets) -> bool {
-  // Check in reverse order (last registered = topmost).
+  // Check in reverse order (last registered = topmost). A null entry is
+  // ABSENT, not opaque: skip it and keep descending, so a sometimes-populated
+  // pointer behaves here the way it already does in tick_widgets (#123).
   for (auto it = widgets.end(); it != widgets.begin();) {
     --it;
+    if (*it == nullptr) continue;
     if ((*it)->hit_test(ev.x, ev.y)) {
       return (*it)->on_event(ev);
     }
