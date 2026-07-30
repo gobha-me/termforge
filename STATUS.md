@@ -6,11 +6,22 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-30)
 
-**Core framework, KittyDriver, and the full widget system are landed and
-tested.** 30 suites green with `-Werror` on gcc 13/14 + clang; ASan/UBSan
-clean.
+**Latest work: #86 — MapWidget v1 (glyph tier) landed.** Epic 3 is now fully
+DONE; ROADMAP 4.2 (`game.cpp`) is unblocked. `MapWidget` renders a tile grid —
+TileSet + widget-owned camera + painter's-algorithm layers — as a pure cell
+widget. v1 deliberately overrides **neither** `pixel_regions()` nor
+`draw_pixels()`: the kitty sprite tier is fully designed in
+`docs/map-widget.md` but gated on the #83 cell-rect contract (`draw_image`
+takes a cell rect) and #63's `Image` ops, and slots in later with no API
+break. Tile size is declared in cells (non-square `{2,1}` is the expected
+case); trailing partial tiles are not drawn; unknown tile ids resolve blank;
+the camera clamps to map bounds and re-clamps on viewport shrink. Tests in
+`test/29mapwidget` (23 cases) cover camera edges, `{2,1}` layout, the
+partial-tile rule, layer order/visibility/fallthrough, OOB safety, and
+mutate-redraw. Validated `-Werror` on g++-13/14 + clang, ASan/UBSan, 31/31
+green on each.
 
-**Latest release: `v0.1.18`** (2026-07-30) — **#63, closed: `Image` gains
+**Previous release: `v0.1.18`** (2026-07-30) — **#63, closed: `Image` gains
 `sub`/`blit`/`blend`/`fill`, and the alpha channel finally means something.**
 
 *What was wrong:* `Pixel` had carried an alpha channel since the beginning and
