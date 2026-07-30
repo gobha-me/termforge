@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "detail/sample.hpp"
+
 namespace termforge {
 
 WaveformWidget::WaveformWidget(int capacity)
@@ -12,6 +14,7 @@ auto WaveformWidget::push(float value) -> void {
   m_samples.push_back(value);
   if (static_cast<int>(m_samples.size()) > m_capacity)
     m_samples.pop_front();
+  ++m_gen;
   mark_dirty();
 }
 
@@ -23,11 +26,13 @@ auto WaveformWidget::set_range(float min, float max) -> void {
   m_auto_range = false;
   m_min = min;
   m_max = max;
+  ++m_gen;
   mark_dirty();
 }
 
 auto WaveformWidget::auto_range() -> void {
   m_auto_range = true;
+  ++m_gen;
   mark_dirty();
 }
 
@@ -115,15 +120,25 @@ auto WaveformWidget::pixel_regions() -> std::vector<Rect> {
   return {rect()};
 }
 
-auto WaveformWidget::draw_pixels(Rect region) -> std::optional<Image> {
-  if (m_samples.empty() || region.w <= 0 || region.h <= 0)
-    return std::nullopt;
+auto WaveformWidget::draw_pixels(Rect region, Extent pixels) -> const Image* {
+  if (m_samples.empty() || region.w <= 0 || region.h <= 0 || pixels.empty())
+    return nullptr;
+
+  // Rasterizing at device resolution is real work -- 640x384 is a quarter of a
+  // million pixels -- so skip it when neither the data nor the resolution has
+  // moved. The buffer is returned either way: it is owned here, per the
+  // lifetime contract on Widget::draw_pixels.
+  if (m_raster_valid && m_raster_gen == m_gen && m_raster_extent == pixels)
+    return &m_raster;
 
   const auto [lo, hi] = compute_range(m_samples, m_auto_range, m_min, m_max);
 
-  // One pixel per cell for now (kitty maps 1:1).
-  const int w = region.w;
-  const int h = region.h;
+  // Rasterize at the resolution the driver asked for, not at the cell count.
+  // This is the whole point of #83: at a nominal 8x16 cell an 80x24 region is
+  // 640x384 real pixels, where before it was 80x24 -- one solid colour per
+  // cell, which the cell renderer could already do on every tier.
+  const int w = pixels.w;
+  const int h = pixels.h;
   const auto count = static_cast<std::size_t>(w) * h;
 
   const Pixel bg_px{m_bg.r, m_bg.g, m_bg.b, 255};
@@ -132,26 +147,47 @@ auto WaveformWidget::draw_pixels(Rect region) -> std::optional<Image> {
                       static_cast<std::uint8_t>(m_fg.g / 3),
                       static_cast<std::uint8_t>(m_fg.b / 3), 255};
 
-  std::vector<Pixel> pixels(count, bg_px);
+  std::vector<Pixel> buf(count, bg_px);
 
   const int visible = std::min(static_cast<int>(m_samples.size()), w);
   const int start = static_cast<int>(m_samples.size()) - visible;
 
-  // Filled area chart: bright line at the sample value, dim fill below.
-  for (int col = 0; col < visible; ++col) {
-    const float val = m_samples[static_cast<std::size_t>(start + col)];
+  const auto y_for = [&](int sample) {
+    const float val = m_samples[static_cast<std::size_t>(start + sample)];
     const float norm = std::clamp((val - lo) / (hi - lo), 0.0f, 1.0f);
     // y=0 is top in image coordinates; norm=1 should be at top.
-    const int y_pos =
-        h - 1 - static_cast<int>(norm * static_cast<float>(h - 1));
+    return h - 1 - static_cast<int>(norm * static_cast<float>(h - 1));
+  };
 
-    for (int y = y_pos + 1; y < h; ++y)
-      pixels[static_cast<std::size_t>(y) * w + col] = fill_px;
+  // Filled area chart: bright line at the sample value, dim fill below.
+  //
+  // Every destination column gets a sample now, where before there was one
+  // column per sample and the rest of the image stayed background. At device
+  // resolution the relationship inverts -- 640 columns against maybe 256
+  // samples -- so the line is drawn as a SPAN between consecutive columns
+  // rather than a single pixel. Poking one pixel per column at this scale
+  // draws a dotted scatter, not a curve, because adjacent samples can be
+  // hundreds of pixels apart.
+  int y_prev = y_for(detail::sample_index(0, visible, w));
+  for (int col = 0; col < w; ++col) {
+    const int y_cur = y_for(detail::sample_index(col, visible, w));
 
-    pixels[static_cast<std::size_t>(y_pos) * w + col] = fg_px;
+    for (int y = y_cur + 1; y < h; ++y)
+      buf[static_cast<std::size_t>(y) * w + col] = fill_px;
+
+    const int y_top = std::min(y_prev, y_cur);
+    const int y_bot = std::max(y_prev, y_cur);
+    for (int y = y_top; y <= y_bot; ++y)
+      buf[static_cast<std::size_t>(y) * w + col] = fg_px;
+
+    y_prev = y_cur;
   }
 
-  return Image{w, h, std::move(pixels)};
+  m_raster = Image{w, h, std::move(buf)};
+  m_raster_extent = pixels;
+  m_raster_gen = m_gen;
+  m_raster_valid = true;
+  return &m_raster;
 }
 
 }  // namespace termforge

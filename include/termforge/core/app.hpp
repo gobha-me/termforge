@@ -452,9 +452,17 @@ class App {
   Input m_input;
 
   // Pixel regions collected during on_render, flushed after present.
+  //
+  // The image is BORROWED, never owned (#84): the widget holds the storage and
+  // guarantees it until its next draw_pixels() call. Both ends of that window
+  // are inside one frame_step -- collect runs in on_render, flush runs after
+  // present -- and clearing this vector at the top of the next frame happens
+  // before any widget code runs. Owning it instead would copy the whole
+  // buffer out of a widget's cache every frame, which is the entire point of
+  // the change.
   struct PixelRegion {
     Rect rect;
-    Image image;
+    const Image* image{nullptr};
   };
   std::vector<PixelRegion> m_pixel_regions;
 

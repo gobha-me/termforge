@@ -60,11 +60,33 @@ class Widget {
   // frame before the pixel pass. Empty (default) = no pixel rendering.
   virtual auto pixel_regions() -> std::vector<Rect> { return {}; }
 
-  // Provide pixel data for a region. Called only when the active driver
-  // supports images AND the region was declared via pixel_regions().
-  // Return nullopt to fall back to cells for this frame.
-  virtual auto draw_pixels(Rect /*region*/) -> std::optional<Image> {
-    return std::nullopt;
+  // Provide pixel data for a region, rasterized at `pixels` -- the resolution
+  // the active driver asked for via preferred_pixel_extent(). A widget has no
+  // driver access by design (docs/pixel-regions.md rejects that as
+  // alternative A), so the App is what carries the answer here. Called only
+  // when the active driver supports images AND the region was declared via
+  // pixel_regions(). Return nullptr to fall back to cells this frame.
+  //
+  // LIFETIME -- the widget owns the buffer, and the App only borrows it. The
+  // returned pixels must stay valid and unmodified until this widget's next
+  // draw_pixels() call or its destruction, whichever comes first; returning
+  // the address of a member satisfies that, and a widget that builds a fresh
+  // image every frame just keeps a scratch member.
+  //
+  // A widget declaring N regions from pixel_regions() must own N DISTINCT
+  // buffers. The App calls draw_pixels once per region and holds every view
+  // at once, so two regions served from one scratch member leave the first
+  // pointer valid and its contents overwritten -- the one sharp edge in this
+  // contract that no type catches.
+  //
+  // The return was std::optional<Image> BY VALUE until #84. That was free
+  // while the whole path ran at one pixel per cell; at the device resolution
+  // #83 unlocked, an 80x24 region is ~983 KB, and copying it 60 times a
+  // second to hand the App something it immediately moves is ~59 MB/s of
+  // memcpy for a buffer that did not change.
+  virtual auto draw_pixels(Rect /*region*/, Extent /*pixels*/)
+      -> const Image* {
+    return nullptr;
   }
 
   auto set_geometry(Rect r) -> void { m_rect = r; }
