@@ -89,8 +89,12 @@ constexpr auto operator&=(Attr& a, Attr b) -> Attr& {
 struct Rect {
   int x{0}, y{0}, w{0}, h{0};
 
+  // int64 for the same reason intersect() uses it: x + w overflows for a rect
+  // near INT_MAX, and a wrapped comparison answers "outside" for a point that
+  // is inside.
   [[nodiscard]] constexpr auto contains(int px, int py) const noexcept -> bool {
-    return px >= x && px < x + w && py >= y && py < y + h;
+    using i64 = std::int64_t;
+    return px >= x && i64{px} < i64{x} + w && py >= y && i64{py} < i64{y} + h;
   }
 
   [[nodiscard]] constexpr auto empty() const noexcept -> bool {
@@ -134,36 +138,66 @@ class Image {
  public:
   Image() = default;
 
-  // The buffer is NORMALIZED to exactly width*height pixels: a short buffer is
-  // padded with default Pixels, a long one truncated, and any non-positive
-  // dimension collapses the image to empty.
+  // INVARIANT: m_pixels.size() == width*height, always. A buffer that does not
+  // satisfy it, or a non-positive dimension, yields an EMPTY image.
   //
   // This is not politeness. `at()`, the region ops below, and the kitty
   // transmit path all derive their extent from the *dimensions*, never from
   // the vector's size (see image_hash / transmit in kitty_driver.cpp) — so a
   // buffer that disagrees with them is an out-of-bounds read whose bytes get
-  // base64'd to the terminal. The drivers' `empty()` guard does not catch it:
-  // a short-but-non-empty buffer sails straight past. And a constructor is the
-  // only place the invariant can be established, because there is no mutable
-  // access to the buffer afterwards.
+  // base64'd to the terminal. The drivers' `empty()` guard does not catch a
+  // short-but-non-empty buffer on its own. And a constructor is the only place
+  // the invariant can be established, because there is no mutable access to the
+  // buffer afterwards.
   //
-  // Padding uses a default Pixel (opaque black) rather than transparent on
-  // purpose: a short buffer is a caller bug, and a visible black band is
-  // diagnosable where invisible transparency is not.
+  // Collapsing to empty rather than padding the buffer out to width*height is
+  // deliberate, on three counts. It cannot allocate, so it cannot throw:
+  // `Image{100000, 100000, {}}` would otherwise turn a caller's bad arithmetic
+  // into a 40 GB request and a std::bad_alloc out of a constructor that used to
+  // be free. It cannot silently fabricate pixels the caller never supplied. And
+  // it routes the mistake into the existing degradation path instead of hiding
+  // it — every driver already answers an empty image with
+  // `ErrorEvent{Severity::Warning, …, "draw_image: empty image"}`, which is the
+  // event AGENTS.md requires rather than a silent downgrade.
   Image(int width, int height, std::vector<Pixel> pixels)
       : m_width(width > 0 ? width : 0),
         m_height(height > 0 ? height : 0),
         m_pixels(std::move(pixels)) {
     const auto need = static_cast<std::size_t>(m_width) *
                       static_cast<std::size_t>(m_height);
-    if (need == 0) {
+    if (need == 0 || m_pixels.size() != need) {
       m_width = 0;
       m_height = 0;
       m_pixels.clear();
-    } else if (m_pixels.size() != need) {
-      m_pixels.resize(need);
     }
   }
+
+  // Moving must not leave the invariant broken. The defaulted move empties
+  // m_pixels but leaves m_width/m_height at their old values, so the moved-from
+  // Image would claim a size it no longer has — and since the region ops take
+  // their extent from the dimensions and do NOT consult empty(), the next
+  // fill()/blend() on it writes through a null data() pointer. Zero the source
+  // instead, which leaves it a valid empty image.
+  Image(Image&& other) noexcept
+      : m_width(other.m_width),
+        m_height(other.m_height),
+        m_pixels(std::move(other.m_pixels)) {
+    other.m_width = 0;
+    other.m_height = 0;
+  }
+  auto operator=(Image&& other) noexcept -> Image& {
+    if (this != &other) {
+      m_width = other.m_width;
+      m_height = other.m_height;
+      m_pixels = std::move(other.m_pixels);
+      other.m_width = 0;
+      other.m_height = 0;
+    }
+    return *this;
+  }
+  Image(const Image&) = default;
+  auto operator=(const Image&) -> Image& = default;
+  ~Image() = default;
 
   [[nodiscard]] auto width() const noexcept -> int { return m_width; }
   [[nodiscard]] auto height() const noexcept -> int { return m_height; }

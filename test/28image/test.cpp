@@ -135,23 +135,66 @@ TEST_CASE("Rect: contains still tests the half-open interior", "[image][rect]") 
 // suite under cmake/toolchain/address.cmake and they are where ASan earns its
 // keep.
 
-TEST_CASE("Image: a short pixel buffer is padded to width*height",
+TEST_CASE("Image: a buffer that disagrees with the dimensions yields empty",
           "[image][failure]") {
-  const Image img{4, 4, std::vector<Pixel>(2, Pixel{1, 2, 3, 4})};
-  REQUIRE(img.width() == 4);
-  REQUIRE(img.height() == 4);
-  REQUIRE_FALSE(img.empty());
-  // The whole buffer is addressable — this read is the one that was OOB.
-  REQUIRE(img.at(3, 3) == Pixel{});
-  REQUIRE(img.at(0, 0) == Pixel{1, 2, 3, 4});
+  // Short. Before #63 this constructed a 4x4 whose at(3,3) read past the end of
+  // an 8-byte allocation, and the drivers' empty() guard did not catch it.
+  const Image short_buf{4, 4, std::vector<Pixel>(2, Pixel{1, 2, 3, 4})};
+  REQUIRE(short_buf.empty());
+  REQUIRE(short_buf.width() == 0);
+  REQUIRE(short_buf.height() == 0);
+  REQUIRE(short_buf.pixels().empty());
+
+  // Long.
+  const Image long_buf{2, 2, std::vector<Pixel>(99, Pixel{9, 9, 9, 9})};
+  REQUIRE(long_buf.empty());
+  REQUIRE(long_buf.width() == 0);
+  REQUIRE(long_buf.height() == 0);
 }
 
-TEST_CASE("Image: a long pixel buffer is truncated to width*height",
+TEST_CASE("Image: a mismatched buffer does not allocate to the dimensions",
           "[image][failure]") {
-  const Image img{2, 2, std::vector<Pixel>(99, Pixel{9, 9, 9, 9})};
-  REQUIRE(img.width() == 2);
-  REQUIRE(img.height() == 2);
-  REQUIRE(img.at(1, 1) == Pixel{9, 9, 9, 9});
+  // Collapsing rather than padding is what keeps this from being a 40 GB
+  // request and a std::bad_alloc out of a constructor that cannot report one.
+  // A caller's bad arithmetic must not be amplified into an allocation.
+  const Image absurd{100000, 100000, std::vector<Pixel>(4)};
+  REQUIRE(absurd.empty());
+  REQUIRE(absurd.width() == 0);
+  REQUIRE(absurd.height() == 0);
+}
+
+TEST_CASE("Image: a moved-from image is a valid empty image",
+          "[image][failure]") {
+  // The defaulted move would empty m_pixels and leave the dimensions alone, so
+  // the moved-from image would claim a size it no longer has. The region ops
+  // take their extent from the DIMENSIONS and never consult empty(), so the
+  // next fill() on it wrote through a null data() pointer.
+  Image src = solid(8, 8, kMark);
+
+  const Image moved = std::move(src);
+  REQUIRE(moved.width() == 8);
+  REQUIRE(moved.height() == 8);
+
+  REQUIRE(src.width() == 0);          // NOLINT(bugprone-use-after-move)
+  REQUIRE(src.height() == 0);
+  REQUIRE(src.empty());
+  REQUIRE(src.pixels().empty());
+  // Each of these segfaulted before the move constructor zeroed the source.
+  src.fill(Rect{0, 0, 8, 8}, kBg);
+  src.blend(solid(2, 2, Pixel{1, 2, 3, 128}), 0, 0);
+  src.blit(solid(2, 2, kMark), 0, 0);
+  REQUIRE(src.sub(Rect{0, 0, 8, 8}).empty());
+  REQUIRE(src.empty());
+
+  // Move ASSIGNMENT has the same obligation.
+  Image a = solid(4, 4, kMark);
+  Image b;
+  b = std::move(a);
+  REQUIRE(b.width() == 4);
+  REQUIRE(a.width() == 0);            // NOLINT(bugprone-use-after-move)
+  REQUIRE(a.empty());
+  a.fill(Rect{0, 0, 4, 4}, kBg);
+  REQUIRE(a.empty());
 }
 
 TEST_CASE("Image: a non-positive dimension collapses the image to empty",
@@ -397,9 +440,9 @@ TEST_CASE("Image: blend over a translucent destination composites alpha",
           "[image]") {
   Image dst = solid(1, 1, Pixel{0, 0, 255, 128});
   dst.blend(solid(1, 1, Pixel{255, 0, 0, 128}), 0, 0);
-  // dc  = div255(128*127) = 64;  a_o = 128 + 64 = 192
-  // R   = round(255*128 / 192) = round(170.0) = 170
-  // B   = round(255*64  / 192) = round(85.0)  = 85
+  // dcw = 128*127 = 16256;  aos = 128*255 + 16256 = 48896;  a_o = div255 = 192
+  // R   = round(255*128*255 / 48896) = round(170.2...) = 170
+  // B   = round(255*16256   / 48896) = round(84.8...)  = 85
   // The 2:1 colour ratio matches the 128:64 alpha ratio, and 170 + 85 == 255.
   REQUIRE(dst.at(0, 0) == Pixel{170, 0, 85, 192});
 }
@@ -412,6 +455,44 @@ TEST_CASE("Image: blend over a fully transparent destination yields the source",
   // Nothing to composite against: the destination contributes no coverage, so
   // its colour must not leak in.
   REQUIRE(dst.at(0, 0) == src);
+}
+
+TEST_CASE("Image: blend's general path is correctly rounded Porter-Duff",
+          "[image]") {
+  // The general path must equal exact real-valued straight-alpha compositing
+  // rounded to nearest ONCE, at the end:
+  //   C_o = (C_s*a_s*255 + C_d*a_d*(255-a_s)) / (a_s*255 + a_d*(255-a_s))
+  // Rounding the destination weight a_d*(1-a_s) to 8 bits before dividing by it
+  // is off by up to 4/255, worst when that weight is tiny. This case is the
+  // exhaustive argmax: it returned 99 before the weight was kept at 255x scale.
+  const Pixel faint_src{0, 0, 0, 13};
+  const Pixel faint_dst{243, 243, 243, 10};
+  REQUIRE(termforge::detail::source_over(faint_src, faint_dst) ==
+          Pixel{103, 103, 103, 22});
+
+  // Exhaustive over both alphas for one colour pair, against the exact ratio in
+  // 64-bit integers (rational, so this is the real-valued answer, not a float
+  // approximation of it).
+  for (int as = 1; as <= 254; ++as) {
+    for (int ad = 1; ad <= 255; ++ad) {
+      const auto inv = static_cast<std::uint64_t>(255 - as);
+      const std::uint64_t den = static_cast<std::uint64_t>(as) * 255U + ad * inv;
+      const auto exact = [&](std::uint64_t cs, std::uint64_t cd) {
+        const std::uint64_t num = cs * static_cast<std::uint64_t>(as) * 255U +
+                                  cd * static_cast<std::uint64_t>(ad) * inv;
+        return static_cast<std::uint8_t>((2 * num + den) / (2 * den));
+      };
+      const Pixel s{0, 128, 255, static_cast<std::uint8_t>(as)};
+      const Pixel d{243, 128, 7, static_cast<std::uint8_t>(ad)};
+      const Pixel got = termforge::detail::source_over(s, d);
+      REQUIRE(got.r == exact(s.r, d.r));
+      REQUIRE(got.g == exact(s.g, d.g));
+      REQUIRE(got.b == exact(s.b, d.b));
+      // a_o is round((a_s*255 + a_d*(255-a_s))/255) either way.
+      REQUIRE(got.a == termforge::detail::div255(
+                           static_cast<std::uint32_t>(den)));
+    }
+  }
 }
 
 TEST_CASE("Image: blend's fast and general paths agree bit-exactly",
@@ -543,6 +624,107 @@ TEST_CASE("Image: fill to transparent clears a region", "[image]") {
 }
 
 // ── the invariant survives every op ─────────────────────────────────────────
+
+// ── an image as its own source ───────────────────────────────────────────────
+//
+// Scrolling a framebuffer in place is the obvious use for the src_rect
+// overloads. blit's per-row memcpy is UB on overlapping ranges (ASan reports
+// memcpy-param-overlap), and blend's ascending loop would read pixels it had
+// just written, smearing the row.
+
+TEST_CASE("Image: blitting an image onto itself shifts without smearing",
+          "[image][failure]") {
+  // A 6x1 ramp shifted right by one. Reading through a copy is what makes the
+  // overlapping ranges safe; a forward memcpy would smear 10 across the row.
+  Image img{6, 1,
+            std::vector<Pixel>{Pixel{10, 0, 0, 255}, Pixel{20, 0, 0, 255},
+                               Pixel{30, 0, 0, 255}, Pixel{40, 0, 0, 255},
+                               Pixel{50, 0, 0, 255}, Pixel{60, 0, 0, 255}}};
+  img.blit(img, Rect{0, 0, 5, 1}, 1, 0);
+  const std::uint8_t want[] = {10, 10, 20, 30, 40, 50};
+  for (int x = 0; x < 6; ++x) REQUIRE(img.at(x, 0).r == want[x]);
+}
+
+TEST_CASE("Image: blitting an image onto itself shifts the other way too",
+          "[image][failure]") {
+  // The opposite direction, where a naive backward traversal would smear.
+  Image img{6, 1,
+            std::vector<Pixel>{Pixel{10, 0, 0, 255}, Pixel{20, 0, 0, 255},
+                               Pixel{30, 0, 0, 255}, Pixel{40, 0, 0, 255},
+                               Pixel{50, 0, 0, 255}, Pixel{60, 0, 0, 255}}};
+  img.blit(img, Rect{1, 0, 5, 1}, 0, 0);
+  const std::uint8_t want[] = {20, 30, 40, 50, 60, 60};
+  for (int x = 0; x < 6; ++x) REQUIRE(img.at(x, 0).r == want[x]);
+}
+
+TEST_CASE("Image: self-blit matches going through an explicit copy",
+          "[image][failure]") {
+  // Rows as well as columns, on a checker so a stride error cannot hide.
+  const Image before = checker(7, 5, kA, kB);
+  for (const auto& [dx, dy] : std::vector<std::pair<int, int>>{
+           {1, 0}, {-1, 0}, {0, 1}, {0, -1}, {2, 2}, {-2, -2}, {3, -1}}) {
+    Image in_place = before;
+    in_place.blit(in_place, Rect{0, 0, 7, 5}, dx, dy);
+
+    Image via_copy = before;
+    via_copy.blit(before, Rect{0, 0, 7, 5}, dx, dy);
+
+    REQUIRE(same(in_place, via_copy));
+  }
+}
+
+TEST_CASE("Image: blending an image onto itself matches an explicit copy",
+          "[image][failure]") {
+  // Translucent, so the composite actually depends on what it reads.
+  std::vector<Pixel> px;
+  for (int i = 0; i < 6; ++i)
+    px.push_back(Pixel{static_cast<std::uint8_t>(i * 40), 0, 0, 128});
+  const Image before{6, 1, px};
+
+  for (const int dx : {1, -1, 2, -2}) {
+    Image in_place = before;
+    in_place.blend(in_place, Rect{0, 0, 6, 1}, dx, 0);
+
+    Image via_copy = before;
+    via_copy.blend(before, Rect{0, 0, 6, 1}, dx, 0);
+
+    REQUIRE(same(in_place, via_copy));
+  }
+}
+
+// ── op-level overflow ────────────────────────────────────────────────────────
+
+TEST_CASE("Image: a trimmed source rect with an extreme offset does not "
+          "overflow",
+          "[image][failure]") {
+  // clip_placement shifts the paste origin by whatever the source clip trimmed
+  // off the left/top. In int that is `INT_MAX + 4` — signed overflow, and the
+  // exact adversarial input Rect::intersect went to int64 to survive. Run under
+  // -fsanitize=undefined; that is where this case earns its keep.
+  const Image src = solid(8, 8, kMark);
+  const Image before = checker(4, 4, kA, kB);
+
+  for (const auto& [dx, dy] : std::vector<std::pair<int, int>>{
+           {INT_MAX, 0}, {0, INT_MAX}, {INT_MIN, 0}, {0, INT_MIN},
+           {INT_MAX, INT_MAX}, {INT_MIN, INT_MIN}}) {
+    Image dst = before;
+    dst.blit(src, Rect{-4, -4, 8, 8}, dx, dy);
+    dst.blend(src, Rect{-4, -4, 8, 8}, dx, dy);
+    // Nothing can land on the destination from that far away.
+    REQUIRE(same(dst, before));
+  }
+}
+
+TEST_CASE("Rect: contains does not overflow near the coordinate limits",
+          "[image][rect][failure]") {
+  // x + w wraps negative in int, so a point genuinely inside reads as outside.
+  const Rect huge{INT_MAX - 2, INT_MAX - 2, 4, 4};
+  REQUIRE(huge.contains(INT_MAX - 2, INT_MAX - 2));
+  REQUIRE(huge.contains(INT_MAX, INT_MAX));
+  const Rect low{INT_MIN, INT_MIN, 4, 4};
+  REQUIRE(low.contains(INT_MIN, INT_MIN));
+  REQUIRE_FALSE(low.contains(INT_MIN + 4, INT_MIN));
+}
 
 TEST_CASE("Image: pixels() length always matches the dimensions", "[image]") {
   const auto check = [](const Image& i) {
