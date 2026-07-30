@@ -1,6 +1,7 @@
 #include "termforge/widgets/progress_bar.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <string_view>
 
 #include "detail/width.hpp"
@@ -14,8 +15,26 @@ auto ProgressBar::set_value(float v) -> void {
 }
 
 auto ProgressBar::set_indeterminate(bool on) -> void {
+  // Gated on the transition, like Widget::set_focused. Resetting on every call
+  // pinned the pulse at its start for any app that set the mode each frame,
+  // and now that draw() no longer animates, that failure would look exactly
+  // like "you forgot to forward ticks".
+  if (m_indeterminate == on) return;
   m_indeterminate = on;
-  if (on) m_pulse = 0;
+  if (on) m_pulse_cells = 0.0;
+  mark_dirty();
+}
+
+auto ProgressBar::set_pulse_rate(float cells_per_second) -> void {
+  m_pulse_rate = std::max(0.0f, cells_per_second);
+  mark_dirty();
+}
+
+auto ProgressBar::on_tick(std::chrono::duration<double> dt) -> void {
+  // A determinate bar has nothing to advance, and a tick carrying no time is
+  // not a content change — the first frame of a run delivers dt == 0.
+  if (!m_indeterminate || dt <= std::chrono::duration<double>::zero()) return;
+  m_pulse_cells += dt.count() * static_cast<double>(m_pulse_rate);
   mark_dirty();
 }
 
@@ -33,10 +52,15 @@ auto ProgressBar::draw(Screen& screen) -> void {
   const int y = r.y + r.h / 2;  // draw on middle row
 
   if (m_indeterminate) {
-    // Pulse: a moving window of fill that bounces left-right.
+    // Pulse: a moving window of fill that bounces left-right. The travelled
+    // distance is reduced against the CURRENT width here rather than in
+    // on_tick, which cannot trust rect() (widget.hpp) — and the reduction
+    // happens in double, before any cast, so a bar left running for months
+    // does not overflow its way out of the animation.
     constexpr int kPulseWidth = 8;
     const int range = r.w + kPulseWidth * 2;
-    const int pos = (m_pulse % (range * 2));
+    const double period = 2.0 * range;
+    const int pos = static_cast<int>(std::fmod(m_pulse_cells, period));
     const int effective = pos < range ? pos : range * 2 - pos;
     const int start = effective - kPulseWidth;
 
@@ -45,7 +69,6 @@ auto ProgressBar::draw(Screen& screen) -> void {
       screen.write_text(r.x + x, y, in_pulse ? "█" : "─",
                         in_pulse ? m_fill_fg : m_empty_fg, m_bg);
     }
-    ++m_pulse;
   } else {
     // Determinate: filled portion + empty portion.
     const int filled = static_cast<int>(m_value * static_cast<float>(r.w));
@@ -74,10 +97,9 @@ auto ProgressBar::draw(Screen& screen) -> void {
     }
   }
 
-  // An indeterminate bar animates every frame, so its content genuinely
-  // differs next frame — it stays dirty. A determinate bar is settled once
-  // painted (set_value() re-marks it dirty on change).
-  if (!m_indeterminate) clear_dirty();
+  // Settled once painted, in both modes: what makes an indeterminate bar dirty
+  // again is on_tick moving the pulse, not the act of drawing it (#69).
+  clear_dirty();
 }
 
 }  // namespace termforge
