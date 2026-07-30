@@ -53,9 +53,13 @@
 namespace termforge::detail {
 
 // One wheel tick moves the window one row. NOT ListWidget's 3
-// (list_widget.cpp): that is a step for a viewport tens of rows tall, and a
-// dropdown window is routinely 2-5, where 3 overshoots a whole page. Do not
-// "unify" the two constants -- they are sized for different things.
+// (detail/viewport.hpp's kWheelStep): that is a step for a viewport tens of
+// rows tall, and a dropdown window is routinely 2-5, where 3 overshoots a
+// whole page. Do not "unify" the two constants -- they are sized for different
+// things. (A dropdown is also, per #35, a picker over a fixed set rather than
+// a viewport: it CONSUMES the wheel to keep it from leaking to the widget
+// beneath the open list, which is a modal-absorption decision, not the
+// view-scrolling the scrollable widgets adopted in Q1.)
 inline constexpr int kDropdownWheelStep = 1;
 
 // The offset the window is ACTUALLY drawn at, given a window height. Callers

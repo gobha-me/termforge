@@ -169,6 +169,13 @@ class TableWidget final : public Widget {
   // Compute effective column widths (auto-size if width==0).
   auto compute_widths() const -> std::vector<int>;
 
+  // Pull the scroll window onto the selected row (the arrow-key direction:
+  // the selection moved, so the window follows). Called on selection change
+  // -- set_selected and the arrow/PageUp/PageDown/Home/End keys. NOT from
+  // draw(): the wheel may have scrolled the selection out of view on purpose
+  // (#35 Q2), and draw()'s clamp is bounds-only.
+  auto ensure_visible() -> void;
+
   // Render a single cell with alignment.
   static auto render_cell(Screen& screen, int x, int y, int w,
                           const std::string& text, Align align, Rgb fg,
