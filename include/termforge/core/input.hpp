@@ -51,6 +51,12 @@ class Input {
   // Push a resize event (from the SIGWINCH handler).
   auto push_resize(int cols, int rows) -> void;
 
+  // Push a degradation notice into the queue so it reaches the app through
+  // the ordinary drain (#60). setup() has no event loop of its own yet, and
+  // returning it would mean inventing a second delivery channel for something
+  // that is not a failure.
+  auto push_error(ErrorEvent e) -> void;
+
  private:
   std::deque<Event> m_events;
   std::string m_pending;     // incomplete sequence carried across feed() calls

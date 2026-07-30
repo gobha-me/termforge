@@ -111,6 +111,30 @@ class App {
     return m_term.mouse_mode();
   }
 
+  // ── keyboard protocol (#60) ──
+  // Which kitty keyboard-protocol tier the terminal is asked for. Default
+  // Legacy: presses only, and not a byte different from any earlier TermForge.
+  // Opt in to KeyboardMode::Enhanced for KeyAction::Repeat/Release on ordinary
+  // letters — the tier a real-time app needs for hold-to-move — or
+  // Disambiguate to tell Ctrl+I from Tab while text keeps arriving as text.
+  // Set it before run(); safe to call mid-run (the terminal is switched live).
+  //
+  // On a terminal without the protocol the app gets press-only input and one
+  // ErrorEvent{Severity::Info, "keyboard"} on the first frame, never a silent
+  // downgrade — so a game can fall back to discrete steps knowingly. See
+  // docs/keyboard-protocol.md.
+  auto set_keyboard_mode(KeyboardMode mode) -> void {
+    m_term.set_keyboard_mode(mode);
+  }
+  [[nodiscard]] auto keyboard_mode() const noexcept -> KeyboardMode {
+    return m_term.keyboard_mode();
+  }
+
+  // What the startup probe found. Empty until setup() has run.
+  [[nodiscard]] auto capabilities() const noexcept -> const Capabilities& {
+    return m_caps;
+  }
+
   // ── override points ──
   // Handle one event (input, resize, error). Default: ESC / Ctrl+C quits.
   virtual auto on_event(const Event& ev) -> void;
@@ -273,6 +297,13 @@ class App {
     const bool was = m_resize_pending.exchange(false);
     return was;
   }
+  // setup()/teardown() over whatever tty the test has arranged (a pty). run()
+  // stays untestable — it would loop — but the *startup* half is not: the
+  // probe, the capability result and the events setup() queues are only
+  // observable through the real thing. Used by test/31keyboard to pin the
+  // keyboard fallback event end to end.
+  auto test_setup() -> std::expected<void, ErrorEvent> { return setup(); }
+  auto test_teardown() -> void { teardown(); }
   // Drive the real loop body `frames` times with no tty: no termios, no
   // signal handlers, no setup()/teardown(). Builds a Screen and a Renderer
   // over a FallbackDriver whose output goes to `sink` (pass nullptr to
@@ -407,6 +438,10 @@ class App {
   auto wait_frame(std::chrono::steady_clock::time_point frame_start) -> void;
 
   Terminal m_term;
+  // What the startup probe found. A member rather than a setup() local (#60):
+  // "did the terminal answer the keyboard query" has to outlive the probe to
+  // be reportable, and an app has legitimate reasons to ask later too.
+  Capabilities m_caps;
   std::unique_ptr<TerminalDriver> m_driver;
   std::unique_ptr<Screen> m_screen;
   std::unique_ptr<Renderer> m_renderer;

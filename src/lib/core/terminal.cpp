@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 
+#include "detail/keyboard.hpp"
 #include "detail/probe.hpp"
 #include "detail/tty_restore.hpp"
 #include "drivers/select_driver.hpp"
@@ -319,6 +320,7 @@ auto Terminal::enter_screen() -> void {
   emit(m_impl->out_fd, "\033[?1049h\033[?25l\033[2J\033[H");
   emit_mouse_mode();
   emit(m_impl->out_fd, "\033[?2004h");
+  emit_keyboard_mode();  // #60: no-op under the default KeyboardMode::Legacy
   m_impl->in_screen = true;
   // Arm the escape half of the signal-restore path (termios half is armed in
   // enter_raw). Now a fatal signal will also leave the alt-screen + mouse/paste.
@@ -339,11 +341,38 @@ auto Terminal::set_mouse_mode(MouseMode mode) -> void {
   m_mouse_mode = mode;  // no screen up: recorded, applied by enter_screen()
 }
 
+// Push the configured tier onto the terminal's keyboard stack. Called once,
+// from enter_screen(); a later mode change overwrites that entry instead (see
+// set_keyboard_mode), so the stack depth is 0 or 1 and leave_screen()'s single
+// pop always balances.
+auto Terminal::emit_keyboard_mode() -> void {
+  if (m_keyboard_mode == KeyboardMode::Legacy) return;  // nothing to push
+  emit(m_impl->out_fd, detail::keyboard_push_seq(m_keyboard_mode));
+  m_kb_pushed = true;
+}
+
+auto Terminal::set_keyboard_mode(KeyboardMode mode) -> void {
+  if (mode == m_keyboard_mode) return;
+  m_keyboard_mode = mode;
+  if (!m_impl->in_screen) return;  // recorded, applied by enter_screen()
+  if (!m_kb_pushed) {
+    emit_keyboard_mode();  // first non-Legacy tier of this screen: push it
+    return;
+  }
+  // We already own an entry: overwrite it rather than pushing a second one.
+  // That includes switching back to Legacy, which sets flags 0 — popping here
+  // would leave leave_screen() popping an entry that is not ours.
+  emit(m_impl->out_fd, detail::keyboard_set_seq(mode));
+}
+
 auto Terminal::leave_screen() -> void {
   // Undo enter_screen in reverse: disable paste/mouse tracking, reset attrs,
   // show cursor, main screen. Byte-for-byte the detail::kLeaveSequence constant.
   detail::restore_state().in_screen = 0;
   m_impl->in_screen = false;
+  // The leave sequence pops our keyboard entry (#60), so a later
+  // enter_screen() must push a fresh one rather than overwrite a stale claim.
+  m_kb_pushed = false;
   // .data(), not a std::string copy: kLeaveSequence is a view over a string
   // literal, so it is already NUL-terminated — and this runs from teardown(),
   // which ~App calls and must therefore never throw. The copy allocated, which

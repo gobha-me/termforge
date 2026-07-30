@@ -271,6 +271,10 @@ auto Input::push_resize(int cols, int rows) -> void {
   m_events.push_back(ResizeEvent{cols, rows});
 }
 
+auto Input::push_error(ErrorEvent e) -> void {
+  m_events.push_back(std::move(e));
+}
+
 auto Input::decode_one(std::string_view buf) -> std::size_t {
   if (buf.empty()) return 0;
 

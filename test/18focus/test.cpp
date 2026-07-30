@@ -286,3 +286,29 @@ TEST_CASE("FocusRing: clear() empties the ring and drops focus", "[focus]") {
   REQUIRE(ring.current() == nullptr);
   REQUIRE_FALSE(ring.handle_key(key(Key::Tab)));
 }
+
+TEST_CASE("FocusRing: a key release is not routed to the focused member",
+          "[focus][keyboard]") {
+  // #60: no widget can interpret a release, and one that treats "a key event
+  // arrived" as "act on it" would insert twice per keystroke under
+  // KeyboardMode::Enhanced. Repeat still routes — the protocol sends it
+  // instead of a second press, so dropping it would break hold-to-scroll.
+  FocusRing ring;
+  Probe a;
+  ring.add(&a);
+  REQUIRE_FALSE(ring.handle_key(release(Key::Down)));
+  REQUIRE(a.keys() == 0);
+  ring.handle_key(key(Key::Down));
+  REQUIRE(a.keys() == 1);
+}
+
+TEST_CASE("FocusRing: a Tab release does not cycle focus", "[focus][keyboard]") {
+  FocusRing ring;
+  Probe a, b;
+  ring.add(&a);
+  ring.add(&b);  // a focused
+  REQUIRE_FALSE(ring.handle_key(release(Key::Tab)));
+  REQUIRE(ring.current() == &a);
+  REQUIRE(ring.handle_key(key(Key::Tab)));
+  REQUIRE(ring.current() == &b);
+}
