@@ -6,7 +6,7 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-30)
 
-**Latest work: #60 — the kitty keyboard protocol.** An app can now opt into
+**Latest release: `v0.2.2` — #60, the kitty keyboard protocol.** An app can now opt into
 key **repeat and release**: `KeyEvent` gains `action`
 (`KeyAction::{Press,Repeat,Release}`, defaulting to `Press`), and
 `KeyboardMode` picks how much of the protocol the terminal is asked for —
@@ -43,6 +43,15 @@ protocol sends it instead of a second press. `test/31keyboard` extends
 `App::setup()` runnable in CI against a synthetic probe reply — and it caught
 that `enter_raw`'s `TCSAFLUSH` discards a reply written before it. Validated
 `-Werror` on g++ + clang + ASan + UBSan, 33/33 on each.
+
+**The key table is pinned against a real kitty capture** (`[ground-truth]` in
+`test/04input`), which settled the load-bearing assumption — arrows, Home,
+Delete, Insert and the F-keys keep their *legacy* encodings even under flag 8 —
+and surfaced one thing nothing had pinned: the modifier parameter carries
+**lock** state. With NumLock on, every key reports modifier `129`; CapsLock
+takes it to `193`. The mask models shift/alt/ctrl only, so those read as no
+modifiers, but a careless widening would give every NumLock user phantom
+modifiers on every keystroke. Now a regression test.
 
 **Previous: #21 — the shared scrollbar indicator.** Scrolling is now
 *visible*: `ListWidget`, `TableWidget` and `TextBox` paint a one-column
