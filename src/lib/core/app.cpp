@@ -518,6 +518,12 @@ auto App::route_mouse(const MouseEvent& ev,
   return false;
 }
 
+auto App::tick_widgets(std::chrono::duration<double> dt,
+                       std::initializer_list<Widget*> widgets) -> void {
+  for (Widget* w : widgets)
+    if (w != nullptr) w->on_tick(dt);
+}
+
 auto App::render_pixel_regions(Widget& widget) -> void {
   // Modal: skip the app's images entirely. They would be emitted after the
   // cell diff and paint over the dialog, and collecting them also blanks the

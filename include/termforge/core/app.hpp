@@ -170,6 +170,13 @@ class App {
   // simulation is a game (pause behind the dialog — check modal()) or a
   // progress animation (keep going). Default is a no-op, so every existing App
   // is unaffected.
+  //
+  // Widgets have the same hook (Widget::on_tick, #69) and the App does not
+  // walk them: there is no widget registry here, and this decision did not
+  // create one. Forward from this override the same way mouse events are
+  // forwarded — tick_widgets(dt, {&m_progress, &m_ok}) — and note that a
+  // widget nobody ticks simply stops animating: an indeterminate ProgressBar
+  // stands still, a Button's press flash sticks on.
   virtual auto on_tick(std::chrono::duration<double> /*dt*/) -> void {}
 
   // ── modal overlays ──
@@ -184,6 +191,11 @@ class App {
   // never destroy the object whose stack frame is still live. The flip side:
   // pop before you destroy. Pushing the same widget twice is allowed and
   // needs two pops.
+  //
+  // Overlays are NOT ticked either (#69). The stack is a draw/dispatch order,
+  // not ownership, so the app that owns the dialog owns its tick — keep the
+  // tick_widgets call unconditional rather than gating it on what is currently
+  // pushed, so a dialog that was dismissed mid-flash still finishes it.
   auto push_overlay(Widget& w, OverlayOptions opts = {}) -> void;
   // Remove the top overlay. No-op on an empty stack.
   auto pop_overlay() -> void;
@@ -390,6 +402,17 @@ class App {
   // The subclass calls this from on_event for MouseEvents.
   auto route_mouse(const MouseEvent& ev,
                    std::initializer_list<Widget*> widgets) -> bool;
+
+  // Forward a tick to each widget, in the order given. The subclass calls this
+  // from its on_tick override; see the on_tick doc above for why the App does
+  // not keep the list itself.
+  //
+  // Unlike route_mouse this walks FORWARD and visits every widget: z-order
+  // decides who gets an event, but time reaches everything, so there is no
+  // topmost and nothing to stop at. Null entries are skipped, which lets an
+  // app pass a pointer that is only sometimes populated.
+  auto tick_widgets(std::chrono::duration<double> dt,
+                    std::initializer_list<Widget*> widgets) -> void;
 
  private:
   // Flush collected pixel-region images to the driver. Called by run()

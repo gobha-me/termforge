@@ -24,6 +24,9 @@
 //   });
 //   // The flood gate (#45): let the picker raise one error dialog at a time.
 //   m_open.error_overlay_up([this] { return top_overlay() != &m_open; });
+//   // ...and in on_tick, unconditionally: its OK/Cancel Buttons hold a timed
+//   // press flash that outlives the pop their activation caused (#69).
+//   tick_widgets(dt, {&m_open});
 //   push_overlay(m_open);
 //
 // The pieces and their keys:

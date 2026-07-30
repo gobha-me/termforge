@@ -16,6 +16,14 @@
 //   m_quit.on_close([this] { pop_overlay(); });
 //   // ...somewhere in on_event:
 //   push_overlay(m_quit);
+//   // ...and in on_tick, whether or not it is currently pushed:
+//   tick_widgets(dt, {&m_quit});
+//
+// That last line is not optional bookkeeping. These dialogs own Buttons, whose
+// press flash is a duration counted down in on_tick (#69), and every one of
+// them closes the dialog on activation — so the flash is still running after
+// the pop. A dialog that stops being ticked there re-opens with its button
+// lit.
 //
 // The result callback runs AFTER the dialog has closed, so a callback that
 // raises a follow-up dialog leaves that one on top rather than being popped
