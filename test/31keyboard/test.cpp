@@ -33,10 +33,13 @@
 #include "detail/tty_restore.hpp"
 #include "termforge/core/app.hpp"
 #include "termforge/core/terminal.hpp"
+#include "termforge/widgets/focus_ring.hpp"
+#include "termforge/widgets/text_input.hpp"
 
 using termforge::App;
 using termforge::ErrorEvent;
 using termforge::Event;
+using termforge::Input;
 using termforge::KeyAction;
 using termforge::KeyboardMode;
 using termforge::KeyEvent;
@@ -421,4 +424,44 @@ TEST_CASE("App: a Release is never captured by an overlay",
 
   app.test_pump({"\033[97;1:1u"});  // 'a' press
   REQUIRE(overlay.seen.size() == 1);
+}
+
+// ── the tier a user actually types in ──────────────────────────────────────
+
+TEST_CASE("Enhanced typing reaches a TextInput exactly once per keystroke",
+          "[keyboard][regression]") {
+  // The suite-is-green-but-the-UI-isn't guard. Under Enhanced a keystroke is
+  // three reports (press, maybe repeats, release) and the text arrives in the
+  // *third* parameter rather than as a plain byte, so "does typing still
+  // work" is a different question from "does the parser decode". Drive it the
+  // way an app does: raw bytes -> Input -> FocusRing -> widget.
+  termforge::TextInput field;
+  termforge::FocusRing ring;
+  ring.add(&field);
+
+  termforge::Input in;
+  auto type = [&](std::string_view bytes) {
+    for (auto& ev : in.decode(bytes)) ring.handle_key(ev);
+  };
+
+  type("\033[104;1:1u");       // 'h' press
+  type("\033[105;1:1u");       // 'i' press
+  REQUIRE(field.text() == "hi");
+
+  type("\033[105;1:3u");       // 'i' release — must insert nothing
+  REQUIRE(field.text() == "hi");
+
+  // Shift+1 on a US layout: flag 8 reports the *unshifted* key (49 = '1')
+  // with shift set, and flag 16 carries what it actually produced (33 = '!').
+  // Insert the key code here and the field would read "hi1".
+  type("\033[49;2;33u");
+  REQUIRE(field.text() == "hi!");
+
+  type("\033[105;1:2u");       // 'i' repeat — hold-to-type still types
+  REQUIRE(field.text() == "hi!i");
+
+  type("\033[127;1:1u");       // Backspace as CSI-u
+  REQUIRE(field.text() == "hi!");
+  type("\033[127;1:3u");       // its release deletes nothing further
+  REQUIRE(field.text() == "hi!");
 }
