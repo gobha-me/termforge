@@ -289,6 +289,19 @@ enum class Key {
   F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
 };
 
+// What happened to the key (#60). A plain terminal reports presses and
+// nothing else, so `Press` is the default and the only value an app sees
+// under KeyboardMode::Legacy:
+//   Press   — the key went down. Also what auto-repeat looks like without
+//             the kitty keyboard protocol (the OS repeats the press).
+//   Repeat  — the key is being held. With the protocol the terminal sends
+//             this *instead of* a second Press, so a widget that treats
+//             Repeat like Press keeps hold-to-scroll and hold-to-type.
+//   Release — the key came up. Never delivered on a terminal without the
+//             protocol, so a game must degrade to discrete steps rather
+//             than wait for a release that will not arrive.
+enum class KeyAction { Press, Repeat, Release };
+
 // Which mouse events the terminal is asked to report (#75):
 //   None   \u2014 no tracking at all: native click-drag selection (copy/paste out
 //            of the app) belongs to the terminal again.
@@ -302,10 +315,37 @@ enum class Key {
 // is enabled with any non-None mode.
 enum class MouseMode { None, Click, Drag, Motion };
 
+// How much of the kitty keyboard protocol the terminal is asked for (#60).
+// Progressive enhancement: TermForge pushes a flag set on enter_screen and
+// pops it on leave_screen, and a terminal that does not implement it ignores
+// the push. Opt-in, because every tier above Legacy changes what the app
+// sees:
+//   Legacy       — nothing is pushed. Byte-identical to every TermForge
+//                  version before #60: presses only, and Ctrl+I is
+//                  indistinguishable from Tab. The default.
+//   Disambiguate — flags 1|2. Ctrl+I ≠ Tab and Ctrl+M ≠ Enter, and keys that
+//                  already arrive as escape sequences (arrows, F-keys) carry
+//                  a KeyAction. Text keys still arrive as plain bytes, so an
+//                  editor or form keeps its input path unchanged — but plain
+//                  letters therefore have no Release.
+//   Enhanced     — flags 1|2|8|16. Every key arrives as CSI-u with the text
+//                  the terminal computed, so letters get Repeat and Release:
+//                  the tier a game needs for hold-to-move. Costs one
+//                  behavioural change — Shift+a now arrives as ch=='A' *with*
+//                  shift set, where a plain byte carried no modifier.
+// Flag 16 is not optional next to flag 8: flag 8 reports the *unshifted* key
+// code plus a shift bit, and deriving 'A' from (97, shift) would mean
+// guessing the user's keyboard layout.
+enum class KeyboardMode { Legacy, Disambiguate, Enhanced };
+
 struct KeyEvent {
   Key key{Key::Unknown};
   char32_t ch{0};       // valid when key == Key::Char
   bool ctrl{false}, alt{false}, shift{false};
+  // Press unless the app opted into a KeyboardMode that reports event types.
+  // Appended deliberately: KeyEvent is aggregate-initialized positionally
+  // across the parser and the suites, so field order is load-bearing.
+  KeyAction action{KeyAction::Press};
 };
 
 struct MouseEvent {
