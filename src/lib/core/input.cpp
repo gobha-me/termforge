@@ -89,6 +89,15 @@ enum class CsiUKind {
   Text,     // Key::Char with the resolved code point
   Unknown,  // a real key TermForge has no enumerator for
 };
+
+// A Unicode scalar value: in range and not a surrogate. Every other route to
+// KeyEvent::ch runs through the UTF-8 decoder, which validates and resyncs —
+// CSI-u is the one path where a code point arrives as a decimal *parameter*,
+// straight off the wire, so it has to be checked here or a hostile terminal
+// could hand an app a `ch` it cannot legally encode.
+constexpr auto is_scalar_value(char32_t code) -> bool {
+  return code <= 0x10FFFF && !(code >= 0xD800 && code <= 0xDFFF);
+}
 struct CsiUKey {
   CsiUKind kind{CsiUKind::Unknown};
   Key key{Key::Unknown};
@@ -154,7 +163,7 @@ auto map_csi_u_key(char32_t code) -> CsiUKey {
   // Control codes (other than the four named above), lone surrogates and
   // anything past the Unicode range are not key codes any terminal should
   // send; a clamped garbage parameter lands here too.
-  if (code < 32 || (code >= 0xD800 && code <= 0xDFFF) || code > 0x10FFFF) {
+  if (code < 32 || !is_scalar_value(code)) {
     return {CsiUKind::Drop, Key::Unknown, 0};
   }
   if (code >= 57344 && code <= 63743) {  // remaining private-use functionals
@@ -472,9 +481,13 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
       if (resolved.kind == CsiUKind::Drop) break;
       KeyEvent ev{resolved.key};
       if (resolved.kind == CsiUKind::Text) {
+        // The text field is unvalidated wire data — an out-of-range or
+        // surrogate value is not something an app can encode, so it falls
+        // back to the key code, which map_csi_u_key has already vetted.
         const auto text = static_cast<char32_t>(p.v[2][0]);
-        ev.ch = resolved.ch != 0 ? resolved.ch : text != 0 ? text
-                                                           : static_cast<char32_t>(p1);
+        const bool usable = text != 0 && is_scalar_value(text);
+        ev.ch = resolved.ch != 0 ? resolved.ch
+                                 : usable ? text : static_cast<char32_t>(p1);
       }
       apply_key_mods(ev, mods);
       apply_key_action(ev, event);
