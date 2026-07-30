@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "termforge/widgets/glyphs.hpp"
+#include "termforge/widgets/theme.hpp"
 #include "termforge/widgets/widget.hpp"
 
 namespace termforge {
@@ -37,6 +39,32 @@ class TextBox final : public Widget {
   [[nodiscard]] auto line_count() const noexcept -> std::size_t { return m_lines.size(); }
   [[nodiscard]] auto at_bottom() const noexcept -> bool;
 
+  // Which glyph family #21's scrollbar comes from. TextBox has no other
+  // glyph need, so this knob exists purely for the bar: an app holding one
+  // BorderStyle passes it here too, and BorderStyle::Ascii is what keeps the
+  // strip 7-bit on a bare TTY. Same convention as ListWidget/TableWidget.
+  auto set_style(BorderStyle style) -> void {
+    m_style = style;
+    mark_dirty();
+  }
+  [[nodiscard]] auto style() const noexcept -> BorderStyle { return m_style; }
+
+  // Scrollbar colours (#21): the │ track and the █ thumb.
+  auto set_scrollbar_colors(Rgb track_fg, Rgb thumb_fg) -> void {
+    m_track_fg = track_fg;
+    m_thumb_fg = thumb_fg;
+    mark_dirty();
+  }
+
+  // The width text wraps and paints at: the rect width minus the column #21's
+  // scrollbar claims when the content overflows. Whether the bar is up is
+  // decided at draw time (only then is the wrapped row count known), so this
+  // is the draw-loop's width -- an app laying out against it should treat it
+  // as advisory, like the wrap itself. Floored at 0 (never negative): the
+  // wrap helper requires a positive width and the narrow-rect draw guards
+  // before calling it.
+  [[nodiscard]] auto content_w() const noexcept -> int;
+
  private:
   // Wrap `line` to `width` columns, appending to `out`. Returns rows added.
   static auto wrap_into(std::vector<std::string>& out, const std::string& line, int width) -> void;
@@ -44,6 +72,12 @@ class TextBox final : public Widget {
   std::vector<std::string> m_lines;  // logical (unwrapped) lines
   int m_scroll{0};                   // 0 = pinned to bottom; >0 = lines scrolled up
   bool m_follow{true};               // auto-scroll to bottom on new content
+
+  // #21: the scrollbar strip's family and colours. Default colours mirror
+  // the list/table: dim track, selection-blue thumb.
+  BorderStyle m_style{BorderStyle::Single};
+  Rgb m_track_fg{theme::kDim};
+  Rgb m_thumb_fg{theme::kFocusBg};
 };
 
 }  // namespace termforge

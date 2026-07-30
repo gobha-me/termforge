@@ -34,17 +34,20 @@
 // column. ▸ is deliberately the small triangle, not ▶ U+25B6, which many
 // terminals give an emoji presentation and render double-width.
 //
-// Still an extension point for the shared scrollbar (#21), which needs │/█ vs
-// |/#. That belongs HERE too, keyed off this same enum — in practice it only
-// needs the Unicode-vs-ASCII bit, which is what is_ascii() is for. Add tables,
-// not a second enum.
+// The shared scrollbar's table (#21) landed here as ScrollGlyphs below, keyed
+// off this same enum — the extension note that used to stand here asked for a
+// table, not a second enum, and that is what it got.
 //
-// ProgressBar's █/─ and WaveformWidget's █/▀/▄ are deliberately NOT here yet:
-// they are content glyphs, not border glyphs, they need a different table and a
-// per-widget knob no issue has asked for, and the half-block waveform has no
-// honest ASCII equivalent (which is exactly why FallbackDriver carries its own
-// luminance ramp). #21 is the first issue that genuinely needs a second glyph
-// family; that is when to decide whether they join.
+// ProgressBar's █/─ and WaveformWidget's █/▀/▄ are deliberately still NOT
+// here, and #21 is the decision that keeps them out: those are CONTENT glyphs
+// (a bar chart, a waveform) whose shape is the information, not chrome framing
+// it, and they need a per-widget knob no issue has asked for. The half-block
+// waveform also has no honest ASCII equivalent — which is exactly why
+// FallbackDriver carries its own luminance ramp. A scrollbar's track/thumb,
+// by contrast, is chrome in the border family: one column, stateless, and the
+// ASCII answer (|/#) is unambiguous. If a future issue gives ProgressBar a
+// style knob, that is when a second family opens — with a new table, not by
+// widening this one.
 
 #include <array>
 #include <string_view>
@@ -196,6 +199,57 @@ static_assert([] {
   // Unreachable: every enumerator returns above. No `default:` on purpose —
   // same reason as border_glyphs().
   return kUnicodeMarks;
+}
+
+// The scrollbar's one-column strip (#21): a `track` under everything and a
+// `thumb` marking where the viewport sits and how much of the content it
+// covers. Chrome, not content — this joins the border family, not the
+// ProgressBar/Waveform content glyphs the header note keeps out.
+//
+// Same shape as MarkGlyphs: the only axis of variation is whether the strip
+// may leave 7-bit ASCII (│/█ vs |/#), the struct is initialised POSITIONALLY
+// with the same tripwire asserts, and both glyphs are exactly one terminal
+// column wide. █ U+2588 (FULL BLOCK) is the same block ProgressBar and
+// WaveformWidget already draw with, so it inherits their rendering bet rather
+// than making a new one; │ is the light vertical every border family shares.
+struct ScrollGlyphs {
+  std::string_view track, thumb;
+
+  [[nodiscard]] constexpr auto all() const noexcept
+      -> std::array<std::string_view, 2> {
+    return {track, thumb};
+  }
+};
+
+inline constexpr ScrollGlyphs kUnicodeScroll{"│", "█"};
+inline constexpr ScrollGlyphs kAsciiScroll{"|", "#"};
+
+static_assert(sizeof(ScrollGlyphs) ==
+                  kUnicodeScroll.all().size() * sizeof(std::string_view),
+              "ScrollGlyphs gained a field: add it to all() and to BOTH tables");
+
+static_assert([] {
+  for (const auto& table : {kUnicodeScroll, kAsciiScroll})
+    for (const auto glyph : table.all())
+      if (glyph.empty()) return false;
+  return true;
+}(), "a ScrollGlyphs field is empty in one of the tables (positional init)");
+
+// Same fall-through switch as mark_glyphs(), for the same reason.
+[[nodiscard]] constexpr auto scrollbar_glyphs(BorderStyle style) noexcept
+    -> ScrollGlyphs {
+  switch (style) {
+    case BorderStyle::Single:
+    case BorderStyle::Double:
+    case BorderStyle::Rounded:
+    case BorderStyle::Heavy:
+      return kUnicodeScroll;
+    case BorderStyle::Ascii:
+      return kAsciiScroll;
+  }
+  // Unreachable: every enumerator returns above. No `default:` on purpose —
+  // same reason as border_glyphs().
+  return kUnicodeScroll;
 }
 
 }  // namespace termforge

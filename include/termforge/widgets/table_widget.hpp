@@ -80,6 +80,27 @@ class TableWidget final : public Widget {
   }
   [[nodiscard]] auto scroll_offset() const noexcept -> int { return m_scroll; }
 
+  // Whether draw() paints #21's scrollbar in the last column (over the data
+  // rows, below the header): only when the content overflows the view, and
+  // only when a data column is left beside it. Unlike ListWidget the column
+  // is NOT reserved when the bar is absent -- a table's right edge was never
+  // padded, so the bar costs the overflow-truncated tail one column only
+  // while it is actually there.
+  [[nodiscard]] auto scrollbar_visible() const noexcept -> bool {
+    const Rect r = rect();
+    if (r.w <= 0 || r.h <= 1) return false;
+    return static_cast<int>(m_rows.size()) > r.h - 1 && r.w - gutter_cols() > 1;
+  }
+
+  // Scrollbar colours (#21): the │ track and the █ thumb. The thumb defaults
+  // to the selection highlight so the two position markers read as one
+  // language; the track defaults to theme::kDim, the muted-slate role.
+  auto set_scrollbar_colors(Rgb track_fg, Rgb thumb_fg) -> void {
+    m_track_fg = track_fg;
+    m_thumb_fg = thumb_fg;
+    mark_dirty();
+  }
+
   // Row selection. -1 = no selection (the default — no visual change for
   // tables that never select). Clicking a data row selects it.
   auto set_selected(int row) -> void;
@@ -196,6 +217,10 @@ class TableWidget final : public Widget {
   BorderStyle m_style{BorderStyle::Single};
   bool m_marker_enabled{true};
   std::string m_marker;  // empty == use the style's glyph
+
+  // #21: the scrollbar strip's colours (see set_scrollbar_colors).
+  Rgb m_track_fg{theme::kDim};
+  Rgb m_thumb_fg{theme::kFocusBg};
 
   std::function<void(int, const std::vector<std::string>&)> m_on_select;
 };

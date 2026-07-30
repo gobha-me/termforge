@@ -5,6 +5,7 @@
 #include "detail/width.hpp"
 #include "termforge/widgets/detail/callback.hpp"
 #include "termforge/widgets/detail/scroll.hpp"
+#include "termforge/widgets/detail/scrollbar.hpp"
 #include "termforge/widgets/detail/viewport.hpp"
 
 namespace termforge {
@@ -78,6 +79,9 @@ auto ListWidget::draw(Screen& screen) -> void {
   // to raise one on.
   const int gutter = gutter_cols();
   const int text_x = r.x + gutter;
+  // The -1 is the right-hand column #21's scrollbar claims below when the
+  // content overflows: the budget is reserved whether or not the bar is up,
+  // so a list's text does not reflow as it grows past the view.
   const int max_w = r.w - gutter - 1;
 
   for (int vr = 0; vr < r.h; ++vr) {
@@ -110,6 +114,19 @@ auto ListWidget::draw(Screen& screen) -> void {
       screen.write_text(text_x, y, detail::truncate_to_width(text, max_w), fg,
                         bg);
     }
+  }
+
+  // #21: the scrollbar claims the reserved column when the content overflows.
+  // It draws AFTER the rows on purpose: rows fill the whole rect (including
+  // this column) with their background, and the strip re-paints it with the
+  // SAME background -- drawing it inside the row loop with the selected row's
+  // highlight colour would give the thumb a blue-tinted cell exactly where it
+  // matters least. One strip, one bg, after the per-row colours are done.
+  if (scrollbar_visible()) {
+    detail::draw_scrollbar(screen, {r.x + r.w - 1, r.y, 1, r.h},
+                           m_list.count(), m_scroll, r.h,
+                           scrollbar_glyphs(m_style), m_track_fg, m_thumb_fg,
+                           m_bg);
   }
 
   clear_dirty();
@@ -168,6 +185,29 @@ auto ListWidget::on_event(const Event& ev) -> bool {
       return true;
     }
     if (m->pressed && m->button == 0 && rect().contains(m->x, m->y)) {
+      // #21: a press on the scrollbar's column page-jumps the VIEW (the wheel
+      // direction, not a selection) -- the wheel branch above already
+      // returned for scroll events, so this branch only sees presses.
+      if (m->x == rect().x + rect().w - 1 && scrollbar_visible()) {
+        const int page = std::max(1, rect().h);
+        // Above the thumb pages up, below it pages down; on the thumb the
+        // click is inert (the drag the issue leaves as a stretch -- #96's
+        // mid-press relayout class is why v1 does click-only).
+        const auto [top, thumb_h] =
+            detail::thumb_window(rect().h, m_list.count(), m_scroll, rect().h);
+        const int row = m->y - rect().y;
+        if (row < top) {
+          m_scroll = detail::clamp_offset(m_scroll - page, m_list.count(),
+                                          rect().h);
+        } else if (row >= top + thumb_h) {
+          m_scroll = detail::clamp_offset(m_scroll + page, m_list.count(),
+                                          rect().h);
+        } else {
+          return true;  // on the thumb: consumed, no movement
+        }
+        mark_dirty();
+        return true;
+      }
       const int clicked = m_scroll + (m->y - rect().y);
       if (clicked >= 0 && clicked < m_list.count()) {
         set_selected(clicked);
