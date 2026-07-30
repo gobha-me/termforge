@@ -76,11 +76,15 @@ already render.** Building a "kitty sprite tier" against the current
 contract produces a strictly worse cell renderer that also allocates an
 image every frame.
 
-The fix is not in this widget. It is the contract change already proposed in
-#16's design comment — `draw_image(Rect cells, const Image&)` plus
+The fix is not in this widget. It is the contract change proposed in #16's
+design comment — `draw_image(Rect cells, const Image&)` plus
 `preferred_pixel_extent(Rect cells)` — which is what lets a widget rasterize
-at real device resolution and let the driver scale to a cell rect. Until
-that lands, the sprite tier has nothing to stand on.
+at real device resolution and let the driver scale to a cell rect.
+
+**That landed in #83, and #84 landed with it**, so the ground the sprite
+tier was waiting for now exists. Everything below describing the gate is
+kept as the record of why v1 shipped glyph-only; it is no longer a
+blocker.
 
 **Therefore: v1 ships the glyph tier only, and unblocks ROADMAP 4.2
 (`game.cpp`) immediately.** The sprite tier is designed for below, gated on
@@ -270,15 +274,19 @@ complete image for the region.
 The glyph tier needs no cache at all — `draw()` writes cells, and
 `Renderer::present` already diffs them.
 
-**One real cost remains, and it is a contract-level problem rather than a
-widget one:** `draw_pixels` returns `std::optional<Image>` *by value*, so a
-memoized raster is copied out of the cache on every frame. At today's one
-pixel per cell that is kilobytes and irrelevant. At real device resolution —
-which is exactly what the #16 contract change enables — an 80×24 region at
-8×16 px/cell is a ~1 MB buffer copied 60 times a second. **The sprite tier
-should not land before `draw_pixels` can return a non-owning view.** This is
-filed as a follow-up rather than solved here, because it is a change to the
-pixel-region contract that affects `WaveformWidget` equally.
+**One real cost used to remain, and it was a contract-level problem rather
+than a widget one:** `draw_pixels` returned `std::optional<Image>` *by
+value*, so a memoized raster was copied out of the cache on every frame. At
+one pixel per cell that is kilobytes and irrelevant; at the device
+resolution #83 enables, an 80×24 region at 8×16 px/cell is a ~1 MB buffer
+copied 60 times a second.
+
+**Resolved in #84.** `draw_pixels(Rect region, Extent pixels)` returns a
+borrowed `const Image*` that the widget owns, so the cache above is
+expressible exactly as designed: return `&m_raster` and copy nothing. Two
+things to carry into the implementation — the buffer must stay valid until
+the widget's next `draw_pixels` call, and a widget declaring more than one
+region needs one buffer per region. `WaveformWidget` is the worked example.
 
 ## Interaction with pixel regions
 
@@ -332,13 +340,16 @@ a cursor on a tile grid is the canonical case.
 
 ## Future work
 
-- **Sprite tier** — gated on #16's `draw_image(Rect cells, ...)` +
-  `preferred_pixel_extent()`, and on #63's `Image::sub`/`blit`/`blend`/
-  `fill`. Adds `TileDef::sprite`, an atlas + sub-rect authoring path, and
-  the `pixel_regions()`/`draw_pixels()` overrides.
-- **Non-owning `draw_pixels` return** — a contract change so a memoized
-  rasterizer does not copy its buffer per frame. Must precede the sprite
-  tier; affects `WaveformWidget` too.
+- **Sprite tier** — **unblocked.** Both gates are lifted: `draw_image(Rect
+  cells, ...)` + `preferred_pixel_extent()` landed in #83, `Image::sub`/
+  `blit`/`blend`/`fill` in #63. Adds `TileDef::sprite`, an atlas +
+  sub-rect authoring path, and the `pixel_regions()`/`draw_pixels()`
+  overrides. Note the buffer must be a member, one per declared region —
+  see the lifetime contract in `docs/pixel-regions.md`.
+- ~~**Non-owning `draw_pixels` return**~~ — done in #84. `draw_pixels`
+  returns a borrowed `const Image*`, so the memoized rasterizer this doc
+  designs is now expressible: cache on a generation counter, return the
+  cache's address, copy nothing.
 - **Smooth sub-tile scrolling** — sprite-tier only, opt-in, and only once
   the widget can rasterize at device resolution.
 - **Cell attributes for tiles** (#62) — reverse for a cursor, dim for fog,
