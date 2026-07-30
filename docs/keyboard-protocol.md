@@ -72,6 +72,35 @@ Arrows, `Home`/`End`, `PageUp`/`PageDown`, `Insert` and `Delete` keep their
 legacy encodings even under flag 8 — the protocol says so — and carry the event
 type as a sub-parameter instead: `ESC[1;1:3A` is Up-release.
 
+## Verified against a real terminal
+
+Captured with `kitty +kitten show_key -m kitty` and pinned byte-for-byte in
+`test/04input` under the `[ground-truth]` tag — these are observations, not
+readings of the spec:
+
+| key | press | release |
+| --- | --- | --- |
+| `a` / `Shift+a` | `CSI 97u` / `CSI 97:65;2;65u` | `CSI 97;1:3u` |
+| `Ctrl+I` (≠ Tab) | `CSI 105;5u` | `CSI 105;5:3u` |
+| `Tab` | `CSI 9u` | `CSI 9;1:3u` |
+| `Enter` / `Escape` / `Backspace` | `CSI 13u` / `CSI 27u` / `CSI 127u` | `CSI 13;1:3u` … |
+| `Up` / `Home` / `F1` | `CSI A` / `CSI H` / `CSI P` | `CSI 1;1:3A` / `…H` / `…P` |
+| `Delete` / `Insert` / `F5` | `CSI 3~` / `CSI 2~` / `CSI 15~` | `CSI 3;1:3~` … |
+| keypad `7` | `CSI 57406;129;55u` | `CSI 57406;129:3u` |
+| `LeftShift` / `LeftCtrl` | `CSI 57441;2u` / `CSI 57442;5u` | `CSI 57441;1:3u` |
+| `CapsLock` / `NumLock` | `CSI 57358;129u` / `CSI 57360u` | `CSI 57358;193:3u` |
+
+**The modifier parameter carries lock state, and lock state is not a
+modifier.** With NumLock on — a common resting state — *every* key reports
+modifier `129` (`1 + 128`), and CapsLock takes it to `193` (`1 + 128 + 64`).
+`KeyEvent` models shift/alt/ctrl only, so the higher bits are dropped: `129`
+yields no modifiers, `130` yields shift alone, `193` yields none. Anything that
+widens the mask has to keep that property, or a NumLock user gets phantom
+modifiers on every keystroke. There is a regression test for exactly this.
+
+CapsLock deliberately does **not** surface as `shift`: it changes the character
+the terminal produces, and the associated-text parameter is what carries that.
+
 ## Fallback: `Release` is never delivered on a terminal without the protocol
 
 A terminal that does not implement the protocol ignores the push and keeps

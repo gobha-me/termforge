@@ -737,3 +737,128 @@ TEST_CASE("Input: an unencodable associated text falls back to the key code",
   auto emoji = in.decode("\033[97;1;128512u");  // U+1F600
   REQUIRE(first_key(emoji).ch == U'\U0001F600');
 }
+
+// ── ground truth: bytes captured from kitty via `show_key -m kitty` ────────
+//
+// AGENTS.md: "Pin the Capabilities schema against real responses before it
+// becomes load-bearing." The same applies to the key table. Every sequence
+// below is copied verbatim from a real capture, not derived from the spec.
+
+TEST_CASE("Input: captured kitty CSI-u sequences decode as observed",
+          "[input][keyboard][ground-truth]") {
+  Input in;
+  // Shift+a: kitty reports the UNSHIFTED key (97) with the shifted key as a
+  // sub-parameter we discard, and the produced text in the third parameter.
+  auto shift_a = in.decode("\033[97:65;2;65u");
+  REQUIRE(shift_a.size() == 1);
+  REQUIRE(first_key(shift_a).ch == U'A');
+  REQUIRE(first_key(shift_a).shift);
+  auto a_rel = in.decode("\033[97;1:3u");
+  REQUIRE(first_key(a_rel).ch == U'a');
+  REQUIRE(first_key(a_rel).action == KeyAction::Release);
+  // The ambiguities the protocol exists to resolve.
+  auto ctrl_i = in.decode("\033[105;5u");
+  REQUIRE(first_key(ctrl_i).ch == U'i');
+  REQUIRE(first_key(ctrl_i).ctrl);
+  auto ctrl_i_rel = in.decode("\033[105;5:3u");
+  REQUIRE(first_key(ctrl_i_rel).action == KeyAction::Release);
+  auto ctrl_m = in.decode("\033[109;5u");
+  REQUIRE(first_key(ctrl_m).ch == U'm');
+  REQUIRE(first_key(ctrl_m).ctrl);
+  // Named keys, press and release.
+  const struct { const char* seq; Key key; KeyAction action; } named[] = {
+    {"\033[9u", Key::Tab, KeyAction::Press},
+    {"\033[9;1:3u", Key::Tab, KeyAction::Release},
+    {"\033[13u", Key::Enter, KeyAction::Press},
+    {"\033[13;1:3u", Key::Enter, KeyAction::Release},
+    {"\033[27u", Key::Escape, KeyAction::Press},
+    {"\033[27;1:3u", Key::Escape, KeyAction::Release},
+    {"\033[127u", Key::Backspace, KeyAction::Press},
+    {"\033[127;1:3u", Key::Backspace, KeyAction::Release},
+  };
+  for (const auto& c : named) {
+    auto ev = in.decode(c.seq);
+    REQUIRE(ev.size() == 1);
+    REQUIRE(first_key(ev).key == c.key);
+    REQUIRE(first_key(ev).action == c.action);
+  }
+}
+
+TEST_CASE("Input: captured legacy-encoded keys keep their encodings",
+          "[input][keyboard][ground-truth]") {
+  // The capture confirms the design assumption the whole sub-parameter scan
+  // rests on: under "report all keys as escape codes" kitty still sends
+  // arrows, Home, Delete, Insert and the F-keys in their legacy forms, and
+  // attaches the event type as a sub-parameter of the modifiers.
+  Input in;
+  const struct { const char* seq; Key key; KeyAction action; } cases[] = {
+    {"\033[A", Key::Up, KeyAction::Press},
+    {"\033[1;1:3A", Key::Up, KeyAction::Release},
+    {"\033[H", Key::Home, KeyAction::Press},
+    {"\033[1;1:3H", Key::Home, KeyAction::Release},
+    {"\033[3~", Key::Delete, KeyAction::Press},
+    {"\033[3;1:3~", Key::Delete, KeyAction::Release},
+    {"\033[2~", Key::Unknown, KeyAction::Press},      // Insert: unnameable
+    {"\033[2;1:3~", Key::Unknown, KeyAction::Release},
+    {"\033[P", Key::F1, KeyAction::Press},
+    {"\033[1;1:3P", Key::F1, KeyAction::Release},
+    {"\033[15~", Key::F5, KeyAction::Press},
+    {"\033[15;1:3~", Key::F5, KeyAction::Release},
+  };
+  for (const auto& c : cases) {
+    auto ev = in.decode(c.seq);
+    REQUIRE(ev.size() == 1);
+    REQUIRE(first_key(ev).key == c.key);
+    REQUIRE(first_key(ev).action == c.action);
+  }
+}
+
+TEST_CASE("Input: lock bits in the modifier mask are not modifiers",
+          "[input][keyboard][ground-truth][regression]") {
+  // The capture's sharpest edge: with NumLock on -- a very common state --
+  // EVERY keystroke carries modifier parameter 129 (1 + 128), and CapsLock
+  // pushes it to 193 (1 + 128 + 64). Kitty's bitmask extends well past the
+  // three modifiers KeyEvent models, so anything that widened the mask
+  // naively would hand a NumLock user phantom Ctrl/Alt/Shift on every key.
+  Input in;
+  auto numlock_enter = in.decode("\033[13;129u");
+  REQUIRE(first_key(numlock_enter).key == Key::Enter);
+  REQUIRE_FALSE(first_key(numlock_enter).ctrl);
+  REQUIRE_FALSE(first_key(numlock_enter).alt);
+  REQUIRE_FALSE(first_key(numlock_enter).shift);
+  // CapsLock is likewise not Shift: it changes the produced text, and the
+  // text parameter is what carries that.
+  auto caps_num = in.decode("\033[13;193u");
+  REQUIRE_FALSE(first_key(caps_num).shift);
+  // …but a real Shift alongside the lock bits still reads as Shift (130 =
+  // 1 + 128 + 1).
+  auto shift_num = in.decode("\033[13;130u");
+  REQUIRE(first_key(shift_num).shift);
+  REQUIRE_FALSE(first_key(shift_num).ctrl);
+  // Keypad 7 with NumLock on, exactly as captured: text 55 is the '7'.
+  auto kp7 = in.decode("\033[57406;129;55u");
+  REQUIRE(kp7.size() == 1);
+  REQUIRE(first_key(kp7).key == Key::Char);
+  REQUIRE(first_key(kp7).ch == U'7');
+  REQUIRE_FALSE(first_key(kp7).shift);
+  auto kp7_rel = in.decode("\033[57406;129:3u");
+  REQUIRE(first_key(kp7_rel).action == KeyAction::Release);
+}
+
+TEST_CASE("Input: captured modifier and lock keypresses emit nothing",
+          "[input][keyboard][ground-truth]") {
+  // Verbatim from the capture. These arrive on every shifted keystroke and
+  // on every lock toggle; Key::Unknown for them would be an Unknown storm.
+  Input in;
+  for (const char* seq : {"\033[57441;2u",     // shift+LEFT_SHIFT press
+                          "\033[57441;1:3u",   // LEFT_SHIFT release
+                          "\033[57441;130u",   // shift+numlock+LEFT_SHIFT
+                          "\033[57442;5u",     // ctrl+LEFT_CONTROL press
+                          "\033[57442;1:3u",   // LEFT_CONTROL release
+                          "\033[57360u",       // NUM_LOCK press
+                          "\033[57360;129:3u", // NUM_LOCK release
+                          "\033[57358;129u",   // CAPS_LOCK press
+                          "\033[57358;193:3u"}) {  // CAPS_LOCK release
+    REQUIRE(in.decode(seq).empty());
+  }
+}
