@@ -6,7 +6,45 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-30)
 
-**Latest work: #21 — the shared scrollbar indicator.** Scrolling is now
+**Latest work: #60 — the kitty keyboard protocol.** An app can now opt into
+key **repeat and release**: `KeyEvent` gains `action`
+(`KeyAction::{Press,Repeat,Release}`, defaulting to `Press`), and
+`KeyboardMode` picks how much of the protocol the terminal is asked for —
+`Legacy` (default, *byte-for-byte* what every earlier version emitted),
+`Disambiguate` (flags 1|2: Ctrl+I ≠ Tab, text keys still plain bytes) or
+`Enhanced` (1|2|8|16: every key as CSI-u with associated text, so letters get
+releases — the tier `term-game` needs for hold-to-move). Flag 16 is not
+optional next to 8: flag 8 reports the *unshifted* key, so 'A' from Shift+a
+would otherwise need a layout guess. Flag 4 is deliberately not requested.
+Full contract in `docs/keyboard-protocol.md`.
+
+Three things worth carrying forward. (1) **Sub-parameters are a generic-CSI
+concern, not a CSI-u one** — kitty attaches the event type to the *modifier*
+parameter of every key that keeps a legacy encoding, so `ESC[1;1:3A` is
+Up-release, and the old scan stopped at the ':' and exploded it into three
+events. `scan_csi_params` (3 params x 2 sub-params) replaces the p1/p2 scan.
+(2) **Stack depth stays 0 or 1**: `CSI > u` pushes a *new* entry every call,
+so `enter_screen` pushes once and a live `set_keyboard_mode` overwrites with
+`CSI = flags;1 u` — including the switch back to Legacy, which is flags 0 and
+never a pop. The pop lives in `kLeaveSequence`, so a crash cannot leave the
+user's shell enhanced. (3) **Bare modifier keys emit nothing** — under flag 8
+a LeftShift press (57441) arrives on every shifted keystroke, and `Key::Unknown`
+there would be an Unknown storm on ordinary typing; keys that are real but
+unnameable (Insert, F13+) still get `Unknown`.
+
+Also in this cut: `find_da1()` — the keyboard reply `CSI ? <flags> u` shares
+DA1's `\033[?` prefix, so the probe's bare `find` stopped being a DA1 locator
+the moment the query was added, and `probe_kitty_ok`'s ordering guard would
+have **silently degraded kitty_graphics to false**. Red-verified. Releases are
+filtered in exactly two routers (`App::dispatch_event`, `FocusRing::handle_key`)
+rather than 13 widgets; `Repeat` is deliberately *not* filtered, since the
+protocol sends it instead of a second press. `test/31keyboard` extends
+26mousemode's `PtyCapture` to dup2 the slave onto **stdin** too, which makes
+`App::setup()` runnable in CI against a synthetic probe reply — and it caught
+that `enter_raw`'s `TCSAFLUSH` discards a reply written before it. Validated
+`-Werror` on g++ + clang + ASan + UBSan, 33/33 on each.
+
+**Previous: #21 — the shared scrollbar indicator.** Scrolling is now
 *visible*: `ListWidget`, `TableWidget` and `TextBox` paint a one-column
 `│`/`█` track+thumb strip (`|`/`#` under `BorderStyle::Ascii`) when their
 content overflows, so a 10-row table no longer looks like a 10,000-row one.
@@ -1059,9 +1097,9 @@ An app that wants to keep its own marker calls `set_marker_enabled(false)`
 instead; either way the upgrade is not a no-op for anyone drawing their own.
 The open queue, in rough priority order:
 - **The rest of the TG-xx batch** — ~~#62~~ **LANDED (v0.1.16)** (Cell text
-  attributes), **#63** (Image sub-rect blit + sprite-sheet
-  slicing), **#60** (kitty keyboard protocol: key release + repeat — it
-  re-opens the same parser #61 just touched), **#64**
+  attributes), ~~#63~~ **LANDED (v0.1.18)** (Image sub-rect blit +
+  sprite-sheet slicing), ~~#60~~ **LANDED (v0.2.2)** (kitty keyboard protocol:
+  key release + repeat), **#64**
   (MapWidget — a **design doc** is the deliverable, and it is the last
   unchecked Epic 3 item, transitively blocking Epic 4.2 `game.cpp`).
 - **#69** (ProgressBar's indeterminate pulse animates per *frame*, not per

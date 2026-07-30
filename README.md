@@ -23,7 +23,9 @@ green in CI, ASan/UBSan clean).
 Landed and verified:
 - **Core** — value types (`Cell`/`Image`, `Capabilities`, `Event`/`ErrorEvent`
   variant), `Screen` (cell grid + sanitize boundary), `Renderer` (diff-render
-  with color pass-through), `Input` (escape state machine, UTF-8, SGR mouse),
+  with color pass-through), `Input` (escape state machine, UTF-8, SGR mouse,
+  kitty CSI-u key reports with press/repeat/release — see
+  [docs/keyboard-protocol.md](docs/keyboard-protocol.md)),
   `App` (event loop, SIGWINCH resize, pixel-region plumbing, guarded teardown
   on every exit path including an exception).
 - `Terminal` — raw-mode RAII (termios restore on destruction, or explicitly via
