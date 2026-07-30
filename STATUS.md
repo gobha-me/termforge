@@ -6,8 +6,8 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-30)
 
-**In flight: `v0.3.0` — #83 + #84, the pixel path stops being one pixel per
-cell.** `TerminalDriver::draw_image` now takes a destination **cell `Rect`**
+**Latest release: `v0.3.0` — #83 + #84, the pixel path stops being one pixel
+per cell** (PR #107). `TerminalDriver::draw_image` now takes a destination **cell `Rect`**
 instead of a bare `(x, y)`, and `Widget::draw_pixels(Rect, Extent)` returns a
 borrowed `const Image*` the widget owns. Both are breaking; they ship together
 because they are the same virtual and the same consumer migration
@@ -53,11 +53,27 @@ rejected by the driver, leaving a hole in the UI.
 
 Validated `-Werror` on g++ + clang + ASan/UBSan, 33/33 on each, and both
 examples captured under a pty on the fallback and half-block tiers (32×16 image
-→ 16 rows and 8 rows respectively, prompt below the image on both). **The kitty
-tier is the one thing this sandbox cannot check**, and it is where the change
-actually bites: `App`'s borrow-then-flush plumbing has no unit pin either,
-because `m_pixel_regions` is private and the collect pass gates on
-`kitty_graphics`. Both ride on the capture named in the PR.
+→ 16 rows and 8 rows respectively, prompt below the image on both).
+
+**The kitty capture settled the one thing that mattered, and settled it the
+good way.** `TIOCGWINSZ` reports `1917×1026` over a `213×57` grid — exactly
+**9×18 px cells**. So `ws_xpixel` is populated on real hardware, the
+`App` → `set_cell_pixel_size` → `preferred_pixel_extent` path is live rather
+than degrading to the nominal 8×16, and a rasterizing widget gets 12.5% more
+pixels per axis than the guess would have handed it. The nominal stays the
+right default for tmux and the Linux console; it is just not what runs here. A
+32×16 image now occupies ≈4×1 cells and is no longer stretched. That capture is
+also the only exercise `App`'s borrow-then-flush plumbing gets — it has no unit
+pin, because `m_pixel_regions` is private and the collect pass gates on
+`kitty_graphics`.
+
+**One process note, because it cost a force-push.** A bare `git add -A` swept
+the untracked `assets/art/` (8.8 MB) and `tools/artview.py` into the driver
+commit, against a deliberate decision to keep regenerable art out of git.
+Caught after the merge; fixed by rewriting the five commits since `v0.2.2` and
+force-pushing, since "out of history" is the whole point and a later `git rm`
+would not have delivered it. **Stage by path in this repo** — the main checkout
+routinely carries untracked scratch that must not ship.
 
 **Previous release: `v0.2.2` — #60, the kitty keyboard protocol.** An app can now opt into
 key **repeat and release**: `KeyEvent` gains `action`
