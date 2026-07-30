@@ -48,14 +48,17 @@ auto Screen::clear(const Cell& fill) -> void {
 
 auto Screen::fill_rect(int x, int y, int w, int h, Rgb fg, Rgb bg,
                        Attr attrs) -> void {
-  if (w <= 0 || h <= 0) return;
-  const int x0 = std::max(0, x);
-  const int y0 = std::max(0, y);
-  const int x1 = std::min(m_cols, x + w);
-  const int y1 = std::min(m_rows, y + h);
+  // The same clip Image::fill does (image.cpp), in the same arithmetic. The
+  // longhand this replaces computed x + w in int, so a rect starting near
+  // INT_MAX wrapped and std::min picked the wrapped value: a rect that
+  // genuinely covered the screen was silently dropped. #63 widened the pixel
+  // grid to int64 for exactly that; the cell grid kept the overflow until
+  // #102. An empty or non-positive rect needs no early return — intersect
+  // returns an empty Rect and the loops run zero times.
+  const Rect r = Rect{x, y, w, h}.intersect(Rect{0, 0, m_cols, m_rows});
   const Cell fill{"", fg, bg, attrs};  // blank cell (image_id defaults to -1)
-  for (int yy = y0; yy < y1; ++yy)
-    for (int xx = x0; xx < x1; ++xx)
+  for (int yy = r.y; yy < r.y + r.h; ++yy)
+    for (int xx = r.x; xx < r.x + r.w; ++xx)
       m_cells[static_cast<std::size_t>(yy) * m_cols + xx] = fill;
 }
 
