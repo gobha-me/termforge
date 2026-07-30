@@ -142,6 +142,12 @@ The `src_rect` overloads exist so a frame loop can read straight out of an
 atlas: `blend(atlas.sub(frame), …)` allocates and copies a whole sprite per
 draw per frame, `blend(atlas, frame, …)` allocates nothing.
 
+**An image may be its own source.** `img.blit(img, r, dx, dy)` and the `blend`
+equivalent — how a framebuffer is scrolled or shifted in place — are supported
+and correct, including when the regions overlap. They read through an internal
+copy of the clipped source region, so that one path does allocate; a caller in a
+hot loop that already owns a scratch buffer should blit out and back instead.
+
 ### Alpha is straight, not premultiplied
 
 `Pixel::r/g/b` are the colour **at full opacity** and `Pixel::a` is coverage.
@@ -156,7 +162,7 @@ a_o = a_s + a_d*(1 - a_s)
 C_o = (C_s*a_s + C_d*a_d*(1 - a_s)) / a_o
 ```
 
-in integers over 0..255, rounding to nearest at every step. Concretely
+in integers over 0..255, rounding to nearest **once, at the end**. Concretely
 (`src/lib/detail/blend.hpp`):
 
 ```cpp
@@ -165,23 +171,39 @@ div255(x) = { t = x + 128; (t + (t >> 8)) >> 8 }   // exact round(x/255), x <= 6
 // destination opaque (the common case) — division-free
 C_o = div255(C_s*a_s + C_d*(255 - a_s));  a_o = 255
 
-// general
-dc  = div255(a_d * (255 - a_s));  a_o = a_s + dc
-C_o = (2*(C_s*a_s + C_d*dc) + a_o) / (2*a_o)      // round-half-up
+// general — both weights stay at 255x scale through the ratio
+dcw = a_d * (255 - a_s);  aos = a_s*255 + dcw;  a_o = div255(aos)
+C_o = (2*(C_s*a_s*255 + C_d*dcw) + aos) / (2*aos)   // round-half-up
 ```
+
+The general channel is the **correctly rounded** Porter-Duff result: it matches
+exact rational compositing on all 256^4 inputs (verified exhaustively). Keeping
+the destination weight at 65025x scale is what buys that. Rounding it to 8 bits
+first — `dc = div255(a_d*(255-a_s))` — and then dividing by it is off by up to
+`4/255` on 8.13% of inputs, because the weight can be as small as 1 and a
+half-LSB error in a weight of 1 is a 50% error in the ratio. `a_o` is the same
+either way.
 
 ### The fast path is a specialization, not an approximation
 
 The two forms agree **bit-for-bit** wherever `a_d == 255`. With `a_d == 255`,
-`dc = div255(255*(255-a_s))` is exactly `255-a_s`, so `a_o == 255` and the
-general channel reduces to `(2*num + 255) / 510` — round-half-up of `num/255`.
-Since 255 is odd, `num/255` is never exactly `.5` for integer `num`, so that is
-plain `round(num/255)`, which is `div255(num)`. One oracle, no seam. The
-`test/28image` suite pins the agreement across all 256 source alphas.
+`dcw = 255*(255-a_s)`, so `aos = 255*255` and `a_o = div255(65025) = 255`; the
+numerator is likewise `255*n` for `n = C_s*a_s + C_d*(255-a_s)`, so the general
+channel reduces to `(2n + 255) / 510` — round-half-up of `n/255`. Since 255 is
+odd, `n/255` is never exactly `.5` for integer `n`, so that is plain
+`round(n/255)`, which is `div255(n)`. One oracle, no seam. The `test/28image`
+suite pins the agreement across all 256 source alphas.
 
 This matters beyond tidiness: #90 replaces the scalar kernel with SIMD required
 to match it bit-exactly, so **the rounding above is contract, not an
 implementation detail.** Changing it is a breaking change to that oracle.
+
+The general path is reachable by SIMD despite the divide: `2*num + aos` peaks at
+33227775, so it fits u32 with 129x headroom, and `num` peaks at `255*aos` =
+16581375, just under 2^24. A lane may therefore evaluate the divide in `f32`
+(`floor(num/aos + 0.5f)`) and still match the integer form bit-exactly on every
+input — verified exhaustively over all 256^4. Note `lrintf` does **not** work:
+it rounds halves to even and disagrees on the 416138 exact ties.
 
 ### Why not assume an opaque destination
 

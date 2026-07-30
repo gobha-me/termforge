@@ -1,11 +1,11 @@
 #include "termforge/drivers/kitty_driver.hpp"
 
-#include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <format>
-#include <vector>
+#include <span>
 
 #include "detail/base64.hpp"
 #include "detail/sgr_attrs.hpp"
