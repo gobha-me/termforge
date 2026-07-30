@@ -53,6 +53,9 @@ auto Button::set_flash_duration(std::chrono::duration<double> d) -> void {
 }
 
 auto Button::on_tick(std::chrono::duration<double> dt) -> void {
+  // App clamps dt to non-negative, but on_tick is public and a caller of its
+  // own can hand this anything; a negative delta must not extend the flash.
+  if (dt <= std::chrono::duration<double>::zero()) return;
   if (m_flash_left <= std::chrono::duration<double>::zero()) return;
   m_flash_left -= dt;
   // Dirty only on the edge, unlike ProgressBar which marks on every tick that
