@@ -24,10 +24,9 @@
 //   });
 //   // The flood gate (#45): let the picker raise one error dialog at a time.
 //   m_open.error_overlay_up([this] { return top_overlay() != &m_open; });
-//   // ...and in on_tick, unconditionally: its OK/Cancel Buttons hold a timed
-//   // press flash that outlives the pop their activation caused (#69).
-//   tick_widgets(dt, {&m_open});
 //   push_overlay(m_open);
+//
+// It needs no ticks: nothing it holds animates while it is up (#122).
 //
 // The pieces and their keys:
 //   * Path field (focused first) — type a directory and Enter navigates into
@@ -121,16 +120,17 @@ class FilePickerDialog final : public Dialog {
   // headless frame) can paint one frame without a tty.
   auto draw(Screen& screen) -> void override { Dialog::draw(screen); }
 
-  // Dialog::on_tick reaches the four add_child()ren, but NOT m_error: it is a
-  // member pushed as its own overlay rather than a child, and the app has no
-  // handle on it (same shape as the style-propagation problem #72 fixed). Its
-  // OK button holds a timed press flash like any other, so without this the
-  // picker's own error dialog is the one widget in the library nobody can
-  // tick — and a second read error would re-open it with OK lit for good.
-  auto on_tick(std::chrono::duration<double> dt) -> void override {
-    Dialog::on_tick(dt);
-    m_error.on_tick(dt);
-  }
+  // No on_tick override, and m_error deliberately gets no ticks at all (#122).
+  // It is a member pushed as its own overlay rather than an add_child(), so
+  // nothing could reach it — but it does not need reaching. Its only timed
+  // state is its OK button's press flash, and arming that flash necessarily
+  // latches m_error's own result (OK -> finish() -> begin_result()), so the
+  // next time report_error() re-raises it, its first draw is a new showing and
+  // the boundary puts the flash out. The one nested dialog nobody can tick
+  // heals itself.
+  //
+  // This stops being free only if MessageDialog ever gains something that
+  // animates WHILE it is up.
 
  protected:
   // Once per SHOWING (not per frame, #45): seed the path field, re-read the

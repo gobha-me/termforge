@@ -8,8 +8,11 @@
 //
 // "Briefly" is a DURATION, counted down in on_tick (#69). It used to be one
 // draw() call, i.e. one frame — so the flash was 16 ms or 100 ms depending on
-// set_frame_ms, and a blur at set_frame_ms(0). A button the app never ticks
-// therefore keeps its flash lit; forward ticks with App::tick_widgets.
+// set_frame_ms, and a blur at set_frame_ms(0). A bare button the app never
+// ticks therefore keeps its flash lit; forward ticks with App::tick_widgets. A
+// button inside a Dialog is additionally cleared at each showing boundary
+// (#122), so the flash a dialog-closing button never got to render cannot
+// survive into the next showing.
 //
 // The callback fires on activation. Buttons are focusable — the parent
 // app manages which button has focus (Tab to cycle).
@@ -51,6 +54,8 @@ class Button final : public Widget {
   //
   // Lowering it while a flash is lit clamps that flash, so set_flash_duration
   // ({}) turns the feedback off immediately rather than leaving one last one.
+  // To put out a lit flash WITHOUT changing the configured duration, call
+  // reset_transient().
   auto set_flash_duration(std::chrono::duration<double> d) -> void;
   [[nodiscard]] auto flash_duration() const noexcept
       -> std::chrono::duration<double> {
@@ -60,6 +65,7 @@ class Button final : public Widget {
   auto draw(Screen& screen) -> void override;
   auto on_event(const Event& ev) -> bool override;
   auto on_tick(std::chrono::duration<double> dt) -> void override;
+  auto reset_transient() -> void override;
 
  private:
   static constexpr std::chrono::duration<double> kDefaultFlash{0.12};
