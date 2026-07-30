@@ -136,8 +136,17 @@ TEST_CASE("ListWidget: scroll follows selection", "[listwidget]") {
 
 TEST_CASE("ListWidget: a height shrink re-clamps the scroll at draw (#41)",
           "[listwidget][failure]") {
-  // ensure_visible() ran only on selection/content changes; set_geometry is
-  // non-virtual, so a shrink stranded m_scroll and the selected row vanished.
+  // #41: ensure_visible() ran only on selection/content changes; set_geometry
+  // is non-virtual, so a shrink stranded m_scroll and content vanished.
+  //
+  // #35 RESTATES this test's intent. Before #35, draw() called ensure_visible()
+  // unconditionally, so a shrink re-revealed the SELECTED row (5). #35 Q2 makes
+  // draw()'s clamp BOUNDS-ONLY -- the view stays inside the content but no
+  // longer tracks the selection on resize. So the scroll (3, from selecting
+  // row 5 at height 3) clamps into [0, 6-2]=[0,4] UNCHANGED at 3, showing rows
+  // 3-4, and the selected row 5 is now OFF-screen until the next selection
+  // change re-reveals it. That is the deliberate new contract: draw() keeps the
+  // viewport valid, it does not chase the selection.
   Screen s{20, 5};
   ListWidget l;
   l.set_geometry({0, 0, 20, 3});
@@ -146,13 +155,58 @@ TEST_CASE("ListWidget: a height shrink re-clamps the scroll at draw (#41)",
   l.set_geometry({0, 0, 20, 2});  // terminal resize: now only 2 rows
 
   l.draw(s);
-  REQUIRE(s.at(2, 0).text == "i");  // row 4 (x=2: past the #72 marker gutter)
-  REQUIRE(s.at(2, 1).text == "i");  // row 5 -- the selection, still visible
-  // And specifically: the second visible row IS the selected one -- by its
-  // text, and (since #72) by the marker, which says so without reading colour.
-  REQUIRE(s.at(3, 1).text == "5");
-  REQUIRE(s.at(0, 1).text == "▸");
+  // Bounds-only clamp: scroll stays 3 (already inside [0, 6-2]), rows 3-4 show.
+  REQUIRE(s.at(3, 0).text == "3");  // row 3 (x=3: past the #72 marker gutter)
+  REQUIRE(s.at(3, 1).text == "4");  // row 4
+  // The selected row 5 is scrolled off the bottom: no marker is visible.
   REQUIRE(s.at(0, 0).text.empty());
+  REQUIRE(s.at(0, 1).text.empty());
+  REQUIRE(l.selected() == 5);  // ... but the selection itself is unmoved
+
+  // The NEXT selection change re-reveals it (reveal is on selection change,
+  // not draw): nudging the selection pulls row 5 back into the window.
+  l.on_event(tfsupport::key(Key::Down));  // already at the last row; re-reveals
+  l.draw(s);
+  REQUIRE(s.at(3, 1).text == "5");  // row 5 visible again
+  REQUIRE(s.at(0, 1).text == "▸");  // ... and marked as the selection
+}
+
+TEST_CASE("ListWidget: wheel scrolls the selection out of view and it STAYS out (#35 Q2)",
+          "[listwidget]") {
+  // The Q2 regression guard. Before #35 the wheel MOVED the selection; after,
+  // it scrolls the VIEW and the selection stays put -- and, crucially, draw()
+  // must NOT snap the view back to the selection (the bug #35 diagnosed in
+  // TableWidget). This is the assertion that would have caught that snap-back.
+  Screen s{20, 3};
+  ListWidget l;
+  l.set_geometry({0, 0, 20, 3});
+  l.set_items({"i0", "i1", "i2", "i3", "i4", "i5", "i6", "i7"});
+  l.set_selected(0);           // selection at the top, scroll = 0
+  REQUIRE(l.scroll_offset() == 0);
+
+  // Wheel down over the list: the VIEW scrolls, the selection does not move.
+  l.on_event(tfsupport::wheel(2, 1, /*up=*/false));
+  REQUIRE(l.selected() == 0);        // selection unmoved
+  REQUIRE(l.scroll_offset() == 3);   // view scrolled by kWheelStep
+
+  l.draw(s);
+  // Row 0 (the selection) is now off the top of the 3-row window (rows 3-5
+  // shown) -- and draw() did NOT pull it back into view.
+  REQUIRE(l.selected() == 0);
+  REQUIRE(l.scroll_offset() == 3);
+  REQUIRE(s.at(3, 0).text == "3");  // topmost visible row is i3, not i0
+  REQUIRE(s.at(0, 0).text.empty());  // no marker visible: the selection is off-screen
+
+  // An arrow key STILL moves the selection and reveals it (the arrow direction
+  // is unchanged): Down from 0 selects 1 and pulls the window back up.
+  l.on_event(tfsupport::key(Key::Down));
+  REQUIRE(l.selected() == 1);
+  l.draw(s);
+  // The marker is visible somewhere again (the window snapped back to row 1).
+  const bool marker_visible = (s.at(0, 0).text == "▸") ||
+                              (s.at(0, 1).text == "▸") ||
+                              (s.at(0, 2).text == "▸");
+  REQUIRE(marker_visible);
 }
 
 TEST_CASE("ListWidget: Enter fires on_select callback", "[listwidget]") {

@@ -6,6 +6,7 @@
 #include "detail/width.hpp"
 #include "termforge/widgets/detail/callback.hpp"
 #include "termforge/widgets/detail/scroll.hpp"
+#include "termforge/widgets/detail/viewport.hpp"
 
 namespace termforge {
 
@@ -45,7 +46,13 @@ auto TableWidget::clear_rows() -> void {
 auto TableWidget::set_selected(int row) -> void {
   const int max_row = static_cast<int>(m_rows.size()) - 1;
   m_selected = std::clamp(row, -1, max_row);
+  ensure_visible();  // reveal a programmatic selection (#35 Q2)
   mark_dirty();
+}
+
+auto TableWidget::ensure_visible() -> void {
+  m_scroll = detail::clamp_scroll(m_scroll, m_selected,
+                                  static_cast<int>(m_rows.size()), rect().h - 1);
 }
 
 auto TableWidget::scroll(int delta) -> void {
@@ -106,10 +113,15 @@ auto TableWidget::draw(Screen& screen) -> void {
   // Re-clamp the scroll against CURRENT geometry (#41's class in the grow
   // direction, #48 item 2): End at h=4 with 10 rows parks m_scroll at 7, and
   // a relayout to h=12 leaves rows 0-6 hidden and the bottom blank until a
-  // manual scroll. set_geometry is non-virtual, so draw() reconciles -- the
-  // same treatment ListWidget/RadioGroup got in 73a985e.
-  m_scroll = detail::clamp_scroll(m_scroll, m_selected,
-                                  static_cast<int>(m_rows.size()), r.h - 1);
+  // manual scroll. set_geometry is non-virtual, so draw() reconciles.
+  //
+  // BOUNDS-ONLY (#35 Q2): the pre-#35 code fed m_selected into clamp_scroll
+  // here, so any wheel scroll that pushed the selected row off-screen was
+  // silently snapped back on the next draw -- "wheel scrolls until the
+  // selection disagrees". The wheel must be able to scroll the selection out
+  // of view; revealing it is ensure_visible()'s job, run on selection change.
+  m_scroll = detail::clamp_offset(m_scroll, static_cast<int>(m_rows.size()),
+                                  r.h - 1);
 
   // Own the whole rect: blank it every frame so the 1-col gaps between columns
   // and rows vacated by clear_rows()/scroll can't leave stale content behind
@@ -173,22 +185,41 @@ auto TableWidget::draw(Screen& screen) -> void {
 
 auto TableWidget::on_event(const Event& ev) -> bool {
   if (const auto* k = std::get_if<KeyEvent>(&ev)) {
-    if (k->key == Key::Up) { scroll(-1); return true; }
-    if (k->key == Key::Down) { scroll(1); return true; }
-    // Clamp the page size so tiny heights (h <= 2) still page by one row
-    // in the right direction instead of negating or zeroing the delta.
-    if (k->key == Key::PageUp) { scroll(-std::max(1, rect().h - 2)); return true; }
-    if (k->key == Key::PageDown) { scroll(std::max(1, rect().h - 2)); return true; }
-    if (k->key == Key::Home) { m_scroll = 0; mark_dirty(); return true; }
-    if (k->key == Key::End) {
-      m_scroll = std::max(0, static_cast<int>(m_rows.size()) - (rect().h - 1));
-      mark_dirty();
+    const int count = static_cast<int>(m_rows.size());
+    // #35 Q3 (BREAKING): the arrow keys move the SELECTION (and reveal it),
+    // they no longer scroll the view. "arrows scroll, mouse selects" was the
+    // odd convention out across the whole widget set, and a table is the
+    // widget users most expect to keyboard-navigate. A table with no rows has
+    // nothing to select; the keys are still consumed (a focused table owns
+    // navigation).
+    if (k->key == Key::Up || k->key == Key::Down || k->key == Key::PageUp ||
+        k->key == Key::PageDown || k->key == Key::Home || k->key == Key::End) {
+      if (count == 0) return true;
+      // The first keypress on a never-selected table (m_selected == -1, the
+      // default) starts from the nearest edge: Down/PageDown/Home land on row
+      // 0, Up/PageUp/End on the last -- so navigation begins somewhere visible
+      // rather than acting on a row the user never chose.
+      const int page = std::max(1, rect().h - 2);
+      int next = m_selected;
+      if (k->key == Key::Up) next = (m_selected < 0 ? count - 1 : m_selected - 1);
+      if (k->key == Key::Down) next = (m_selected < 0 ? 0 : m_selected + 1);
+      if (k->key == Key::PageUp)
+        next = (m_selected < 0 ? count - 1 : m_selected - page);
+      if (k->key == Key::PageDown)
+        next = (m_selected < 0 ? 0 : m_selected + page);
+      if (k->key == Key::Home) next = 0;
+      if (k->key == Key::End) next = count - 1;
+      set_selected(next);  // clamps into [0, count) and reveals
       return true;
     }
   }
   if (const auto* m = std::get_if<MouseEvent>(&ev)) {
-    if (m->scroll_up) { scroll(-3); return true; }
-    if (m->scroll_down) { scroll(3); return true; }
+    // #35 Q1: the wheel scrolls the VIEW; the selection stays put and may
+    // scroll out of view (Q2). scroll() clamps bounds-only.
+    if (m->scroll_up || m->scroll_down) {
+      scroll(detail::wheel_delta(m->scroll_up));
+      return true;
+    }
     if (m->pressed && m->button == 0 && rect().contains(m->x, m->y)) {
       // Header row: consumed but inert (reserved for future sorting).
       if (m->y == rect().y) return true;

@@ -6,7 +6,26 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-30)
 
-**Latest work: #86 — MapWidget v1 (glyph tier) landed.** Epic 3 is now fully
+**Latest work: #35 — wheel vs arrow-key semantics unified (option 1).**
+**BREAKING for TableWidget:** the arrow keys now move the *selection* (and
+reveal it), they no longer scroll the view — "arrows scroll, mouse selects"
+was the odd convention out. Across the scrollable widgets the wheel now
+scrolls the **view** everywhere, and the selection stays put and **may scroll
+out of view** (Q2) — which fixes the latent TableWidget snap-back the reviewer
+diagnosed (`draw()` fed `m_selected` into `clamp_scroll` every frame, so any
+wheel scroll that pushed the selection off-screen was silently undone). New
+`detail/viewport.hpp` owns the `(total, offset, visible)` triple, a uniform
+sign convention, and one `kWheelStep`; `draw()` clamps are now bounds-only
+(`clamp_offset`), with reveal-on-selection-change (`ensure_visible`) kept on
+`set_selected`/arrows. TextBox keeps its inverted bottom-pinned model,
+converting sign at its boundary so `at_bottom()`/`m_follow` are unchanged.
+RadioGroup and the Select/MenuBar dropdowns stay wheel-inert — now documented
+as intended (pickers over a fixed set, not viewports). Wheel behaviour pinned
+for the first time (`grep -c wheel` was 0 in all three suites); the Q2
+snap-back guard and Q3 are red-verified. Lands the viewport triple #21's
+scrollbar needs. Validated `-Werror` on g++-13/14 + clang, ASan/UBSan, 31/31.
+
+**Previous: #86 — MapWidget v1 (glyph tier) landed.** Epic 3 is now fully
 DONE; ROADMAP 4.2 (`game.cpp`) is unblocked. `MapWidget` renders a tile grid —
 TileSet + widget-owned camera + painter's-algorithm layers — as a pure cell
 widget. v1 deliberately overrides **neither** `pixel_regions()` nor

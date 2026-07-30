@@ -137,20 +137,78 @@ TEST_CASE("TableWidget: zero-size rect doesn't crash", "[tablewidget][failure]")
   t.draw(s);  // must not crash
 }
 
-TEST_CASE("TableWidget: keyboard events scroll", "[tablewidget]") {
+TEST_CASE("TableWidget: arrow keys move the selection (#35 Q3, breaking)",
+          "[tablewidget]") {
+  // #35 Q3 CHANGED this: the arrows used to scroll the VIEW (this test pinned
+  // scroll_offset() moving); they now move the SELECTION and reveal it --
+  // "arrows scroll, mouse selects" was the odd convention out across the
+  // widget set. The wheel is what scrolls the view now (next test).
   Screen s{20, 4};
   TableWidget t;
   t.set_geometry({0, 0, 20, 4});
   t.set_columns({{"N", Align::Left}});
   for (int i = 0; i < 10; ++i) t.add_row({std::format("{}", i)});
 
+  // First Down on a never-selected table (m_selected == -1) selects row 0.
   Event down = KeyEvent{Key::Down};
   REQUIRE(t.on_event(down));
-  REQUIRE(t.scroll_offset() == 1);
+  REQUIRE(t.selected() == 0);
+  REQUIRE(t.scroll_offset() == 0);  // nothing scrolled: row 0 was already visible
+
+  // Subsequent Downs walk the selection down.
+  REQUIRE(t.on_event(down));
+  REQUIRE(t.selected() == 1);
 
   Event up = KeyEvent{Key::Up};
   REQUIRE(t.on_event(up));
+  REQUIRE(t.selected() == 0);
+}
+
+TEST_CASE("TableWidget: arrows reveal the selection they move", "[tablewidget]") {
+  Screen s{20, 4};  // 4 rows -> 3 visible data rows (header takes one)
+  TableWidget t;
+  t.set_geometry({0, 0, 20, 4});
+  t.set_columns({{"N", Align::Left}});
+  for (int i = 0; i < 10; ++i) t.add_row({std::format("{}", i)});
+
+  // End selects the last row and pulls the window onto it.
+  Event end = KeyEvent{Key::End};
+  REQUIRE(t.on_event(end));
+  REQUIRE(t.selected() == 9);
+  // max scroll = 10 rows - 3 visible = 7, so rows 7-9 are visible.
+  REQUIRE(t.scroll_offset() == 7);
+
+  // Home selects row 0 and scrolls back to the top.
+  Event home = KeyEvent{Key::Home};
+  REQUIRE(t.on_event(home));
+  REQUIRE(t.selected() == 0);
   REQUIRE(t.scroll_offset() == 0);
+}
+
+TEST_CASE("TableWidget: wheel scrolls the selection out of view and it STAYS out (#35 Q2)",
+          "[tablewidget]") {
+  // The Q2 regression guard -- the exact bug #35 diagnosed. Before #35,
+  // draw() fed m_selected into clamp_scroll on every frame, so any wheel
+  // scroll that pushed the selected row off-screen was silently snapped back
+  // on the next draw ("wheel scrolls until the selection disagrees"). Now
+  // draw()'s clamp is bounds-only and the selection may stay off-screen.
+  Screen s{20, 4};  // 3 visible data rows
+  TableWidget t;
+  t.set_geometry({0, 0, 20, 4});
+  t.set_columns({{"N", Align::Left}});
+  for (int i = 0; i < 10; ++i) t.add_row({std::format("{}", i)});
+  t.set_selected(0);  // selection at the top, scroll = 0
+  REQUIRE(t.scroll_offset() == 0);
+
+  // Wheel down over the table: the VIEW scrolls, the selection does not move.
+  t.on_event(tfsupport::wheel(2, 2, /*up=*/false));
+  REQUIRE(t.selected() == 0);
+  REQUIRE(t.scroll_offset() == 3);  // kWheelStep
+
+  t.draw(s);
+  // THE guard: draw() did NOT snap the view back to row 0.
+  REQUIRE(t.selected() == 0);
+  REQUIRE(t.scroll_offset() == 3);
 }
 
 TEST_CASE("TableWidget: alternating row backgrounds", "[tablewidget]") {

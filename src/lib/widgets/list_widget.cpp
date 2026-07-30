@@ -5,6 +5,7 @@
 #include "detail/width.hpp"
 #include "termforge/widgets/detail/callback.hpp"
 #include "termforge/widgets/detail/scroll.hpp"
+#include "termforge/widgets/detail/viewport.hpp"
 
 namespace termforge {
 
@@ -47,11 +48,14 @@ auto ListWidget::draw(Screen& screen) -> void {
     return;
   }
 
-  // Re-clamp against the CURRENT height: set_geometry is non-virtual and a
-  // shrink strands m_scroll, leaving the selected row off-screen with no
-  // visible focus anywhere (#41). setters keep calling ensure_visible; this
-  // covers the path no setter runs on.
-  ensure_visible();
+  // Re-clamp the SCROLL against the CURRENT height: set_geometry is
+  // non-virtual, so a shrink strands m_scroll past the content (#41's class).
+  // This is a BOUNDS-ONLY clamp (#35 Q2): it must NOT pull the selection back
+  // into view -- the wheel may have deliberately scrolled it off-screen, and
+  // snapping back is the TableWidget bug #35 diagnosed. Revealing the
+  // selection is ensure_visible()'s job, and it runs on selection change
+  // (set_selected / arrows / Home / End), not here.
+  m_scroll = detail::clamp_offset(m_scroll, m_list.count(), r.h);
 
   // The selection marker's gutter (#72). Colour was this widget's whole
   // affordance and FallbackDriver::draw_text drops colour, so on the bottom
@@ -154,12 +158,13 @@ auto ListWidget::on_event(const Event& ev) -> bool {
   }
 
   if (const auto* m = std::get_if<MouseEvent>(&ev)) {
-    if (m->scroll_up) {
-      set_selected(m_list.selected() - 3);
-      return true;
-    }
-    if (m->scroll_down) {
-      set_selected(m_list.selected() + 3);
+    // #35 Q1: the wheel scrolls the VIEW, not the selection. The selection
+    // stays put and may scroll out of view (Q2); arrows still move it.
+    if (m->scroll_up || m->scroll_down) {
+      m_scroll = detail::clamp_offset(
+          m_scroll + detail::wheel_delta(m->scroll_up), m_list.count(),
+          rect().h);
+      mark_dirty();
       return true;
     }
     if (m->pressed && m->button == 0 && rect().contains(m->x, m->y)) {

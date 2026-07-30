@@ -539,8 +539,12 @@ TEST_CASE("RadioGroup: a non-left press does not select",
 
 TEST_CASE("RadioGroup: the wheel does not change the selection",
           "[form][radio][mouse][failure]") {
-  // ListWidget's wheel moves its selection; a form control must not, or a
-  // stray scroll silently changes a value the user is not looking at.
+  // #35 made this INTENDED rather than incidental: RadioGroup is a picker over
+  // a fixed set, not a viewport, so it declines the wheel outright (returns
+  // false, letting a parent scroll its own panel). The contrast is no longer
+  // "ListWidget's wheel moves its selection" -- #35 Q1 changed that to scroll
+  // the view -- but that the scrollable widgets have a WINDOW to move and a
+  // picker does not. A stray scroll must never silently change a form value.
   RadioGroup g;
   make_group(g);
   REQUIRE_FALSE(g.on_event(wheel(1, 1)));

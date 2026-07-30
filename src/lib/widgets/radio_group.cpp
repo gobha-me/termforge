@@ -146,8 +146,10 @@ auto RadioGroup::on_event(const Event& ev) -> bool {
   }
 
   if (const auto* m = std::get_if<MouseEvent>(&ev)) {
-    // Wheel deliberately ignored: a stray scroll must not silently mutate a
-    // form value the user is not looking at. A parent scrolls its own panel.
+    // Wheel deliberately declined (#35, INTENDED): RadioGroup is a picker over
+    // a fixed set, not a viewport, so it has no window to scroll. Returning
+    // false lets a parent scroll its own panel; a stray scroll must never
+    // silently mutate a form value the user is not looking at.
     if (m->scroll_up || m->scroll_down) return false;
 
     if (m->pressed && m->button == 0 && rect().contains(m->x, m->y)) {

@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include "support/events.hpp"
 #include "termforge/widgets/text_box.hpp"
 #include "termforge/core/screen.hpp"
 
@@ -115,5 +116,36 @@ TEST_CASE("TextBox: over-scrolling up clamps instead of blanking",
   REQUIRE(all.find("line 0") != std::string::npos);
   REQUIRE(all.find("line 4") != std::string::npos);
   // Content fits entirely → the clamp lands back at the bottom.
+  REQUIRE(box.at_bottom());
+}
+
+TEST_CASE("TextBox: wheel scrolls the view, sign convention unchanged (#35)",
+          "[textbox]") {
+  // #35 routed TextBox's wheel through the shared viewport helper. Its
+  // m_scroll is INVERTED relative to the library convention (0 == pinned to
+  // bottom, larger == scrolled further up), so the helper's uniform direction
+  // is converted at the widget's boundary. This pins that the app-visible
+  // behaviour -- at_bottom() and the m_follow auto-scroll latch -- is
+  // byte-for-byte unchanged.
+  TextBox box;
+  box.set_geometry({0, 0, 20, 4});
+  for (int i = 0; i < 20; ++i) box.append("line " + std::to_string(i));
+  REQUIRE(box.at_bottom());
+
+  // Wheel UP over the box scrolls toward older lines: no longer at the bottom.
+  box.on_event(tfsupport::wheel(2, 1, /*up=*/true));
+  REQUIRE_FALSE(box.at_bottom());
+
+  // Wheel back DOWN returns to the bottom and re-arms the follow latch.
+  box.on_event(tfsupport::wheel(2, 1, /*up=*/false));
+  REQUIRE(box.at_bottom());
+
+  // The follow latch still auto-scrolls on new content only while at the
+  // bottom: scroll up, append, the view does NOT jump to the new line...
+  box.on_event(tfsupport::wheel(2, 1, /*up=*/true));
+  box.append("new line");
+  REQUIRE_FALSE(box.at_bottom());
+  // ...and an explicit scroll_to_bottom re-pins it.
+  box.scroll_to_bottom();
   REQUIRE(box.at_bottom());
 }
