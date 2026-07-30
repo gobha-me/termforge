@@ -36,7 +36,8 @@ Landed and verified:
 - **AnsiRgbDriver** — truecolor half-block rendering with SGR run-coalescing.
 - **FallbackDriver** — plain-ASCII luminance, the bare-TTY floor.
 - **Widgets** — `Widget` base (with pixel-region support), TextBox scrollback,
-  TableWidget, ListWidget, WaveformWidget, and the primitives Label, Button,
+  TableWidget, ListWidget, WaveformWidget, MapWidget (tile maps: TileSet +
+  camera + layers), and the primitives Label, Button,
   ProgressBar, TextInput, Frame, MenuBar. Mouse event routing via
   `Widget::hit_test` (topmost-first); `FocusRing` owns the Tab order.
 - **Form controls** — `Checkbox`, `RadioGroup` (one tab stop for the whole
@@ -60,8 +61,8 @@ Landed and verified:
   `set_max_tick_dt` clamp keeps a stall from teleporting objects through walls.
   See `examples/motion.cpp`.
 
-Deferred per the roadmap: `SixelDriver` (Epic 5), MapWidget + game example,
-SIMD waveform rasterization, framebuffer driver.
+Deferred per the roadmap: `SixelDriver` (Epic 5), the MapWidget sprite tier +
+game example, SIMD waveform rasterization, framebuffer driver.
 
 ## Why
 
