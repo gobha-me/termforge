@@ -52,6 +52,24 @@ struct TickRecorder : Widget {
   }
 };
 
+// Three recorders logging into one string, ticked through a container. At file
+// scope because a local class cannot have a member template, and the template
+// is the point: tick() takes the container by const& and lets App's constrained
+// overload deduce, so the call performs the resolution an app performs. A
+// std::span parameter here would pre-convert and prove nothing (#123).
+struct ContainerTickProbe : App {
+  std::string log;
+  TickRecorder a, b, c;
+  ContainerTickProbe() {
+    a.log = &log; a.id = 'a';
+    b.log = &log; b.id = 'b';
+    c.log = &log; c.id = 'c';
+  }
+  auto on_render(Screen&) -> void override {}
+  template <class R>
+  auto tick(Seconds dt, const R& ws) -> void { tick_widgets(dt, ws); }
+};
+
 // A widget written before on_tick existed. That this compiles and runs is the
 // source-compatibility claim for the new virtual — the Widget-level mirror of
 // test/24tick's LegacyProbe.
@@ -217,38 +235,32 @@ TEST_CASE("tick_widgets skips a null entry", "[widgettick]") {
 
 TEST_CASE("tick_widgets forwards from a container (#123)", "[widgettick]") {
   // The braced form is an initializer_list, which cannot be built from a
-  // vector -- so an app that keeps its widgets in a container (a generated row
-  // of Buttons, one ProgressBar per item) could not call the forwarder at all,
-  // and looped calling on_tick directly. That spelling bypasses the null-skip
-  // below, which is exactly why it should not be the one such apps are pushed
-  // toward. Same forward order, same contract, through a std::vector.
-  struct Probe : App {
-    std::string log;
-    TickRecorder a, b, c;
-    Probe() {
-      a.log = &log; a.id = 'a';
-      b.log = &log; b.id = 'b';
-      c.log = &log; c.id = 'c';
-    }
-    auto on_render(Screen&) -> void override {}
-    auto tick(Seconds dt, std::span<Widget* const> ws) -> void {
-      tick_widgets(dt, ws);
-    }
-  } app;
+  // vector -- so an app that keeps its widgets in a std::vector<Widget*> could
+  // not call the forwarder at all, and looped calling on_tick directly. That
+  // spelling bypasses the null-skip, which is exactly why it should not be the
+  // one such apps are pushed toward. Same forward order, same contract.
+  //
+  // See ContainerTickProbe for why tick() is a template.
+  ContainerTickProbe app;
 
-  std::vector<Widget*> ws{&app.a, &app.b, &app.c};
+  const std::vector<Widget*> ws{&app.a, &app.b, &app.c};
   app.tick(Seconds{100ms}, ws);
   REQUIRE(app.log == "abc");  // same forward order as the braced form
   REQUIRE(app.a.dts.size() == 1);
   REQUIRE(app.a.dts[0] == Seconds{100ms});
   REQUIRE(app.c.dts[0] == Seconds{100ms});
 
-  // The null contract survives the widening -- it lives in the span overload,
-  // which is the one that holds the loop.
-  ws.push_back(nullptr);
-  app.tick(Seconds{50ms}, ws);
-  REQUIRE(app.b.dts.size() == 2);
-  REQUIRE(app.b.dts[1] == Seconds{50ms});
+  // The null contract survives the widening. The null goes in the MIDDLE, and
+  // the assertion is the log: a skip appends "abc", while a null treated as a
+  // terminator appends "a" and a null dereferenced crashes. Appending it to the
+  // back instead would assert nothing -- every widget is already ticked by the
+  // time the loop reaches it, so "skip" and "stop" are indistinguishable.
+  app.log.clear();
+  const std::vector<Widget*> holed{&app.a, nullptr, &app.b, &app.c};
+  app.tick(Seconds{50ms}, holed);
+  REQUIRE(app.log == "abc");
+  REQUIRE(app.c.dts.size() == 2);
+  REQUIRE(app.c.dts[1] == Seconds{50ms});
 }
 
 // ── the frame-rate coupling this issue exists to remove ─────────────────────

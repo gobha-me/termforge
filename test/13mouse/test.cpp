@@ -3,6 +3,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <span>
 #include <string>
 #include <variant>
@@ -422,11 +423,13 @@ class RouteProbe final : public App {
              std::initializer_list<Widget*> widgets) -> bool {
     return route_mouse(ev, widgets);
   }
-  // A second wrapper, not a widened first one. A braced list cannot bind to a
-  // span until P2447 (C++26), so widening route() would break the two tests
-  // above AND leave the initializer_list overload with no coverage (#123).
-  auto route_span(const MouseEvent& ev,
-                  std::span<Widget* const> widgets) -> bool {
+  // A second wrapper, not a widened first one: widening route() would leave
+  // the initializer_list overload with no coverage (#123). Takes the container
+  // by const& and lets the template deduce, so this call performs the same
+  // overload resolution an app performs -- a std::span parameter here would
+  // pre-convert and test nothing.
+  template <class R>
+  auto route_range(const MouseEvent& ev, const R& widgets) -> bool {
     return route_mouse(ev, widgets);
   }
 };
@@ -474,7 +477,29 @@ TEST_CASE("route_mouse: closed menu does not shadow the widget underneath",
   REQUIRE_FALSE(item_fired);
 }
 
-TEST_CASE("route_mouse: the span overload routes from a container (#123)",
+namespace {
+
+// What the container form must and must not accept (#123). These are compile
+// -time claims, so they are static_asserts on the concept rather than a
+// TEST_CASE -- the ill-formed spellings cannot be written in a running test.
+//
+// The middle one is the whole reason the parameter is a constrained template
+// and not a plain std::span<Widget* const>: span's (iterator, sentinel)
+// constructor is not explicit at dynamic extent, so a TWO-element braced list
+// of Widget** would bind it silently and route only the first widget. Exactly
+// two is the dangerous arity -- one and three or more find no constructor.
+static_assert(termforge::detail::WidgetRange<std::vector<Widget*>>);
+static_assert(termforge::detail::WidgetRange<std::array<Widget*, 3>>);
+static_assert(termforge::detail::WidgetRange<std::span<Widget* const>>);
+// A container of a DERIVED pointer does not convert element-wise; hold
+// std::vector<Widget*> instead. Pinned so the diagnostic stays the concept's.
+static_assert(!termforge::detail::WidgetRange<std::vector<Button*>>);
+// The hazard itself: a range of Widget** is not a widget list.
+static_assert(!termforge::detail::WidgetRange<std::vector<Widget**>>);
+
+}  // namespace
+
+TEST_CASE("route_mouse: the container form routes from a vector (#123)",
           "[mouse][route]") {
   // The same claim the two tests above make -- topmost (last) wins -- reached
   // through a std::vector, which the braced form cannot express at all. An app
@@ -493,7 +518,7 @@ TEST_CASE("route_mouse: the span overload routes from a container (#123)",
   RouteProbe app;
   const std::vector<Widget*> widgets{&under, &mb};  // mb last = topmost
   const MouseEvent click{.x = 2, .y = 1, .button = 0, .pressed = true};
-  REQUIRE(app.route_span(click, widgets));
+  REQUIRE(app.route_range(click, widgets));
   REQUIRE(item_fired);
   REQUIRE_FALSE(button_fired);
 }
@@ -503,8 +528,10 @@ TEST_CASE("route_mouse skips a null entry (#123)", "[mouse][route][failure]") {
   // to pass a pointer that is only sometimes populated. The two lists in every
   // example are the same widgets forty lines apart, so an app that believed
   // that doc and reused the list here dereferenced null -- in a released TUI,
-  // which also leaves the terminal in raw mode. Pre-fix this is UB, so the old
-  // behaviour fails under UBSan rather than failing a REQUIRE.
+  // which also leaves the terminal in raw mode. Pre-fix the failure is a
+  // SIGSEGV, not a failed REQUIRE: the ordinary build reports it through
+  // Catch2's signal handler, and the sanitizer build names the line. Either
+  // way this case has teeth without a sanitizer.
   //
   // A null is ABSENT, not a floor: routing continues to the widget BELOW it.
   bool button_fired = false;
@@ -520,15 +547,34 @@ TEST_CASE("route_mouse skips a null entry (#123)", "[mouse][route][failure]") {
   // button underneath still takes the click.
   REQUIRE(app.route(click, {&under, nullptr}));
   REQUIRE(button_fired);
+}
 
-  // And through the span overload, which is where the loop actually lives.
-  button_fired = false;
+// The next two are separate TEST_CASEs, not more assertions in the one above:
+// the pre-fix failure is a SIGSEGV, which aborts the whole case at its first
+// REQUIRE. Folded in, they would look covered while never executing (#123).
+
+TEST_CASE("route_mouse skips a null through the container form (#123)",
+          "[mouse][route][failure]") {
+  bool button_fired = false;
+  Button under;
+  under.set_label("[ OK ]");
+  under.set_geometry({0, 1, 10, 1});
+  under.on_activate([&] { button_fired = true; });
+
+  RouteProbe app;
+  const MouseEvent click{.x = 2, .y = 1, .button = 0, .pressed = true};
   const std::vector<Widget*> widgets{&under, nullptr};
-  REQUIRE(app.route_span(click, widgets));
+  REQUIRE(app.route_range(click, widgets));
   REQUIRE(button_fired);
+}
 
-  // A list of nothing but nulls is a miss, not a crash.
+TEST_CASE("route_mouse: a list of nothing but nulls is a miss, not a crash "
+          "(#123)", "[mouse][route][failure]") {
+  RouteProbe app;
+  const MouseEvent click{.x = 2, .y = 1, .button = 0, .pressed = true};
   REQUIRE_FALSE(app.route(click, {nullptr, nullptr}));
+  const std::vector<Widget*> nulls{nullptr, nullptr};
+  REQUIRE_FALSE(app.route_range(click, nulls));
 }
 
 // ── decoder round-trip (#55) ──────────────────────────────────────────────────
