@@ -114,16 +114,16 @@ class DialogsDemo final : public App {
   }
 
   auto on_tick(std::chrono::duration<double> dt) -> void override {
-    // Every widget that animates, including the four dialogs — a Dialog
-    // forwards the tick to its own children, which is how their OK/Cancel
-    // buttons get one.
+    // The four PAGE buttons, and nothing else. Their press flash is on screen
+    // while it burns down, so it needs ticks to burn down at wall-clock speed.
     //
-    // Unconditionally, NOT "only what is currently pushed". A dialog button
-    // closes its dialog on activation, so the press flash it is holding is
-    // still burning down after the overlay has been popped; stop ticking it
-    // there and the next showing opens with that button already lit.
+    // The four dialogs are deliberately absent. A dialog's own OK/Cancel closes
+    // the dialog on activation, so its flash never renders however hard you
+    // tick it — and the flash it is left holding is cleared by the showing
+    // boundary rather than by the app (#122). Forward a tick to a dialog only
+    // when it holds something that animates while it is up.
     tick_widgets(dt, {&m_btn_message, &m_btn_confirm, &m_btn_prompt,
-                      &m_btn_open, &m_message, &m_confirm, &m_prompt, &m_open});
+                      &m_btn_open});
   }
 
   auto on_render(Screen& screen) -> void override {

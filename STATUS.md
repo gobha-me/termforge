@@ -6,7 +6,45 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-30)
 
-**Latest release: `v0.4.0` — #69, time reaches a widget.** `Widget` gains
+**Latest release: `v0.5.0` — #122, a dialog re-opens clean.** `Widget` gains
+`reset_transient()` — a second non-pure virtual with an empty body, next to
+`on_tick` — and `Dialog::draw` calls it on every child at the per-showing
+boundary it already computed for `on_show()`. `Button` puts out its press
+flash, `ProgressBar` rewinds its pulse, `Select` and `MenuBar` close an open
+dropdown. All four bodies are **edge-guarded**: a reset that clears nothing
+must not mark dirty, or every dialog holding a button comes up dirty at every
+showing and the idle-loop hint is worthless.
+
+This retires v0.4.0's one non-obvious failure and the six copies of the
+documentation that patched it. The tick rule that survives is "forward a tick
+to a dialog while it is up, if it holds something that animates"; the clause
+that died is "unconditionally, pushed or not". `examples/dialogs.cpp` now ticks
+its four page buttons and *not* its four dialogs — the contrast is the point.
+
+Three things worth carrying. **`FilePickerDialog::on_tick` is gone and needed
+no replacement.** Its `m_error` is a `MessageDialog` member pushed as its own
+overlay, not an `add_child`, so nothing could reach it — but arming that
+dialog's OK flash *necessarily* latches its own result (OK → `finish()` →
+`begin_result()`), so the next `report_error()` raise is a new showing and the
+boundary puts the flash out. The one nested dialog nobody can tick heals
+itself. **`reset_transient()` is called virtually on `this`**, not through a
+private loop, so a `Dialog` subclass that overrides it participates in its own
+boundary; and it runs *before* `on_show()`, so state a subclass establishes
+there survives. **`begin_result()` now ends the showing in a stronger sense**
+than it did: a control that acts without finishing the dialog must not call it,
+or it wipes its own flash. Documented loudly on the declaration.
+
+The narrow behaviour change: a custom dialog that reports a result but stays
+pushed gets its children reset on the next frame. Such a dialog already
+misfired `on_show()` every time (a pre-existing #45 consequence), and no
+in-repo dialog does it.
+
+Validated 34/34 with each of the four new assertions run against the boundary
+call commented out — all four went red, and the one that asserts a flash *does*
+still render on an ordinary frame passed both ways, which is what stops a
+reset-every-draw implementation from sneaking through.
+
+**Previous release: `v0.4.0` — #69, time reaches a widget.** `Widget` gains
 `on_tick(std::chrono::duration<double>)` — a non-pure virtual with an empty
 body, so all ~32 subclasses compile untouched — and `App` gains a protected
 `tick_widgets(dt, {…})` forwarder. `ProgressBar`'s indeterminate pulse and
@@ -38,7 +76,9 @@ when it was frame-counted. (4) **The one failure that is *not* loud** is a
 standard dialog: its buttons close the dialog on activation, so an unforwarded
 flash never renders — and the next showing opens with the button lit. Hence
 `Dialog::on_tick` forwarding to `m_children`, and `examples/dialogs.cpp`
-ticking its dialogs *unconditionally*, pushed or not.
+ticking its dialogs *unconditionally*, pushed or not. **(#122 retired that
+second half: the showing boundary now resets a dialog's children, so nobody
+has to tick a popped dialog — see v0.5.0 above.)**
 
 Validated `-Werror` on g++ + clang, 34/34, plus pty captures on the truecolor
 tier: the pulse advances ~7.5 cells per 0.25 s (30 cells/s as configured), the
