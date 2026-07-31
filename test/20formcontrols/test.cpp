@@ -112,6 +112,13 @@ TEST_CASE("mark_glyphs: the Ascii family is 7-bit throughout",
   REQUIRE(mark_glyphs(BorderStyle::Single).radio_mark != g.radio_mark);
   REQUIRE(mark_glyphs(BorderStyle::Single).arrow_down != g.arrow_down);
   REQUIRE(mark_glyphs(BorderStyle::Single).selector != g.selector);
+  REQUIRE(mark_glyphs(BorderStyle::Single).arrow_left != g.arrow_left);
+  REQUIRE(mark_glyphs(BorderStyle::Single).arrow_right != g.arrow_right);
+  // NOT asserted, deliberately: in this family arrow_right and selector are
+  // both ">". Pinning that would freeze a wart as a contract -- giving Ascii a
+  // distinct arrow_right is an improvement, not a regression, and nothing
+  // depends on the collision (test/33tabbar asserts the marker by column, which
+  // is right either way).
 }
 
 TEST_CASE("mark_glyphs: the four Unicode families share one table",
@@ -126,6 +133,8 @@ TEST_CASE("mark_glyphs: the four Unicode families share one table",
     REQUIRE(g.arrow_down == single.arrow_down);
     REQUIRE(g.check_mark == single.check_mark);
     REQUIRE(g.selector == single.selector);
+    REQUIRE(g.arrow_left == single.arrow_left);
+    REQUIRE(g.arrow_right == single.arrow_right);
   }
   REQUIRE(is_ascii(BorderStyle::Ascii));
 }
