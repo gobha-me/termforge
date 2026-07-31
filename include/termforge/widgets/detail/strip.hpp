@@ -48,11 +48,12 @@
 //
 // Nor the PAINT. Both widgets fill the span, mark the active one in its left pad
 // column, and write the title truncated to span.w - 1 -- but MenuBar's fill is a
-// per-column write_text loop while TabBar's is one fill_rect, and that is
-// load-bearing rather than sloppy: fill_rect clips a negative x through
-// Rect::intersect while write_text CLAMPS it to column 0 (screen.cpp:71, filed
-// as #152), so the two are not interchangeable at the left edge. Unifying the
-// paint means deciding #152 first.
+// per-column write_text loop while TabBar's is one fill_rect. That used to be
+// load-bearing at the left edge, where fill_rect clipped and write_text clamped;
+// #152 settled it, and both clip now. What remains is the cell each leaves:
+// fill_rect writes a blank() Cell and resets image_id, write_text(" ") does
+// neither. Unifying the paint is therefore possible and still deliberately not
+// done here -- it needs its own zero-delta proof over that difference.
 //
 // Pure: no widget state, no Screen, no dirty flags. Callers paint and
 // mark_dirty as they already do.

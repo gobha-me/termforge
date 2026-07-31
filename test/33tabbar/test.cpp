@@ -856,3 +856,51 @@ TEST_CASE("TabBar: dirty is edge-triggered", "[tabbar]") {
   t.set_active(1);
   REQUIRE(t.dirty());
 }
+
+// --------------------------------------------------------------------------
+// #159 / #152 -- the left edge. Every other fixture in this suite sits at
+// {0, 0, W, 1}, which multiplies rect().x by zero and hides an entire class of
+// coordinate bug (the same blind spot #129 documented for MenuBar). These two
+// place the bar left of the screen.
+//
+// Neither needs a TabBar change: #159 was filed because tab_bar.cpp's marker
+// had no `span.x >= 0` guard while MenuBar's did, and #152 fixed the clamp in
+// Screen::write_text instead, so the guard is not wanted on either side. What
+// these cases pin is that the widget still relies on that contract and no
+// longer paints outside its own spans.
+
+TEST_CASE("TabBar: a bar whose rect starts left of the screen leaks no marker",
+          "[tabbar][failure]") {
+  // An empty first title makes span 0 exactly its two pad columns, -2 and -1,
+  // so nothing of it is on screen and column 0 is the gap between spans. Under
+  // the old clamp the marker relocated onto that column: a "▸" marking a tab
+  // that is not there, on a column span_at maps to no tab at all.
+  TabBar t{{"", "Beta"}};
+  t.set_geometry({-2, 0, 12, 1});
+  t.set_focused(true);
+  drawn(t, 16);  // settle the scroll offset before the frame under test
+  const Screen s = drawn(t, 16);
+
+  REQUIRE(t.active() == 0);
+  REQUIRE(s.at(0, 0).text != "▸");
+  REQUIRE(s.at(0, 0).blank());
+}
+
+TEST_CASE("TabBar: a bar left of the screen clips its title, it does not move it",
+          "[tabbar][failure]") {
+  // The title half, which no widget-side guard could have fixed: a clamped
+  // write_text painted "File" from column 0, four columns belonging to no
+  // span. Clipping drops the marker at -2 and the 'F' at -1 and leaves "ile"
+  // where it truly is.
+  TabBar t{{"File", "Edit"}};
+  t.set_geometry({-2, 0, 12, 1});
+  t.set_focused(true);
+  drawn(t, 16);
+  const Screen s = drawn(t, 16);
+
+  REQUIRE(t.active() == 0);
+  REQUIRE(row_text(s, 0, 0, 4) == "ile ");  // was "File" under the clamp
+  // Extent read off the screen, never recomputed: " File " is 6 columns from
+  // -2, so 4 survive at column 0.
+  REQUIRE(highlighted_run(s, 0) == std::pair{0, 4});
+}
