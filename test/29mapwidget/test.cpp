@@ -228,7 +228,80 @@ TEST_CASE("MapWidget: set_geometry before and after set_map_size both work", "[m
   REQUIRE(s.at(1, 1).text == "#");
 }
 
-// ── layers ──────────────────────────────────────────────────────────────────
+// ── set_map_size preservation (#127) ────────────────────────────────────────
+
+TEST_CASE("MapWidget: re-asserting the same size is a no-op, layers survive",
+          "[mapwidget][preserve]") {
+  MapWidget w = make_widget(10, 10);
+  w.set_tile(0, 3, 4, 1);   // wall
+  w.set_tile(0, 7, 2, 3);   // player
+  const int entities = w.add_layer("entities");
+  w.set_tile(entities, 5, 5, 4);  // item on its own layer
+
+  w.set_map_size(10, 10);  // identical dimensions: must NOT wipe
+
+  REQUIRE(w.tile(0, 3, 4) == 1);
+  REQUIRE(w.tile(0, 7, 2) == 3);
+  REQUIRE(w.tile(entities, 5, 5) == 4);
+}
+
+TEST_CASE("MapWidget: shrinking keeps the overlapping top-left corner (#127)",
+          "[mapwidget][preserve]") {
+  MapWidget w = make_widget(8, 8);
+  w.set_tile(0, 1, 1, 1);   // inside the surviving 4x4 corner
+  w.set_tile(0, 6, 6, 3);   // outside: dropped
+  w.set_tile(0, 0, 7, 2);   // row beyond new height: dropped
+
+  w.set_map_size(4, 4);
+
+  REQUIRE(w.tile(0, 1, 1) == 1);        // corner preserved
+  REQUIRE(w.tile(0, 3, 3) == 0);        // untouched cell stays empty
+  // Old (6,6) and (0,7) are now out of range; the accessor returns kEmptyId.
+  REQUIRE(w.tile(0, 6, 6) == 0);
+  REQUIRE(w.tile(0, 0, 7) == 0);
+}
+
+TEST_CASE("MapWidget: growing zero-fills the new cells, keeps the corner (#127)",
+          "[mapwidget][preserve]") {
+  MapWidget w = make_widget(3, 3);
+  w.set_tile(0, 2, 2, 3);   // bottom-right of the original 3x3
+
+  w.set_map_size(6, 6);
+
+  REQUIRE(w.tile(0, 2, 2) == 3);   // corner preserved
+  REQUIRE(w.tile(0, 5, 5) == 0);   // new area is empty
+  REQUIRE(w.tile(0, 0, 0) == 0);
+}
+
+TEST_CASE("MapWidget: preservation is per-layer, every layer keeps its corner",
+          "[mapwidget][preserve]") {
+  MapWidget w = make_widget(6, 6);
+  w.set_tile(0, 0, 0, 1);
+  const int a = w.add_layer("a");
+  const int b = w.add_layer("b");
+  w.set_tile(a, 2, 1, 3);
+  w.set_tile(b, 1, 2, 4);
+
+  w.set_map_size(3, 3);
+
+  REQUIRE(w.tile(0, 0, 0) == 1);
+  REQUIRE(w.tile(a, 2, 1) == 3);
+  REQUIRE(w.tile(b, 1, 2) == 4);
+}
+
+TEST_CASE("MapWidget: size change still re-clamps the camera (#127)",
+          "[mapwidget][preserve]") {
+  MapWidget w;
+  w.set_tileset(make_tileset());
+  w.set_map_size(10, 10);
+  w.set_tile_size(1, 1);
+  w.set_geometry({0, 0, 4, 4});
+  w.set_camera(9, 9);   // clamped to (6,6) while the map is 10x10
+  REQUIRE(w.camera() == std::pair{6, 6});
+
+  w.set_map_size(5, 5);  // shrink: max camera is now (1,1)
+  REQUIRE(w.camera() == std::pair{1, 1});
+}
 
 TEST_CASE("MapWidget: an entity on a higher layer paints over terrain", "[mapwidget]") {
   MapWidget w = make_widget(3, 3);
