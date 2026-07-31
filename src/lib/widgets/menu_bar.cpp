@@ -141,10 +141,14 @@ auto MenuBar::draw(Screen& screen) -> void {
   // Sanitized once per draw and measured as the string that gets painted, then
   // required to be exactly one column: a two-column glyph from a future family
   // would overwrite the first column of the title beside it, and a zero-column
-  // one (a lone combining mark) would paint nothing at all. TabBar's rule
-  // (tab_bar.cpp:229-233) and detail/dropdown.hpp's, verbatim. Held by value —
-  // mark_glyphs returns one and the fields are views into string literals, so
-  // binding a const& to the temporary would dangle (list_widget.hpp:120).
+  // one (a lone combining mark) would paint nothing at all. TabBar's draw()
+  // rule and detail/dropdown.hpp's, verbatim -- and like theirs it is
+  // UNTESTABLE from outside: set_style is the only knob and every family's
+  // selector is one column, so no black-box test can hand this a bad glyph.
+  // Held by value like TabBar's, which is a style choice and not a lifetime
+  // one: a const& would bind to the prvalue and be lifetime-extended just
+  // fine. The rule list_widget.hpp states is a different one -- do not bind a
+  // const& and then RETURN a view into a member of it.
   const MarkGlyphs glyphs = mark_glyphs(m_style);
   const std::string mark = Screen::sanitize(glyphs.selector);
   const bool mark_fits = detail::display_width(mark) == 1;
@@ -165,7 +169,15 @@ auto MenuBar::draw(Screen& screen) -> void {
     // same predicate as the fill: a title starting at or past the bar's right
     // edge paints nothing, or the mark would be visible outside rect(), where
     // handle_mouse's rect().contains gate can never deliver a click (#11).
-    if (is_active && mark_fits && mx < right)
+    //
+    // The mx >= 0 half guards the OTHER edge, and it is not symmetric with the
+    // fill loop by accident: Screen::write_text CLAMPS a negative x to column 0
+    // (screen.cpp:71) instead of dropping the off-screen prefix, so a bar whose
+    // rect().x is negative would relocate this glyph onto column 0 -- a column
+    // that belongs to no span, where handle_mouse maps it to bar background.
+    // The clamp is a Screen-wide wart that already scrambles the titles of such
+    // a bar; this guard only keeps #129 from adding a glyph to the pile.
+    if (is_active && mark_fits && mx >= 0 && mx < right)
       screen.write_text(mx, r.y, mark, fg, bg);
 
     // Title text (1-col padding), clipped to the columns left before the edge.

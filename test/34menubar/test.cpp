@@ -188,7 +188,13 @@ TEST_CASE("MenuBar: a combining mark costs no column", "[menubar]") {
   // e + U+0301: three bytes, one column, and Screen::write_text folds the mark
   // onto the base cell. A byte-counting measure would reserve two.
   const Screen s = bar_with({"A", "é", "Gamma!"}, 1, 20);
-  REQUIRE(active_run(s).second == 3);
+  const auto [x, w] = active_run(s);
+  REQUIRE(w == 3);
+  // The span width alone cannot notice the title never being PAINTED: it comes
+  // from the fill loop, which measures rather than paints. Measured -- with the
+  // title write replaced by an empty string, a width-only assertion stays green.
+  // Read the cells.
+  REQUIRE(row_text(s, 0, x, w) == "\u25b8\u0065\u0301 ");
 }
 
 TEST_CASE("MenuBar: item labels are sanitized too, not just titles",
@@ -219,14 +225,23 @@ TEST_CASE("MenuBar: item labels are sanitized too, not just titles",
 
 TEST_CASE("MenuBar: every column that opens a menu is a column that menu paints",
           "[menubar]") {
-  // The exhaustive form. The EXPECTED side comes from the paint and the ACTUAL
-  // side from clicks, so neither is arithmetic the widget also performs.
+  // WHAT THIS CASE DOES AND DOES NOT PROVE, because the obvious reading is
+  // wrong and a reviewer measured it: the click sweep below is STRUCTURALLY
+  // TAUTOLOGICAL. The painted background and the hit span both come from
+  // layout_menus(), so they agree even when it is wrong -- six separate
+  // mutations (both sanitize calls removed, the pad +2 -> +3, the gap dropped,
+  // the title painted empty, the marker moved, the is_active gate dropped)
+  // leave the sweep green. What it guards is narrower and still worth having:
+  // that fill-side clipping and hit-side clipping agree at every column,
+  // including a span the right edge cuts.
   //
-  // The ESCAPE-LADEN fixture is what gives this case teeth and it is not
-  // optional: with plain titles the widget's raw measurement and its painted
-  // one agree, so every column matches even on the broken code -- measured, by
-  // running this case against the pre-fix widget and watching it stay green.
-  // A test whose fixture cannot express the defect is not a regression guard.
+  // THE ASSERTION WITH TEETH IS last_painted: a span must reserve no column it
+  // does not paint. That is what the raw measurement actually bought -- columns
+  // of highlight with no glyph under them -- and it is read off the screen.
+  // The ESCAPE-LADEN fixture is what lets it fire: with plain titles the raw
+  // measurement and the painted one agree, so the case cannot express the
+  // defect at all. Post-fix the two fixtures lay out IDENTICALLY, which is
+  // itself the claim, asserted below.
   const std::vector<std::vector<std::string>> fixtures{
       {"A", "日本", "Gamma!"},
       {"A", "\033[7m日本\033[0m", "Gam\033[1mma!"},
@@ -236,7 +251,12 @@ TEST_CASE("MenuBar: every column that opens a menu is a column that menu paints"
       for (int i = 0; i < 3; ++i) {
         const Screen s = bar_with(titles, i, cols);
         const auto [x, w] = active_run(s);
-        if (w == 0) continue;  // wholly past the right edge: nothing to check
+        // Not `if (w == 0) continue;`: that skip never fires with these
+        // fixtures (measured -- every iteration yields 3, 6 or 8), and a skip
+        // that CAN fire would silently drop a fixture's whole sweep with no
+        // diagnostic. Assert the precondition instead of tiptoeing around it.
+        INFO("cols=" << cols << " menu=" << i);
+        REQUIRE(w > 0);
         for (int c = 0; c < cols; ++c) {
           const bool painted = (c >= x && c < x + w);
           INFO("cols=" << cols << " menu=" << i << " col=" << c);
@@ -251,6 +271,13 @@ TEST_CASE("MenuBar: every column that opens a menu is a column that menu paints"
       }
     }
   }
+
+  // The two fixtures differ ONLY in escape sequences, so once the setter
+  // sanitizes they must paint the same row. Stating it directly is worth more
+  // than the sweep's duplicate half: it is the whole of what #129 promises.
+  for (int i = 0; i < 3; ++i)
+    REQUIRE(row_text(bar_with(fixtures[0], i, 20), 0) ==
+            row_text(bar_with(fixtures[1], i, 20), 0));
 }
 
 // ── 3. The second channel ───────────────────────────────────────────────────
@@ -322,22 +349,71 @@ TEST_CASE("MenuBar: the active title survives a driver that drops colour",
 
 TEST_CASE("MenuBar: the marker never paints past the bar's right edge",
           "[menubar][failure]") {
-  // Menu 1's span starts at column 9, outside an 8-wide bar. The fill loop and
-  // the title write are both clipped, so the marker was the one thing that
-  // could leak -- and outside rect() it would be visible where handle_mouse's
-  // rect().contains gate can never deliver a click (#11).
-  MenuBar mb;
-  mb.set_menus(menus_from({"AAAAAA", "B"}));
-  mb.set_geometry({0, 0, 8, 1});
-  drawn(mb, 12);
-  mb.on_event(key(Key::Right));
-  const Screen s = drawn(mb, 12);
+  // The fill loop and the title write are both clipped, so the marker is the
+  // one thing that could leak -- and outside rect() it would be visible where
+  // handle_mouse's rect().contains gate can never deliver a click (#11).
+  //
+  // "AAAAA" is chosen so menu 1 starts EXACTLY at right: span 0 is 7 wide, the
+  // gap is 1, so mx == 8 == right. The boundary is the point. Measured: with a
+  // six-A fixture menu 1 lands at 9 and `mx <= right` -- the classic off-by-one
+  // form of this guard -- survives the whole suite. Menu 2 covers mx > right.
+  for (const int active : {1, 2}) {
+    MenuBar mb;
+    mb.set_menus(menus_from({"AAAAA", "B", "C"}));
+    mb.set_geometry({0, 0, 8, 1});
+    drawn(mb, 12);
+    for (int i = 0; i < active; ++i) mb.on_event(key(Key::Right));
+    const Screen s = drawn(mb, 12);
 
-  REQUIRE(mb.active_menu() == 1);
-  for (int x = 8; x < 12; ++x) {
-    INFO("column " << x);
-    REQUIRE(s.at(x, 0).blank());
+    REQUIRE(mb.active_menu() == active);
+    for (int x = 8; x < 12; ++x) {
+      INFO("active=" << active << " column " << x);
+      REQUIRE(s.at(x, 0).blank());
+    }
   }
+}
+
+TEST_CASE("MenuBar: the marker follows the bar's rect, not the screen origin",
+          "[menubar][failure]") {
+  // Every MenuBar fixture in every suite -- 12primitives, 13mouse, 14audit and
+  // the rest of this one -- places the bar at {0, 0, ...}. Measured: with that
+  // coverage, hardcoding the marker's row to 0 leaves all four suites green,
+  // while a bar under a title row ({0, 1, ...}) is the ordinary layout and
+  // would have had the glyph painted into the widget ABOVE it.
+  MenuBar mb;
+  mb.set_menus(menus_from({"A", "Beta", "Gamma!"}));
+  mb.set_geometry({2, 1, 18, 1});
+  Screen warm{24, 3};
+  mb.draw(warm);
+  mb.on_event(key(Key::Right));
+  Screen s{24, 3};
+  mb.draw(s);
+
+  const auto [x, w] = tfsupport::highlighted_run(s, 1, termforge::theme::kFocusBg);
+  REQUIRE(w == 6);            // " Beta " on row 1
+  REQUIRE(x == 2 + 3 + 1);    // rect().x + span 0 + the gap
+  REQUIRE(s.at(x, 1).text == "▸");
+  REQUIRE(row_text(s, 1, x, w) == "▸Beta ");
+  // Nothing on the rows the bar does not own, and nothing left of rect().x.
+  REQUIRE(row_text(s, 0) == std::string(24, ' '));
+  REQUIRE(s.at(0, 1).blank());
+  REQUIRE(s.at(1, 1).blank());
+}
+
+TEST_CASE("MenuBar: a bar whose rect starts left of the screen leaks no marker",
+          "[menubar][failure]") {
+  // Screen::write_text CLAMPS a negative x to column 0 instead of dropping the
+  // off-screen prefix (screen.cpp:71), so without the mx >= 0 guard the marker
+  // for a span at columns -2..-1 relocates onto column 0 -- a column that
+  // belongs to no menu, where handle_mouse maps a click to bar background.
+  // The empty first title is what makes it visible: nothing paints over it.
+  MenuBar mb;
+  mb.set_menus(menus_from({"", "Beta"}));
+  mb.set_geometry({-2, 0, 12, 1});
+  const Screen s = drawn(mb, 16);
+
+  REQUIRE(mb.active_menu() == 0);
+  REQUIRE(s.at(0, 0).text != "▸");
 }
 
 TEST_CASE("MenuBar: an empty title still gets its pad columns and the marker",
