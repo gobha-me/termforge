@@ -6,7 +6,81 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-31)
 
-**Latest work: #139 — a bytes-per-frame meter at the driver write boundary (v0.6.8).**
+**Latest work: #163 — a pre-encoded image payload path, shipped verbatim (v0.6.9).**
+The ticket #139's meter *created*: with a number attached, "images are a bit fat" became
+"a 240x160 plate costs 205,283 bytes against a recorded budget of 8,192." `transmit()`
+emitted `f=32` and nothing else, so the wire cost of a plate was `w*h*4*4/3` no matter how
+compressible the art was. Now `EncodedImage{format, bytes, pixels}` carries an opaque
+payload the *terminal* decodes — `f=100` for PNG — through the same slot keying, chunking,
+LRU and placement as an `Image`.
+
+**The library does not encode, and that is the whole design.** Compression here means zlib
+or a PNG encoder, and the stdlib-only rule is not spendable on it. It is also not needed:
+both graphics consumers bake their art offline already, where a dependency is free. What
+was missing was a way to hand TermForge bytes it should ship untouched. A baked 240x160
+4-colour dithered plate is **3,952 bytes → 5,272 on the wire**, against 204,800 for the
+same image as RGBA. **39x**, and inside the 8 KB budget with room to spare.
+
+**The correction downstream needs:** base64 is 4/3, so an 8,192-byte asset costs ~10,924
+bytes to ship. An 8 KB *wire* budget wants a ~6 KB asset. OBSCURA's #21 is written against
+the asset size and the two are not the same number.
+
+**`pixels` is not there for kitty.** The protocol reads a PNG's geometry out of the
+datastream; the field exists because the *library* needs it — the `Rgba32` length check,
+the content hash, and `image_cell_extent(Extent)` for a caller that never decoded
+anything. So for `Png` it is unverifiable and **deliberately unverified**: an
+`EncodedImage` whose declared extent disagrees with its header still transmits, because
+having an opinion would mean owning a decoder. That non-behaviour has its own test —
+otherwise it is indistinguishable from an oversight.
+
+**The format is part of image identity.** The content hash covers extent, bytes *and*
+format code. The same 64 bytes are a legal 4x4 RGBA buffer and an (unparsed) PNG payload
+which the terminal renders completely differently; a hash blind to the format skips the
+second upload and leaves the first on screen. Keying on the declared extent alone is the
+worse shortcut — every plate baked to a fixed size then hashes identically.
+
+**The new virtual is NOT pure, and there is now a test that says why.** Third-party
+drivers are a stated extensibility goal, and a new pure virtual breaks every one of them
+at compile time on upgrade. Nothing in `test/` derived from `TerminalDriver` before this,
+so a pure virtual would have sailed through CI; `test/38encoded`'s `LegacyDriver`
+implements only the pre-#163 interface and asserts the inherited default degrades to a
+`Warning`. Making the virtual pure is mutation #5 and it fails to *compile*, on exactly
+that line.
+
+**Every tier moved onto a byte span, and no byte moved.** `AnsiRgbDriver` and
+`FallbackDriver` gained a private `draw_rgba(Rect, span, Extent)`; the `Image` overload
+passes `std::as_bytes(image.pixels())`. Reconstructing an `Image` from the span instead
+would allocate and copy `w*h*4` per frame — 153 KB for this ticket's own plate, the exact
+cost #84 removed from the pixel-region path. `01drivers` pins these drivers' exact emitted
+bytes, so the refactor was self-checking, and `test/38encoded` asserts whole-frame equality
+between the two overloads on all three tiers.
+
+**Proven three ways.** (1) Fourteen cases in the new `test/38encoded`, including an
+independent base64 *decoder* so "the payload arrives whole" is not the driver's own encoder
+checked against itself. (2) Five mutations, all killed, each by its intended test: PNG
+hardcoded to `f=32` (→ the format test), hash ignoring the payload (→ three suites), hash
+ignoring the format tag (→ the format-identity test), the `Rgba32` size check removed
+(→ the mismatch test), the virtual made pure (→ compile error). (3) The measured budget
+assertion in `test/37bytes`, which is the one that cannot be faked. 40/40 on GCC and Clang.
+
+⚠ **The emulator gate is open.** This is a terminal-protocol change and
+`tools/png_repro.sh` has not been run on real hardware yet. It tests three things under
+`q=0`: `f=100` acceptance at all, **paletted (colour type 3)** PNG acceptance — the
+interesting one, since that is the format the 8 KB budget depends on and it is not the
+RGB/RGBA PNG an implementation is likeliest to have tested — and chunked PNG reassembly
+across the 4096 boundary. Do not merge without a capture.
+
+⚠ **`q=2` makes a rejected payload silent.** Until now the payload was RGBA the library
+built itself and could not be malformed. An application-supplied one can be, and the
+terminal's rejection goes to a channel nobody reads, so `draw_image` returns success and
+nothing renders. Needs a response reader; filed as a follow-up.
+
+**Residency is not in this.** Slots are keyed on the destination rect, capped at 16, ids
+recycled to stay one byte, and `gc_regions()` deletes anything not drawn this frame.
+GLOAM's "246 plates resident from cold start" is **#109**, and reading `f=100` landing as
+residency landing would be a mistake.
+
+**Previously: #139 — a bytes-per-frame meter at the driver write boundary (v0.6.8).**
 The first upstream ticket taken on behalf of the three downstream consumers rather than
 found by reading our own code, and it was chosen because it is the one node all three
 touch. `TerminalDriver` now carries `last_frame_bytes()` and `total_bytes()`, both

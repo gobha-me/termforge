@@ -274,6 +274,62 @@ class Image {
   std::vector<Pixel> m_pixels;
 };
 
+// ── pre-encoded images (#163) ────────────────────────────────────────────
+// An opaque payload in a format the TERMINAL decodes. The library does not
+// encode, decode, inspect or resample it -- and that is the whole point.
+//
+// Before this, the only wire format was raw RGBA base64'd, so a plate cost
+// `w*h*4*4/3` no matter how compressible the art was: 205,283 bytes for a
+// 240x160 plate, measured with #139's meter, against a downstream budget of
+// 8,192. Closing that gap needs compression, and compression in the library
+// needs zlib or a PNG encoder -- the third-party dependency AGENTS.md forbids.
+//
+// The rule also points at the answer. Applications with graphics budgets bake
+// their art offline already, where a dependency is free; what was missing was
+// a way to hand TermForge bytes it should ship VERBATIM.
+
+enum class ImageFormat {
+  // Raw 32-bit RGBA, row-major -- the same bytes an Image holds. Every tier
+  // can render this; it is the format an EncodedImage defaults to.
+  Rgba32,
+  // A complete PNG datastream. Kitty decodes it itself (f=100); no other tier
+  // can, and they answer with a Warning rather than guessing.
+  Png,
+};
+
+struct EncodedImage {
+  ImageFormat format{ImageFormat::Rgba32};
+
+  // BORROWED, and valid only for the duration of the call it is passed to.
+  // The caller owns the storage -- the same contract Widget::draw_pixels'
+  // returned `const Image*` carries since #84, and for the same reason: the
+  // payloads this exists for are hundreds of kilobytes and a by-value span of
+  // them every frame is the cost the type is meant to avoid.
+  //
+  // A temporary at the call site is fine (it outlives the full expression).
+  // The case that bites is storing an EncodedImage as a member alongside a
+  // buffer that is later reallocated. From a std::vector<std::uint8_t> the
+  // spelling is `std::as_bytes(std::span{vec})`.
+  std::span<const std::byte> bytes;
+
+  // The image's pixel dimensions. NOT, despite appearances, because kitty
+  // needs them: the protocol reads a PNG's geometry out of the datastream
+  // itself, and s=/v= are only load-bearing for the raw formats. They are
+  // here because the LIBRARY needs them -- to check an Rgba32 payload against
+  // its declared extent, to key the content hash, and to answer
+  // image_cell_extent for a caller that never decoded anything.
+  //
+  // For Png this field is therefore unverifiable, and deliberately
+  // unverified: we do not parse the header, so a disagreement between it and
+  // the payload is not an error the library can see or will invent.
+  Extent pixels;
+
+  // Empty is the union of both ways to have nothing: no bytes, or no extent.
+  [[nodiscard]] constexpr auto empty() const noexcept -> bool {
+    return bytes.empty() || pixels.empty();
+  }
+};
+
 // ── capabilities ─────────────────────────────────────────────────────────
 // Result of probing the *terminal* (never the display server). Drives driver
 // selection.

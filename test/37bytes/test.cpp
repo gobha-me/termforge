@@ -12,7 +12,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstddef>
+#include <span>
 #include <string>
+#include <vector>
 
 #include "support/image.hpp"
 #include "termforge/core/app.hpp"
@@ -167,6 +169,75 @@ TEST_CASE("meter: changed pixels retransmit, and the meter shows which bucket",
   CHECK(f.image_transmit > 0);
   CHECK(f.image_edit > 0);
   CHECK(f.total() == written);
+}
+
+// ── #163: what the meter was built to measure ───────────────────────────────
+
+TEST_CASE("meter: a pre-encoded plate costs a fraction of the same plate raw",
+          "[bytes][encoded]") {
+  // This is the assertion the whole of #163 exists for, and it is only
+  // writable because #139 landed first: before the meter, every claim about
+  // what an image path costs was a comment.
+  //
+  // The scenario is obscura#21's, at its exact spec: a 240x160 plate. As raw
+  // RGBA that is 153,600 bytes, which base64 inflates to 204,800 on the wire
+  // against a recorded budget of 8,192. The pre-encoded path ships whatever
+  // the application's asset pipeline produced instead.
+  //
+  // The payload here is opaque filler, NOT a real PNG, and that is the honest
+  // shape for this test: the library does not parse the payload, so what is
+  // being measured is the courier's overhead over an arbitrary N bytes. A
+  // real PNG would make the number prettier without making it mean more --
+  // and would pin this suite to the compression ratio of one baked asset.
+  constexpr int kW = 240;
+  constexpr int kH = 160;
+  constexpr std::size_t kEncodedBytes = 9800;  // a 4-colour plate's order
+
+  const Rect dest{0, 0, 30, 10};
+
+  std::uint64_t rgba_transmit = 0;
+  {
+    KittyDriver d;
+    std::string out;
+    d.set_output(&out);
+    REQUIRE(d.draw_image(dest, checker(kW, kH, kP1, kP2)));
+    const std::size_t written = flush_and_measure(d, out);
+    const FrameBytes f = d.last_frame_bytes();
+    rgba_transmit = f.image_transmit;
+    CHECK(f.total() == written);
+  }
+
+  std::uint64_t encoded_transmit = 0;
+  {
+    std::vector<std::byte> payload(kEncodedBytes);
+    for (std::size_t i = 0; i < payload.size(); ++i) {
+      payload[i] = static_cast<std::byte>((i * 31U + 13U) & 0xFFU);
+    }
+    KittyDriver d;
+    std::string out;
+    d.set_output(&out);
+    REQUIRE(d.draw_image(
+        dest, termforge::EncodedImage{termforge::ImageFormat::Png,
+                                      std::span<const std::byte>{payload},
+                                      termforge::Extent{kW, kH}}));
+    const std::size_t written = flush_and_measure(d, out);
+    const FrameBytes f = d.last_frame_bytes();
+    encoded_transmit = f.image_transmit;
+    CHECK(f.total() == written);
+  }
+
+  // #163's acceptance criterion. The real margin is ~15x; a 4x floor leaves
+  // room for framing without letting a regression that quietly re-expanded
+  // the payload slip through.
+  CHECK(rgba_transmit > 4 * encoded_transmit);
+
+  // The overhead itself, pinned. base64 is 4/3, so the wire cost of a
+  // pre-encoded payload is ~1.34x its size plus a few dozen bytes of APC
+  // framing per 4096-byte chunk. Downstream budgets are written against
+  // asset sizes and this is the factor between the two: an 8,192-byte plate
+  // costs ~10,924 bytes to ship, so an 8 KB WIRE budget needs a ~6 KB asset.
+  CHECK(encoded_transmit > kEncodedBytes * 4 / 3);
+  CHECK(encoded_transmit < kEncodedBytes * 4 / 3 + 256);
 }
 
 // ── The breakdown must not be kitty-shaped ──────────────────────────────────

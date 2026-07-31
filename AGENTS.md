@@ -48,6 +48,14 @@ file is the tactical version.
   re-deriving a footprint from capability flags — a new tier implements one
   function and gets the rest right for free. `draw_pixels` returns a borrowed
   `const Image*` the *widget* owns, one buffer per declared region.
+- **A pre-encoded payload is shipped verbatim** (#163). `EncodedImage` carries
+  opaque bytes the *terminal* decodes; the library never encodes, decodes,
+  inspects or resamples them — that is the application's asset pipeline's job,
+  and it is the only reason a compressed wire format can exist here without
+  breaking the stdlib-only rule. Never add a check that requires parsing the
+  payload: `Rgba32`'s length is derivable and is validated, `Png`'s is not and
+  deliberately is not. A tier that cannot carry a format says so via
+  `supports_image_format` *and* returns a `Warning` — never a guess.
 - **Raw mode is RAII** — `Terminal` restores termios on destruction. Never
   leave the terminal in raw mode on any exit path, **including one an exception
   takes**: a destructor is not a guarantee (an exception escaping `main`

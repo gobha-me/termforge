@@ -8,6 +8,7 @@
 #include <span>
 
 #include "detail/base64.hpp"
+#include "detail/encoded.hpp"
 #include "detail/sgr_attrs.hpp"
 
 namespace termforge {
@@ -147,26 +148,41 @@ auto region_key(int x, int y, int w, int h) -> std::uint64_t {
   return (u16(x) << 48) | (u16(y) << 32) | (u16(w) << 16) | u16(h);
 }
 
-// FNV-1a hash of the dimensions plus pixel data. Dimensions matter:
-// a 4x1 and a 1x4 image can share the same byte stream but need
-// distinct uploads (the transmitted s=/v= geometry differs). Never
-// returns 0 (the slot's "nothing transmitted" sentinel).
-auto image_hash(const Image& image) -> std::uint64_t {
-  const auto bytes = std::as_bytes(image.pixels());
+// FNV-1a hash of everything that decides whether a slot's terminal-side
+// image is still the one we want: the declared extent, the wire format, and
+// the payload bytes.
+//
+// The extent matters because a 4x1 and a 1x4 can share a byte stream and
+// still need distinct uploads (the transmitted s=/v= differ). The FORMAT
+// matters for the same reason and is less obvious (#163): the same bytes sent
+// as f=32 and as f=100 are two different images, and a hash blind to that
+// would skip the second upload and leave the first one on screen.
+//
+// Never returns 0 -- that is the slot's "nothing transmitted yet" sentinel,
+// which set_placement_mode also writes to force a retransmit.
+auto payload_hash(std::span<const std::byte> payload, Extent px,
+                  int format_code) -> std::uint64_t {
   std::uint64_t hash = 14695981039346656037ULL;
-  for (const std::uint32_t dim : {static_cast<std::uint32_t>(image.width()),
-                                  static_cast<std::uint32_t>(image.height())}) {
+  for (const std::uint32_t field : {static_cast<std::uint32_t>(px.w),
+                                    static_cast<std::uint32_t>(px.h),
+                                    static_cast<std::uint32_t>(format_code)}) {
     for (int shift = 0; shift < 32; shift += 8) {
-      hash ^= (dim >> shift) & 0xFF;
+      hash ^= (field >> shift) & 0xFF;
       hash *= 1099511628211ULL;
     }
   }
-  for (const std::byte b : bytes) {
+  for (const std::byte b : payload) {
     hash ^= static_cast<std::uint64_t>(std::to_integer<unsigned char>(b));
     hash *= 1099511628211ULL;
   }
   return hash == 0 ? 1 : hash;
 }
+
+// kitty f= values. Only these two exist here: the library encodes nothing, so
+// a format is only supportable if the application can hand us bytes already
+// in it (#163).
+constexpr int kFormatRgba32 = 32;
+constexpr int kFormatPng = 100;
 
 // Bound on tracked regions; past this the least-recently-drawn slot is
 // deleted terminal-side and reused. Far above any realistic UI.
@@ -210,6 +226,19 @@ auto KittyDriver::set_cell_pixel_size(Extent cell) noexcept -> void {
   m_cell_px = (cell.w > 0 && cell.h > 0) ? cell : kNominalCellPixels;
 }
 
+auto KittyDriver::supports_image_format(ImageFormat f) const noexcept -> bool {
+  // Both, and the enum has no third value. Spelled as an exhaustive switch
+  // rather than `return true` so that adding a format the driver cannot emit
+  // is a -Wswitch warning (an error under CI's -Werror) instead of a silent
+  // yes.
+  switch (f) {
+    case ImageFormat::Rgba32:
+    case ImageFormat::Png:
+      return true;
+  }
+  return false;
+}
+
 auto KittyDriver::draw_image(Rect cells, const Image& image)
     -> std::expected<void, ErrorEvent> {
   if (image.empty()) {
@@ -220,7 +249,31 @@ auto KittyDriver::draw_image(Rect cells, const Image& image)
     return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
                                       "draw_image: empty destination rect"}};
   }
+  return draw_payload(cells, std::as_bytes(image.pixels()), kFormatRgba32,
+                      Extent{image.width(), image.height()});
+}
 
+auto KittyDriver::draw_image(Rect cells, const EncodedImage& image)
+    -> std::expected<void, ErrorEvent> {
+  // Empty, empty rect, and the Rgba32 length check. Png is deliberately
+  // unvalidated there: we do not parse the datastream, so we have no opinion
+  // about whether its header agrees with the declared extent.
+  if (auto ok = detail::validate_encoded(image, cells, "kitty"); !ok) {
+    return ok;
+  }
+
+  int format_code = kFormatRgba32;
+  switch (image.format) {
+    case ImageFormat::Rgba32: format_code = kFormatRgba32; break;
+    case ImageFormat::Png:    format_code = kFormatPng;    break;
+  }
+
+  return draw_payload(cells, image.bytes, format_code, image.pixels);
+}
+
+auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
+                               int format_code, Extent px)
+    -> std::expected<void, ErrorEvent> {
   // Unicode placeholders index cells through a 297-entry diacritic table, so
   // the *placement* cannot exceed that in either axis. Clamp the destination
   // rect; the image still transmits at full resolution and the terminal
@@ -264,9 +317,10 @@ auto KittyDriver::draw_image(Rect cells, const Image& image)
 
   auto& slot = region_slot(region_key(dest.x, dest.y, dest.w, dest.h));
   bool content_changed = false;
-  if (const auto hash = image_hash(image); hash != slot.content_hash) {
+  if (const auto hash = payload_hash(payload, px, format_code);
+      hash != slot.content_hash) {
     const std::size_t before = m_buf.size();
-    transmit(image, slot.image_id);
+    transmit(payload, format_code, px, slot.image_id);
     tally.transmitted = m_buf.size() - before;
     slot.content_hash = hash;
     content_changed = true;
@@ -369,14 +423,24 @@ auto KittyDriver::gc_regions() -> void {
 
 // ── Kitty APC protocol ──────────────────────────────────────────────────────
 
-auto KittyDriver::transmit(const Image& image, std::uint32_t id) -> void {
-  // Encode the raw RGBA pixel data as base64. The span carries its own length,
-  // so this can no longer disagree with the buffer the way a length recomputed
-  // from width()*height() could.
-  const std::string b64 = detail::base64_encode(std::as_bytes(image.pixels()));
+auto KittyDriver::transmit(std::span<const std::byte> payload, int format_code,
+                           Extent px, std::uint32_t id) -> void {
+  // Base64 the payload, whatever it is. The span carries its own length, so
+  // this cannot disagree with the buffer the way a length recomputed from
+  // width()*height() could -- and for a pre-encoded payload there is no such
+  // length to recompute in the first place (#163).
+  const std::string b64 = detail::base64_encode(payload);
 
   // Chunk into ≤4096-byte APC payloads.
   constexpr std::size_t kChunkSize = 4096;
+  // The protocol requires every chunk but the last to be a multiple of 4 --
+  // otherwise the terminal's decoder resynchronises mid-quantum and the
+  // reassembled payload is garbage. 4096 satisfies it, and has since #10, but
+  // it satisfied it by accident: nothing said so and nothing checked. It says
+  // so now, because a pre-encoded payload makes a corrupted reassembly a
+  // silent black frame rather than visibly wrong pixels.
+  static_assert(kChunkSize % 4 == 0,
+                "kitty requires non-final chunk sizes to be a multiple of 4");
   std::size_t offset = 0;
   bool first = true;
 
@@ -387,13 +451,21 @@ auto KittyDriver::transmit(const Image& image, std::uint32_t id) -> void {
     if (first) {
       // First chunk: full transmission parameters.
       // a=t (transmit only, no display — display happens via placeholders),
-      // t=d (direct), f=32 (RGBA), i=<id>, s=W, v=H, m=<more>, q=2 (quiet)
+      // t=d (direct), f=<32 RGBA | 100 PNG>, i=<id>, s=W, v=H, m=<more>,
+      // q=2 (quiet).
+      //
+      // s=/v= are load-bearing for f=32 and redundant for f=100 (kitty reads
+      // a PNG's geometry out of the datastream). Emitted for both anyway:
+      // kitty ignores them where they do not apply, and one format string
+      // beats two that can drift.
       m_buf += std::format(
-          "\033_Ga=t,t=d,f=32,i={},s={},v={},m={},q=2;{}\033\\",
-          id, image.width(), image.height(), more ? 1 : 0, chunk);
+          "\033_Ga=t,t=d,f={},i={},s={},v={},m={},q=2;{}\033\\",
+          format_code, id, px.w, px.h, more ? 1 : 0, chunk);
       first = false;
     } else {
-      // Continuation chunks: only m and payload.
+      // Continuation chunks: only m and payload. The protocol allows m and q
+      // here and nothing else -- repeating f=/s=/v= is an error, not a
+      // redundancy.
       m_buf += std::format("\033_Gm={};{}\033\\", more ? 1 : 0, chunk);
     }
     offset += kChunkSize;

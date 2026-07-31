@@ -31,7 +31,9 @@
 
 #include "termforge/drivers/terminal_driver.hpp"
 
+#include <cstddef>
 #include <expected>
+#include <span>
 #include <string>
 #include <unordered_map>
 
@@ -49,6 +51,18 @@ class KittyDriver final : public TerminalDriver {
                  Attr attrs) -> void override;
   auto draw_image(Rect cells, const Image& image)
       -> std::expected<void, ErrorEvent> override;
+  // Pre-encoded payloads (#163): Png rides f=100, Rgba32 rides f=32. Both go
+  // through the same slot keying, chunking, LRU and placement as an Image --
+  // only the f= value and the source of the bytes differ.
+  auto draw_image(Rect cells, const EncodedImage& image)
+      -> std::expected<void, ErrorEvent> override;
+  // Unhide the base overload set (see TerminalDriver). Both are overridden
+  // here so nothing is actually hidden today; the declaration keeps that true
+  // if one of them is ever removed.
+  using TerminalDriver::draw_image;
+  // The flagship tier is the only one with an opaque-payload channel.
+  [[nodiscard]] auto supports_image_format(ImageFormat f) const noexcept
+      -> bool override;
   // The terminal's real cell geometry (see set_cell_pixels), so a widget can
   // rasterize at native resolution instead of guessing.
   [[nodiscard]] auto preferred_pixel_extent(Rect cells) const noexcept
@@ -98,9 +112,22 @@ class KittyDriver final : public TerminalDriver {
     bool placed{false};             // placement command already emitted
   };
 
-  // Transmit pixel data under `id` via chunked APC sequences. Retransmit
-  // with an existing id replaces that image's data on the terminal.
-  auto transmit(const Image& image, std::uint32_t id) -> void;
+  // Transmit an opaque payload under `id` via chunked APC sequences.
+  // `format_code` is the kitty f= value (32 = raw RGBA, 100 = PNG); `px` is
+  // the declared pixel extent, emitted as s=/v=. Retransmit with an existing
+  // id replaces that image's data on the terminal.
+  auto transmit(std::span<const std::byte> payload, int format_code, Extent px,
+                std::uint32_t id) -> void;
+
+  // Everything both public draw_image overloads share once the payload is in
+  // hand: the placeholder clamp, byte attribution, slot keying and LRU, the
+  // content-hash compare that decides whether to transmit at all, and the
+  // placement. Computes its own hash rather than taking one -- that is what
+  // makes "the format participates in image identity" impossible to forget at
+  // a call site.
+  auto draw_payload(Rect cells, std::span<const std::byte> payload,
+                    int format_code, Extent px)
+      -> std::expected<void, ErrorEvent>;
 
   // Classic placement: position the cursor and place (a=p, C=1), scaled
   // to cols x rows cells.

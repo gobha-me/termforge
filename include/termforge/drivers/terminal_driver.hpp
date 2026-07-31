@@ -74,6 +74,46 @@ class TerminalDriver {
   virtual auto draw_image(Rect cells, const Image& image)
       -> std::expected<void, ErrorEvent> = 0;
 
+  // Fill `cells` with an already-encoded payload, shipped to the terminal
+  // VERBATIM (#163). Same cell-rect destination contract as the overload
+  // above; the difference is only where the bytes come from and what the
+  // terminal is told they are.
+  //
+  // NOT pure, unlike its sibling, and that is deliberate: third-party drivers
+  // are an explicit extensibility goal (see the file comment), and a new pure
+  // virtual breaks every out-of-tree driver at compile time on upgrade. The
+  // default below is the honest answer for any tier without an opaque-payload
+  // channel -- a Warning, per the degradation-is-an-event rule, rather than a
+  // silent no-draw.
+  //
+  // THIRD-PARTY DRIVERS: overriding only one of the two `draw_image`
+  // overloads hides the other for calls made through your concrete type. Add
+  // `using TerminalDriver::draw_image;` to your class to unhide it. Dispatch
+  // through TerminalDriver& is unaffected either way, and the failure mode is
+  // a compile error rather than a silent miscall.
+  virtual auto draw_image(Rect /*cells*/, const EncodedImage& /*image*/)
+      -> std::expected<void, ErrorEvent> {
+    return std::unexpected{
+        ErrorEvent{Severity::Warning, "driver",
+                   "draw_image: this tier cannot transmit a pre-encoded image"}};
+  }
+
+  // Whether `f` can actually be drawn on this tier, askable WITHOUT drawing.
+  //
+  // An application that picks its art set at cold start needs the answer
+  // before it commits, and the alternative signal -- a Warning returned from
+  // every draw_image, forever, after the decision was already made -- is not
+  // one. Not a Capabilities field: that struct is the terminal probe's schema
+  // (AGENTS.md), and this is a property of the driver's own emit path.
+  //
+  // The default is correct for every tier that has no out-of-band channel,
+  // which is every tier but kitty and every third-party driver that has not
+  // thought about it.
+  [[nodiscard]] virtual auto supports_image_format(
+      ImageFormat f) const noexcept -> bool {
+    return f == ImageFormat::Rgba32;
+  }
+
   // The pixel resolution a widget should rasterize at to fill `cells` on THIS
   // tier -- cells are the logical unit, this is the device pixel ratio. Auto
   // scaling alone cannot fix blur or aspect for a widget that *generates* its
@@ -108,11 +148,20 @@ class TerminalDriver {
   // and a Sixel driver would answer that expression wrongly on the day it
   // lands, with no compile error. Deriving it from the one function each
   // driver must already implement makes a new tier correct for free.
-  [[nodiscard]] auto image_cell_extent(const Image& image) const -> Extent {
+  //
+  // The Extent overload is the one an application holding only an
+  // EncodedImage can use (#163): it never decoded a payload, so it has pixel
+  // dimensions and no Image to hand over. The Image overload delegates, so
+  // there is still exactly one implementation.
+  [[nodiscard]] auto image_cell_extent(Extent pixels) const -> Extent {
     const Extent per = preferred_pixel_extent(Rect{0, 0, 1, 1});
-    if (image.empty() || per.w <= 0 || per.h <= 0) return Extent{};
-    return Extent{(image.width() + per.w - 1) / per.w,
-                  (image.height() + per.h - 1) / per.h};
+    if (pixels.empty() || per.w <= 0 || per.h <= 0) return Extent{};
+    return Extent{(pixels.w + per.w - 1) / per.w,
+                  (pixels.h + per.h - 1) / per.h};
+  }
+  [[nodiscard]] auto image_cell_extent(const Image& image) const -> Extent {
+    if (image.empty()) return Extent{};
+    return image_cell_extent(Extent{image.width(), image.height()});
   }
 
   virtual auto flush() -> void = 0;
