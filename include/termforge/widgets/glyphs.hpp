@@ -32,7 +32,9 @@
 // ambiguous-as-wide shifts them either way, and BorderStyle::Ascii is the
 // escape hatch for exactly that. detail/width.hpp measures them all as one
 // column. ▸ is deliberately the small triangle, not ▶ U+25B6, which many
-// terminals give an emoji presentation and render double-width.
+// terminals give an emoji presentation and render double-width. #22's ‹ and ›
+// (U+2039/U+203A) join that same bet: Ambiguous, in neither the kCombining nor
+// the kWide table, so detail/width.hpp measures them as one column too.
 //
 // The shared scrollbar's table (#21) landed here as ScrollGlyphs below, keyed
 // off this same enum — the extension note that used to stand here asked for a
@@ -138,13 +140,29 @@ struct MarkGlyphs {
   // indicator, which is cosmetic. all()'s extent changing 8 -> 9 is the loud
   // half of the break; this is the silent half. Keep appending.
   std::string_view arrow_up;
+  // arrow_down/arrow_up's horizontal pair, appended by #22 for TabBar's strip
+  // overflow indicators. Same role one axis over: a scrolled strip marks each
+  // end its window is cut off at, in a column the strip reserves for it. ‹ and
+  // › (U+2039/U+203A) rather than ◂ U+25C2 / ▸ U+25B8 because ▸ is already
+  // `selector` above, and a TabBar paints both on the SAME row -- the same
+  // glyph meaning "this tab is active" in one column and "there are more tabs"
+  // in another is a legend nobody can read. The ASCII forms < > do collide with
+  // selector's >, which is why #22's tests assert the marker by column rather
+  // than by searching the row.
+  std::string_view arrow_left, arrow_right;
 
   // Every field once, so a sweep does not have to name them. See the
   // static_asserts under the tables for what this is really for.
+  //
+  // ⚠ Bumping this extent while leaving the returned list short COMPILES and
+  // passes the sizeof assert below -- the trailing fields value-initialise to
+  // empty views. The emptiness sweep is what catches that, not the sizeof one.
+  // Never "fix" a build by growing the extent alone.
   [[nodiscard]] constexpr auto all() const noexcept
-      -> std::array<std::string_view, 9> {
-    return {check_open,  check_close, check_mark, radio_open, radio_close,
-            radio_mark,  arrow_down,  selector,   arrow_up};
+      -> std::array<std::string_view, 11> {
+    return {check_open, check_close, check_mark, radio_open,
+            radio_close, radio_mark, arrow_down, selector,
+            arrow_up,   arrow_left,  arrow_right};
   }
 };
 
@@ -161,10 +179,10 @@ struct MarkGlyphs {
 // about. The two static_asserts below close that — the first makes "you added a
 // field and forgot all()" a build error, the second makes "you added it to one
 // table only" a build error. Neither needs a test to run.
-inline constexpr MarkGlyphs kUnicodeMarks{"[", "]", "x", "(", ")",
-                                          "•", "▾", "▸", "▴"};
-inline constexpr MarkGlyphs kAsciiMarks{"[", "]", "x", "(", ")",
-                                        "*", "v", ">", "^"};
+inline constexpr MarkGlyphs kUnicodeMarks{"[", "]", "x", "(", ")", "•",
+                                          "▾", "▸", "▴", "‹", "›"};
+inline constexpr MarkGlyphs kAsciiMarks{"[", "]", "x", "(", ")", "*",
+                                        "v", ">", "^", "<", ">"};
 
 // All members are string_view, so the size is exactly the field count -- which
 // makes this the tripwire on all()'s hardcoded extent.
