@@ -8,7 +8,36 @@
 
 namespace termforge {
 
+namespace {
+
+// Sanitized HERE, at the entry point, so the string layout_menus() measures is
+// byte-for-byte the string draw() paints (#10/#22/#129). write_text sanitizes
+// whatever it is handed anyway; doing it ONLY there is what left every title's
+// click span offset from its glyphs by the width of any escape sequence in the
+// title to its left, because layout_menus() lays titles out left to right.
+//
+// Sanitizing inside layout_menus() would close the same gap and is rejected
+// twice over: that runs from draw(), dropdown_rect() AND handle_mouse(), so it
+// pays per frame and per click for a fact fixed once at the setter — and it
+// leaves the raw string in the object, where the next paint-site edit can
+// reintroduce the drift. After this there IS no raw copy left to measure.
+// TabBar's rule (tab_bar.cpp:18), one widget over.
+//
+// Item labels ride along: dropdown_width() measures label + 4 raw while
+// draw_dropdown_rows() truncates raw and write_text sanitizes, so an escape in
+// a label inflates the dropdown — and dropdown_rect() is what hit_test()
+// claims, so the widget takes columns it does not paint. Same class, same two
+// setters, same struct; fixing the title alone leaves the rule half-applied
+// inside one Menu.
+auto sanitize_menu(Menu& menu) -> void {
+  menu.title = Screen::sanitize(menu.title);
+  for (auto& item : menu.items) item.label = Screen::sanitize(item.label);
+}
+
+}  // namespace
+
 auto MenuBar::set_menus(std::vector<Menu> menus) -> void {
+  for (auto& menu : menus) sanitize_menu(menu);  // before the move, not after
   m_menus = std::move(menus);
   m_active = 0;
   m_selected = -1;  // closed: dropdown_open() derives from m_selected (#56/7)
@@ -16,6 +45,7 @@ auto MenuBar::set_menus(std::vector<Menu> menus) -> void {
 }
 
 auto MenuBar::add_menu(Menu menu) -> void {
+  sanitize_menu(menu);
   m_menus.push_back(std::move(menu));
   mark_dirty();
 }
@@ -108,6 +138,16 @@ auto MenuBar::draw(Screen& screen) -> void {
   // exception — it draws below rect(), matched by hit_test().
   const int right = r.x + r.w;
   const auto layout = layout_menus();
+  // Sanitized once per draw and measured as the string that gets painted, then
+  // required to be exactly one column: a two-column glyph from a future family
+  // would overwrite the first column of the title beside it, and a zero-column
+  // one (a lone combining mark) would paint nothing at all. TabBar's rule
+  // (tab_bar.cpp:229-233) and detail/dropdown.hpp's, verbatim. Held by value —
+  // mark_glyphs returns one and the fields are views into string literals, so
+  // binding a const& to the temporary would dangle (list_widget.hpp:120).
+  const MarkGlyphs glyphs = mark_glyphs(m_style);
+  const std::string mark = Screen::sanitize(glyphs.selector);
+  const bool mark_fits = detail::display_width(mark) == 1;
   for (std::size_t i = 0; i < m_menus.size(); ++i) {
     const bool is_active = (static_cast<int>(i) == m_active);
     const auto& fg = is_active ? m_active_fg : m_fg;
@@ -117,6 +157,16 @@ auto MenuBar::draw(Screen& screen) -> void {
     // Fill the title background, clipped to the right edge.
     for (int x = 0; x < mw && mx + x < right; ++x)
       screen.write_text(mx + x, r.y, " ", fg, bg);
+
+    // AFTER the fill, or the fill erases it. The LEFT PAD COLUMN carries the
+    // marker for the active title — the half of the state that survives a
+    // driver dropping colour (#76/#129). layout_menus' +2 already reserved
+    // this column, so no title moves and no span changes width. Clipped by the
+    // same predicate as the fill: a title starting at or past the bar's right
+    // edge paints nothing, or the mark would be visible outside rect(), where
+    // handle_mouse's rect().contains gate can never deliver a click (#11).
+    if (is_active && mark_fits && mx < right)
+      screen.write_text(mx, r.y, mark, fg, bg);
 
     // Title text (1-col padding), clipped to the columns left before the edge.
     if (const int avail = right - (mx + 1); avail > 0)
@@ -152,7 +202,7 @@ auto MenuBar::draw(Screen& screen) -> void {
     detail::draw_dropdown_rows(
         screen, ddr, count, /*highlight=*/m_selected, /*scroll=*/m_scroll,
         /*label_pad=*/2, m_dropdown_fg, m_dropdown_bg, m_selected_fg,
-        m_selected_bg, mark_glyphs(m_style),
+        m_selected_bg, glyphs,
         [&](int i) -> const std::string& {
           return menu.items[static_cast<std::size_t>(i)].label;
         });
