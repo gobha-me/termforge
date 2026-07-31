@@ -6,32 +6,35 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-31)
 
-**Latest work: #128 — `MapWidget::tile_at`, hit-testing owned by the widget.**
-(Recovered intact from the OOM-killed session's checkout; verified green and
-committed as-found.) An app no longer re-derives the widget's private viewport
-arithmetic to pick a tile: `tile_at(cell_x, cell_y) -> optional<pair<int,int>>`
-answers with the SAME window `draw()` uses — `viewport_tiles()` is now public
-(the floored whole-tile window is part of the draw contract: trailing partial
-tiles are background fill, so a click there is `nullopt`, not a clamped tile),
-and the camera clamp is lifted into a const `clamped_camera()` so the const
-accessor evaluates the window `draw()` *would* paint after a rect shrink
-(`set_geometry` is non-virtual). NOT clamped to the map: "outside the map" and
-"the edge tile" are different answers for a click. Ten new cases in
-`test/29mapwidget`. `docs/map-widget.md`'s deferred-picking note updated.
-Validated `-Werror` Release g++ (CI shape) + g++-13 + clang + ASan/UBSan,
-35/35 each — **sequentially, `-j4`** (see below).
+**Latest work: #127 — `MapWidget::set_map_size` preserves the overlapping corner (v0.6.2).**
+The comment claimed it kept the top-left overlap "like Screen::resize does", but it
+assigned a fresh zero-filled grid to every layer unconditionally — so any later
+`set_map_size`, including a same-size re-assert, silently wiped every tile (bit
+term-game's Sokoban, which sizes first and populates second). Fix = option 1 from
+the issue: **early-out on unchanged size** (no-op) + **copy-overlap preserve** on a
+real change (`min(old,new)` sub-rect per layer, new cells `kEmptyId`). Header doc now
+states the real contract. Pinned in `test/29mapwidget` (`[preserve]`): same-size
+survival, shrink corner/drop, grow zero-fill, per-layer preservation, camera re-clamp.
+Validated 35/35 × 4 (Release -Werror g++, g++-13, clang, ASan/UBSan), CI 8/8, merged
+as PR #135, tagged `v0.6.2`.
 
-**CONTAINER CONSTRAINT (new, load-bearing):** this k8s container has a **16G**
-RAM hard limit and each C++23 compile thread takes ~1G. Builds are now
-**`-j4` max, ONE toolchain at a time, validation matrix strictly sequential** —
-never `$(nproc)` (it reports the host, not the container), never two build
-dirs in flight. A session was OOM-killed mid-work on #127 over this; the
-#127 fix never landed and the issue is **open, untouched, and is the natural
-next pick** (its body fully describes the fix: `set_map_size` must preserve
-the overlapping top-left corner per layer instead of assigning fresh
-zero-filled grids). Untracked `assets/art/*.png` + `tools/artview.py` are a
-side experiment (artview's docstring cites a pre-#83 `draw_image` — stale if
-it ever ships).
+**PROCESS LESSON (load-bearing): `gh pr merge --squash` sweeps up UNTRACKED files.**
+The #135 squash accidentally committed the untracked `assets/art/*.png` (~9.3 MB) +
+`tools/artview.py` leftovers into main. Removed in PR #136 (revert). **Verify a clean
+working tree (`git status --porcelain` empty of `??`) before any squash merge.**
+
+**Previous: #128 — `MapWidget::tile_at`, hit-testing owned by the widget (v0.6.1).**
+An app no longer re-derives the widget's private viewport arithmetic to pick a tile:
+`tile_at(cell_x, cell_y) -> optional<pair<int,int>>` answers with the SAME window
+`draw()` uses — `viewport_tiles()` is public (floored whole-tile window; trailing
+partial tiles are background fill, so a click there is `nullopt`), and the camera
+clamp is a const `clamped_camera()` so the const accessor evaluates the window
+`draw()` *would* paint after a rect shrink. NOT clamped to the map.
+
+**CONTAINER CONSTRAINT (load-bearing):** this k8s container has a **16G** RAM hard
+limit and each C++23 compile thread takes ~1G. Builds are **`-j4` max, ONE toolchain
+at a time, validation matrix strictly sequential** — never `$(nproc)`, never two
+build dirs in flight. A session was OOM-killed over this.
 
 **Previous release: `v0.6.0` — #22, the TabBar view switcher.** A horizontal strip
 of titles that reports which one is active; content switching stays the app's
