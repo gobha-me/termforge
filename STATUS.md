@@ -6,7 +6,41 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-31)
 
-**Latest work: #97 — `App::on_start()`/`on_stop()`, hooks inside the terminal's lifetime (v0.6.3).**
+**Latest work: #129 — MenuBar measures what it paints, and marks the active title (v0.6.4).**
+Two defects in the same twenty lines of `menu_bar.cpp`. (1) `layout_menus` measured the
+caller's RAW title with `display_width` while `draw()` painted it through `write_text`,
+which sanitizes — so an escape sequence reserved columns nothing painted, and since titles
+lay out left to right, every span to its right was offset from its glyphs. Item labels had
+the same drift one level down (`dropdown_width` measured them raw, inflating the
+`dropdown_rect().w` that `hit_test()` answers with). (2) The active title was stated in
+COLOUR ALONE, so on `FallbackDriver` the bar row was byte-identical whichever menu was
+active — Left/Right moved an invisible cursor, the finding that had sat unfiled since #76.
+Fix: `Screen::sanitize` at both setters (`set_menus`/`add_menu`, titles **and** labels), so
+no raw copy survives for a later paint-site edit to re-measure; and `MarkGlyphs::selector`
+in the title's left pad column, the one `display_width(title) + 2` already reserved, so it
+costs no geometry. The mark tracks `m_active`, **not** `focused()` — MenuBar has one fact
+where TabBar has two, and a focus gate would keep the bug for the click-driven bar of
+`docs/modal-overlays.md`. Pinned in the new `test/34menubar`; 10 of its 13 cases
+fail against the pre-fix widget. Validated 36/36 × 4 sequential (Release -Werror g++,
+g++-13, clang, ASan/UBSan) plus a pty capture of `examples/widgets` on the colour-dropping
+tier. Unblocks #130 (`detail/strip.hpp`), which would otherwise have extracted the bug.
+
+**TEST LESSON (load-bearing, measured twice): a fixture that cannot express the defect is
+not a regression guard.** Two cases in the new suite were written, passed, and proved
+nothing until they were re-aimed — each caught by running it against the pre-fix widget and
+watching it stay green. (a) An exhaustive click-vs-highlight sweep **cannot see this bug at
+all**: the hit span and the painted BACKGROUND both come from `layout_menus()`, so they
+agree even when it is wrong. What the raw measurement actually bought was columns of
+highlight with no glyph under them, so the invariant with teeth is that a span reserves
+nothing it does not paint — the last painted cell is the one before the trailing pad, read
+off the screen. (b) The same sweep with PLAIN titles is vacuous, because `display_width` of
+a 7-bit string already equals what `write_text` paints; it needed an escape-laden fixture
+beside it. Related: the plan claimed the #76 acceptance case in `12primitives` was silently
+gutted by the bar's new marker — measurement said otherwise (its `row1 != row2` assertion
+still catches a deleted dropdown marker; only the closing whole-frame `find("▸")` lost
+specificity). The comment says what was measured, not what was assumed.
+
+**Previous: #97 — `App::on_start()`/`on_stop()`, hooks inside the terminal's lifetime (v0.6.3).**
 `setup()`/`teardown()` are private and non-virtual by design (they own the raw-mode/alt-screen/
 driver invariants), so a subclass had no hook for its OWN resources — an audio device, a bulk
 resident image upload, a socket — anywhere but the constructor, which runs before any terminal
