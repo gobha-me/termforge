@@ -231,7 +231,7 @@ TEST_CASE("MapWidget: set_geometry before and after set_map_size both work", "[m
 // ── set_map_size preservation (#127) ────────────────────────────────────────
 
 TEST_CASE("MapWidget: re-asserting the same size is a no-op, layers survive",
-          "[mapwidget][#127]") {
+          "[mapwidget][preserve]") {
   MapWidget w = make_widget(10, 10);
   w.set_tile(0, 3, 4, 1);   // wall
   w.set_tile(0, 7, 2, 3);   // player
@@ -246,7 +246,7 @@ TEST_CASE("MapWidget: re-asserting the same size is a no-op, layers survive",
 }
 
 TEST_CASE("MapWidget: shrinking keeps the overlapping top-left corner (#127)",
-          "[mapwidget][#127]") {
+          "[mapwidget][preserve]") {
   MapWidget w = make_widget(8, 8);
   w.set_tile(0, 1, 1, 1);   // inside the surviving 4x4 corner
   w.set_tile(0, 6, 6, 3);   // outside: dropped
@@ -262,7 +262,7 @@ TEST_CASE("MapWidget: shrinking keeps the overlapping top-left corner (#127)",
 }
 
 TEST_CASE("MapWidget: growing zero-fills the new cells, keeps the corner (#127)",
-          "[mapwidget][#127]") {
+          "[mapwidget][preserve]") {
   MapWidget w = make_widget(3, 3);
   w.set_tile(0, 2, 2, 3);   // bottom-right of the original 3x3
 
@@ -274,7 +274,7 @@ TEST_CASE("MapWidget: growing zero-fills the new cells, keeps the corner (#127)"
 }
 
 TEST_CASE("MapWidget: preservation is per-layer, every layer keeps its corner",
-          "[mapwidget][#127]") {
+          "[mapwidget][preserve]") {
   MapWidget w = make_widget(6, 6);
   w.set_tile(0, 0, 0, 1);
   const int a = w.add_layer("a");
@@ -290,7 +290,7 @@ TEST_CASE("MapWidget: preservation is per-layer, every layer keeps its corner",
 }
 
 TEST_CASE("MapWidget: size change still re-clamps the camera (#127)",
-          "[mapwidget][#127]") {
+          "[mapwidget][preserve]") {
   MapWidget w;
   w.set_tileset(make_tileset());
   w.set_map_size(10, 10);
