@@ -58,7 +58,19 @@ class Screen {
 
   // Write sanitized text starting at (x,y). Control characters and ESC are
   // stripped here — the sanitization boundary — so drivers can emit cells
-  // verbatim. Returns the number of cells written (clipped at the right edge).
+  // verbatim.
+  //
+  // Text is CLIPPED at both edges and relocated at neither (#152): a glyph
+  // whose columns are all left of 0 or all past the last column paints
+  // nothing, and the rest paints at its true position. A width-2 glyph that
+  // would straddle either edge is dropped and its one on-screen column is
+  // padded with a space in the run's colours, because half a wide glyph is not
+  // expressible and an unpainted hole inside a run keeps the previous frame's
+  // content (the renderer only emits cells that changed).
+  //
+  // Returns the number of on-screen cells painted, so never more than cols();
+  // an off-screen glyph counts nothing, and the return does not say where the
+  // visible part started.
   auto write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
                   Attr attrs = Attr::None) -> int;
 
