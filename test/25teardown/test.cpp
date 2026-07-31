@@ -3,6 +3,7 @@
 #include <chrono>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "detail/tty_restore.hpp"
 #include "termforge/core/app.hpp"
@@ -174,4 +175,89 @@ TEST_CASE("running() stays true when no quit was dispatched", "[teardown]") {
   probe.test_run_frames(2, 20, 5, nullptr);
   REQUIRE(probe.running());
   REQUIRE(probe.renders == 2);
+}
+
+// ── #97: on_start()/on_stop() ──
+//
+// The hooks live in run_loop(), so these drive test_run_guarded() like the
+// cases above. test_run_frames() deliberately does NOT fire them: it runs
+// frame bodies with no loop around them, and the hooks wrap the loop.
+class HookProbe : public GuardProbe {
+ public:
+  // Ordered log of hook and frame events, plus the teardown witness at the
+  // moment on_stop ran. on_stop is noexcept, so the witness is recorded
+  // rather than asserted in-body.
+  std::vector<std::string> log;
+  bool stop_saw_winch{false};
+  int throw_on_start{0};  // 1 = on_start throws Boom
+
+  auto on_start() -> void override {
+    log.emplace_back("start");
+    if (throw_on_start) throw Boom{"on_start blew up"};
+  }
+  auto on_stop() noexcept -> void override {
+    stop_saw_winch = test_winch_hooked();
+    log.emplace_back("stop");
+  }
+  auto on_render(Screen& s) -> void override {
+    log.emplace_back("render");
+    GuardProbe::on_render(s);
+  }
+};
+
+// The contract GLOAM asked to have pinned: on_start runs after the terminal
+// is fully up and before the first frame; on_stop runs once, after the last
+// frame, while the terminal is still up (winch still hooked) and before
+// teardown() unwinds it.
+TEST_CASE("lifecycle: on_start precedes the first frame, on_stop follows the last",
+          "[teardown]") {
+  HookProbe probe;
+  probe.quit_after = 2;
+
+  REQUIRE(probe.go() == 0);
+  REQUIRE(probe.log == std::vector<std::string>{"start", "render", "render", "stop"});
+  REQUIRE(probe.stop_saw_winch);          // terminal still up inside on_stop
+  REQUIRE_FALSE(probe.test_winch_hooked());  // ...and torn down after it
+}
+
+// The exception path pays the same on_stop, before teardown, and the app's
+// exception still reaches the caller. This is the path where a throwing hook
+// would be std::terminate, which is why the signature is noexcept.
+TEST_CASE("lifecycle: a throwing frame still gets exactly one on_stop", "[teardown]") {
+  HookProbe probe;
+  probe.throw_on_frame = 2;
+
+  REQUIRE_THROWS_AS(probe.go(), Boom);
+  REQUIRE(probe.log == std::vector<std::string>{"start", "render", "render", "stop"});
+  REQUIRE(probe.stop_saw_winch);
+  REQUIRE_FALSE(probe.test_winch_hooked());
+}
+
+// Balanced pairing: an on_start that fails never earns an on_stop, and the
+// terminal is still restored before the exception propagates.
+TEST_CASE("lifecycle: a throwing on_start gets no on_stop and still tears down",
+          "[teardown]") {
+  HookProbe probe;
+  probe.throw_on_start = 1;
+
+  try {
+    probe.go();
+    FAIL("run_loop() swallowed on_start's exception");
+  } catch (const Boom& e) {
+    REQUIRE(std::string{e.what()} == "on_start blew up");
+  }
+  REQUIRE(probe.log == std::vector<std::string>{"start"});
+  REQUIRE(probe.renders == 0);  // the loop never began
+  REQUIRE_FALSE(probe.test_winch_hooked());
+}
+
+// The default no-op hooks keep every pre-#97 app source-compatible: GuardProbe
+// overrides neither, and its behavior is byte-identical to before.
+TEST_CASE("lifecycle: apps that override nothing are unaffected", "[teardown]") {
+  GuardProbe probe;
+  probe.quit_after = 3;
+
+  REQUIRE(probe.go() == 0);
+  REQUIRE(probe.renders == 3);
+  REQUIRE_FALSE(probe.test_winch_hooked());
 }
