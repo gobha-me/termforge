@@ -215,6 +215,49 @@ class App {
   // stands still, a Button's press flash sticks on.
   virtual auto on_tick(std::chrono::duration<double> /*dt*/) -> void {}
 
+  // ── lifecycle hooks (#97) ──
+  // Bring up and tear down the app's own resources INSIDE the terminal's
+  // lifetime. App::setup()/teardown() are private and non-virtual on purpose
+  // -- they own real invariants (raw mode, the alternate screen, the driver),
+  // and a subclass that overrode one and forgot to chain would break the
+  // terminal rather than its own feature. These two no-op hooks cannot do
+  // that; they own nothing and are pure extension points.
+  //
+  // on_start() runs after setup() has fully succeeded -- raw mode entered,
+  // capabilities probed (capabilities()/terminal()/screen()/driver() all
+  // answer), alt-screen up -- and BEFORE the first on_event/on_tick/on_render.
+  // This is where a device opens, a resident image set uploads, a socket
+  // connects: anything that needs the terminal already up, or that wants a
+  // failure reported through the ordinary channel with somewhere to show it.
+  //
+  // An exception out of on_start() is a startup failure: the loop never
+  // begins, on_stop() does NOT run (there is nothing to stop -- the pairing
+  // is balanced, one on_stop per completed on_start), teardown() restores
+  // the terminal, and the exception propagates out of run() unchanged. So a
+  // resource on_start() brought up before throwing must be unwound by the
+  // app itself -- on the way out of the hook, or in the destructor.
+  //
+  // Default is a no-op: every existing App is unaffected.
+  virtual auto on_start() -> void {}
+
+  // The mirror, called once per completed on_start() while the terminal is
+  // STILL UP -- before teardown() leaves the alt-screen and restores cooked
+  // mode -- on every path out of the loop: a normal quit(), and the catch
+  // that runs before an exception propagates out of run(). This is where the
+  // device closes and the upload frees, while there is still a terminal to
+  // say so on.
+  //
+  // It does NOT run when setup() or on_start() failed, and it never runs
+  // twice -- the flag behind that is cleared before the call, so even an
+  // ~App that somehow followed could not re-enter it.
+  //
+  // noexcept and enforced: a throw is std::terminate. It is called from
+  // run_loop()'s catch path, where a throw would turn one in-flight
+  // exception into a terminate anyway, so no useful behavior is lost --
+  // close the resource, report what the terminal can still show, and let
+  // the original failure carry the rest.
+  virtual auto on_stop() noexcept -> void {}
+
   // ── modal overlays ──
   // Push a widget onto the overlay stack. Overlays draw after on_render (in
   // stack order, bottom first) and take ALL key/mouse/paste events while the
@@ -513,6 +556,10 @@ class App {
   auto collect_pixel_regions(Widget& widget) -> void;
   auto save_backdrop(const Screen& screen) -> void;
   auto dim_screen(Screen& screen) -> void;
+  // Fire on_stop() if a completed on_start() is owed one (#97). run_loop()
+  // calls this on both exits, before teardown(). noexcept because it must
+  // not add a third exception to a path already handling one.
+  auto stop_app() noexcept -> void;
   auto setup() -> std::expected<void, ErrorEvent>;
   // The exact inverse of setup(): leave the alt-screen, restore cooked mode,
   // return SIGWINCH to its default, and deregister from the resize handler.
@@ -591,6 +638,10 @@ class App {
   std::vector<Cell> m_backdrop_backup;
   bool m_running{false};
   bool m_in_screen{false};
+  // on_stop() is owed exactly once per completed on_start() (#97). Set right
+  // after the call, cleared right before the matching on_stop() -- so the
+  // hook never fires when setup()/on_start() failed, and never fires twice.
+  bool m_app_started{false};
   // Whether setup() replaced the SIGWINCH disposition. teardown() restores the
   // default only if it did — an unconditional reset would clobber a handler an
   // embedding program owns on the run where setup() failed before installing.

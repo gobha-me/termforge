@@ -143,12 +143,20 @@ auto App::run_loop() -> int {
   // restore_backdrop() and flush_pixel_regions(), so the Screen can be left
   // dimmed under an overlay. Harmless because the loop is over — but it is the
   // first thing to fix if catching-and-resuming ever becomes a feature.
+  // #97: the terminal is fully up here and no frame has run -- the one point
+  // that satisfies on_start()'s contract. A throw is a startup failure: the
+  // loop never begins, m_app_started stays false so no on_stop() is owed,
+  // and the catch restores the terminal before the exception propagates.
   try {
+    on_start();
+    m_app_started = true;
     while (m_running) frame_step();
   } catch (...) {
+    stop_app();
     teardown();
     throw;
   }
+  stop_app();
   teardown();
   return 0;
 }
@@ -319,6 +327,18 @@ auto App::test_run_guarded(int cols, int rows, std::string* sink) -> int {
   m_winch_hooked = true;
   m_running = true;
   return run_loop();
+}
+
+auto App::stop_app() noexcept -> void {
+  // One on_stop() per completed on_start(), BEFORE teardown() takes the
+  // terminal down, on the normal and the exception path alike (#97). The
+  // flag clears first so nothing can re-enter, and the noexcept call sites
+  // make a throwing on_stop() override terminate right here, where the
+  // contract says it must.
+  if (m_app_started) {
+    m_app_started = false;
+    on_stop();
+  }
 }
 
 auto App::pump_input() -> void {
