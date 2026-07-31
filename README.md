@@ -40,11 +40,16 @@ Landed and verified:
 - **Widgets** — `Widget` base (with pixel-region support), TextBox scrollback,
   TableWidget, ListWidget, WaveformWidget, MapWidget (tile maps: TileSet +
   camera + layers), and the primitives Label, Button,
-  ProgressBar, TextInput, Frame, MenuBar. Mouse event routing via
+  ProgressBar, TextInput, Frame, MenuBar, TabBar. Mouse event routing via
   `Widget::hit_test` (topmost-first); `FocusRing` owns the Tab order.
   The scrollable three paint a shared one-column scrollbar (track + thumb,
   click-to-page-jump) when their content overflows, so a viewport never hides
   that there's more (`widgets/detail/scrollbar.hpp`).
+- **TabBar** — a horizontal strip of titles that reports which one is active
+  (`on_change(int)`); Left/Right and clicks switch it, and the strip scrolls
+  with `‹ ›` indicators when the titles outrun the columns. It owns the strip
+  and nothing else — swapping the content below it stays the app's job (see
+  `examples/widgets.cpp`).
 - **Form controls** — `Checkbox`, `RadioGroup` (one tab stop for the whole
   group, arrows move the selection) and `Select` (a dropdown that closes on
   focus loss, and closes-then-declines Tab so one press both dismisses it and

@@ -6,11 +6,11 @@
 //
 // Layout:
 //   File  Edit  View  Border                        [MenuBar]
-//   ┌┤ Controls ├───────────┐┌┤ ListWidget ├───────────────────┐
-//   │ Label                 ││  item 1                         │
-//   │ TextInput             ││  item 2                         │
-//   │ [Button] [Button]     ││  ...                            │
-//   │ ProgressBar           ││                                 │
+//   ┌┤ Controls ├───────────┐┌┤ Views ├─────────────────────────┐
+//   │ Label                 ││ ▸All Items  Even  Odd  Reversed ›│  [TabBar]
+//   │ TextInput             ││  item 1                         │
+//   │ [Button] [Button]     ││  item 2                         │
+//   │ ProgressBar           ││  ...                            │
 //   └───────────────────────┘└─────────────────────────────────┘
 //   ┌┤ Signal ├──────────────────────────────────────────────────┐
 //   │ (sine wave)                                                │
@@ -26,14 +26,24 @@
 // counts frames, so the bar and the wave run at the same speed whatever the
 // frame budget is.
 //
+// The TabBar (#22) shows the division of labour that widget insists on: it owns
+// the strip and reports an index, and repopulating the list below it is the
+// app's job (apply_view). Five tabs need more columns than half an 80-column
+// terminal, so it is also where the overflow indicators are visible — narrow
+// the window and the strip scrolls with ‹ ›, the wheel, or Left/Right.
+//
 // The Border menu is also the answer to "how do I style a whole app?": there is
 // no global default style — the app holds one BorderStyle and hands it to each
 // frame (see set_border below). Border > ASCII is what an app on the
 // FallbackDriver tier wants.
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <format>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "termforge/core/app.hpp"
 #include "termforge/widgets/button.hpp"
@@ -44,6 +54,7 @@
 #include "termforge/widgets/list_widget.hpp"
 #include "termforge/widgets/menu_bar.hpp"
 #include "termforge/widgets/progress_bar.hpp"
+#include "termforge/widgets/tab_bar.hpp"
 #include "termforge/widgets/text_input.hpp"
 #include "termforge/widgets/waveform_widget.hpp"
 
@@ -88,9 +99,18 @@ class WidgetsDemo final : public App {
       set_status("Cancel — input cleared");
     });
 
-    // List.
-    for (int i = 1; i <= 15; ++i)
-      m_list.add_item(std::format("Item {:2} — selectable list entry", i));
+    // Tabs over the list pane. Populated BEFORE m_ring.add below: focusable()
+    // is dynamic on the tab count, and FocusRing::add only grants initial focus
+    // to a member that is focusable at add time.
+    m_tabs.set_tabs({"All Items", "Even", "Odd", "Reversed", "Empty"});
+    m_tabs.on_change([this](int view) {
+      apply_view(view);
+      set_status(std::format("View: {}", m_tabs.title(view)));
+    });
+
+    // List. The TabBar owns the strip and nothing else — filling the pane under
+    // it is this app's job, which is the whole point of #22's scope.
+    apply_view(0);
     m_list.on_select([this](int idx, const std::string& text) {
       set_status(std::format("Selected: {} (index {})", text, idx));
     });
@@ -111,6 +131,7 @@ class WidgetsDemo final : public App {
     m_ring.add(&m_input);
     m_ring.add(&m_btn_ok);
     m_ring.add(&m_btn_cancel);
+    m_ring.add(&m_tabs);
     m_ring.add(&m_list);
     m_ring.add(&m_menu);
 
@@ -126,7 +147,8 @@ class WidgetsDemo final : public App {
       if (m->pressed && m_menu.dropdown_open() && !m_menu.hit_test(m->x, m->y))
         m_menu.close_dropdown();
       if (m->pressed) m_ring.focus_at(m->x, m->y);
-      route_mouse(*m, {&m_input, &m_btn_ok, &m_btn_cancel, &m_list, &m_menu});
+      route_mouse(*m, {&m_input, &m_btn_ok, &m_btn_cancel, &m_tabs, &m_list,
+                       &m_menu});
       return;
     }
 
@@ -208,12 +230,20 @@ class WidgetsDemo final : public App {
     m_progress.set_geometry({li.x + 1, li.y + 6, li.w - 2, 1});
     m_progress.draw(screen);
 
-    // Right frame.
-    m_right_frame.set_title("ListWidget");
+    // Right frame: the tab strip on its first row, the selected view below it.
+    m_right_frame.set_title("Views");
     m_right_frame.set_geometry({left_w, menu_h, right_w, content_h});
     m_right_frame.draw(screen);
-    m_list.set_geometry(m_right_frame.content_rect());
-    m_list.draw(screen);
+    // content_rect() clamps its height to 0 rather than going negative, and
+    // splitting it must not undo that: at H <= 12 the interior is empty, and an
+    // unguarded ri.y would put the strip on the frame's bottom border.
+    const auto ri = m_right_frame.content_rect();
+    if (ri.h > 0) {
+      m_tabs.set_geometry({ri.x, ri.y, ri.w, 1});
+      m_tabs.draw(screen);
+      m_list.set_geometry({ri.x, ri.y + 1, ri.w, std::max(0, ri.h - 1)});
+      m_list.draw(screen);
+    }
 
     // Waveform (full width).
     m_wave_frame.set_title("Signal");
@@ -256,6 +286,20 @@ class WidgetsDemo final : public App {
     }
   }
 
+  // What each tab shows. The strip reports an index; deciding what that index
+  // means, and refilling the pane, is the application's half of the deal.
+  auto apply_view(int view) -> void {
+    std::vector<std::string> items;
+    for (int i = 1; i <= 15; ++i) {
+      if (view == 1 && i % 2 != 0) continue;
+      if (view == 2 && i % 2 == 0) continue;
+      if (view == 4) break;
+      items.push_back(std::format("Item {:2} — selectable list entry", i));
+    }
+    if (view == 3) std::ranges::reverse(items);
+    m_list.set_items(std::move(items));
+  }
+
   // One style, applied to every frame the app owns. There is no global default
   // in the library on purpose (widgets/glyphs.hpp) — this three-line helper is
   // what "style the whole app" looks like instead.
@@ -268,6 +312,7 @@ class WidgetsDemo final : public App {
     // (#76), and the demo contradicts the tier it is advertising.
     m_list.set_style(style);
     m_menu.set_style(style);
+    m_tabs.set_style(style);
     set_status(std::format("Border: {}", name));
   }
 
@@ -277,6 +322,7 @@ class WidgetsDemo final : public App {
     if (c == &m_input) return "Input";
     if (c == &m_btn_ok) return "OK";
     if (c == &m_btn_cancel) return "Cancel";
+    if (c == &m_tabs) return "Tabs";
     if (c == &m_list) return "List";
     if (c == &m_menu) return "Menu";
     return "-";
@@ -288,6 +334,7 @@ class WidgetsDemo final : public App {
   TextInput m_input;
   Button m_btn_ok, m_btn_cancel;
   ProgressBar m_progress;
+  TabBar m_tabs;
   ListWidget m_list;
   WaveformWidget m_wave;
   FocusRing m_ring;
