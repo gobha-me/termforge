@@ -1392,6 +1392,17 @@ TEST_CASE("MenuBar: the selection survives a driver that drops colour (#76)",
   }
   REQUIRE(row1 != row2);  // in CELL TEXT, not only in colour
 
+  // The DROPDOWN's marker, BY COLUMN. Since #129 the bar row carries a marker
+  // too, so the whole-frame find() below no longer names this case's subject
+  // on its own -- it would pass on the bar's account alone. What still catches
+  // a deleted dropdown marker is the row1 != row2 assertion above (measured:
+  // mutate draw_dropdown_rows' marker away and the case fails there, at this
+  // line's expense of never being reached). This one pins the column, which
+  // neither of the other two does. test/34menubar carries the mirror image:
+  // the same driver assertion with the dropdown CLOSED, where the bar's marker
+  // is the only one in the frame.
+  REQUIRE(s.at(0, 1).text == "▸");
+
   FallbackDriver d;
   std::string out;
   d.set_output(&out);

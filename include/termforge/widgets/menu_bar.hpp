@@ -36,6 +36,33 @@
 // cursor the user could not see and Enter fired whichever action it happened to
 // be on. The marker is drawn by the shared detail/dropdown.hpp skeleton, so
 // Select cannot drift away from it.
+//
+// The BAR ROW states its active title twice for the same reason (#129). The
+// marker is MarkGlyphs::selector in the title's left pad column — the one
+// layout_menus' `display_width(title) + 2` already reserves — so it costs no
+// geometry: no title moves and no click span changes width. TabBar reached the
+// same answer for the same reason (#22).
+//
+// The mark tracks m_active, NOT focused(), and that is deliberate: do not
+// "fix" it to match TabBar. TabBar has two facts to state — which view is live
+// (persistent) and where the arrow keys go (transient) — so it splits its two
+// channels between them. MenuBar's m_active is one fact, a cursor meaning "the
+// menu Enter or a click would open"; nothing outside the widget consumes it
+// and set_menus resets it. So both channels state that one fact and differ
+// only by driver tier, which is the whole point. A focused() gate would make
+// colour and glyph disagree on a colour-capable driver, and would keep the bug
+// entirely for the click-driven bar in docs/modal-overlays.md, which is never
+// focused.
+//
+// TITLES AND ITEM LABELS ARE SANITIZED AT THE SETTER (#129), so the string
+// layout_menus() measures is byte-for-byte the string draw() paints. Doing it
+// only in write_text (which sanitizes whatever it is handed) is what left
+// every title's click span offset from its glyphs by the length of any escape
+// sequence in a title to its left, and inflated dropdown_rect().w past the
+// columns the dropdown actually needs. set_menus and add_menu are the only
+// entry points, and there is deliberately no accessor handing back the raw
+// form — after the setter there IS no raw copy left in the object for a later
+// paint-site edit to re-measure.
 
 #include <functional>
 #include <string>
