@@ -6,7 +6,75 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-31)
 
-**Latest work: #130 — `detail/strip.hpp`, one horizontal span layout for MenuBar and TabBar (v0.6.6).**
+**Latest work: #152 + #159 — `Screen::write_text` clips its off-screen prefix instead of relocating it (v0.6.7).**
+The root of the #129/#153/#130 thread's leftovers. `write_text` handled the right edge
+correctly from the start (`x >= m_cols` returns 0, the loop stops at `cx < m_cols`) but
+**clamped** a negative x: `const int start_x = x < 0 ? 0 : x`. So a widget at a negative
+`rect().x` — ordinary centring arithmetic, or any container narrower than its content —
+did not clip; it *moved*, painting its content from column 0, in columns belonging to no
+span and unreachable by a hit test gated on `rect().contains`. The #11 class, mirrored.
+Now the cursor starts at the caller's x even when that is negative, and a glyph whose
+columns are all off-screen advances the cursor and paints nothing.
+
+**Why it was a `Screen` fix and not a widget fix.** The sweep found ~20 `write_text` call
+sites and **not one widget that does its own left clipping** — `frame.cpp` (all four
+corners and both edges), `table_widget.cpp`, `list_widget.cpp`, `text_input.cpp`,
+`label.cpp`/`button.cpp`'s centring, `detail/dropdown.hpp`, `detail/scrollbar.hpp`, every
+one of them relies on this function's behaviour. One change makes all of them correct.
+Nothing outside `test/02screen` reads the return value, so its meaning was free to
+redefine: **on-screen cells painted**, never more than `cols()`, an off-screen glyph
+counting nothing. The header and the body comment had disagreed ("cells written" vs
+"columns advanced") since #10 — vacuously, because the two numbers were equal until now.
+
+**Two widget workarounds came out, and no new one went in.** #129 had bolted an
+`mx >= 0` guard onto MenuBar's active-title marker with eight lines explaining the clamp;
+the guard is now exactly redundant (the mark is one column wide, so at a negative `mx` it
+paints nothing on its own) and both went. **#159 — TabBar's identical unguarded marker —
+is closed by this with zero TabBar edits**, which is the right outcome: adding the
+symmetric guard would have been dead code restating `Screen`'s contract *and* would have
+masked a regression of it. `strip.hpp`'s "unifying the paint means deciding #152 first"
+is answered; the paint is still not unified, for the one reason that survives — `fill_rect`
+writes a `blank()` cell and resets `image_id`, `write_text(" ")` does neither.
+
+**The straddling wide glyph is padded, not skipped, and that is a correctness call rather
+than a symmetry preference.** A width-2 glyph starting at column −1 has its left half off
+screen and the continuation-cell contract cannot express half a glyph, so it is dropped —
+but column 0 is *painted* with a space in the run's colours, mirroring the right-edge arm.
+Letting the ordinary path run at `cx == -1` would sink the base through `at(-1, y)` and
+leave a **lone `"\0"` continuation cell** on column 0, which `Renderer` skips forever;
+leaving the column untouched is nearly as bad, because `write_text` is how a widget fills
+a run one column at a time and the renderer only emits cells that *changed*, so a hole
+inside a painted run keeps the previous frame's glyph indefinitely.
+
+**A guard that looks defensive and is not:** `m_cols <= 0` joined the early return.
+It is reachable only *because* a negative x now survives — on a zero-column grid
+`cx < m_cols` reads `cx < 0`, which −1 satisfies, so the straddle arm would have padded a
+column 0 that does not exist and returned 1 for a screen with no columns.
+
+**Proven four ways.** (1) Ten new `test/02screen` cases, **nine of which fail against the
+pre-fix `screen.cpp`** (the tenth pins the new `m_cols <= 0` guard, which the old code
+satisfied for a different reason). (2) Seven mutations of the new branches, all killed:
+restoring the clamp, `cx == -1` → `cx <= -1`, the paint gate `cx >= 0` → `cx > 0`,
+`cx += w` → `cx += 1` in both places, `base_cx = 0` in the straddle arm, the dropped
+`++written`, and the removed `m_cols <= 0`. (3) Four widget assertions across `33tabbar`
+and `34menubar`, all four red without the `Screen` change. (4) Empirically, under a pty:
+`examples/widgets` with the TabBar forced to `x = -3` renders `All Items Even   Odd …`
+before (marker and `Al` piled onto column 0, the whole strip shifted right) and
+`l Items   Even   Odd …` after (prefix dropped, every tab at its true column) — and with
+the shipping geometry, six sizes from 80x24 down to 12x10 are **byte-identical** before
+and after, with the waveform and progress-bar animation normalised (their run-to-run noise
+floor is the same under both binaries). Clean under `-fsanitize=undefined,address`,
+including the `INT_MIN` case. 38/38 × 3 (g++, clang toolchain, `-Werror`).
+
+**The fixture-geometry lesson landed a third time.** Every `TabBar` fixture in `33tabbar`
+sat at `{0, 0, W, 1}` — nineteen of them — so `rect().x` was multiplied by zero
+everywhere, which is why #159 was invisible to a green suite. The two new cases put the
+bar at `{-2, 0, 12, 1}`. Note which assertion has teeth: `s.at(0,0).text != "▸"` is an
+*absence* claim and would have stayed green in MenuBar's case, where the title relocates
+on top of the relocated marker; `s.at(0,0).blank()` and `row_text(...) == "ile "` are what
+actually separate a clip from a move.
+
+**Previously: #130 — `detail/strip.hpp`, one horizontal span layout for MenuBar and TabBar (v0.6.6).**
 The last of #129's sequencing: extract only after MenuBar stopped measuring raw titles (#129,
 or the extraction would have baked that bug in and given it a second caller) and after #153 had
 lifted the sanitize-then-fit block out of the way. Both widgets laid a row of variable-width
