@@ -1,8 +1,11 @@
 #include "termforge/drivers/fallback_driver.hpp"
 
+#include <cstddef>
 #include <cstdio>
 #include <format>
+#include <span>
 
+#include "detail/encoded.hpp"
 #include "detail/sample.hpp"
 
 namespace termforge {
@@ -64,14 +67,35 @@ auto FallbackDriver::draw_image(Rect cells, const Image& image)
     return std::unexpected{ErrorEvent{Severity::Warning, "fallback",
                                       "draw_image: empty destination rect"}};
   }
+  return draw_rgba(cells, std::as_bytes(image.pixels()),
+                   Extent{image.width(), image.height()});
+}
+
+auto FallbackDriver::draw_image(Rect cells, const EncodedImage& image)
+    -> std::expected<void, ErrorEvent> {
+  if (auto ok = detail::validate_encoded(image, cells, "fallback"); !ok) {
+    return ok;
+  }
+  if (image.format != ImageFormat::Rgba32) {
+    // The floor tier reads pixels to pick a ramp glyph. It cannot read a PNG,
+    // and emitting the payload as text would spray the datastream across the
+    // cell grid, so it warns and emits nothing.
+    return std::unexpected{detail::unsupported_format(image.format,
+                                                      "fallback")};
+  }
+  return draw_rgba(cells, image.bytes, image.pixels);
+}
+
+auto FallbackDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
+                               Extent px) -> std::expected<void, ErrorEvent> {
   // One glyph per cell, each sampling the nearest source pixel (#83). At 1:1
   // every index maps to itself, so this is the pre-#83 loop exactly.
   for (int row = 0; row < cells.h; ++row) {
     m_buf += std::format("\033[{};{}H", cells.y + row + 1, cells.x + 1);
-    const int sy = detail::sample_index(row, image.height(), cells.h);
+    const int sy = detail::sample_index(row, px.h, cells.h);
     for (int col = 0; col < cells.w; ++col) {
-      const int sx = detail::sample_index(col, image.width(), cells.w);
-      m_buf += luminance_char(image.at(sx, sy));
+      const int sx = detail::sample_index(col, px.w, cells.w);
+      m_buf += luminance_char(detail::rgba_at(rgba, px, sx, sy));
     }
   }
   return {};

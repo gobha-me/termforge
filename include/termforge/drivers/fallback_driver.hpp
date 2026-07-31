@@ -7,7 +7,9 @@
 
 #include "termforge/drivers/terminal_driver.hpp"
 
+#include <cstddef>
 #include <expected>
+#include <span>
 #include <string>
 
 namespace termforge {
@@ -22,6 +24,14 @@ class FallbackDriver final : public TerminalDriver {
                  Attr attrs) -> void override;
   auto draw_image(Rect cells, const Image& image)
       -> std::expected<void, ErrorEvent> override;
+  // Rgba32 renders exactly as an Image does; Png warns. The floor tier has no
+  // out-of-band channel and no decoder (#163).
+  auto draw_image(Rect cells, const EncodedImage& image)
+      -> std::expected<void, ErrorEvent> override;
+  using TerminalDriver::draw_image;
+  // supports_image_format is NOT overridden: the base already answers
+  // Rgba32-only, which is this tier's exact truth.
+  //
   // One glyph per cell: the destination pixel grid is the cell grid.
   [[nodiscard]] auto preferred_pixel_extent(Rect cells) const noexcept
       -> Extent override;
@@ -31,6 +41,12 @@ class FallbackDriver final : public TerminalDriver {
   void set_output(std::string* sink);
 
  private:
+  // The ASCII-ramp renderer, over a row-major RGBA span rather than an Image.
+  // Both public draw_image overloads land here; see AnsiRgbDriver::draw_rgba
+  // for why the encoded path does not rebuild an Image first.
+  auto draw_rgba(Rect cells, std::span<const std::byte> rgba, Extent px)
+      -> std::expected<void, ErrorEvent>;
+
   std::string* m_sink{nullptr};
   std::string m_buf;
 };

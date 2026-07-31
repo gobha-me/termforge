@@ -1,8 +1,11 @@
 #include "termforge/drivers/ansi_rgb_driver.hpp"
 
+#include <cstddef>
 #include <cstdio>
 #include <format>
+#include <span>
 
+#include "detail/encoded.hpp"
 #include "detail/sample.hpp"
 #include "detail/sgr_attrs.hpp"
 
@@ -70,7 +73,28 @@ auto AnsiRgbDriver::draw_image(Rect cells, const Image& image)
     return std::unexpected{ErrorEvent{Severity::Warning, "ansi_rgb",
                                       "draw_image: empty destination rect"}};
   }
+  return draw_rgba(cells, std::as_bytes(image.pixels()),
+                   Extent{image.width(), image.height()});
+}
 
+auto AnsiRgbDriver::draw_image(Rect cells, const EncodedImage& image)
+    -> std::expected<void, ErrorEvent> {
+  if (auto ok = detail::validate_encoded(image, cells, "ansi_rgb"); !ok) {
+    return ok;
+  }
+  if (image.format != ImageFormat::Rgba32) {
+    // No out-of-band channel and no decoder: this tier builds its output
+    // character by character out of pixels it can read. Warn and emit
+    // nothing, rather than shipping bytes the terminal will render as
+    // garbage in the middle of the cell grid.
+    return std::unexpected{detail::unsupported_format(image.format,
+                                                      "ansi_rgb")};
+  }
+  return draw_rgba(cells, image.bytes, image.pixels);
+}
+
+auto AnsiRgbDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
+                              Extent px) -> std::expected<void, ErrorEvent> {
   // Track the active SGR to coalesce runs of identical color.
   int cur_fg = -1, cur_bg = -1;
   const auto rgb_id = [](const Pixel& p) {
@@ -91,12 +115,12 @@ auto AnsiRgbDriver::draw_image(Rect cells, const Image& image)
   // bottom-padded.
   for (int row = 0; row < dst.h; row += 2) {
     m_buf += std::format("\033[{};{}H", cells.y + row / 2 + 1, cells.x + 1);
-    const int sy_up = detail::sample_index(row, image.height(), dst.h);
-    const int sy_lo = detail::sample_index(row + 1, image.height(), dst.h);
+    const int sy_up = detail::sample_index(row, px.h, dst.h);
+    const int sy_lo = detail::sample_index(row + 1, px.h, dst.h);
     for (int col = 0; col < dst.w; ++col) {
-      const int sx = detail::sample_index(col, image.width(), dst.w);
-      const Pixel& up = image.at(sx, sy_up);
-      const Pixel& lo = image.at(sx, sy_lo);
+      const int sx = detail::sample_index(col, px.w, dst.w);
+      const Pixel up = detail::rgba_at(rgba, px, sx, sy_up);
+      const Pixel lo = detail::rgba_at(rgba, px, sx, sy_lo);
       const int fg = rgb_id(up), bg = rgb_id(lo);
       if (fg != cur_fg) {
         m_buf += std::format("\033[38;2;{};{};{}m", up.r, up.g, up.b);

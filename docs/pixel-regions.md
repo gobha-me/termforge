@@ -299,6 +299,95 @@ onto the scene — is the normal way to build a sprite frame, and is what
 `docs/map-widget.md` commits the sprite tier to. Assuming opacity is silently
 wrong at every antialiased edge, with no diagnostic.
 
+## Pre-encoded payloads (#163)
+
+Everything above assumes the library holds pixels. Sometimes it should not.
+
+`transmit()` emitted exactly one wire format — `f=32`, raw RGBA, base64 — so
+the cost of a plate was `w * h * 4 * 4/3` regardless of how compressible the
+art was. #139's meter turned that from a suspicion into a number: a 240x160
+plate costs **205,283 bytes**, against a downstream budget of **8,192**.
+
+The fix is not compression. Compression in the library means zlib or a PNG
+encoder, and the stdlib-only rule is not spendable here. It is also not
+*needed*: every application with a graphics budget bakes its art offline
+already, where a dependency is free. What was missing was a way to hand
+TermForge bytes it should ship verbatim.
+
+```cpp
+enum class ImageFormat { Rgba32, Png };
+
+struct EncodedImage {
+  ImageFormat format;
+  std::span<const std::byte> bytes;   // borrowed, for the call's duration
+  Extent pixels;
+};
+
+auto draw_image(Rect cells, const EncodedImage& image)
+    -> std::expected<void, ErrorEvent>;
+```
+
+| tier | `Rgba32` | `Png` |
+|---|---|---|
+| Kitty | `f=32` — identical bytes to the `Image` overload | `f=100`, the terminal decodes |
+| AnsiRgb | half-blocks, resampled straight off the span | `Warning`, nothing emitted |
+| Fallback | ramp glyphs, resampled straight off the span | `Warning`, nothing emitted |
+
+Ask `supports_image_format()` before committing to an art set. An application
+picking its assets at cold start needs the answer at cold start; a `Warning`
+returned from every frame, forever, after the decision was already made is not
+an answer.
+
+### We do not parse the payload, and that is the feature
+
+`pixels` is not there because kitty needs it — the protocol reads a PNG's
+geometry out of the datastream. It is there because the *library* needs it: to
+check an `Rgba32` payload against its declared length, to key the content hash,
+and to answer `image_cell_extent(Extent)` for a caller that never decoded
+anything. `s=`/`v=` are emitted for both formats regardless; kitty ignores them
+where they do not apply, and one format string beats two that can drift.
+
+For `Png` the field is therefore unverifiable and deliberately unverified. An
+`EncodedImage` whose declared extent disagrees with its header still transmits.
+Having an opinion would mean owning a decoder — the dependency the whole design
+exists to avoid — so the disagreement is not an error the library can see or
+will invent.
+
+`Rgba32` is the one format whose length *is* derivable, so it is the one format
+where a caller's extent/buffer disagreement is visible at all, and it is
+checked. In 64 bits: `w * h * 4` in `int` overflows for extents a public API
+can be handed, and a wrapped product can collide with the real span length,
+turning the one check that catches the mistake into one that waves it through.
+
+### Identity includes the format
+
+The content hash covers the extent, the payload bytes, **and the wire format**.
+The last is the non-obvious one: the same 64 bytes are a legal 4x4 RGBA buffer
+and a (nonsensical, but unparsed) PNG payload, and the terminal renders them
+completely differently. A hash blind to the format would skip the second upload
+and leave the first one on screen.
+
+Keying on the declared extent alone is the other tempting shortcut, and it is
+worse: every plate an application bakes to a fixed size hashes identically, so
+only the first one ever uploads.
+
+### The blind spot: `q=2`
+
+TermForge emits `q=2`, which suppresses the terminal's responses. Until now the
+payload was RGBA the library built itself and could not be malformed. An
+opaque application-supplied payload can be — and a terminal that rejects it
+says so on a channel nobody is reading, so `draw_image` returns success and
+nothing renders. Fixing it needs a response reader, which the driver does not
+have; `tools/png_repro.sh` runs the same sequences under `q=0` so a human can
+see what a real terminal actually says.
+
+### What this does not deliver
+
+Residency. Slots are keyed on the destination *rect*, capped at 16, ids are
+recycled to stay one byte, and `gc_regions()` deletes anything not drawn this
+frame. A resident art set uploaded once at cold start is #109's job. This
+lowers the per-plate byte cost and nothing else.
+
 ## Interaction with Diff Rendering
 
 Pixel regions are **not** diff-rendered. The cell diff skips them (the
