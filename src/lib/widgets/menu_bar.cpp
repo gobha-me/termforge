@@ -5,6 +5,7 @@
 #include "detail/width.hpp"
 #include "termforge/widgets/detail/callback.hpp"
 #include "termforge/widgets/detail/dropdown.hpp"
+#include "termforge/widgets/detail/glyph_fit.hpp"
 
 namespace termforge {
 
@@ -138,20 +139,17 @@ auto MenuBar::draw(Screen& screen) -> void {
   // exception — it draws below rect(), matched by hit_test().
   const int right = r.x + r.w;
   const auto layout = layout_menus();
-  // Sanitized once per draw and measured as the string that gets painted, then
-  // required to be exactly one column: a two-column glyph from a future family
-  // would overwrite the first column of the title beside it, and a zero-column
-  // one (a lone combining mark) would paint nothing at all. TabBar's draw()
-  // rule and detail/dropdown.hpp's, verbatim -- and like theirs it is
-  // UNTESTABLE from outside: set_style is the only knob and every family's
-  // selector is one column, so no black-box test can hand this a bad glyph.
   // Held by value like TabBar's, which is a style choice and not a lifetime
   // one: a const& would bind to the prvalue and be lifetime-extended just
   // fine. The rule list_widget.hpp states is a different one -- do not bind a
-  // const& and then RETURN a view into a member of it.
+  // const& and then RETURN a view into a member of it. Still needed after the
+  // marker below: draw_dropdown_rows takes the whole table.
   const MarkGlyphs glyphs = mark_glyphs(m_style);
-  const std::string mark = Screen::sanitize(glyphs.selector);
-  const bool mark_fits = detail::display_width(mark) == 1;
+  // Budget 1 -- the title's left pad column -- and empty means do not paint.
+  // detail/glyph_fit.hpp owns the rule; it is also where the note lives that
+  // the guard is unreachable from a black-box test here, set_style being the
+  // only knob and every family's selector one column.
+  const std::string mark = detail::fitted_glyph(glyphs.selector, 1);
   for (std::size_t i = 0; i < m_menus.size(); ++i) {
     const bool is_active = (static_cast<int>(i) == m_active);
     const auto& fg = is_active ? m_active_fg : m_fg;
@@ -177,7 +175,7 @@ auto MenuBar::draw(Screen& screen) -> void {
     // that belongs to no span, where handle_mouse maps it to bar background.
     // The clamp is a Screen-wide wart that already scrambles the titles of such
     // a bar; this guard only keeps #129 from adding a glyph to the pile.
-    if (is_active && mark_fits && mx >= 0 && mx < right)
+    if (is_active && !mark.empty() && mx >= 0 && mx < right)
       screen.write_text(mx, r.y, mark, fg, bg);
 
     // Title text (1-col padding), clipped to the columns left before the edge.

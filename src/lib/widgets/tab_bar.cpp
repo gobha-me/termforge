@@ -6,6 +6,7 @@
 
 #include "detail/width.hpp"
 #include "termforge/widgets/detail/callback.hpp"
+#include "termforge/widgets/detail/glyph_fit.hpp"
 
 namespace termforge {
 
@@ -223,17 +224,16 @@ auto TabBar::draw(Screen& screen) -> void {
   const StripLayout strip = layout_strip(first_visible());
   const MarkGlyphs glyphs = mark_glyphs(m_style);
 
-  // Sanitize once and measure THAT copy, then require exactly one column: a
-  // two-column glyph from some future family would overwrite the column beside
-  // it and a zero-column one would paint nothing (detail/dropdown.hpp's rule).
-  const std::string left = Screen::sanitize(glyphs.arrow_left);
-  const std::string right = Screen::sanitize(glyphs.arrow_right);
-  const std::string mark = Screen::sanitize(glyphs.selector);
-  if (strip.left_arrow && detail::display_width(left) == 1)
+  // One column each -- the indicator columns and the title's left pad -- so
+  // the budget is 1 and empty means do not paint. detail/glyph_fit.hpp owns
+  // the rule and the reason it is sanitize-then-measure.
+  const std::string left = detail::fitted_glyph(glyphs.arrow_left, 1);
+  const std::string right = detail::fitted_glyph(glyphs.arrow_right, 1);
+  const std::string mark = detail::fitted_glyph(glyphs.selector, 1);
+  if (strip.left_arrow && !left.empty())
     screen.write_text(strip.left_x, r.y, left, m_fg, m_bg);
-  if (strip.right_arrow && detail::display_width(right) == 1)
+  if (strip.right_arrow && !right.empty())
     screen.write_text(strip.right_x, r.y, right, m_fg, m_bg);
-  const bool mark_fits = detail::display_width(mark) == 1;
 
   for (const auto& span : strip.spans) {
     const bool is_active = span.index == m_list.selected();
@@ -251,7 +251,7 @@ auto TabBar::draw(Screen& screen) -> void {
     // The left pad column carries the marker for the active tab -- the half of
     // the state that survives a driver dropping colour (#76). Inactive tabs
     // leave it blank; the fill above already put a space there.
-    if (is_active && mark_fits) screen.write_text(span.x, r.y, mark, fg, bg);
+    if (is_active && !mark.empty()) screen.write_text(span.x, r.y, mark, fg, bg);
     // Title starts one column in. The trailing pad is the first thing clipping
     // eats, which is why the budget is w - 1 and not w - 2.
     if (const int avail = span.w - 1; avail > 0)

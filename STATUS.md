@@ -6,6 +6,60 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-31)
 
+**Latest work: #153 — `detail::fitted_glyph`, one sanitize-then-fit instead of seven (v0.6.5).**
+Spun out of #129's review, and sequenced *before* #130 on purpose so the `detail/strip.hpp`
+extraction would move a smaller block. `Screen::write_text` sanitizes whatever it is handed, so
+a widget that measures a raw glyph and then paints it has measured a different string than it
+painted — that is #76/#10, and #129 was the most recent re-run. The remedy (sanitize once,
+measure that copy, paint that copy) was written **seven times in three files**, and the copies
+had drifted **inside one function**: `draw_dropdown_rows` required `w > 0 && w <= label_pad &&
+w <= dr.w` for its marker and `w == 1` for the two indicators beside it, under a comment
+claiming they got "the same fit discipline". Now one
+`detail::fitted_glyph(glyph, max_cols) -> std::string` in the new public
+`include/termforge/widgets/detail/glyph_fit.hpp`, returning **empty when it does not fit**;
+the one-column callers pass 1 and the dropdown marker passes `min(label_pad, dr.w)`.
+Net −6 lines across the three widget files, with ~45 lines of duplicated prose replaced by one
+header block. Validated 37/37 × 3 (g++, clang toolchain, `-Werror`).
+
+**It is a ZERO-DELTA refactor, and that was proven three ways rather than asserted.**
+(1) Algebraically: `display_width` is non-negative, so "non-empty at budget 1" ⟺ `w == 1`, and
+`w > 0 && w <= min(pad, dr.w)` ⟺ the dropdown's three-term predicate. (2) A test oracle —
+`test/35glyphfit` case 7 re-writes **both old predicates by hand** and sweeps them against the
+helper over ten glyphs × every budget the callers can produce; written against
+`display_width(Screen::sanitize(g))` directly, *not* against `fitted_glyph`, or it would be the
+identity that #129 warned about. (3) Empirically: `examples/forms` driven under a pty produces a
+**byte-identical** capture before and after, and `examples/widgets` an identical set of painted
+glyph runs.
+
+**Why the helper is a new header and not `width.hpp`, which the issue proposed.** `width.hpp` is
+deliberately dependency-free — every entity constexpr, includes only `<array> <cstddef>
+<string_view>`, and `src/lib/core/screen.cpp` itself includes it. `Screen::sanitize` is a
+non-constexpr, allocating, out-of-line static member, so `fitted_glyph` can be neither constexpr
+nor noexcept; folding it in would put `Screen` into every TU that only wanted `char_width` and
+have core's implementation depend on a widgets header that reaches back into core.
+`detail/scrollbar.hpp` is the existing precedent for what `glyph_fit.hpp` is instead.
+
+**The guard this closes was previously unobservable from ANY test in the repo — measured, not
+guessed.** Mutation M1 (drop the `w <= 0` half, so a lone combining mark "fits") leaves
+`20formcontrols`, `33tabbar` and `34menubar` **green**: a zero-width mark paints nothing whether
+or not the guard rejects it, so no Screen read can distinguish the two. `test/35glyphfit` is the
+first thing that pins it. The complement, M2 (`>` → `>=`), kills all four suites — so the helper
+is genuinely load-bearing at every call site, not merely called from them. 13 mutations run in
+all; the one deliberate survivor is `!mark.empty()` → `true` in MenuBar, an **equivalent mutant**
+(no in-tree `MarkGlyphs` family yields an empty mark) — recorded rather than chased with a fake
+glyph family. Its follow-up, `mx >= 0` → `true`, turns `34menubar` red, which is the proof the
+refactor did not eat #129's negative-x edge guard.
+
+**Seen and judged, deliberately NOT folded in:** `ListWidget`/`TableWidget`'s
+`set_marker`/`marker()`/`gutter_cols()` pair is an 8th and 9th sanitize-then-measure site the
+issue's inventory missed, but it computes a *variable-width* gutter (`w + 1`) rather than an
+all-or-nothing fit, `gutter_cols()` is `noexcept` where `fitted_glyph` allocates, and the two
+copies have drifted for a *documented* reason (ListWidget reserves a column for #21's scrollbar,
+TableWidget does not — and TableWidget's copy has no comment saying why). Also found there:
+`marker()`'s fallback branch returns `mark_glyphs(m_style).selector` **unsanitized**. Filed
+separately. Likewise excluded: `select.cpp`/`checkbox.cpp`/`radio_group.cpp` compose glyph+label
+into one string and truncate **once** (the #20 frame-title rule) — a different discipline.
+
 **Latest work: #129 — MenuBar measures what it paints, and marks the active title (v0.6.4).**
 Two defects in the same twenty lines of `menu_bar.cpp`. (1) `layout_menus` measured the
 caller's RAW title with `display_width` while `draw()` painted it through `write_text`,
