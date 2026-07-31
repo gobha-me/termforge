@@ -6,6 +6,116 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-31)
 
+**Latest work: #130 — `detail/strip.hpp`, one horizontal span layout for MenuBar and TabBar (v0.6.6).**
+The last of #129's sequencing: extract only after MenuBar stopped measuring raw titles (#129,
+or the extraction would have baked that bug in and given it a second caller) and after #153 had
+lifted the sanitize-then-fit block out of the way. Both widgets laid a row of variable-width
+titles out with the same four decisions — span width is `display_width(title) + 2`, one gap
+column between spans belonging to no title, the run is clipped at a content edge, and a hit is
+`[span.x, span.x + span.w)` — and each mapped a mouse x back to an index against its own copy.
+The copies had already begun to diverge: MenuBar spelled the `+2` inline while TabBar had a
+`span_width()`; MenuBar clipped at **paint** time, twice, with two different expressions, while
+TabBar clipped in the layout and kept the unclipped width beside it. When copies like that drift
+the click span stops matching the painted extent, which is invisible from either side alone —
+#10, #76, #129, and #154 still open. Now one
+`detail::layout_spans(first, count, x0, right, StripFit, title_at)` returning
+`std::vector<StripSpan>` (`{index, x, w /*clipped*/, natural}`), plus `detail::span_at()` for the
+reverse map and `detail::span_width()` owning the `+2`. Validated 38/38 × 3 (g++, clang
+toolchain, `-Werror`).
+
+**`StripFit` is a required argument, and the two policies are the two widgets.** `Truncate` emits
+a span for **every** title, clipping `w` to the content edge and yielding `w == 0` past it —
+MenuBar's rule, and its index alignment is load-bearing because `draw()` and `dropdown_rect()`
+both index the result by *menu* index. `Whole` emits the title at `first` unconditionally (clipped
+to whatever remains, because dropping it would leave TabBar's offset pointing at something neither
+painted nor clickable) and stops at the first *later* title that does not fit whole. Neither is a
+sensible default for the other, and a defaulted policy is a decision the next author makes by not
+making it — the same reasoning as `draw_dropdown_rows`' required `marker`.
+
+**What was deliberately NOT hoisted.** #130's text lists TabBar's ‹ › indicator columns, its
+two-pass settle, its tab-counted scroll offset (`max_first`/`reveal`/`scroll_by`/`shows`) and
+sanitize-at-the-setter as things the shared helper "would have to carry". Each has exactly **one**
+caller, and hoisting a one-caller block promotes a local rule ("an indicator never takes the last
+content column") to a general one nobody chose — the judgement `detail/dropdown.hpp` was held to.
+They stay in `tab_bar.cpp`. Hoist them the day a second strip grows indicators, with two callers
+to keep the rule honest.
+
+**Zero delta at MenuBar's call sites, and each substitution is an identity rather than a
+judgement.** `span.w == min(natural, right - mx)` floored at 0, so: the background loop's old
+bound `x < mw && mx + x < right` is exactly `x < span.w`; `natural >= 2` for every title, so the
+marker guard `mx < right` is exactly `span.w > 0`; and `span.w - 1` and the old `right - (mx + 1)`
+differ only where both already exceed `display_width(title)`, so `truncate_to_width` returns the
+same string. `dropdown_rect` reads `span.natural`, not `span.w` — the popup's width floor is what
+the title *asked* for, and a popup is not confined to the bar. `Screen::write_text` is kept for the
+background loop rather than switching to `fill_rect`: `fill_rect` clips a negative x properly while
+`write_text` clamps it to column 0 (`screen.cpp:71`), so the swap would silently change #152's edge
+and the zero-delta claim with it.
+
+**Proven three ways, #153's bar.** (1) The algebra above. (2) An oracle — `test/36strip`'s last
+case re-writes **both** pre-extraction layouts by hand (MenuBar's `layout_menus` + its two paint
+clips, TabBar's `fit` lambda) and sweeps them against the helper across 5 title corpora × 5 x0 × 9
+right edges × every offset, plus a column-by-column hit-test sweep; written against
+`display_width()` directly, never against `span_width`/`layout_spans`, or both sides would derive
+from the code under test (#129's identity trap). (3) Empirically: `examples/widgets` driven under a
+pty through five resizes — down to 12 columns, where MenuBar's titles clip and TabBar shows both
+indicators — reconstructing the screen from the escape stream and comparing the MenuBar row, the
+frame tops and the TabBar strip row at nine checkpoints. Nine-for-nine identical. The
+set-of-printable-runs trick #153 used is useless here: the renderer emits one CUP per cell, so
+every "run" is a single character and the whole capture collapses to four of them.
+
+**24 mutations run, 24 killed — and two of them are why two suites grew.**
+(1) `const int mw = span.natural` → `span.w` in `dropdown_rect` **survived the entire suite**. Not an
+equivalent mutant: it makes a dropdown's width depend on how much of its title survived the bar's
+clip, observable whenever the bar is narrower than the screen. Every MenuBar fixture in the repo
+either filled the screen width or had a title too short to clip, so the arm was unreachable —
+`test/34menubar` now gives an 8-column bar on a 24-column screen a 13-column title, opens it, and
+reads the dropdown's extent off the screen. (2) `std::clamp(first, 0, count - 1)` → `std::max`
+survived a *second* pass, and the reason is worth keeping: the case that was supposed to catch it
+read `lay(99, …)[0].index`, and under the mutant that run is EMPTY, so `[0]` is an out-of-bounds
+read rather than a failing assertion. **A test whose failure mode is UB does not reliably fail** —
+it was killed on the first pass only by an unrelated `reserve()` overflow, and stopped being killed
+the moment that reserve was narrowed. Asserting `.size()` before indexing is what makes it a kill.
+The other 22: both `avail` comparisons and the policy guard on them, `i > first`, the clip and its
+floor, the gap column in both directions, the lower clamp, the `count <= 0` guard, all three
+`span_at` predicates, `span_width`'s `+2` (a compile-time kill, via `test/36strip`'s
+`static_assert`), and every policy and edge argument at both call sites.
+
+**What the review changed.** The title accessors were written `[this](int i) { return m_list.at(i); }`
+— and `auto` deduction **decays `const std::string&` to `std::string`**, so every span measured
+copied its title. `TabBar::max_first()` builds a layout per candidate offset (the O(n²) cost its own
+comment measures), so that was a copy per title per offset, per frame; `-> std::string_view` is now
+spelled at both call sites and the header says why. Also from the review: `reserve()` is skipped
+under `Whole`, where the run usually stops far short of `count - first`; the `<cstddef>` that
+`std::size_t` needs; `TitleLayout` spelled once rather than beside a second copy of its own type;
+TabBar's `TabSpan` alias deleted in favour of naming `detail::StripSpan` (an alias re-localizes the
+one name the extraction exists to share); and the oracle grew the `span_at` sweep for MenuBar, whose
+hit test going from the unclipped width to the clipped one is the single semantic change in the
+diff and was the one thing the equivalence test did not check.
+
+**A hazard worth re-recording: a review subagent left two mutations behind in `detail/strip.hpp`.**
+Its cleanup was `git checkout -- <file>`, which is a **no-op on an untracked file** — and a brand-new
+header is untracked until the commit. The `avail <= 0` policy guard and the `first` clamp were both
+still mutated when the next edit landed on top of them. Mutation harnesses must restore from a `cp`
+backup, and any review that runs control experiments must be followed by a read of the actual file.
+
+**Seen and judged, deliberately NOT folded in.** The *paint* is the other block both widgets share —
+fill the span, mark the active one in its left pad column, write the title truncated to `span.w - 1`
+— and it stays duplicated because the two fills are **not interchangeable**: MenuBar's per-column
+`write_text` loop and TabBar's single `fill_rect` disagree at a negative `x` (`fill_rect` clips
+through `Rect::intersect`, `write_text` clamps to column 0, `screen.cpp:71`). Unifying the paint
+means deciding **#152** first, so `strip.hpp` says so rather than leaving it looking like an
+oversight. Filed separately: TabBar's marker has **no `span.x >= 0` guard**, which is #129's bug one
+widget over and reachable the same way — a bar at a negative `rect().x` puts the ▸ on column 0,
+a column no span owns. Not a ride-along: this diff does not touch that line.
+
+**Why `test/36strip` exists rather than leaning on `33tabbar`/`34menubar`.** Each widget reaches
+the layout only through its own edges: MenuBar always starts at offset 0 and never sets a content
+edge inside its rect, TabBar never uses `Truncate`, and **neither** can produce a strip whose `x0`
+is past its right edge. Those arms are unreachable from either black box — `test/35glyphfit`'s
+argument for `fitted_glyph`, one widget over. Its fixtures also all start at a **non-zero** `x0`,
+which the MenuBar suites did not until #129 (every fixture in the repo sat at `{0, 0, …}`, and a
+strip at column 0 cannot tell an absolute column from an offset one).
+
 **Latest work: #153 — `detail::fitted_glyph`, one sanitize-then-fit instead of seven (v0.6.5).**
 Spun out of #129's review, and sequenced *before* #130 on purpose so the `detail/strip.hpp`
 extraction would move a smaller block. `Screen::write_text` sanitizes whatever it is handed, so

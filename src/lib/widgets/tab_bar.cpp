@@ -7,6 +7,7 @@
 #include "detail/width.hpp"
 #include "termforge/widgets/detail/callback.hpp"
 #include "termforge/widgets/detail/glyph_fit.hpp"
+#include "termforge/widgets/detail/strip.hpp"
 
 namespace termforge {
 
@@ -42,10 +43,6 @@ auto TabBar::title(int index) const -> std::string {
   return m_list.at(index);
 }
 
-auto TabBar::span_width(int index) const -> int {
-  return detail::display_width(m_list.at(index)) + 2;
-}
-
 auto TabBar::layout_strip(int first) const -> StripLayout {
   StripLayout out;
   const Rect r = rect();
@@ -67,22 +64,25 @@ auto TabBar::layout_strip(int first) const -> StripLayout {
 
   // Emit tabs from `first` into [content_x0, content_right).
   //
-  // The tab at `first` is emitted UNCONDITIONALLY, clipped to whatever columns
-  // remain; only later tabs have to fit whole. Dropping it when it does not fit
-  // would leave the offset pointing at a tab that is neither painted nor
-  // clickable, which is how a strip goes dead.
+  // StripFit::Whole is TabBar's half of the shared rule (#130): the tab at
+  // `first` is emitted UNCONDITIONALLY, clipped to whatever columns remain,
+  // because dropping it would leave the offset pointing at a tab that is
+  // neither painted nor clickable, which is how a strip goes dead; only later
+  // tabs have to fit whole, because a truncated tab in the middle of a strip
+  // that already has a › saying "there is more" is just a lie about which one
+  // it is. MenuBar passes Truncate, and detail/strip.hpp says why the policy is
+  // a required argument rather than a default.
+  // -> std::string_view, spelled out. Without it `auto` deduction DECAYS
+  // OptionsList::at's `const std::string&` to a std::string, so every span
+  // measured would copy its title -- and max_first() calls this per candidate
+  // offset, which is the O(n^2) path the comment below it measures in
+  // microseconds. The view borrows m_list's storage, which outlives the call.
+  const auto title_at = [this](int i) -> std::string_view {
+    return m_list.at(i);
+  };
   const auto fit = [&](int content_right) {
-    std::vector<TabSpan> spans;
-    int x = content_x0;
-    for (int i = first; i < n; ++i) {
-      const int avail = content_right - x;
-      if (avail <= 0) break;
-      const int natural = span_width(i);
-      if (i > first && natural > avail) break;
-      spans.push_back({i, x, std::min(natural, avail), natural});
-      x += natural + 1;  // one gap column, belonging to no tab
-    }
-    return spans;
+    return detail::layout_spans(first, n, content_x0, content_right,
+                                detail::StripFit::Whole, title_at);
   };
 
   // Two passes, because whether the › indicator is up depends on how many tabs
@@ -116,7 +116,8 @@ auto TabBar::layout_strip(int first) const -> StripLayout {
 // End from landing on an offset draw() clamps back, and no test would catch its
 // absence in advance.
 auto TabBar::shows(const StripLayout& strip, int index) -> bool {
-  const auto it = std::ranges::find(strip.spans, index, &TabSpan::index);
+  const auto it =
+      std::ranges::find(strip.spans, index, &detail::StripSpan::index);
   return it != strip.spans.end() && it->w >= it->natural;
 }
 auto TabBar::max_first() const -> int {
@@ -293,11 +294,14 @@ auto TabBar::handle_mouse(const MouseEvent& m) -> bool {
     if (scroll_by(1)) mark_dirty();
     return true;
   }
-  for (const auto& span : strip.spans)
-    if (m.x >= span.x && m.x < span.x + span.w) {
-      activate(span.index);
-      return true;
-    }
+  // Through the shared reverse map, not a hand-rolled loop: the painted extent
+  // and the clickable extent come from one expression over one set of spans, so
+  // #10's drift has nowhere to live (#130). -1 is a gap column or the strip's
+  // background, both of which fall through to the inert return below.
+  if (const int hit = detail::span_at(strip.spans, m.x); hit >= 0) {
+    activate(hit);
+    return true;
+  }
   return true;  // gap or background inside the rect: consumed, inert
 }
 

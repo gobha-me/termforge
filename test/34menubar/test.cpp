@@ -373,6 +373,41 @@ TEST_CASE("MenuBar: the marker never paints past the bar's right edge",
   }
 }
 
+TEST_CASE("MenuBar: a clipped title's dropdown is as wide as the title ASKED for",
+          "[menubar][failure]") {
+  // Since #130 the title spans carry two widths -- `w`, clipped to the bar's
+  // right edge, and `natural`, what the title wanted -- and dropdown_rect()
+  // must read `natural`. It is the floor for the popup's width, and a popup is
+  // not confined to the bar: a bar narrower than the screen has columns to its
+  // right that the dropdown legitimately uses.
+  //
+  // Reading `w` there would make the popup's width depend on how much of its
+  // title happened to survive the clip, which is a rule nobody chose. It was
+  // also invisible: EVERY MenuBar fixture in the repo before this one either
+  // filled the screen width or had a title short enough never to clip, so
+  // swapping natural for w left the whole suite green. Found by mutation.
+  //
+  // Sized so the title is the binding term: "Configuration" is 13 columns, so
+  // its span wants 15, while the only item's label costs 2 + 4 == 6.
+  MenuBar mb;
+  mb.set_menus(menus_from({"A", "Configuration"}));
+  mb.set_geometry({0, 0, 8, 1});  // narrower than the screen, on purpose
+  drawn(mb, 24, 4);
+  mb.on_event(key(Key::Right));  // active = 1, whose span the bar clips
+  mb.on_event(key(Key::Down));   // open it
+  const Screen s = drawn(mb, 24, 4);
+  REQUIRE(mb.dropdown_open());
+
+  // On the bar row the title gets the four columns the bar has left: it starts
+  // at 4 (span 0 is 3 wide, plus the gap) and the edge is at 8.
+  REQUIRE(active_run(s) == std::pair{4, 4});
+  // One row down, the dropdown is 15 wide from the same x -- the title's
+  // natural span, not the four columns of it that fit. Read off the screen,
+  // never recomputed: the selected row carries theme::kFocusBg like the bar.
+  REQUIRE(tfsupport::highlighted_run(s, 1, termforge::theme::kFocusBg) ==
+          std::pair{4, 15});
+}
+
 TEST_CASE("MenuBar: the marker follows the bar's rect, not the screen origin",
           "[menubar][failure]") {
   // Every MenuBar fixture in every suite -- 12primitives, 13mouse, 14audit and

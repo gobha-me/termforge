@@ -75,6 +75,7 @@
 #include <vector>
 
 #include "termforge/widgets/detail/options_list.hpp"
+#include "termforge/widgets/detail/strip.hpp"
 #include "termforge/widgets/glyphs.hpp"
 #include "termforge/widgets/theme.hpp"
 #include "termforge/widgets/widget.hpp"
@@ -143,17 +144,13 @@ class TabBar final : public Widget {
   // nothing here is ever painted outside rect().
 
  private:
-  // One tab's painted extent. `w` is the CLIPPED width — what is actually on
-  // the screen, which is what a click must be tested against. MenuBar can leave
-  // its spans unclipped because its content edge IS its rect edge, so
-  // App::route_mouse's hit_test gate clips them for free; a TabBar's content
-  // edge is one column inside the rect whenever the › indicator is up.
-  struct TabSpan {
-    int index;
-    int x;
-    int w;        // CLIPPED: what is on screen, what a click is tested against
-    int natural;  // what it wanted; w < natural iff this span is truncated
-  };
+  // A tab's painted extent is detail::StripSpan, shared with MenuBar since
+  // #130 — the span type, the `display_width(title) + 2` convention, the gap
+  // column and the x→index map all live in detail/strip.hpp now, so the two
+  // strips cannot disagree about a column. Named through no local alias, on
+  // purpose: a `using TabSpan = …` would re-localize the one name the header
+  // above says must be shared. What stays below this line is what TabBar alone
+  // has: the indicators, the two-pass settle, and the tab-counted offset.
 
   // THE single source of truth for where everything on the strip is. draw() and
   // the hit test both go through this, so a painted column and a clickable
@@ -162,7 +159,7 @@ class TabBar final : public Widget {
   // enough: which indicators are up, and in which columns, are three more facts
   // that the two callers would each re-derive.
   struct StripLayout {
-    std::vector<TabSpan> spans;
+    std::vector<detail::StripSpan> spans;
     bool left_arrow{false};
     bool right_arrow{false};
     int left_x{0};
@@ -171,10 +168,6 @@ class TabBar final : public Widget {
   // Takes the offset explicitly rather than reading m_first, because max_first()
   // has to ask it about candidate offsets. Clamps only into [0, count).
   [[nodiscard]] auto layout_strip(int first) const -> StripLayout;
-
-  // Natural (unclipped) width of a tab's span: the title plus its two pad
-  // columns. The one place the +2 is spelled.
-  [[nodiscard]] auto span_width(int index) const -> int;
 
   // Is `index` on this strip AT FULL WIDTH? Truncated does not count — this is
   // the predicate max_first() and reveal() share, and they MUST share it. If

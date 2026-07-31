@@ -68,6 +68,7 @@
 #include <string>
 #include <vector>
 
+#include "termforge/widgets/detail/strip.hpp"
 #include "termforge/widgets/glyphs.hpp"
 #include "termforge/widgets/widget.hpp"
 #include "termforge/widgets/theme.hpp"
@@ -132,8 +133,23 @@ class MenuBar final : public Widget {
   [[nodiscard]] auto style() const noexcept -> BorderStyle { return m_style; }
 
  private:
-  // Compute the x position and width of each menu title.
-  auto layout_menus() const -> std::vector<std::pair<int, int>>;
+  // Where each menu title sits on the bar. The span type, the
+  // `display_width(title) + 2` convention, the gap column and the x→index map
+  // are shared with TabBar since #130 (detail/strip.hpp); what stays here is
+  // MenuBar's own edge — its content edge IS its rect edge, and it emits a span
+  // for EVERY menu (StripFit::Truncate) because draw() and dropdown_rect()
+  // index the result by menu index.
+  //
+  // Spans are CLIPPED to the bar's right edge. That is not a new rule, only a
+  // relocated one: draw() clipped at paint time and handle_mouse relied on
+  // App::route_mouse's rect().contains gate to clip for free. One expression
+  // now, in the layout, where a reader can see it.
+  //
+  // Spelled ONCE, here: dropdown_rect() takes the same thing by pointer, and
+  // two spellings of one type nine lines apart is how a producer and its
+  // consumer drift into different containers.
+  using TitleLayout = std::vector<detail::StripSpan>;
+  auto layout_menus() const -> TitleLayout;
 
   // Width of a menu's dropdown given its title width.
   auto dropdown_width(const Menu& menu, int title_w) const -> int;
@@ -142,7 +158,6 @@ class MenuBar final : public Widget {
   // hit_test()/on_event() share this so they can never disagree. draw()
   // passes the title layout it already computed so an open frame scans the
   // titles once, not twice (#56 item 4).
-  using TitleLayout = std::vector<std::pair<int, int>>;
   [[nodiscard]] auto dropdown_rect(const TitleLayout* layout = nullptr) const
       -> Rect;
 

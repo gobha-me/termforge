@@ -6,6 +6,7 @@
 #include "termforge/widgets/detail/callback.hpp"
 #include "termforge/widgets/detail/dropdown.hpp"
 #include "termforge/widgets/detail/glyph_fit.hpp"
+#include "termforge/widgets/detail/strip.hpp"
 
 namespace termforge {
 
@@ -56,15 +57,21 @@ auto MenuBar::close_dropdown() -> void {
   mark_dirty();
 }
 
-auto MenuBar::layout_menus() const -> std::vector<std::pair<int, int>> {
-  std::vector<std::pair<int, int>> out;
-  int x = rect().x;
-  for (const auto& menu : m_menus) {
-    const int w = detail::display_width(menu.title) + 2;  // padding (columns)
-    out.emplace_back(x, w);
-    x += w + 1;  // gap between menus
-  }
-  return out;
+auto MenuBar::layout_menus() const -> TitleLayout {
+  const Rect r = rect();
+  // Truncate, not Whole: EVERY menu gets a span, so the result stays index-
+  // aligned with m_menus and draw()/dropdown_rect() can keep indexing it by
+  // menu index. A title starting past the right edge comes back w == 0, which
+  // is the same "paints nothing, claims nothing" this widget had before (#130).
+  //
+  // -> std::string_view, spelled out: without it `auto` deduction decays the
+  // title to a std::string and every span measured copies it. This runs from
+  // draw(), dropdown_rect() and every click.
+  return detail::layout_spans(
+      0, static_cast<int>(m_menus.size()), r.x, r.x + r.w,
+      detail::StripFit::Truncate, [this](int i) -> std::string_view {
+        return m_menus[static_cast<std::size_t>(i)].title;
+      });
 }
 
 auto MenuBar::dropdown_width(const Menu& menu, int title_w) const -> int {
@@ -83,8 +90,14 @@ auto MenuBar::dropdown_rect(const TitleLayout* layout) const -> Rect {
   // titles anyway); otherwise lay out once. Copy, not reference: the
   // fallback's layout_menus() returns a temporary.
   const auto fallback = layout ? TitleLayout{} : layout_menus();
-  const auto [mx, mw] =
+  const auto& span =
       (layout ? *layout : fallback)[static_cast<std::size_t>(m_active)];
+  // NATURAL, not the clipped width: the dropdown's floor is how wide the title
+  // asked to be, which is what this read before spans carried both (#130).
+  // Using span.w would shrink a clipped title's dropdown as a side effect of
+  // the bar being narrow, a rule nobody chose.
+  const int mx = span.x;
+  const int mw = span.natural;
   // Hangs below the WHOLE bar, not rect().y + 1 (#85). The old form assumed a
   // one-row bar: for any h >= 2 it put the first dropdown row inside rect(),
   // where handle_mouse's rect().contains gate claims the press before the row
@@ -133,11 +146,11 @@ auto MenuBar::draw(Screen& screen) -> void {
   // Own the whole rect: blank the bar (row 0) and any extra rows.
   screen.fill_rect(r.x, r.y, r.w, r.h, m_fg, m_bg);
 
-  // Draw menu titles, clipped to the bar's right edge so an overflowing title
-  // can't paint past rect() (where it would be visible but dead to clicks,
-  // which are gated by rect().contains). The dropdown is the one deliberate
-  // exception — it draws below rect(), matched by hit_test().
-  const int right = r.x + r.w;
+  // Draw menu titles. The clip to the bar's right edge is in layout_menus()
+  // now (#130): span.w is what is on screen, so an overflowing title cannot
+  // paint past rect(), where it would be visible but dead to clicks (they are
+  // gated by rect().contains). The dropdown is the one deliberate exception —
+  // it draws below rect(), matched by hit_test().
   const auto layout = layout_menus();
   // Held by value like TabBar's, which is a style choice and not a lifetime
   // one: a const& would bind to the prvalue and be lifetime-extended just
@@ -154,10 +167,21 @@ auto MenuBar::draw(Screen& screen) -> void {
     const bool is_active = (static_cast<int>(i) == m_active);
     const auto& fg = is_active ? m_active_fg : m_fg;
     const auto& bg = is_active ? m_active_bg : m_bg;
-    const auto& [mx, mw] = layout[i];
+    const auto& span = layout[i];
+    const int mx = span.x;
 
-    // Fill the title background, clipped to the right edge.
-    for (int x = 0; x < mw && mx + x < right; ++x)
+    // Fill the title background. span.w is already clipped to the bar's right
+    // edge, so the `mx + x < right` half of the old bound is gone rather than
+    // relaxed: span.w == min(natural, right - mx), which is exactly the number
+    // of columns that loop used to reach.
+    //
+    // Still write_text rather than fill_rect, deliberately. fill_rect clips a
+    // negative x properly (Rect::intersect) while write_text CLAMPS it to
+    // column 0 (screen.cpp:71), so swapping it in would change what a bar at a
+    // negative rect().x paints. That is #152's wart, not this refactor's to
+    // fix, and a "cleanup" that quietly alters an edge is how a zero-delta
+    // claim stops being true.
+    for (int x = 0; x < span.w; ++x)
       screen.write_text(mx + x, r.y, " ", fg, bg);
 
     // AFTER the fill, or the fill erases it. The LEFT PAD COLUMN carries the
@@ -175,11 +199,20 @@ auto MenuBar::draw(Screen& screen) -> void {
     // that belongs to no span, where handle_mouse maps it to bar background.
     // The clamp is a Screen-wide wart that already scrambles the titles of such
     // a bar; this guard only keeps #129 from adding a glyph to the pile.
-    if (is_active && !mark.empty() && mx >= 0 && mx < right)
+    //
+    // `span.w > 0` is the old `mx < right` exactly, not an approximation of it:
+    // span.w == min(natural, right - mx) and natural >= 2 for every title
+    // (span_width is display_width + 2), so span.w is positive precisely when
+    // right - mx is.
+    if (is_active && !mark.empty() && mx >= 0 && span.w > 0)
       screen.write_text(mx, r.y, mark, fg, bg);
 
     // Title text (1-col padding), clipped to the columns left before the edge.
-    if (const int avail = right - (mx + 1); avail > 0)
+    // span.w - 1 is the old `right - (mx + 1)` for every input that reaches
+    // truncate_to_width: the two differ only when right - mx exceeds natural,
+    // and there both bounds are at least natural - 1 == display_width(title)
+    // + 1, so both truncate to the whole title.
+    if (const int avail = span.w - 1; avail > 0)
       screen.write_text(mx + 1, r.y,
                         detail::truncate_to_width(m_menus[i].title, avail), fg,
                         bg);
@@ -261,19 +294,20 @@ auto MenuBar::handle_mouse(const MouseEvent& m) -> bool {
 
   // Click on the bar row: map x to a title span.
   if (rect().contains(m.x, m.y)) {
+    // Through the shared reverse map, so the columns a click claims are the
+    // columns draw() painted, from one expression over one set of spans
+    // (#130). The spans are clipped now, which this path never needed before --
+    // App::route_mouse's rect().contains gate already blocked an x past the
+    // right edge -- so it is a rule stated in one more place, not a new one.
     const auto layout = layout_menus();
-    for (std::size_t i = 0; i < layout.size(); ++i) {
-      const auto& [mx, mw] = layout[i];
-      if (m.x >= mx && m.x < mx + mw) {
-        const int idx = static_cast<int>(i);
-        if (dropdown_open() && m_active == idx) {
-          close_dropdown();
-        } else {
-          close_dropdown();
-          open_menu(idx);
-        }
-        return true;
+    if (const int idx = detail::span_at(layout, m.x); idx >= 0) {
+      if (dropdown_open() && m_active == idx) {
+        close_dropdown();
+      } else {
+        close_dropdown();
+        open_menu(idx);
       }
+      return true;
     }
     // Bar background (between/after titles): close any open dropdown.
     if (dropdown_open()) close_dropdown();
