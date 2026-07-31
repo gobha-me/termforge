@@ -4,9 +4,60 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-07-30)
+## Where we are (2026-07-31)
 
-**Latest release: `v0.5.2` — #94 + #101 + #102, the cleanup batch.** Three
+**Latest release: `v0.6.0` — #22, the TabBar view switcher.** A horizontal strip
+of titles that reports which one is active; content switching stays the app's
+job, which is what keeps it out of the layout ownership the library still does
+not do. Five things worth carrying:
+
+- **The active tab is stated twice, in colour AND in a glyph** (`MarkGlyphs::
+  selector` in the tab's left pad column, which already existed so it costs no
+  geometry). MenuBar states its active title in colour alone, so on
+  FallbackDriver its title row is byte-identical whichever menu is open — a wart
+  there, but for a TabBar the active tab is the entire content of the widget.
+  The unfiled MenuBar finding is now **filed as #129**.
+- **One const function is the whole strip decision** — spans, which indicators
+  are up, and their columns — because "returns the spans" would still leave
+  draw() and the hit test re-deriving the indicator predicate separately. The
+  spans carry **clipped** widths: MenuBar can leave its unclipped only because
+  its content edge *is* its rect edge, so `route_mouse`'s `hit_test` gate clips
+  them for free. A TabBar's content edge is one column inside the rect whenever
+  › is up.
+- **AN INDICATOR NEVER TAKES THE LAST CONTENT COLUMN**, and the *left* one
+  needed that rule too — found by a test, not by review. At one column wide, ‹
+  ate the only cell and the strip painted an arrow and no tab, at every offset.
+  The rule is symmetric now: at 1 column you get ▸ (which tab is active), not ‹
+  (that the answer is elsewhere).
+- **Titles are sanitized at the setter**, so the string measured is the string
+  painted. This is #22's headline requirement and MenuBar still fails it
+  (`menu_bar.cpp:32` measures raw, `:124` paints through `write_text`, which
+  sanitizes) — see #129.
+
+**Spun out:** #129 (MenuBar: the raw-vs-sanitized drift, plus its colour-only
+active title — the finding that had sat unfiled since #76), #130 (a shared
+`detail/strip.hpp` for variable-width horizontal spans, **sequenced after
+#129** or the extraction encodes the bug), #131 (a horizontal scrollbar as the
+real owner of the two indicator columns; #21's is vertical-only).
+- **The review changed two behaviours, and both were bugs a suite can hide.**
+  (1) A **resize** could scroll the active tab off the strip — no mark, no
+  highlight, nothing saying which view was live, while the pane below still
+  showed it. The wheel is *licensed* to do that (#35 Q1/Q2, the user asked);
+  a window drag is not, so `draw()` now re-reveals when the rect changed since
+  the last paint and only then. (2) The focus colours were painted **unfocused**,
+  so a bar looked identical whether or not the arrow keys went to it — found by
+  noticing `RadioGroup`, the widget this one models itself on, gates its
+  inversion on `focused()` for that exact reason. The mark is ungated, the
+  colours are: two channels saying two different things.
+- **`arrow_left`/`arrow_right` were appended to `MarkGlyphs`** rather than
+  starting a `TabGlyphs` family: #85's `arrow_up` set that precedent for
+  overflow indicators, and `test/20formcontrols` sweeps `all()`, so appending
+  bought the one-column and 7-bit pins for free. ‹ › rather than ◂ ▸ because ▸
+  is already `selector` and a TabBar paints both on the **same row**. Under
+  Ascii, `arrow_right` and `selector` are both `>` — which is why the suite
+  asserts the marker by column, never by searching the row.
+
+**Previous release: `v0.5.2` — #94 + #101 + #102, the cleanup batch.** Three
 spun-out review cleanups, a batch cut rather than the usual single-issue one
 (the v0.1.5 cadence). Sequenced ahead of the feature queue on purpose: #22's
 TabBar tests will read rows off a `Screen`, and shipping it first would have
@@ -1396,7 +1447,7 @@ The open queue, in rough priority order:
   a decision no other site had to make: whether the marker column costs the
   first column its width or comes out of the inter-column gaps. That decision is
   the only thing in #76 that is not mechanical.
-- **#22** (TabBar) — small, independent.
+- ~~**#22** (TabBar)~~ — shipped v0.6.0.
 - **#21** (shared scrollbar) — small; the issue that decides whether
   `ProgressBar`'s `█`/`─` and `WaveformWidget`'s half-blocks join
   `glyphs.hpp` (see below). Gives ListWidget's right-margin column an actual
@@ -1427,7 +1478,7 @@ so the rest is composition:
   **Add its table to `glyphs.hpp` keyed off the same `BorderStyle`** — the
   `MarkGlyphs` fall-through switch is the shape to copy. It also gives
   ListWidget's undocumented right-margin column an actual job.
-- **#22** (TabBar) — small, independent.
+- ~~**#22** (TabBar)~~ — shipped v0.6.0.
 - **#16** (forge-top demo) — the larger dogfooding epic; now has focus,
   dialogs, modality, and form controls to build on.
 

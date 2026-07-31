@@ -21,6 +21,9 @@ completed items.
 > (`MarkGlyphs`) on that same enum, along with **#32** (the callback-copy bug
 > class from #5, fixed at all seven sites). Next: #23 (FilePicker, unblocked —
 > Dialog + ListWidget + the overlay stack), then #21/#22 (scrollbar, TabBar).
+> Both are now landed — #21 in v0.2.1, **#22 in v0.6.0**, which added the third
+> and fourth `MarkGlyphs` fields (`arrow_left`/`arrow_right`) on that same enum
+> rather than a new family, following #85's precedent for overflow indicators.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
