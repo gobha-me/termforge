@@ -6,7 +6,71 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-31)
 
-**Latest work: #152 + #159 — `Screen::write_text` clips its off-screen prefix instead of relocating it (v0.6.7).**
+**Latest work: #139 — a bytes-per-frame meter at the driver write boundary (v0.6.8).**
+The first upstream ticket taken on behalf of the three downstream consumers rather than
+found by reading our own code, and it was chosen because it is the one node all three
+touch. `TerminalDriver` now carries `last_frame_bytes()` and `total_bytes()`, both
+returning a `FrameBytes{cells, image_transmit, image_edit}`. OBSCURA's budget — 2 KB idle,
+40 KB per transition, 250 KB/min sustained — was three comments and is now three
+assertions it can write.
+
+**Why this one before the image tickets, not after.** A claim like "this edit path emits
+bytes proportional to the edited region rather than to the image" is *unfalsifiable*
+without a byte breakdown. #137, #140, #141, #109 and #112 all have acceptance criteria
+denominated in bytes; landing the instrument first means they get assertions instead of
+prose. It is also the smallest of the set and purely additive.
+
+**`cells` is the remainder, and that is the load-bearing decision.** Only the image paths
+tally; `tally_frame(written)` derives `cells = written − image_transmit − image_edit` at
+the flush boundary. So the buckets sum to what the sink received **by construction**, and
+an emit path added later without touching `terminal_driver.hpp` shows up as cell traffic —
+visible and at worst miscategorised — rather than vanishing and silently deflating a budget
+a session is being held to. The alternative (tallying all three) makes every future escape
+a chance to under-report, which is the one failure a bandwidth meter cannot survive.
+
+**ANVIL's #147 rode along for free.** #147 asks that these counters not be process-global,
+since a server billing N sessions cannot use a sum. The three drivers already kept `m_sink`
+and `m_buf` as instance members, so honouring it cost nothing beyond putting the state on
+the base class and writing the test that fails the moment someone makes it `static`. #147's
+other two requests (`peak_alloc`, image residency) stay with #112 and #144.
+
+**The non-kitty tiers do not get a fake image bucket.** A half-block or ASCII image *is*
+cell traffic — there is no out-of-band channel to bill it to — so it lands in `cells` and
+both image buckets read 0. Inventing a fourth bucket would make the breakdown kitty-shaped
+for every driver that will ever exist. The kitty placeholder grid is the mirror case: it
+looks like cell traffic and is billed to `image_edit`, because 2.5 KB *every frame* for a
+30x10 placement is an image cost and an application watching its image budget has to see it.
+
+**What the meter immediately showed** (`script -qc` on a real pty, offline demo):
+a 120x40 full text repaint is **~5.1 KB** — already 2.5x OBSCURA's idle budget, so damage
+tracking is not optional for them; a 240x160 RGBA plate costs **205 KB** to transmit
+(base64 of raw RGBA) against the **8 KB** their #21 budgets, so that plate needs kitty's
+`f=100` PNG path, which `transmit()` does not implement; an unchanged image re-drawn costs
+**exactly 0**; and the tmux-safe placeholder path costs **2,555 bytes per frame forever**,
+which at 60fps is 9 MB/min against a 250 KB/min budget. Those four numbers are the point of
+the ticket, and none of them was knowable before it.
+
+**Proven three ways.** (1) Fourteen cases in the new `test/37bytes`, every meter assertion
+checked against the *sink's own growth* rather than against a second reading of the meter —
+otherwise both sides come from one function and the test is an identity. (2) Nine mutations,
+all killed; the ninth (dropping `set_placement_mode`'s tally) **survived the first suite**
+and exposed a real gap the sum invariant structurally cannot see — misattribution, not loss —
+which is now its own case. (3) The consumer path itself: an `App` subclass reading
+`driver().last_frame_bytes()`, which is how OBSCURA and GLOAM will actually reach it.
+39/39.
+
+⚠ **`test_run_frames` builds a fresh driver on every call** (`app.cpp:302`). Calling it
+twice hands the second call counters that start at zero while the sink keeps accumulating,
+so a cumulative assertion across two calls fails and the meter looks broken. It is not —
+pass the frame count to one call. The first bandwidth test anyone downstream writes will
+meet this; it cost this session a real debugging detour.
+
+**`delete_all()` is deliberately unmetered.** It writes straight to stdout, bypassing the
+sink — the bypass #148 names — and its only caller is `~KittyDriver`, so a counter
+incremented there would be read by an object mid-destruction. Metering it becomes both
+possible and meaningful when #148 gives the frame a one-write contract.
+
+**Previously: #152 + #159 — `Screen::write_text` clips its off-screen prefix instead of relocating it (v0.6.7).**
 The root of the #129/#153/#130 thread's leftovers. `write_text` handled the right edge
 correctly from the start (`x >= m_cols` returns 0, the loop stops at `cx < m_cols`) but
 **clamped** a negative x: `const int start_x = x < 0 ? 0 : x`. So a widget at a negative

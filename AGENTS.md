@@ -27,6 +27,15 @@ file is the tactical version.
   a text path, keep this split — it's the injection defense.
 - **Degradation is an event.** Any fallback/downgrade returns/raises an
   `ErrorEvent` (severity Info) via `std::expected` — never silently downgrade.
+- **Every frame is metered, and the meter is per-driver** (#139, #147). A
+  driver's `flush()` calls `tally_frame(written)` exactly once with the byte
+  count it handed to the sink; image paths call `tally_image_transmit` /
+  `tally_image_edit` as they append. `cells` is the *remainder*, never tallied
+  directly, so the buckets sum to what was emitted by construction and a new
+  escape path can be miscategorised but never lost. The counters are instance
+  state — one driver is one session, and a `static` here makes a server unable
+  to bill any single connection. If you add an emit path that is image traffic,
+  tally it; if you add one that is not, it is already counted.
 - **Runtime polymorphism for drivers** (`std::unique_ptr<TerminalDriver>`);
   the `DriverImpl` concept is a `static_assert` check only, not dispatch.
   Don't convert drivers to a closed `std::variant`.

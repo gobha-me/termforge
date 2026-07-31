@@ -78,12 +78,17 @@ auto FallbackDriver::draw_image(Rect cells, const Image& image)
 }
 
 void FallbackDriver::flush() {
+  // #139: the floor tier has no out-of-band image channel, so it tallies no
+  // image buckets at all — draw_image's ramp glyphs ARE cell traffic, and
+  // tally_frame's remainder lands them in `cells`, which is the honest answer.
+  const std::size_t written = m_buf.size();
   if (m_sink != nullptr) {
     *m_sink += m_buf;
   } else {
     std::fwrite(m_buf.data(), 1, m_buf.size(), stdout);
     std::fflush(stdout);
   }
+  tally_frame(written);
   m_buf.clear();
 }
 

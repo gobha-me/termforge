@@ -115,12 +115,18 @@ auto AnsiRgbDriver::draw_image(Rect cells, const Image& image)
 }
 
 void AnsiRgbDriver::flush() {
+  // #139: no out-of-band image channel on this tier either — a half-block
+  // image is SGR-per-cell, so it is cell traffic and tally_frame's remainder
+  // bills it there. That it is *expensive* cell traffic is exactly what an
+  // application comparing tiers wants the meter to show.
+  const std::size_t written = m_buf.size();
   if (m_sink != nullptr) {
     *m_sink += m_buf;
   } else {
     std::fwrite(m_buf.data(), 1, m_buf.size(), stdout);
     std::fflush(stdout);
   }
+  tally_frame(written);
   m_buf.clear();
 }
 
