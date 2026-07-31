@@ -4,6 +4,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <optional>
+
 #include "termforge/core/screen.hpp"
 #include "termforge/widgets/map_widget.hpp"
 
@@ -339,4 +341,121 @@ TEST_CASE("MapWidget: a mutation then redraw reflects the new state", "[mapwidge
   w.set_tile(0, 0, 0, 2);  // mutate
   w.draw(s);               // redraw without re-geometry
   REQUIRE(s.at(0, 0).text == ".");
+}
+
+// ── tile_at (hit testing) ───────────────────────────────────────────────────
+
+TEST_CASE("MapWidget: tile_at maps a cell back to its map tile", "[mapwidget]") {
+  MapWidget w = make_widget(4, 3);
+  w.set_geometry({0, 0, 4, 3});
+
+  REQUIRE(w.tile_at(0, 0) == std::pair{0, 0});
+  REQUIRE(w.tile_at(3, 2) == std::pair{3, 2});
+}
+
+TEST_CASE("MapWidget: tile_at honours the rect origin", "[mapwidget]") {
+  MapWidget w = make_widget(4, 3);
+  w.set_geometry({5, 2, 4, 3});
+
+  REQUIRE(w.tile_at(5, 2) == std::pair{0, 0});       // rect top-left
+  REQUIRE(w.tile_at(8, 4) == std::pair{3, 2});       // rect bottom-right
+  REQUIRE(w.tile_at(0, 0) == std::nullopt);          // left of the rect
+  REQUIRE(w.tile_at(5, 1) == std::nullopt);          // above the rect
+  REQUIRE(w.tile_at(4, 2) == std::nullopt);          // one column left
+  REQUIRE(w.tile_at(9, 2) == std::nullopt);          // one column right
+}
+
+TEST_CASE("MapWidget: tile_at outside the rect is nullopt, not clamped", "[mapwidget]") {
+  MapWidget w = make_widget(4, 3);
+  w.set_geometry({0, 0, 4, 3});
+
+  REQUIRE(w.tile_at(-1, 0) == std::nullopt);
+  REQUIRE(w.tile_at(0, -1) == std::nullopt);
+  REQUIRE(w.tile_at(4, 0) == std::nullopt);   // one past the right edge
+  REQUIRE(w.tile_at(0, 3) == std::nullopt);   // one past the bottom edge
+}
+
+TEST_CASE("MapWidget: tile_at with {2,1} tiles divides cells by the tile size", "[mapwidget]") {
+  MapWidget w = make_widget(3, 1);
+  w.set_tile_size(2, 1);
+  w.set_geometry({0, 0, 6, 1});
+
+  REQUIRE(w.tile_at(0, 0) == std::pair{0, 0});
+  REQUIRE(w.tile_at(1, 0) == std::pair{0, 0});  // second cell of tile 0
+  REQUIRE(w.tile_at(2, 0) == std::pair{1, 0});
+  REQUIRE(w.tile_at(3, 0) == std::pair{1, 0});
+  REQUIRE(w.tile_at(5, 0) == std::pair{2, 0});
+}
+
+TEST_CASE("MapWidget: tile_at in a trailing partial tile is nullopt", "[mapwidget]") {
+  MapWidget w = make_widget(4, 1);
+  w.set_tile_size(2, 1);
+  w.set_geometry({0, 0, 5, 1});  // two full tiles + 1 leftover column
+
+  REQUIRE(w.tile_at(3, 0) == std::pair{1, 0});
+  // Column 4 is inside rect() but the widget draws only background there —
+  // a click there is not a click on tile 2 (the tile the widget never drew).
+  REQUIRE(w.tile_at(4, 0) == std::nullopt);
+}
+
+TEST_CASE("MapWidget: tile_at past the map edge in a large viewport is nullopt", "[mapwidget]") {
+  MapWidget w = make_widget(3, 2);
+  w.set_geometry({0, 0, 8, 8});  // viewport bigger than the whole map
+
+  REQUIRE(w.tile_at(2, 1) == std::pair{2, 1});  // last map tile
+  REQUIRE(w.tile_at(3, 0) == std::nullopt);     // inside rect, past the map
+  REQUIRE(w.tile_at(0, 2) == std::nullopt);
+  REQUIRE(w.tile_at(7, 7) == std::nullopt);
+}
+
+TEST_CASE("MapWidget: tile_at answers in the camera's visible window", "[mapwidget]") {
+  MapWidget w = make_widget(10, 10);
+  w.set_geometry({0, 0, 3, 3});
+  w.set_camera(5, 6);
+
+  REQUIRE(w.tile_at(0, 0) == std::pair{5, 6});
+  REQUIRE(w.tile_at(2, 2) == std::pair{7, 8});
+}
+
+TEST_CASE("MapWidget: tile_at uses the clamped window draw() would paint", "[mapwidget]") {
+  MapWidget w = make_widget(8, 8);
+  w.set_geometry({0, 0, 2, 2});
+  w.set_camera(6, 6);  // legal for a 2x2 viewport
+  REQUIRE(w.camera() == std::pair{6, 6});
+
+  // Grow the viewport: the camera is stranded at (6,6) until draw() re-clamps
+  // it to (2,2). tile_at must answer against the window the NEXT paint uses,
+  // not the stranded one — the same rule draw() already follows.
+  w.set_geometry({0, 0, 6, 6});
+  REQUIRE(w.tile_at(0, 0) == std::pair{2, 2});
+  REQUIRE(w.tile_at(3, 3) == std::pair{5, 5});
+  REQUIRE(w.camera() == std::pair{6, 6});  // and it does not mutate
+}
+
+TEST_CASE("MapWidget: tile_at on degenerate geometry is nullopt, not a crash", "[mapwidget][failure]") {
+  MapWidget w = make_widget(4, 4);
+  w.set_geometry({0, 0, 0, 0});  // zero-size rect
+  REQUIRE(w.tile_at(0, 0) == std::nullopt);
+
+  MapWidget bare;  // never sized, never laid out
+  REQUIRE(bare.tile_at(0, 0) == std::nullopt);
+}
+
+// ── viewport_tiles (public) ─────────────────────────────────────────────────
+
+TEST_CASE("MapWidget: viewport_tiles reports the floored whole-tile window", "[mapwidget]") {
+  MapWidget w = make_widget(10, 10);
+  w.set_tile_size(2, 1);
+
+  w.set_geometry({0, 0, 7, 3});
+  REQUIRE(w.viewport_tiles() == std::pair{3, 3});  // 7/2 floors to 3
+
+  w.set_geometry({0, 0, 6, 1});
+  REQUIRE(w.viewport_tiles() == std::pair{3, 1});
+
+  w.set_geometry({0, 0, 1, 1});  // smaller than one tile
+  REQUIRE(w.viewport_tiles() == std::pair{0, 1});
+
+  w.set_geometry({0, 0, 0, 0});
+  REQUIRE(w.viewport_tiles() == std::pair{0, 0});
 }

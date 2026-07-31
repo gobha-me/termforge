@@ -19,6 +19,7 @@
 // rect() — fill_rect first, then draw on top. The cell Renderer diffs, so no
 // raster cache is needed on this tier.
 
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -82,6 +83,27 @@ class MapWidget final : public Widget {
     return {m_cam_x, m_cam_y};
   }
 
+  // ── hit testing ──────────────────────────────────────────────────────────
+  // Viewport size in whole tiles: rect()/tile_size, FLOORED. Trailing partial
+  // tiles are not drawn (a half-glyph is not a thing) — the leftover cells
+  // get the background fill. Returns {0,0} for a degenerate rect or tile
+  // size. An app laying out around the widget uses this to know how many
+  // whole tiles are visible.
+  [[nodiscard]] auto viewport_tiles() const noexcept -> std::pair<int, int>;
+
+  // Screen cell → map tile, the inverse of what draw() paints. nullopt when
+  // the cell is outside rect(), or inside a trailing partial tile the widget
+  // did not draw (the floored viewport is part of the draw contract, so a
+  // click there is a click on background, not on a tile). NOT clamped:
+  // "outside the map" and "the edge tile" are different answers for a click.
+  //
+  // Like draw(), this re-clamps the camera first — set_geometry is
+  // non-virtual, so a rect shrink since the last mutator can strand the
+  // camera and a pick must answer against the same window the next frame
+  // paints.
+  [[nodiscard]] auto tile_at(int cell_x, int cell_y) const
+      -> std::optional<std::pair<int, int>>;
+
   // ── layers (layer 0 implicit; add_layer for more) ─────────────────────────
   auto add_layer(std::string name) -> int;  // returns the new layer's index
   auto set_tile(int layer, int x, int y, int id) -> void;
@@ -108,13 +130,12 @@ class MapWidget final : public Widget {
   // mutator — set_geometry is non-virtual and a shrink strands the camera.
   auto clamp_camera() -> void;
 
-  // Viewport size in whole tiles: rect()/tile_size, FLOORED. Trailing partial
-  // tiles are not drawn (a half-glyph is not a thing) — the leftover cells get
-  // the background fill. Returns {0,0} for a degenerate rect or tile size.
-  [[nodiscard]] auto viewport_tiles() const noexcept -> std::pair<int, int>;
-
   TileSet m_tileset;
   std::vector<Layer> m_layers;   // [0] created on first use / by set_map_size
+  // viewport_tiles()/clamp_camera() arithmetic lifted out so const tile_at
+  // can evaluate the SAME clamped window draw() would use, without mutating.
+  [[nodiscard]] auto clamped_camera() const noexcept -> std::pair<int, int>;
+
   int m_map_w{0}, m_map_h{0};    // tiles
   int m_tile_w{1}, m_tile_h{1};  // cells
   int m_cam_x{0}, m_cam_y{0};    // top-left tile of the viewport

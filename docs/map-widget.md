@@ -354,10 +354,14 @@ a cursor on a tile grid is the canonical case.
   the widget can rasterize at device resolution.
 - **Cell attributes for tiles** (#62) — reverse for a cursor, dim for fog,
   which halves the column budget a grid game needs.
-- **Mouse picking** — `tile_at(px, py) -> std::optional<std::pair<int,int>>`
-  converting a `MouseEvent` back to map coords. Cheap, deliberately deferred
-  until a consumer needs it; `MouseMode::Motion` already exists for the
-  hover case (`core/types.hpp:86-92`).
+- ~~**Mouse picking**~~ — done in #128. `tile_at(cell_x, cell_y) ->
+  std::optional<std::pair<int,int>>` converts a `MouseEvent` back to map
+  coords, owned by the widget for the same reason the camera is: picking
+  needs the floored viewport and the clamp, both widget state. `nullopt`
+  outside `rect()` and in trailing partial tiles — *not* clamped, because
+  "outside the map" and "the edge tile" are different answers for a click.
+  `viewport_tiles()` is public alongside it. `MouseMode::Motion` already
+  exists for the hover case (`core/types.hpp`).
 - **Sparse layer storage** — v1 uses a dense `std::vector<int>` per layer.
   A large mostly-empty entity layer wants a hash map; not worth it until a
   map is big enough to notice.

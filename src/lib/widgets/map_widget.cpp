@@ -112,15 +112,43 @@ auto MapWidget::viewport_tiles() const noexcept -> std::pair<int, int> {
   return {r.w / m_tile_w, r.h / m_tile_h};
 }
 
-auto MapWidget::clamp_camera() -> void {
+auto MapWidget::clamped_camera() const noexcept -> std::pair<int, int> {
   const auto [vtw, vth] = viewport_tiles();
   // Max top-left tile so the viewport stays over the map. When the viewport is
   // larger than the map the max is negative and the camera pins to 0 (map
   // top-left) rather than revealing void on the leading edge.
   const int max_x = std::max(0, m_map_w - vtw);
   const int max_y = std::max(0, m_map_h - vth);
-  m_cam_x = std::clamp(m_cam_x, 0, max_x);
-  m_cam_y = std::clamp(m_cam_y, 0, max_y);
+  return {std::clamp(m_cam_x, 0, max_x), std::clamp(m_cam_y, 0, max_y)};
+}
+
+auto MapWidget::clamp_camera() -> void {
+  const auto [cx, cy] = clamped_camera();
+  m_cam_x = cx;
+  m_cam_y = cy;
+}
+
+auto MapWidget::tile_at(int cell_x, int cell_y) const
+    -> std::optional<std::pair<int, int>> {
+  const Rect r = rect();
+  const int cx = cell_x - r.x;
+  const int cy = cell_y - r.y;
+  if (cx < 0 || cy < 0 || cx >= r.w || cy >= r.h) return std::nullopt;
+
+  const auto [vtw, vth] = viewport_tiles();
+  const int tx = cx / m_tile_w;  // m_tile_w/h >= 1 (enforced by the setter)
+  const int ty = cy / m_tile_h;
+  // The floored viewport is the draw contract: a cell in a trailing partial
+  // tile is background fill, not a tile, so the pick is nullopt too.
+  if (tx >= vtw || ty >= vth) return std::nullopt;
+
+  // Answer against the SAME clamped window draw() would paint right now —
+  // a rect shrink can strand m_cam past the edge until the next frame.
+  const auto [cam_x, cam_y] = clamped_camera();
+  const int map_x = cam_x + tx;
+  const int map_y = cam_y + ty;
+  if (map_x >= m_map_w || map_y >= m_map_h) return std::nullopt;
+  return std::pair{map_x, map_y};
 }
 
 auto MapWidget::draw(Screen& screen) -> void {
