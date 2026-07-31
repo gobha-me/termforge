@@ -437,11 +437,17 @@ TEST_CASE("MenuBar: the marker follows the bar's rect, not the screen origin",
 
 TEST_CASE("MenuBar: a bar whose rect starts left of the screen leaks no marker",
           "[menubar][failure]") {
-  // Screen::write_text CLAMPS a negative x to column 0 instead of dropping the
-  // off-screen prefix (screen.cpp:71), so without the mx >= 0 guard the marker
-  // for a span at columns -2..-1 relocates onto column 0 -- a column that
-  // belongs to no menu, where handle_mouse maps a click to bar background.
-  // The empty first title is what makes it visible: nothing paints over it.
+  // #129 added this with an `mx >= 0` guard in the widget, because
+  // Screen::write_text CLAMPED a negative x onto column 0. #152 moved the fix
+  // into Screen and the guard came out, so the same assertion now pins the
+  // core contract through the widget. The empty first title is what makes it
+  // visible: nothing paints over it.
+  //
+  // The marker check alone is an ABSENCE claim and stays green under a clamp
+  // that happens to relocate something else, which is why the blank() below
+  // matters more: span 0 is columns -2..-1, entirely off screen, so column 0
+  // is the inter-span gap and belongs to the bar's own fill_rect. Under the
+  // clamp the span's per-column background loop piled its spaces there.
   MenuBar mb;
   mb.set_menus(menus_from({"", "Beta"}));
   mb.set_geometry({-2, 0, 12, 1});
@@ -449,6 +455,28 @@ TEST_CASE("MenuBar: a bar whose rect starts left of the screen leaks no marker",
 
   REQUIRE(mb.active_menu() == 0);
   REQUIRE(s.at(0, 0).text != "▸");
+  REQUIRE(s.at(0, 0).blank());
+}
+
+TEST_CASE("MenuBar: a bar left of the screen clips its titles, it does not move them",
+          "[menubar][failure]") {
+  // The other half of #152, and the half #129 could not fix from inside the
+  // widget: a clamped write_text relocated the whole TITLE too, so a bar at
+  // x == -2 painted "File" starting at column 0 -- four columns that belong to
+  // no span, where handle_mouse (gated on rect().contains) delivers nothing.
+  // Clipping drops the two off-screen columns instead: the marker at -2 and
+  // the 'F' at -1 are gone, and "ile" lands at its true position.
+  MenuBar mb;
+  mb.set_menus(menus_from({"File", "Edit"}));
+  mb.set_geometry({-2, 0, 12, 1});
+  const Screen s = drawn(mb, 16);
+
+  REQUIRE(mb.active_menu() == 0);
+  REQUIRE(row_text(s, 0, 0, 4) == "ile ");  // was "File" under the clamp
+  // Read the active span's extent off the screen rather than recomputing it:
+  // " File " is 6 columns starting at -2, so 4 of them survive at column 0.
+  REQUIRE(tfsupport::highlighted_run(s, 0, termforge::theme::kFocusBg) ==
+          std::pair{0, 4});
 }
 
 TEST_CASE("MenuBar: an empty title still gets its pad columns and the marker",

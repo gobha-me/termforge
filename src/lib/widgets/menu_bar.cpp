@@ -175,12 +175,13 @@ auto MenuBar::draw(Screen& screen) -> void {
     // relaxed: span.w == min(natural, right - mx), which is exactly the number
     // of columns that loop used to reach.
     //
-    // Still write_text rather than fill_rect, deliberately. fill_rect clips a
-    // negative x properly (Rect::intersect) while write_text CLAMPS it to
-    // column 0 (screen.cpp:71), so swapping it in would change what a bar at a
-    // negative rect().x paints. That is #152's wart, not this refactor's to
-    // fix, and a "cleanup" that quietly alters an edge is how a zero-delta
-    // claim stops being true.
+    // Still write_text rather than fill_rect. The left-edge reason is gone --
+    // #152 made write_text clip a negative x instead of clamping it, so the
+    // two now agree there -- but they still differ in the CELL they leave
+    // behind: fill_rect assigns a fresh Cell{"", fg, bg, attrs}, which is
+    // blank() and resets image_id, while write_text(" ") sets text to " " and
+    // leaves image_id alone. Swapping is a separate change with its own
+    // zero-delta claim to prove, not a tidy-up to smuggle in here.
     for (int x = 0; x < span.w; ++x)
       screen.write_text(mx + x, r.y, " ", fg, bg);
 
@@ -192,19 +193,19 @@ auto MenuBar::draw(Screen& screen) -> void {
     // edge paints nothing, or the mark would be visible outside rect(), where
     // handle_mouse's rect().contains gate can never deliver a click (#11).
     //
-    // The mx >= 0 half guards the OTHER edge, and it is not symmetric with the
-    // fill loop by accident: Screen::write_text CLAMPS a negative x to column 0
-    // (screen.cpp:71) instead of dropping the off-screen prefix, so a bar whose
-    // rect().x is negative would relocate this glyph onto column 0 -- a column
-    // that belongs to no span, where handle_mouse maps it to bar background.
-    // The clamp is a Screen-wide wart that already scrambles the titles of such
-    // a bar; this guard only keeps #129 from adding a glyph to the pile.
+    // #129 also carried an `mx >= 0` half here, because write_text CLAMPED a
+    // negative x onto column 0 and would have relocated this glyph into a
+    // column belonging to no span. #152 fixed that in Screen -- the mark is one
+    // column wide (fitted_glyph's budget is 1), so at a negative mx it now
+    // paints nothing on its own -- and the guard came out with it. Re-adding it
+    // would be dead code that restates Screen's contract and would mask a
+    // regression of it; TabBar deliberately carries no such guard either (#159).
     //
     // `span.w > 0` is the old `mx < right` exactly, not an approximation of it:
     // span.w == min(natural, right - mx) and natural >= 2 for every title
     // (span_width is display_width + 2), so span.w is positive precisely when
     // right - mx is.
-    if (is_active && !mark.empty() && mx >= 0 && span.w > 0)
+    if (is_active && !mark.empty() && span.w > 0)
       screen.write_text(mx, r.y, mark, fg, bg);
 
     // Title text (1-col padding), clipped to the columns left before the edge.
