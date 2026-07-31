@@ -67,7 +67,10 @@ class MapWidget final : public Widget {
   auto set_tileset(TileSet tiles) -> void;
 
   // ── geometry ────────────────────────────────────────────────────────────
-  // Map extents in TILES. Re-clamps the camera against the new bounds.
+  // Map extents in TILES. Re-clamps the camera against the new bounds. On a
+  // real size change every layer keeps the overlapping top-left corner (like
+  // Screen::resize); new cells are kEmptyId. Re-asserting the current size is
+  // a no-op, so sizing before populating never throws layers away.
   auto set_map_size(int w, int h) -> void;
   // Tile footprint in CELLS (not pixels). Non-square is the expected case — a
   // cell is ~1:2, so a visually square tile wants {2,1}. Default {1,1}.

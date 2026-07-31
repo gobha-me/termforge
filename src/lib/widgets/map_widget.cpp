@@ -30,16 +30,30 @@ auto MapWidget::set_tileset(TileSet tiles) -> void {
 }
 
 auto MapWidget::set_map_size(int w, int h) -> void {
-  m_map_w = std::max(0, w);
-  m_map_h = std::max(0, h);
+  const int new_w = std::max(0, w);
+  const int new_h = std::max(0, h);
+  // Re-asserting the same size is a no-op: don't throw the layers away.
+  if (new_w == m_map_w && new_h == m_map_h) return;
+  const int old_w = m_map_w;
+  const int old_h = m_map_h;
+  m_map_w = new_w;
+  m_map_h = new_h;
   // Ensure the implicit layer 0 exists and (re)size every layer's dense grid,
   // preserving the overlapping top-left corner like Screen::resize does.
   if (m_layers.empty()) m_layers.push_back(Layer{});
+  const int copy_w = std::min(old_w, new_w);
+  const int copy_h = std::min(old_h, new_h);
   for (auto& layer : m_layers) {
-    std::vector<int> next(static_cast<std::size_t>(m_map_w) *
-                              static_cast<std::size_t>(m_map_h),
+    std::vector<int> next(static_cast<std::size_t>(new_w) *
+                              static_cast<std::size_t>(new_h),
                           kEmptyId);
-    // There is no prior geometry to preserve against on a fresh (0-sized) map.
+    for (int y = 0; y < copy_h; ++y)
+      for (int x = 0; x < copy_w; ++x)
+        next[static_cast<std::size_t>(y) * static_cast<std::size_t>(new_w) +
+             static_cast<std::size_t>(x)] =
+            layer.cells[static_cast<std::size_t>(y) *
+                            static_cast<std::size_t>(old_w) +
+                        static_cast<std::size_t>(x)];
     layer.cells = std::move(next);
   }
   clamp_camera();
