@@ -45,6 +45,7 @@
 #include <string_view>
 
 #include "termforge/core/screen.hpp"  // also pulls in detail/width.hpp
+#include "termforge/widgets/detail/glyph_fit.hpp"
 #include "termforge/widgets/detail/scroll.hpp"
 #include "termforge/widgets/detail/width.hpp"
 #include "termforge/widgets/glyphs.hpp"
@@ -165,31 +166,31 @@ auto draw_dropdown_rows(Screen& screen, Rect dr, int count, int highlight,
   // dropdown_scroll_at. Doing it in only one of the two is #10's hit-span
   // drift with extra steps.
   scroll = dropdown_scroll_at(scroll, count, dr.h);
-  // SANITIZED once, then measured and painted as the same string. write_text
-  // sanitizes whatever it is handed, so measuring the caller's raw view would
-  // let the two disagree on exactly the input an app is likeliest to try:
-  // "\033[7m>\033[0m" measures 7 columns (the CSI parameter bytes are
-  // printable) and paints 1, so the fit test below would reject a mark that
-  // would have fit -- silently reinstating the very bug this parameter exists
-  // to close, with no compile error to catch it. ListWidget::set_marker
-  // normalises at the setter for the same reason; the skeleton has no setter,
-  // so it normalises here. Once per call, not per row.
-  const std::string mark = Screen::sanitize(glyphs.selector);
-  const int mark_w = display_width(mark);
-  // The indicators get the marker's full sanitize-then-measure treatment, once
-  // per call rather than per row, and the same fit discipline. The strip they
-  // land in is exactly ONE column, so a hint wider than that would put its
-  // continuation cell at dr.x + dr.w -- outside the rect, on a cell this widget
-  // does not own and the renderer would diff anyway. Both in-tree families are
-  // one column, but this is a public building block taking an arbitrary
-  // MarkGlyphs: the third-party dropdown is precisely who the guard is for.
-  // dr.w > label_pad additionally keeps a hint off the marker's own gutter in a
-  // dropdown one column wide.
-  const std::string up = Screen::sanitize(glyphs.arrow_up);
-  const std::string down = Screen::sanitize(glyphs.arrow_down);
+  // Normalised and fit-tested once per call, not per row. fitted_glyph()
+  // sanitizes and returns EMPTY when the result will not fit -- see
+  // detail/glyph_fit.hpp for why measuring the caller's raw view is #76.
+  //
+  // The marker's budget is min(label_pad, dr.w): the pad, because a wider mark
+  // would eat the first columns of every highlighted label, and the dropdown's
+  // own width, because a pad wider than the popup would put the mark on a cell
+  // this widget does not own.
+  //
+  // The indicators' strip is exactly ONE column, so their budget is 1 -- a
+  // wider hint would put its continuation cell at dr.x + dr.w, outside the
+  // rect. Both in-tree families are one column, but this is a public building
+  // block taking an arbitrary MarkGlyphs: the third-party dropdown is
+  // precisely who the guard is for.
+  const std::string mark = fitted_glyph(glyphs.selector,
+                                        std::min(label_pad, dr.w));
+  const std::string up = fitted_glyph(glyphs.arrow_up, 1);
+  const std::string down = fitted_glyph(glyphs.arrow_down, 1);
+  // A RECT question, not a glyph one, which is why it stays separate from the
+  // budgets above: it keeps a hint off the marker's own gutter in a dropdown
+  // one column wide. #21's scrollbar claims this strip with a wider element,
+  // and folding the two conditions together is what would break then.
   const bool room_for_hint = dr.w > label_pad;
-  const bool more_above = scroll > 0 && display_width(up) == 1;
-  const bool more_below = scroll + dr.h < count && display_width(down) == 1;
+  const bool more_above = scroll > 0 && !up.empty();
+  const bool more_below = scroll + dr.h < count && !down.empty();
   for (int vi = 0; vi < dr.h && scroll + vi < count; ++vi) {
     const int item = scroll + vi;
     const int dy = dr.y + vi;
@@ -197,15 +198,10 @@ auto draw_dropdown_rows(Screen& screen, Rect dr, int count, int highlight,
     const Rgb fg = is_hl ? highlight_fg : normal_fg;
     const Rgb bg = is_hl ? highlight_bg : normal_bg;
     screen.fill_rect(dr.x, dy, dr.w, 1, fg, bg);
-    // Drawn only where it fits the gutter it was given. A marker wider than
-    // label_pad would overwrite the first columns of the label, and a
-    // zero-width one (a lone combining mark) has no base glyph and would paint
-    // nothing at all -- in both cases the label wins, silently, the way every
-    // other layout truncation here does (ListWidget's gutter, Frame titles).
-    // mark_w <= dr.w additionally keeps a mark out of a dropdown narrower than
-    // its own pad.
-    if (is_hl && mark_w > 0 && mark_w <= label_pad && mark_w <= dr.w)
-      screen.write_text(dr.x, dy, mark, fg, bg);
+    // Empty means it did not fit the gutter it was given, so the label wins
+    // the columns -- silently, the way every other layout truncation here does
+    // (ListWidget's gutter, Frame titles).
+    if (is_hl && !mark.empty()) screen.write_text(dr.x, dy, mark, fg, bg);
     const int avail = std::max(0, dr.w - label_pad - 1);
     screen.write_text(dr.x + label_pad, dy,
                       truncate_to_width(label_at(item), avail), fg, bg);
