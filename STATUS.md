@@ -25,6 +25,25 @@ fail against the pre-fix widget. Validated 36/36 × 4 sequential (Release -Werro
 g++-13, clang, ASan/UBSan) plus a pty capture of `examples/widgets` on the colour-dropping
 tier. Unblocks #130 (`detail/strip.hpp`), which would otherwise have extracted the bug.
 
+**The cold review found one real defect in the fix and four gaps in its suite.** The
+defect: the marker's clip guard was **one-sided**. `Screen::write_text` CLAMPS a negative
+x to column 0 (`screen.cpp:71`) rather than dropping the off-screen prefix, so a bar with a
+negative `rect().x` relocated the glyph onto column 0 — a column belonging to no span,
+where `handle_mouse` maps a click to bar background. #11's "visible but dead", mirrored to
+the left edge, and **new with this change** (pre-#129 the clamp painted only a coloured
+space there). Guarded with `mx >= 0`. **The Screen-wide clamp is untouched and is its own
+issue** — it already scrambles the *titles* of such a bar, and changing it moves every
+widget.
+
+**COVERAGE LESSON: every MenuBar fixture in the whole repo placed the bar at `{0, 0, …}`.**
+Hardcoding the marker's row to `0` left all four MenuBar suites green — while a bar under a
+title row is the *ordinary* layout and would have had the glyph painted into the widget
+above it. A widget whose fixtures all share an origin cannot see a coordinate bug at all.
+Two more of the same shape: the right-edge fixture sat one column *past* the boundary, so
+the classic `mx <= right` off-by-one survived; and "a combining mark costs no column"
+asserted only the span width, which comes from the fill loop and is independent of what
+`write_text` does with the grapheme (painting the title as an empty string left it green).
+
 **TEST LESSON (load-bearing, measured twice): a fixture that cannot express the defect is
 not a regression guard.** Two cases in the new suite were written, passed, and proved
 nothing until they were re-aimed — each caught by running it against the pre-fix widget and
@@ -33,9 +52,11 @@ all**: the hit span and the painted BACKGROUND both come from `layout_menus()`, 
 agree even when it is wrong. What the raw measurement actually bought was columns of
 highlight with no glyph under them, so the invariant with teeth is that a span reserves
 nothing it does not paint — the last painted cell is the one before the trailing pad, read
-off the screen. (b) The same sweep with PLAIN titles is vacuous, because `display_width` of
-a 7-bit string already equals what `write_text` paints; it needed an escape-laden fixture
-beside it. Related: the plan claimed the #76 acceptance case in `12primitives` was silently
+off the screen — and the review measured that the sweep is **structurally tautological**
+regardless: the painted background and the hit span both come from `layout_menus()`, so six
+separate mutations leave it green. Its comment now says what it actually guards. (b) The
+same sweep with PLAIN titles is vacuous, because `display_width` of a 7-bit string already
+equals what `write_text` paints; it needed an escape-laden fixture beside it. Related: the plan claimed the #76 acceptance case in `12primitives` was silently
 gutted by the bar's new marker — measurement said otherwise (its `row1 != row2` assertion
 still catches a deleted dropdown marker; only the closing whole-frame `find("▸")` lost
 specificity). The comment says what was measured, not what was assumed.

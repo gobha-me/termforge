@@ -65,8 +65,10 @@
 //::write_text sanitizes whatever it is handed, so measuring the caller's raw
 // string means the two disagree: "\033[7mX\033[0m" measures 7 columns and
 // paints 1, and every tab to its right gets a click span 6 columns from its
-// glyphs. MenuBar still has that bug (it measures raw titles); ListWidget's
-// set_marker is the precedent followed here.
+// glyphs. ListWidget's set_marker is the precedent followed here, and MenuBar
+// -- which carried the bug when this was written -- sanitizes at its own two
+// setters since #129, so a shared strip layout (#130) can assume the rule
+// rather than carry a raw-measure path for one caller.
 
 #include <functional>
 #include <string>

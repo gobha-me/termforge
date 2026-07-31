@@ -93,19 +93,26 @@ inline auto row_text(const Screen& s, int y) -> std::string {
 // on it would go vacuously green — REQUIRE(w > 0) being the only thing in the
 // way. Naming the colour at the call site makes the coincidence a statement.
 //
-// Only one run is reported: cells matching bg are counted across the whole
-// row, so two separate runs in the same colour come back as one span from the
-// first match to the last. Pass a y that holds a single highlighted region —
-// for a dropdown that means the row, not the whole widget.
+// **The FIRST CONTIGUOUS run, and only that one.** Every caller treats the
+// pair as an extent — feeding it to row_text, or testing `c >= x && c < x + w`
+// — so counting matches across the whole row (which is what the 33tabbar
+// original did) would hand back a plausible-looking span describing neither
+// run the moment a row carried two. That is not hypothetical: MenuBar's
+// m_active_bg and m_selected_bg are both theme::kFocusBg, and so is TabBar's
+// focus colour. Identical results to the original wherever exactly one run
+// exists, which is every call site today; a second run is now ignored rather
+// than silently folded in. Still pass a y that holds a single highlighted
+// region — for a dropdown that means one row, not the whole widget.
 inline auto highlighted_run(const Screen& s, int y, Rgb bg)
     -> std::pair<int, int> {
   int x = -1;
   int w = 0;
-  for (int i = 0; i < s.cols(); ++i)
+  for (int i = 0; i < s.cols(); ++i) {
     if (s.at(i, y).bg == bg) {
       if (x < 0) x = i;
-      ++w;
+      if (x + w == i) ++w;  // still contiguous with the run that started at x
     }
+  }
   return x < 0 ? std::pair{0, 0} : std::pair{x, w};
 }
 
