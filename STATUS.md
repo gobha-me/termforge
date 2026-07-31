@@ -6,7 +6,22 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-07-31)
 
-**Latest work: #127 — `MapWidget::set_map_size` preserves the overlapping corner (v0.6.2).**
+**Latest work: #97 — `App::on_start()`/`on_stop()`, hooks inside the terminal's lifetime (v0.6.3).**
+`setup()`/`teardown()` are private and non-virtual by design (they own the raw-mode/alt-screen/
+driver invariants), so a subclass had no hook for its OWN resources — an audio device, a bulk
+resident image upload, a socket — anywhere but the constructor, which runs before any terminal
+exists. term-game filed it; GLOAM +1'd with a concrete ordering need. Fix: two protected virtual
+no-op hooks. `on_start()` runs after setup() fully succeeds (raw mode, caps probed, alt-screen up)
+and **before the first frame**; `on_stop() noexcept` runs **once per completed on_start()**, while
+the terminal is still up, before teardown(), on the normal AND the exception path. Balanced pairing:
+a throwing `on_start()` owes no `on_stop()`, the terminal is restored, the exception propagates.
+`on_stop` never fires twice (flag clears before the call) and a throwing one is std::terminate.
+Source-compatible: both default to no-ops. Wiring lives in `run_loop()`, which `test_run_guarded()`
+shares, so it's covered headless. Pinned in `test/25teardown` (ordering, exception-path single
+on_stop, throwing on_start, default-hook app). Validated 35/35 × 4 sequential (Release -Werror g++,
+g++-13, clang, ASan/UBSan), CI 8/8, cold review clean, merged as PR #138, tagged `v0.6.3`.
+
+**Previous: #127 — `MapWidget::set_map_size` preserves the overlapping corner (v0.6.2).**
 The comment claimed it kept the top-left overlap "like Screen::resize does", but it
 assigned a fresh zero-filled grid to every layer unconditionally — so any later
 `set_map_size`, including a same-size re-assert, silently wiped every tile (bit
