@@ -13,11 +13,14 @@
 // an anonymous namespace without ODR worries.
 
 #include <string>
+#include <utility>
 
 #include "termforge/core/screen.hpp"
+#include "termforge/core/types.hpp"
 
 namespace tfsupport {
 
+using termforge::Rgb;
 using termforge::Screen;
 
 // The cell the renderer writes *after* a width-2 glyph: a single NUL byte
@@ -70,6 +73,40 @@ inline auto row_text(const Screen& s, int y, int x0, int w) -> std::string {
 // spent a release closing. Three arguments is a compile error, on purpose.
 inline auto row_text(const Screen& s, int y) -> std::string {
   return row_text(s, y, 0, s.cols());
+}
+
+// The columns of row y painted with background `bg`: the DRAWN extent, read
+// back off the screen rather than recomputed from the widths a widget
+// measured. Returns {x, width} of the run, {0, 0} if no cell matches.
+//
+// This is the only oracle a widget with no accessor has. A test that derives
+// an expected span from display_width(title) + padding re-runs the widget's
+// own arithmetic, so the two agree by making the same mistake twice — which is
+// how the measure-vs-paint drift of #10/#129 stayed invisible for a release.
+// Anchor every span claim here instead.
+//
+// **bg is a required argument, deliberately.** 33tabbar's original hardcoded
+// theme::kFocusBg, which happens to equal MenuBar's m_active_bg too, so the
+// copy that would have landed in 34menubar worked by coincidence. The day
+// either widget gains a set_colors() (ListWidget, TableWidget and Label all
+// have one) an implicit constant would return {0, 0} and every assertion built
+// on it would go vacuously green — REQUIRE(w > 0) being the only thing in the
+// way. Naming the colour at the call site makes the coincidence a statement.
+//
+// Only one run is reported: cells matching bg are counted across the whole
+// row, so two separate runs in the same colour come back as one span from the
+// first match to the last. Pass a y that holds a single highlighted region —
+// for a dropdown that means the row, not the whole widget.
+inline auto highlighted_run(const Screen& s, int y, Rgb bg)
+    -> std::pair<int, int> {
+  int x = -1;
+  int w = 0;
+  for (int i = 0; i < s.cols(); ++i)
+    if (s.at(i, y).bg == bg) {
+      if (x < 0) x = i;
+      ++w;
+    }
+  return x < 0 ? std::pair{0, 0} : std::pair{x, w};
 }
 
 }  // namespace tfsupport

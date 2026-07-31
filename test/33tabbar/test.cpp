@@ -50,15 +50,14 @@ const std::vector<std::string> kTitles{"A", "Beta", "Gamma!"};  // spans 3, 6, 8
 // back off the screen rather than recomputed from the widths. Every hit-span
 // claim below is anchored to this, so a test cannot agree with the widget by
 // making the same arithmetic mistake twice. Returns {x, width}, {0,0} if none.
+//
+// tfsupport::highlighted_run is the shared definition (#129 hoisted it, ahead
+// of 34menubar adding a second copy). It takes the background colour, which
+// this wrapper supplies once: TabBar's is theme::kFocusBg, and so is MenuBar's
+// today — the coincidence that made the shared helper's third argument
+// required rather than defaulted. See test/support/screen.hpp.
 auto highlighted_run(const Screen& s, int y) -> std::pair<int, int> {
-  int x = -1;
-  int w = 0;
-  for (int i = 0; i < s.cols(); ++i)
-    if (s.at(i, y).bg == termforge::theme::kFocusBg) {
-      if (x < 0) x = i;
-      ++w;
-    }
-  return x < 0 ? std::pair{0, 0} : std::pair{x, w};
+  return tfsupport::highlighted_run(s, y, termforge::theme::kFocusBg);
 }
 
 // Draw once so the widget has geometry (rect() is last frame's, and {0,0,0,0}
