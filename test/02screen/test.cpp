@@ -2,6 +2,7 @@
 
 #include <climits>
 
+#include "support/screen.hpp"
 #include "termforge/core/screen.hpp"
 
 using termforge::Rgb;
@@ -136,6 +137,158 @@ TEST_CASE("Screen: write_text folds a combining mark onto its base cell",
   REQUIRE(cols == 1);                            // one display column
   REQUIRE(s.at(0, 0).text == base_accent);       // both code points in one cell
   REQUIRE(s.at(1, 0).blank());
+}
+
+// --------------------------------------------------------------------------
+// #152 -- the LEFT edge. write_text used to CLAMP a negative x to column 0
+// (`start_x = x < 0 ? 0 : x`), relocating the whole string instead of dropping
+// its off-screen prefix, so a widget at a negative rect().x -- ordinary
+// centring arithmetic -- painted its content in columns that belong to no span
+// and that no hit test can reach. The right edge was always correct; these
+// cases pin the mirror rule, and the four cases ABOVE are the standing proof
+// that nothing moved for a non-negative x.
+//
+// Distinct colours throughout, because "painted" and "left alone" are not
+// distinguishable by cell text: a padded column and a blank column both read
+// back as " " through row_text.
+namespace {
+const Rgb kFg{0xAB, 0xCD, 0xEF};
+const Rgb kBg{0x12, 0x34, 0x56};
+const Rgb kSeedFg{0x01, 0x02, 0x03};
+const Rgb kSeedBg{0x71, 0x72, 0x73};
+const std::string kShi = "\xE4\xB8\x96";  // 世 U+4E16, width 2
+}  // namespace
+
+TEST_CASE("Screen: write_text drops the off-screen prefix at a negative x",
+          "[screen][width][failure]") {
+  Screen s{10, 1};
+  const int n = s.write_text(-2, 0, "abcdef", kFg, kBg);
+  // Two columns fell off the left; the rest paints where it belongs.
+  REQUIRE(n == 4);
+  REQUIRE(tfsupport::row_text(s, 0) == "cdef      ");  // whole row: a
+                                                       // relocation cannot hide
+  REQUIRE(s.at(0, 0).text == "c");
+  REQUIRE(s.at(3, 0).bg == kBg);
+  REQUIRE(s.at(4, 0).bg != kBg);  // and the run stops where it should
+}
+
+TEST_CASE("Screen: write_text paints nothing for a string entirely off the left",
+          "[screen][width][failure]") {
+  // The row is SEEDED, so "nothing happened" is an assertion rather than one
+  // blank row compared against another.
+  Screen s{5, 1};
+  s.write_text(0, 0, "ZZZZZ", kSeedFg, kSeedBg);
+
+  REQUIRE(s.write_text(-6, 0, "abcdef", kFg, kBg) == 0);  // last column is -1
+  REQUIRE(tfsupport::row_text(s, 0) == "ZZZZZ");
+  REQUIRE(s.at(0, 0).bg == kSeedBg);
+
+  // One column further right and exactly one glyph survives -- the boundary
+  // pair, so an off-by-one in the gate cannot pass both halves.
+  REQUIRE(s.write_text(-5, 0, "abcdef", kFg, kBg) == 1);
+  REQUIRE(tfsupport::row_text(s, 0) == "fZZZZ");
+  REQUIRE(s.at(0, 0).bg == kBg);
+}
+
+TEST_CASE("Screen: write_text pads rather than splitting a wide glyph at the left edge",
+          "[screen][width][failure]") {
+  // The mirror of "pads rather than splitting ... at the edge" above. Letting
+  // the ordinary path run at cx == -1 would sink the base through at(-1, y)
+  // and leave a LONE "\0" continuation cell on column 0, which the renderer
+  // skips forever -- so the arm is a correctness requirement, not a taste call.
+  Screen s{6, 1};
+  const int n = s.write_text(-1, 0, kShi + "ab", kFg, kBg);
+  REQUIRE(n == 3);                    // the pad, then 'a', then 'b'
+  REQUIRE(s.at(0, 0).text == " ");    // padded, not half a glyph, not "\0"
+  REQUIRE(s.at(0, 0).bg == kBg);      // and PAINTED, in the run's colours
+  REQUIRE_FALSE(s.at(0, 0).blank());
+  REQUIRE(s.at(1, 0).text == "a");
+  REQUIRE(tfsupport::row_text(s, 0) == " ab   ");
+}
+
+TEST_CASE("Screen: a wide glyph fully off the left leaves column 0 to the next glyph",
+          "[screen][width][failure]") {
+  // The pair to the case above: this one fails if the straddle arm's test is
+  // loosened from `cx == -1` to `cx < 0`, that one fails if it is dropped.
+  Screen s{6, 1};
+  const int n = s.write_text(-2, 0, kShi + "ab", kFg, kBg);  // 世 covers -2,-1
+  REQUIRE(n == 2);
+  REQUIRE(s.at(0, 0).text == "a");
+  REQUIRE(tfsupport::row_text(s, 0) == "ab    ");
+}
+
+TEST_CASE("Screen: a combining mark whose base fell off the left does not migrate",
+          "[screen][width][failure]") {
+  Screen s{6, 1};
+  const int n = s.write_text(-1, 0, "a\xCC\x81" "b", kFg, kBg);  // á at -1, b at 0
+  REQUIRE(n == 1);
+  REQUIRE(s.at(0, 0).text == "b");  // the acute did not fold onto 'b'
+  REQUIRE(tfsupport::row_text(s, 0) == "b     ");
+}
+
+TEST_CASE("Screen: a combining mark after a dropped straddling glyph does not migrate",
+          "[screen][width][failure]") {
+  // This is the case that makes "the straddle arm does not set base_cx" a
+  // decision instead of an accident: set it to 0 there and the acute lands on
+  // the pad column. (The sibling mutation -- deleting the `base_cx >= 0` test
+  // in the zero-width branch -- is NOT killable, and deliberately so: at(-1,y)
+  // returns the throwaway sink, so the mark is dropped either way. Saying so
+  // here beats a case that looks like coverage and is not.)
+  Screen s{6, 1};
+  const int n = s.write_text(-1, 0, kShi + "\xCC\x81" "b", kFg, kBg);
+  REQUIRE(n == 2);
+  REQUIRE(s.at(0, 0).text == " ");  // the pad, not " ́"
+  REQUIRE(tfsupport::row_text(s, 0) == " b    ");
+}
+
+TEST_CASE("Screen: a combining mark still folds when the run started off-screen",
+          "[screen][width]") {
+  Screen s{6, 1};
+  const int n = s.write_text(-2, 0, "xya\xCC\x81z", kFg, kBg);  // x,y dropped
+  REQUIRE(n == 2);
+  REQUIRE(s.at(0, 0).text == std::string("a\xCC\x81"));
+  REQUIRE(s.at(1, 0).text == "z");
+}
+
+TEST_CASE("Screen: write_text clips both edges at once", "[screen][width][failure]") {
+  Screen s{3, 1};
+  REQUIRE(s.write_text(-2, 0, "abcdefg", kFg, kBg) == 3);
+  REQUIRE(tfsupport::row_text(s, 0) == "cde");
+
+  // Both pads at once. The bg assertions are load-bearing: row_text of this
+  // row is "  ", which a blank screen also produces, so a text-only assertion
+  // would pass under a mutant that painted neither.
+  Screen t{2, 1};
+  REQUIRE(t.write_text(-1, 0, kShi + kShi, kFg, kBg) == 2);
+  REQUIRE(t.at(0, 0).text == " ");
+  REQUIRE(t.at(1, 0).text == " ");
+  REQUIRE(t.at(0, 0).bg == kBg);
+  REQUIRE(t.at(1, 0).bg == kBg);
+}
+
+TEST_CASE("Screen: write_text survives an x of INT_MIN", "[screen][width][failure]") {
+  // Not primarily a sanitizer case -- there is no UBSan toolchain in
+  // cmake/toolchain/, and this fails as an ordinary REQUIRE against any mutant
+  // that clamps. It is the guard against a "skip the prefix" rewrite that
+  // computes x + width in int: for INT_MIN that wraps POSITIVE, which such
+  // code reads as "starts on screen" and paints. #102's class, one function
+  // over.
+  Screen s{4, 1};
+  s.write_text(0, 0, "wxyz", kSeedFg, kSeedBg);
+  REQUIRE(s.write_text(INT_MIN, 0, std::string("abc") + kShi, kFg, kBg) == 0);
+  REQUIRE(tfsupport::row_text(s, 0) == "wxyz");
+  REQUIRE(s.at(0, 0).bg == kSeedBg);  // not even the colours moved
+}
+
+TEST_CASE("Screen: a zero-column grid paints nothing at a negative x",
+          "[screen][width][failure]") {
+  // Reachable only because a negative x now survives the top guard: on a grid
+  // with no columns `cx < m_cols` reads `cx < 0`, which -1 satisfies, so the
+  // straddle arm would pad a column 0 that does not exist. There is no cell to
+  // read back, which is exactly why this asserts the RETURN value.
+  Screen z{0, 1};
+  REQUIRE(z.write_text(-1, 0, kShi + std::string(" a"), kFg, kBg) == 0);
+  REQUIRE(z.write_text(-1, 0, "abc", kFg, kBg) == 0);
 }
 
 TEST_CASE("Screen: out-of-bounds access is safe (no corruption)", "[screen][failure]") {

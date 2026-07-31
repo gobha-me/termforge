@@ -64,18 +64,32 @@ auto Screen::fill_rect(int x, int y, int w, int h, Rgb fg, Rgb bg,
 
 auto Screen::write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
                         Attr attrs) -> int {
-  if (y < 0 || y >= m_rows || x >= m_cols) return 0;
+  // m_cols <= 0 is load-bearing, not defensive padding: since #152 a negative
+  // x SURVIVES this guard, and on a zero-column grid `cx < m_cols` reads
+  // `cx < 0`, which -1 satisfies -- so the straddle arm below would pad a
+  // column 0 that does not exist. at() sinks the write, but `written` would
+  // come back 1 for a screen with no columns.
+  if (m_cols <= 0 || y < 0 || y >= m_rows || x >= m_cols) return 0;
   const std::string clean = sanitize(text);
   const std::string_view sv{clean};
-  const int start_x = x < 0 ? 0 : x;
-  int cx = start_x;
+  int cx = x;  // MAY BE NEGATIVE: see the left-edge paragraph below
   int written = 0;
   // Place one grapheme per cell, advancing the column cursor by the glyph's
   // *display width* (not its byte count). A width-2 glyph (CJK/emoji) occupies
   // two columns: the glyph goes in cell cx and a "\0" continuation cell in
   // cx+1, which the renderer skips because the terminal cursor already moved
   // two columns. Combining/zero-width marks fold onto the preceding grapheme.
-  // Returns the number of columns advanced (clipped at the right edge).
+  //
+  // BOTH edges clip, and neither relocates (#152). The cursor starts at the
+  // caller's x even when that is off the left of the grid: glyphs whose
+  // columns are all negative advance the cursor and paint nothing. The old
+  // `start_x = x < 0 ? 0 : x` CLAMPED instead, which moved the whole string to
+  // column 0 rather than dropping its off-screen prefix -- so a widget at a
+  // negative rect().x (ordinary centring arithmetic) painted its content in
+  // columns belonging to no span, where a hit test can never deliver a click.
+  //
+  // Returns the number of ON-SCREEN cells painted, so it is never more than
+  // cols(); an off-screen glyph counts nothing.
   int base_cx = -1;  // column of the most recent base glyph, for combining marks
   std::size_t i = 0;
   while (i < sv.size() && cx < m_cols) {
@@ -88,8 +102,39 @@ auto Screen::write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
     const int w = detail::char_width(cp);
     if (w == 0) {
       // Combining / zero-width: append to the base grapheme so it renders as
-      // one cell. Drop it if there is no base on this row yet.
+      // one cell. Drop it if there is no base on this row yet -- and that same
+      // test covers a mark whose base fell off the LEFT edge, because base_cx
+      // is only ever assigned by a glyph that was actually painted. (Deleting
+      // the test would not be observable: at(-1, y) returns the throwaway
+      // sink, so the mark would be dropped either way. What the suite CAN
+      // pin is that base_cx is never set to an off-screen or clamped column.)
       if (base_cx >= 0) at(base_cx, y).text.append(sv, i, len);
+      i += len;
+      continue;
+    }
+    if (w == 2 && cx == -1) {
+      // A wide glyph straddling column 0: its left half is off screen, and the
+      // continuation-cell contract cannot express half a glyph. Drop it and
+      // pad the surviving column -- the mirror of the right-edge arm below.
+      //
+      // PAINTED rather than skipped, on purpose. write_text is how a widget
+      // fills a run (menu_bar.cpp fills a title background one column at a
+      // time), so a hole in the middle of a run is not "no content": Renderer
+      // only emits cells that differ from the previous frame, so an untouched
+      // column 0 keeps LAST frame's glyph beside freshly repainted neighbours.
+      // Letting the ordinary path run here would be worse still -- at(-1, y)
+      // sinks the base and column 0 receives a lone "\0" continuation cell,
+      // which the renderer skips forever.
+      //
+      // base_cx is deliberately NOT set: the base is gone, so a combining mark
+      // following it has nothing to fold onto.
+      Cell& cell = at(0, y);  // m_cols >= 1, established by the guard above
+      cell.text = " ";
+      cell.fg = fg;
+      cell.bg = bg;
+      cell.attrs = attrs;
+      ++written;
+      cx += w;  // -> 1
       i += len;
       continue;
     }
@@ -104,23 +149,32 @@ auto Screen::write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
       ++written;
       break;
     }
-    Cell& cell = at(cx, y);
-    cell.text.assign(sv, i, len);
-    cell.fg = fg;
-    cell.bg = bg;
-    cell.attrs = attrs;
-    base_cx = cx;
-    ++cx;
-    ++written;
-    if (w == 2) {
-      Cell& cont = at(cx, y);
-      cont.text.assign(1, '\0');  // width-2 continuation cell (renderer skips)
-      cont.fg = fg;
-      cont.bg = bg;
-      cont.attrs = attrs;
-      ++cx;
+    // The gate that replaces the old clamp: off the left edge, advance the
+    // cursor and paint nothing. cx is compared, never used in arithmetic on
+    // x, so an x of INT_MIN needs no special case -- every step moves cx
+    // toward zero. Computing a skip count as `x + display_width(text)` would
+    // reintroduce #102's signed-overflow class instead.
+    if (cx >= 0) {
+      Cell& cell = at(cx, y);
+      cell.text.assign(sv, i, len);
+      cell.fg = fg;
+      cell.bg = bg;
+      cell.attrs = attrs;
+      base_cx = cx;
       ++written;
+      if (w == 2) {
+        // Inside the same gate on purpose: the continuation is painted iff its
+        // base was. cx == -1 is the straddle arm above and cx <= -2 puts both
+        // columns off screen, so one is never visible without the other.
+        Cell& cont = at(cx + 1, y);
+        cont.text.assign(1, '\0');  // width-2 continuation cell (renderer skips)
+        cont.fg = fg;
+        cont.bg = bg;
+        cont.attrs = attrs;
+        ++written;
+      }
     }
+    cx += w;
     i += len;
   }
   return written;
