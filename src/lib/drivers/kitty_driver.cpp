@@ -247,10 +247,27 @@ auto KittyDriver::draw_image(Rect cells, const Image& image)
   // a different cell box are genuinely a different placement. Keying on pixel
   // dims also let two images collide -- region_key truncates each field to
   // uint16, and pixel dimensions can exceed that where cell counts cannot.
+  // #139: attribute this call's bytes on every return path. The payload upload
+  // goes to image_transmit; everything else this emits — the replacement
+  // delete, the placement, the placeholder cell grid — is image_edit. Both are
+  // disjoint sub-ranges of m_buf, which only grows until flush() clears it.
+  struct Tally {
+    KittyDriver& drv;
+    const std::size_t start;
+    std::size_t transmitted{0};
+    ~Tally() {
+      const std::size_t all = drv.m_buf.size() - start;
+      drv.tally_image_transmit(transmitted);
+      drv.tally_image_edit(all - transmitted);
+    }
+  } tally{*this, m_buf.size()};
+
   auto& slot = region_slot(region_key(dest.x, dest.y, dest.w, dest.h));
   bool content_changed = false;
   if (const auto hash = image_hash(image); hash != slot.content_hash) {
+    const std::size_t before = m_buf.size();
     transmit(image, slot.image_id);
+    tally.transmitted = m_buf.size() - before;
     slot.content_hash = hash;
     content_changed = true;
   }
@@ -295,14 +312,18 @@ void KittyDriver::flush() {
   // the cell diff cannot paint over them. Delete it terminal-side and drop
   // the slot. This runs *before* emitting m_buf so the deletions land in
   // the same flush as the frame that removed the region.
+  const std::size_t before_gc = m_buf.size();
   gc_regions();
+  tally_image_edit(m_buf.size() - before_gc);  // #139: deletes are image traffic
 
+  const std::size_t written = m_buf.size();
   if (m_sink != nullptr) {
     *m_sink += m_buf;
   } else {
     std::fwrite(m_buf.data(), 1, m_buf.size(), stdout);
     std::fflush(stdout);
   }
+  tally_frame(written);
   m_buf.clear();
   ++m_frame;  // advance the frame window used by gc_regions()
 }
@@ -316,8 +337,10 @@ void KittyDriver::set_placement_mode(PlacementMode mode) {
   // classic placements terminal-side and force every region to re-place
   // under the new mode on its next draw.
   if (m_mode == PlacementMode::Classic) {
+    const std::size_t before = m_buf.size();
     for (const auto& [key, slot] : m_regions)
       if (slot.placed) delete_image(slot.image_id);
+    tally_image_edit(m_buf.size() - before);  // #139
   }
   for (auto& [key, slot] : m_regions) {
     slot.placed = false;
@@ -469,6 +492,12 @@ auto KittyDriver::delete_all() -> void {
   // Delete all images: a=d (delete), d=A (all).
   // Write directly to stdout (never through m_sink) — the destructor runs
   // after local test strings may already be destroyed.
+  //
+  // #139: these bytes are deliberately NOT metered. This is the sink bypass
+  // #148 names, and the only caller is ~KittyDriver — a counter incremented
+  // here would be read by nobody, since the object holding it is mid-
+  // destruction. Metering it becomes both possible and meaningful when #148
+  // gives the frame a one-write contract and this stops being a special case.
   const char* cmd = "\033_Ga=d,d=A\033\\";
   ::fwrite(cmd, 1, std::strlen(cmd), stdout);
   ::fflush(stdout);

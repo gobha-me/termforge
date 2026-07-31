@@ -13,6 +13,8 @@
 // is not a dispatch mechanism.
 
 #include <concepts>
+#include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <memory>
 #include <string_view>
@@ -21,6 +23,32 @@
 #include "termforge/core/types.hpp"
 
 namespace termforge {
+
+// Bytes emitted, split by what produced them (#139). An application with a
+// hard bandwidth budget measures a frame with this; before it, the only
+// instrument was `ssh -v` and vibes, and every claim about what an image path
+// costs was a comment rather than an assertion.
+struct FrameBytes {
+  // The ordinary cell stream: text, SGR, cursor positioning. On the half-block
+  // and ASCII tiers an image IS cell traffic and lands here — those tiers have
+  // no out-of-band channel to bill it to, and inventing one would make this
+  // breakdown kitty-shaped for every driver that will ever exist.
+  std::uint64_t cells{0};
+  // Out-of-band image payload upload (kitty's a=t APC chunks). Zero on any
+  // tier without such a channel.
+  std::uint64_t image_transmit{0};
+  // Image control traffic that is not payload: placements, the Unicode
+  // placeholder cell grid, deletions — and, once #140 lands, partial-frame
+  // edits. This is the baseline an edit path gets asserted against. A claim
+  // like "this edit costs bytes proportional to the edited region rather than
+  // to the image" is unfalsifiable without the split, which is the argument
+  // for landing the meter before the image tickets rather than after.
+  std::uint64_t image_edit{0};
+
+  [[nodiscard]] constexpr auto total() const noexcept -> std::uint64_t {
+    return cells + image_transmit + image_edit;
+  }
+};
 
 class TerminalDriver {
  public:
@@ -89,6 +117,63 @@ class TerminalDriver {
 
   virtual auto flush() -> void = 0;
   [[nodiscard]] virtual auto capabilities() const noexcept -> Capabilities = 0;
+
+  // Bytes emitted by the most recent flush(), and since construction (#139).
+  //
+  // Instance state, never static (#147): one driver is one session, so a
+  // server rendering N sessions reads N independent meters and can answer
+  // "is *this* connection saturating its link" — the one question a
+  // process-global counter cannot. Non-virtual because there is exactly one
+  // correct implementation and three copies of it would drift.
+  //
+  // Reading costs nothing: the counters are maintained at the single write
+  // boundary the drivers already funnel through, whether or not anyone asks.
+  [[nodiscard]] auto last_frame_bytes() const noexcept -> FrameBytes {
+    return m_last_frame_bytes;
+  }
+  [[nodiscard]] auto total_bytes() const noexcept -> FrameBytes {
+    return m_total_bytes;
+  }
+
+ protected:
+  // Attribute `n` bytes of the pending frame to an image bucket. A driver
+  // calls these as it appends. `cells` is deliberately not tallied here — see
+  // tally_frame.
+  auto tally_image_transmit(std::size_t n) noexcept -> void {
+    m_pending.image_transmit += n;
+  }
+  auto tally_image_edit(std::size_t n) noexcept -> void {
+    m_pending.image_edit += n;
+  }
+
+  // Close the frame. `written` is the exact number of bytes handed to the sink
+  // or to stdout; every driver's flush() calls this once with that number.
+  //
+  // `cells` is the REMAINDER rather than a tallied quantity, and that is the
+  // load-bearing choice: the buckets then sum to `written` by construction, so
+  // no emit path can go uncounted. An escape someone adds later without
+  // touching this file shows up as cell traffic — visible, and at worst
+  // slightly miscategorised — instead of vanishing and silently deflating a
+  // budget that a session is being held to.
+  auto tally_frame(std::size_t written) noexcept -> void {
+    FrameBytes frame = m_pending;
+    const std::uint64_t attributed = frame.image_transmit + frame.image_edit;
+    const auto total = static_cast<std::uint64_t>(written);
+    // Saturating. The image tallies are disjoint sub-ranges of the same
+    // growing buffer and so cannot exceed it — unless a driver double-counts,
+    // and a zero is a better failure than an underflow to 2^64.
+    frame.cells = total > attributed ? total - attributed : 0;
+    m_last_frame_bytes = frame;
+    m_total_bytes.cells += frame.cells;
+    m_total_bytes.image_transmit += frame.image_transmit;
+    m_total_bytes.image_edit += frame.image_edit;
+    m_pending = FrameBytes{};
+  }
+
+ private:
+  FrameBytes m_pending{};  // this frame, so far
+  FrameBytes m_last_frame_bytes{};
+  FrameBytes m_total_bytes{};
 };
 
 // Compile-time conformance check for concrete drivers. Not a dispatch tool.
