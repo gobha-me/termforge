@@ -184,6 +184,17 @@ auto payload_hash(std::span<const std::byte> payload, Extent px,
 constexpr int kFormatRgba32 = 32;
 constexpr int kFormatPng = 100;
 
+// ImageFormat -> the f= value on the wire. An exhaustive switch with no
+// default, so a format added to the enum without a wire code here is a
+// -Wswitch error under CI rather than silently transmitted as RGBA.
+[[nodiscard]] auto wire_format(ImageFormat format) noexcept -> int {
+  switch (format) {
+    case ImageFormat::Rgba32: return kFormatRgba32;
+    case ImageFormat::Png:    return kFormatPng;
+  }
+  return kFormatRgba32;
+}
+
 // Bound on tracked regions; past this the least-recently-drawn slot is
 // deleted terminal-side and reused. Far above any realistic UI.
 constexpr std::size_t kMaxRegionSlots = 16;
@@ -255,20 +266,15 @@ auto KittyDriver::draw_image(Rect cells, const Image& image)
 
 auto KittyDriver::draw_image(Rect cells, const EncodedImage& image)
     -> std::expected<void, ErrorEvent> {
-  // Empty, empty rect, and the Rgba32 length check. Png is deliberately
-  // unvalidated there: we do not parse the datastream, so we have no opinion
-  // about whether its header agrees with the declared extent.
-  if (auto ok = detail::validate_encoded(image, cells, "kitty"); !ok) {
+  // Empty, empty rect, the supports_image_format() check, and the Rgba32
+  // length check. Png is deliberately unvalidated for length: we do not parse
+  // the datastream, so we have no opinion about whether its header agrees
+  // with the declared extent.
+  if (auto ok = detail::validate_encoded(image, cells, *this, "kitty"); !ok) {
     return ok;
   }
-
-  int format_code = kFormatRgba32;
-  switch (image.format) {
-    case ImageFormat::Rgba32: format_code = kFormatRgba32; break;
-    case ImageFormat::Png:    format_code = kFormatPng;    break;
-  }
-
-  return draw_payload(cells, image.bytes, format_code, image.pixels);
+  return draw_payload(cells, image.bytes, wire_format(image.format),
+                      image.pixels);
 }
 
 auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,

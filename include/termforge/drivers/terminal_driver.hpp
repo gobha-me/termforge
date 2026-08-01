@@ -156,8 +156,20 @@ class TerminalDriver {
   [[nodiscard]] auto image_cell_extent(Extent pixels) const -> Extent {
     const Extent per = preferred_pixel_extent(Rect{0, 0, 1, 1});
     if (pixels.empty() || per.w <= 0 || per.h <= 0) return Extent{};
-    return Extent{(pixels.w + per.w - 1) / per.w,
-                  (pixels.h + per.h - 1) / per.h};
+    // The ceiling division rounds up, so it ADDS before it divides, and in
+    // int that overflows at pixels.w > INT_MAX - per.w. Unreachable while the
+    // only caller was the Image overload — an Image that wide has its pixels
+    // actually allocated — but an EncodedImage is an aggregate whose extent
+    // is caller-declared and, for Png, deliberately unverified (#163). A few
+    // bytes of payload plus a bad Extent would otherwise be signed overflow,
+    // which is UB rather than a wrong answer. Widen like Rect::intersect
+    // does, for the same reason.
+    const auto up = [](int value, int per_cell) {
+      const auto v = static_cast<std::int64_t>(value);
+      const auto p = static_cast<std::int64_t>(per_cell);
+      return static_cast<int>((v + p - 1) / p);
+    };
+    return Extent{up(pixels.w, per.w), up(pixels.h, per.h)};
   }
   [[nodiscard]] auto image_cell_extent(const Image& image) const -> Extent {
     if (image.empty()) return Extent{};

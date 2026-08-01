@@ -26,7 +26,19 @@ file is the tactical version.
   user/network text) happens in the **renderer**, never the driver. If you add
   a text path, keep this split — it's the injection defense.
 - **Degradation is an event.** Any fallback/downgrade returns/raises an
-  `ErrorEvent` (severity Info) via `std::expected` — never silently downgrade.
+  `ErrorEvent` via `std::expected` — never silently downgrade. The two
+  severities the library actually emits mean different things, and the
+  distinction is load-bearing rather than a gradient of loudness:
+  **`Info`** — the request was honoured by a lesser route. The app got what it
+  asked for and should know the tier changed (`detail/keyboard.hpp`: no kitty
+  keyboard protocol, so the legacy encoding is used, and every key still
+  arrives).
+  **`Warning`** — the request was *not* honoured and nothing was drawn or
+  emitted (every `draw_image` guard: empty image, empty destination rect, a
+  payload format this tier cannot decode). A caller that ignores it has a hole
+  in its UI.
+  `Severity` defaults to `Info` on the `ErrorEvent` aggregate, which is a
+  default rather than a recommendation — pick deliberately.
 - **Every frame is metered, and the meter is per-driver** (#139, #147). A
   driver's `flush()` calls `tally_frame(written)` exactly once with the byte
   count it handed to the sink; image paths call `tally_image_transmit` /
