@@ -56,6 +56,8 @@ void FallbackDriver::draw_text(int x, int y, std::string_view text, Rgb /*fg*/,
 auto FallbackDriver::preferred_pixel_extent(Rect cells) const noexcept
     -> Extent {
   if (cells.empty()) return Extent{};
+  // w/h here are already ints in cells' units (1 pixel == 1 cell), so there
+  // is no int64 multiplication to widen (#173 affects the *scaled* tiers).
   return Extent{cells.w, cells.h};  // one ramp glyph per cell
 }
 

@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <format>
+#include <limits>
 #include <span>
 
 #include "detail/base64.hpp"
@@ -231,7 +232,12 @@ auto KittyDriver::region_slot(std::uint64_t key) -> RegionSlot& {
 
 auto KittyDriver::preferred_pixel_extent(Rect cells) const noexcept -> Extent {
   if (cells.empty()) return Extent{};
-  return Extent{cells.w * m_cell_px.w, cells.h * m_cell_px.h};
+  const auto wide = [](int cell_count, int per_cell) -> int {
+    const auto p = static_cast<std::int64_t>(cell_count) * per_cell;
+    const auto max = std::numeric_limits<int>::max();
+    return p > max ? max : static_cast<int>(p);
+  };
+  return Extent{wide(cells.w, m_cell_px.w), wide(cells.h, m_cell_px.h)};
 }
 
 auto KittyDriver::set_cell_pixel_size(Extent cell) noexcept -> void {

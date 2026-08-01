@@ -247,6 +247,22 @@ class TerminalDriver {
   // answers {w, h*2} because it packs two pixel rows per cell; the ASCII tier
   // {w, h}. A caller that merely *displays* an image ignores this and lets the
   // driver scale.
+  //
+  // THE UNREPRESENTABLE CASE (#173). The product is cells * per-cell pixels,
+  // and both are int -- but cells can state a region an int cannot hold the
+  // pixel extent of (a 16k-column region asks for > 2^31 device pixels even
+  // at the nominal 8 px/cell). Evaluating the product in int at that input
+  // was signed overflow: UB, not a wrong answer, and it returned a NEGATIVE
+  // width that then fed validate_fit's `pixels.w > room.w` comparison.
+  //
+  // THE CONTRACT, and the content of the ticket: the product is computed in
+  // int64_t, and a result above INT_MAX CLAMPS to INT_MAX rather than
+  // wrapping. Clamping keeps `room` additive across the caller's whole rect,
+  // so `validate_fit`'s comparison stays meaningful and REFUSES CORRECTLY --
+  // the alternative (returning Extent{}, which would make room zero and
+  // produce a nonsense message) is stated and rejected. An empty `cells`
+  // still returns Extent{}; a non-representable one returns a huge, usable
+  // room.
   [[nodiscard]] virtual auto preferred_pixel_extent(Rect cells) const noexcept
       -> Extent = 0;
 
