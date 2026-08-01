@@ -112,16 +112,33 @@ auto AnsiRgbDriver::draw_image(Rect cells, const Image& image, PlacementFit fit)
 
 auto AnsiRgbDriver::draw_image(Rect cells, const EncodedImage& image)
     -> std::expected<void, ErrorEvent> {
+  return draw_image(cells, image, PlacementFit::Stretch);
+}
+
+auto AnsiRgbDriver::draw_image(Rect cells, const EncodedImage& image,
+                               PlacementFit fit)
+    -> std::expected<void, ErrorEvent> {
   // Includes the format check, which asks this driver's own
   // supports_image_format() -- so the query and the emit path cannot drift.
   // This tier builds its output character by character out of pixels it must
   // be able to read, so anything but Rgba32 is refused there rather than
   // shipped as bytes the terminal would render as garbage across the grid.
+  //
+  // Running it before validate_fit matters more here than on kitty: that
+  // Rgba32 length check is the only reason Exact -- whose source-to-
+  // destination map is the identity into image.pixels -- cannot read off the
+  // end of the caller's span. #169 extends no trust on this tier, because the
+  // one format that reaches draw_rgba is the one whose declaration is checked.
   if (auto ok = detail::validate_encoded(image, cells, *this, "ansi_rgb");
       !ok) {
     return ok;
   }
-  return draw_rgba(cells, image.bytes, image.pixels, PlacementFit::Stretch);
+  if (auto ok =
+          detail::validate_fit(fit, cells, image.pixels, *this, "ansi_rgb");
+      !ok) {
+    return ok;
+  }
+  return draw_rgba(cells, image.bytes, image.pixels, fit);
 }
 
 auto AnsiRgbDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,

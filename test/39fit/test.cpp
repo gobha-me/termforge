@@ -25,6 +25,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include "support/apc.hpp"
@@ -896,6 +897,67 @@ TEST_CASE("encoded: Exact refuses an oversize DECLARED extent, emitting all") {
   CHECK(count_of(out, "a=t") == 0);
   CHECK(count_of(out, "a=p") == 0);
   CHECK(out.empty());
+}
+
+TEST_CASE("encoded: Stretch is byte-for-byte the two-argument overload") {
+  // Case 3 on the encoded path, and the assertion that #169 added a parameter
+  // without moving a single byte of #163's behaviour. It holds structurally --
+  // each tier's two-argument overload now DELEGATES rather than reimplementing
+  // -- and this is what would catch a tier that reimplemented it instead.
+  const Image art = checker(30, 17, kA, kB);
+  const EncodedImage img = as_encoded(art);
+  const Rect dest{2, 1, 5, 3};
+
+  // A fresh driver per side: kitty's slot cache would make the second frame
+  // empty, and the comparison would then be between one frame and no frame.
+  auto both = [&]<typename D>(std::type_identity<D>) {
+    std::string a, b;
+    D da;
+    da.set_output(&a);
+    REQUIRE(da.draw_image(dest, img));
+    da.flush();
+    D db;
+    db.set_output(&b);
+    REQUIRE(db.draw_image(dest, img, PlacementFit::Stretch));
+    db.flush();
+    CHECK(a == b);
+    CHECK_FALSE(a.empty());
+  };
+
+  SECTION("kitty") { both(std::type_identity<KittyDriver>{}); }
+  SECTION("ansi_rgb") { both(std::type_identity<AnsiRgbDriver>{}); }
+  SECTION("fallback") { both(std::type_identity<FallbackDriver>{}); }
+}
+
+TEST_CASE("encoded: the resampling tiers refuse an oversize extent too") {
+  // The same refusal as the kitty case, on the two tiers whose rooms are
+  // measured in half-cells and whole cells rather than in pixels. Without
+  // these, "Exact is enforced" would be a claim about one driver.
+  const Image art = checker(40, 40, kA, kB);
+  const EncodedImage img = as_encoded(art);
+
+  SECTION("ansi_rgb: a 2x1 rect holds 2x2") {
+    AnsiRgbDriver d;
+    std::string out;
+    d.set_output(&out);
+    const auto r = d.draw_image(Rect{0, 0, 2, 1}, img, PlacementFit::Exact);
+    d.flush();
+    REQUIRE_FALSE(r);
+    CHECK(r.error().severity == Severity::Warning);
+    CHECK(r.error().source == "ansi_rgb");
+    CHECK(out.empty());
+  }
+  SECTION("fallback: a 2x1 rect holds 2x1") {
+    FallbackDriver d;
+    std::string out;
+    d.set_output(&out);
+    const auto r = d.draw_image(Rect{0, 0, 2, 1}, img, PlacementFit::Exact);
+    d.flush();
+    REQUIRE_FALSE(r);
+    CHECK(r.error().severity == Severity::Warning);
+    CHECK(r.error().source == "fallback");
+    CHECK(out.empty());
+  }
 }
 
 TEST_CASE("encoded: changing only the fit re-places, without retransmitting") {

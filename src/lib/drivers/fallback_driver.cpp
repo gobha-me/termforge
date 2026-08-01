@@ -100,15 +100,30 @@ auto FallbackDriver::draw_image(Rect cells, const Image& image,
 
 auto FallbackDriver::draw_image(Rect cells, const EncodedImage& image)
     -> std::expected<void, ErrorEvent> {
+  return draw_image(cells, image, PlacementFit::Stretch);
+}
+
+auto FallbackDriver::draw_image(Rect cells, const EncodedImage& image,
+                                PlacementFit fit)
+    -> std::expected<void, ErrorEvent> {
   // Includes the format check, via this driver's own supports_image_format().
   // The floor tier reads pixels to pick a ramp glyph; it cannot read a PNG,
   // and emitting the payload as text would spray the datastream across the
   // cell grid.
+  //
+  // Before validate_fit for the same reason as the half-block tier: the
+  // Rgba32 length check is what keeps Exact's identity map inside the
+  // caller's span.
   if (auto ok = detail::validate_encoded(image, cells, *this, "fallback");
       !ok) {
     return ok;
   }
-  return draw_rgba(cells, image.bytes, image.pixels, PlacementFit::Stretch);
+  if (auto ok =
+          detail::validate_fit(fit, cells, image.pixels, *this, "fallback");
+      !ok) {
+    return ok;
+  }
+  return draw_rgba(cells, image.bytes, image.pixels, fit);
 }
 
 auto FallbackDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
