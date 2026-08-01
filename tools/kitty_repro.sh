@@ -63,7 +63,17 @@ yellow_b64=$(printf '\xff\xff\x00\xff\xff\xff\x00\xff\xff\xff\x00\xff\xff\xff\x0
 
 saved_stty=''
 if ((! dump)); then
-  saved_stty=$(stty -g)
+  # Hard-fail rather than degrade. Without a tty every send() would return
+  # "response: (none)" and the script would print a complete, plausible,
+  # exit-0 report of a run that reached no terminal at all -- the single most
+  # dangerous output this file can produce, because it is indistinguishable
+  # from a terminal that accepted everything silently. Redirecting stdout to
+  # capture the transcript is the natural way to hit it.
+  saved_stty=$(stty -g 2>/dev/null) || {
+    echo "$0: needs a real terminal on stdin (or --dump to emit the wire" >&2
+    echo "    with no tty). Refusing to report on a run that cannot happen." >&2
+    exit 3
+  }
 fi
 restore() { [[ -n $saved_stty ]] && stty "$saved_stty"; return 0; }
 trap restore EXIT
