@@ -322,6 +322,12 @@ struct EncodedImage {
   // For Png this field is therefore unverifiable, and deliberately
   // unverified: we do not parse the header, so a disagreement between it and
   // the payload is not an error the library can see or will invent.
+  //
+  // Since #169 it is also what a PlacementFit::Exact fit is enforced against.
+  // That does not make it verified -- nothing here parses anything -- but it
+  // does make it load-bearing in a second way: over-declare and Exact refuses
+  // a rect the image would have fitted, under-declare a Png and the terminal
+  // paints outside the rect the caller named. Declare it accurately.
   Extent pixels;
 
   // Empty is the union of both ways to have nothing: no bytes, or no extent.

@@ -15,6 +15,12 @@
 // find("c=") cannot tell a placement key from the same two characters
 // somewhere else in the same buffer.
 //
+// Sections 12 and 13 are #169, which extends the parameter to the EncodedImage
+// overload. The interesting cases there are about a number the library cannot
+// check -- an EncodedImage's extent is DECLARED, not measured -- so the ones
+// that pin the posture rather than the plumbing live in test/38encoded, where
+// a real PNG with a lying header already exists to lie with.
+//
 // All offline. set_output redirects every driver away from stdout.
 
 #include <catch2/catch_test_macros.hpp>

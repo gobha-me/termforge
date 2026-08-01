@@ -169,8 +169,16 @@ enum class PlacementFit { Stretch, Exact };
 
 auto draw_image(Rect cells, const Image&, PlacementFit fit)
     -> std::expected<void, ErrorEvent>;
+auto draw_image(Rect cells, const EncodedImage&, PlacementFit fit)
+    -> std::expected<void, ErrorEvent>;
 auto supports_placement_fit(PlacementFit) const noexcept -> bool;
 ```
+
+The second overload (#169) is the one a shipped asset actually reaches: a
+pre-rendered plate is by definition pre-encoded, so `Exact` and the
+verbatim-payload path have to compose or neither is usable for baked art.
+See **[Pre-encoded payloads](#pre-encoded-payloads)** for what the fit is
+measured against there, which is a weaker guarantee than it is here.
 
 The distinction is **generated versus shipped**, and it is not about
 games or art. It is about whether the pixel *grid* carries meaning. A QR
@@ -393,6 +401,8 @@ struct EncodedImage {
 
 auto draw_image(Rect cells, const EncodedImage& image)
     -> std::expected<void, ErrorEvent>;
+auto draw_image(Rect cells, const EncodedImage& image, PlacementFit fit)
+    -> std::expected<void, ErrorEvent>;
 ```
 
 | tier | `Rgba32` | `Png` |
@@ -420,6 +430,36 @@ For `Png` the field is therefore unverifiable and deliberately unverified. An
 Having an opinion would mean owning a decoder — the dependency the whole design
 exists to avoid — so the disagreement is not an error the library can see or
 will invent.
+
+### The declared extent decides the fit (#169)
+
+`PlacementFit::Exact` on this overload is enforced against `pixels` — the
+number the *caller* declared — for both formats, with no `Png`/`Rgba32`
+asymmetry. #163 deferred the overload on exactly this ground, so it is worth
+saying why it is now the answer rather than a compromise: the declared extent
+is the only number that exists, and the library already rests on it everywhere
+else. `s=`/`v=` are emitted from it, the content hash is keyed on it, and
+`image_cell_extent(Extent)` — how a caller *sizes* a rect for `Exact` — answers
+from it. A caller reaching for `Exact` is already trusting it; making the fit
+the one place that did not would be a rule to memorise, not a safeguard.
+
+The alternative, skipping the check for `Png` alone, catches strictly nothing
+that this does not. It is dominated, not merely rejected.
+
+**What a lying declaration costs is placement, never memory safety.** The tiers
+that *index* the payload accept only `Rgba32`, whose length is already matched
+to the declared extent, so `Exact`'s identity map is in bounds by construction.
+
+- **Over-declare** and `Exact` refuses a rect the image would have fitted.
+- **Under-declare a `Png`** and the fit guard approves a rect the terminal then
+  **paints outside**. kitty reads `f=100` geometry out of the datastream and
+  ignores our `s=`/`v=`, and `Exact` has omitted the `c=`/`r=` that would have
+  clamped it. This is the one input that breaks `Exact`'s promise to leave the
+  remainder of the rect as it was — `Stretch` cannot do it, because there
+  `c=`/`r=` dominate.
+
+Declare the extent accurately. The library will not check it for you, and on
+this path that is a choice rather than an oversight.
 
 `Rgba32` is the one format whose length *is* derivable, so it is the one format
 where a caller's extent/buffer disagreement is visible at all, and it is
@@ -535,9 +575,6 @@ bars. Same widget, same code, no branching.
   out of scope here as it is on `Image`. `PlacementFit::Exact` (#137)
   landed the *no-scaling* half and anchors top-left; it is not a fit mode
   and adds no border behaviour.
-- **`PlacementFit` for the `EncodedImage` overload** — deferred: for `Png`
-  the library never parses the header, so a fit could only be enforced
-  against the caller-declared, deliberately-unverified extent.
 - **`Exact` under Unicode placeholders** — folded into #115, where
   sub-cell offsets make it expressible.
 - **MapWidget** — tile-based maps fit naturally: `draw_pixels` renders

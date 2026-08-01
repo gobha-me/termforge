@@ -192,6 +192,12 @@ class TerminalDriver {
   // to leave the rest of the rect as it was, and it is stated plainly here
   // rather than softened to "misplaced" -- Stretch cannot do it, because there
   // c=/r= dominate.
+  //
+  // A fourth overload extends one existing hazard: `draw_image(rect, {}, fit)`
+  // is ambiguous, because `{}` list-initializes Image and EncodedImage equally
+  // well. So is the two-argument `draw_image(rect, {})`, and has been since
+  // #163. Both are hard errors naming both candidates, never a silent miscall;
+  // spell the type (`Image{}` / `EncodedImage{}`) if you want an empty one.
   virtual auto draw_image(Rect cells, const EncodedImage& image,
                           PlacementFit fit) -> std::expected<void, ErrorEvent> {
     if (fit == PlacementFit::Stretch) return draw_image(cells, image);

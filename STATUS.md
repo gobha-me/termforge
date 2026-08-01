@@ -6,7 +6,63 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-01)
 
-**Latest work: #137 — `PlacementFit::Exact`, opting out of stretch-to-fill (v0.6.10).**
+**In flight: #169 + #171 — the two features that had to compose (v0.6.11).**
+Picked by re-reading GLOAM#7's blocker table *after* #137 shipped, which is the
+discipline that found it: row 1 is "1:1 placement of a **pre-rendered** plate", and
+a pre-rendered plate is by definition **pre-encoded**. #137 gave `Exact` to the
+`Image` overload; #163 gave the `f=100` path `Stretch` and nothing else. So the one
+combination both GLOAM and OBSCURA actually need was still inexpressible, and #137
+had not really closed row 1. **A shipped feature is not a closed blocker until you
+check it against the consumer's actual code path.**
+
+- **The posture #163 deferred is now settled**: the `Exact` fit is enforced against
+  the caller-**declared** extent, both formats, no asymmetry. It is the only number
+  that exists, and `s=`/`v=`, the content hash and `image_cell_extent(Extent)`
+  already rest on it. The alternative — skip the check for `Png` — catches strictly
+  nothing, so it is *dominated*, not merely rejected. Nothing parses the payload.
+- **The sharp edge, documented rather than fixed**: under-declaring a `Png` lets the
+  terminal paint **outside** the caller's rect, because kitty reads `f=100` geometry
+  from the datastream and `Exact` has omitted the `c=`/`r=` that would have clamped
+  it. Not a memory-safety issue (only `Rgba32` is ever indexed, and its length is
+  checked). The docs say "paints outside the rect", not "misplaced" — under-promising
+  is how the first person to hit it concludes the docs lied.
+- **#171 rode along because it is this change's verification path**, not because it
+  was small. `send()` printed its response line at the cursor, which is exactly where
+  a classic placement draws — so every gated placement was stamped over by the report
+  of its own success. Both scripts now have `place_below()`, `png_repro.sh` gets the
+  dispatcher, and **both gained `--dump`**, which emits the wire with no tty. That is
+  the thing that should have existed three releases ago: every claim in the #171
+  commit was read off the byte stream, and the stanza-5 payload was decoded
+  independently of its own generator.
+- **Still outstanding: the real-kitty capture.** `./tools/png_repro.sh 5` — see
+  "What the capture must answer" below.
+
+### What the capture must answer (#169)
+
+Run `./tools/png_repro.sh 5` in real kitty. **One transmit, two placements, live at
+the same time** — `p=1` with `c=11,r=5`, `p=2` with neither. The named uncertainties,
+in the order the observer should read them:
+
+1. **Does a `f=100` payload placed with `c=`/`r=` omitted render at its true pixel
+   size?** #137 established this for `f=32` (raw RGBA). It has never been on real
+   hardware for PNG, and the two are not obviously the same: for `f=100` kitty reads
+   the geometry out of the *datastream* and ignores our `s=`/`v=` entirely, so the
+   terminal is deriving the native extent from a source we never parsed.
+2. **Is the left arm visibly larger?** That is the binary question and the one that
+   matters. 88x80 from a 64x64 source.
+3. **Are the left arm's squares uneven while the right arm's are uniform?** The
+   secondary signal; 1.375x and 1.25x are non-integer on purpose.
+
+Everything checkable without hardware already has been, via `--dump`: the wire
+carries exactly one `a=t` and two `a=p`, the second with no `c=` and no `r=`; the
+payload decodes independently to a 64x64 colour-type-3 PNG with a 4-entry PLTE and
+uniform 4px modules. **What is left is only what a terminal can answer.**
+
+Read a part-NO against the hazard list in the #137 section below before treating it
+as a blocker — a stanza can be a deliberate demonstration of something the driver
+already routes around.
+
+**Previous: #137 — `PlacementFit::Exact`, opting out of stretch-to-fill (v0.6.10).**
 Picked because the priority signal lives in the *consumer* trackers: GLOAM#7, its
 centrepiece and explicitly "build it first", names **#137 first** in its blocker table.
 #83 closed and made stretch-to-fill the written contract, which GLOAM's SPEC §3.2 rules

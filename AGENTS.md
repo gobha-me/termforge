@@ -66,7 +66,9 @@ file is the tactical version.
   and it is the only reason a compressed wire format can exist here without
   breaking the stdlib-only rule. Never add a check that requires parsing the
   payload: `Rgba32`'s length is derivable and is validated, `Png`'s is not and
-  deliberately is not. A tier that cannot carry a format says so via
+  deliberately is not. #169 sharpened rather than weakened this — the declared
+  extent is precisely *why* no parse is needed, and a guard built on it stays
+  inside the rule. A tier that cannot carry a format says so via
   `supports_image_format` *and* returns a `Warning` — never a guess.
 - **Scaling is the default, not the only option** (#137). Stretch-to-fill is
   right for content a widget *generates*, because it can re-rasterize at
@@ -75,7 +77,13 @@ file is the tactical version.
   silent corruption rather than a quality loss. `supports_placement_fit`
   answers before anything is drawn, and its answer can change at runtime.
   `Exact` anchors top-left and refuses an image that does not fit; it is not a
-  fit mode and adds no border policy.
+  fit mode and adds no border policy. Since #169 it applies to `EncodedImage`
+  too — a pre-rendered plate is by definition pre-encoded, so the two features
+  had to compose or neither was usable for shipped art. There the fit is
+  enforced against the caller-**declared** extent, for both formats: it is the
+  only number that exists, and `s=`/`v=`, the content hash and
+  `image_cell_extent(Extent)` already rest on it. Still nothing parses the
+  payload.
 - **A virtual an out-of-tree driver could not have implemented is never pure.**
   Third-party drivers are a stated extensibility goal, so a new pure virtual
   breaks every one of them at compile time on upgrade. #163 and #137 each add a
