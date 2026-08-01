@@ -20,6 +20,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -532,6 +533,11 @@ TEST_CASE("encoded: a tier that cannot decode PNG warns and emits nothing",
     REQUIRE_FALSE(r);
     CHECK(r.error().severity == Severity::Warning);
     CHECK(r.error().source == "ansi_rgb");
+    // The message must name the format that was actually refused. A
+    // diagnostic that reports the wrong one sends the reader to the wrong
+    // call site, and nothing else in the suite reads this string -- the
+    // mutation that hardcodes the name survives every other assertion here.
+    CHECK(r.error().message.find("Png") != std::string::npos);
     d.flush();
     // Emitting *something* would be worse than emitting nothing: the payload
     // is not text, and half-blocks derived from bytes we cannot interpret are
@@ -675,4 +681,36 @@ TEST_CASE("encoded: image_cell_extent answers from an extent alone",
   // An empty extent is empty, matching the Image overload on an empty image.
   CHECK(f.image_cell_extent(Extent{}) == Extent{});
   CHECK(f.image_cell_extent(Image{}) == Extent{});
+}
+
+TEST_CASE("encoded: a declared extent at the int limit does not overflow",
+          "[encoded][failure]") {
+  // EncodedImage is an aggregate with no validating constructor, and for Png
+  // its extent is deliberately unverified -- so INT_MAX is a value a caller
+  // can legally hand us with a few bytes of payload behind it. Image could
+  // never reach here: an Image that wide has its pixels actually allocated.
+  //
+  // The ceiling division rounds UP, so it adds before it divides, and
+  // `pixels.w + per.w - 1` in int is signed overflow at this input. That is
+  // UB, not a wrong answer -- it is the kind of bug that reads as fine until
+  // a build with different optimization settings deletes the guard around it.
+  constexpr int kMax = std::numeric_limits<int>::max();
+
+  KittyDriver k;
+  const Extent per = k.preferred_pixel_extent(Rect{0, 0, 1, 1});
+  REQUIRE(per.w > 0);
+  REQUIRE(per.h > 0);
+
+  const Extent cells = k.image_cell_extent(Extent{kMax, kMax});
+  // The honest ceiling of kMax/per, computed independently in 64 bits.
+  const auto want = [&](int p) {
+    return static_cast<int>((static_cast<std::int64_t>(kMax) + p - 1) / p);
+  };
+  CHECK(cells.w == want(per.w));
+  CHECK(cells.h == want(per.h));
+
+  // And the floor tier, whose per-cell extent is 1x1 -- the case where the
+  // addition is largest relative to the divisor.
+  FallbackDriver f;
+  CHECK(f.image_cell_extent(Extent{kMax, kMax}) == Extent{kMax, kMax});
 }

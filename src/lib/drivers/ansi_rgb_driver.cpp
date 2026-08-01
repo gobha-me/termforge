@@ -79,16 +79,14 @@ auto AnsiRgbDriver::draw_image(Rect cells, const Image& image)
 
 auto AnsiRgbDriver::draw_image(Rect cells, const EncodedImage& image)
     -> std::expected<void, ErrorEvent> {
-  if (auto ok = detail::validate_encoded(image, cells, "ansi_rgb"); !ok) {
+  // Includes the format check, which asks this driver's own
+  // supports_image_format() -- so the query and the emit path cannot drift.
+  // This tier builds its output character by character out of pixels it must
+  // be able to read, so anything but Rgba32 is refused there rather than
+  // shipped as bytes the terminal would render as garbage across the grid.
+  if (auto ok = detail::validate_encoded(image, cells, *this, "ansi_rgb");
+      !ok) {
     return ok;
-  }
-  if (image.format != ImageFormat::Rgba32) {
-    // No out-of-band channel and no decoder: this tier builds its output
-    // character by character out of pixels it can read. Warn and emit
-    // nothing, rather than shipping bytes the terminal will render as
-    // garbage in the middle of the cell grid.
-    return std::unexpected{detail::unsupported_format(image.format,
-                                                      "ansi_rgb")};
   }
   return draw_rgba(cells, image.bytes, image.pixels);
 }

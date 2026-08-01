@@ -30,6 +30,7 @@
 #include <string_view>
 
 #include "termforge/core/types.hpp"
+#include "termforge/drivers/terminal_driver.hpp"
 
 namespace termforge::detail {
 
@@ -55,10 +56,32 @@ namespace termforge::detail {
                std::to_integer<std::uint8_t>(rgba[i + 3])};
 }
 
+// An ImageFormat's spelling, for diagnostics. An exhaustive switch rather than
+// a ternary: a third enumerator added later must not silently come out named
+// as one of these two, and -Wswitch (an error under CI's -Werror) is what
+// stops it.
+[[nodiscard]] inline auto format_name(ImageFormat format) noexcept
+    -> std::string_view {
+  switch (format) {
+    case ImageFormat::Rgba32: return "Rgba32";
+    case ImageFormat::Png:    return "Png";
+  }
+  return "?";
+}
+
 // The guards every tier applies before it looks at an EncodedImage. `source`
 // is the driver's name, so the ErrorEvent points at the tier that refused.
+//
+// `driver` is taken by reference for one reason: the format check below asks
+// supports_image_format() rather than restating each tier's answer. Those two
+// CANNOT then disagree — a driver that says it cannot carry a format also
+// refuses to try, structurally, rather than because a test noticed. It also
+// means a new tier gets the refusal for free by answering one query, which is
+// the same bargain preferred_pixel_extent already offers.
 [[nodiscard]] inline auto validate_encoded(const EncodedImage& image,
-                                           Rect cells, std::string_view source)
+                                           Rect cells,
+                                           const TerminalDriver& driver,
+                                           std::string_view source)
     -> std::expected<void, ErrorEvent> {
   // Message strings match the Image overload's on every tier: an application
   // matching on them should not have to care which overload it called.
@@ -69,6 +92,15 @@ namespace termforge::detail {
   if (cells.empty()) {
     return std::unexpected{ErrorEvent{Severity::Warning, std::string{source},
                                       "draw_image: empty destination rect"}};
+  }
+  if (!driver.supports_image_format(image.format)) {
+    // Never a guess, and never a silent success that draws nothing: a tier
+    // with no decoder for this payload emits nothing and says why.
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, std::string{source},
+        std::format("draw_image: this tier cannot decode ImageFormat::{} -- "
+                    "ask supports_image_format() before drawing",
+                    format_name(image.format))}};
   }
   if (image.format == ImageFormat::Rgba32) {
     // In 64 bits deliberately. `w * h * 4` in int overflows for extents a
@@ -86,20 +118,6 @@ namespace termforge::detail {
     }
   }
   return {};
-}
-
-// The answer a tier with no opaque-payload channel gives for a format it
-// cannot decode. A Warning and no output -- never a guess, and never a
-// silent success that draws nothing.
-[[nodiscard]] inline auto unsupported_format(ImageFormat format,
-                                             std::string_view source)
-    -> ErrorEvent {
-  const std::string_view name = format == ImageFormat::Png ? "Png" : "Rgba32";
-  return ErrorEvent{
-      Severity::Warning, std::string{source},
-      std::format("draw_image: this tier cannot decode ImageFormat::{} -- "
-                  "ask supports_image_format() before drawing",
-                  name)};
 }
 
 }  // namespace termforge::detail

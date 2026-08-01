@@ -73,15 +73,13 @@ auto FallbackDriver::draw_image(Rect cells, const Image& image)
 
 auto FallbackDriver::draw_image(Rect cells, const EncodedImage& image)
     -> std::expected<void, ErrorEvent> {
-  if (auto ok = detail::validate_encoded(image, cells, "fallback"); !ok) {
+  // Includes the format check, via this driver's own supports_image_format().
+  // The floor tier reads pixels to pick a ramp glyph; it cannot read a PNG,
+  // and emitting the payload as text would spray the datastream across the
+  // cell grid.
+  if (auto ok = detail::validate_encoded(image, cells, *this, "fallback");
+      !ok) {
     return ok;
-  }
-  if (image.format != ImageFormat::Rgba32) {
-    // The floor tier reads pixels to pick a ramp glyph. It cannot read a PNG,
-    // and emitting the payload as text would spray the datastream across the
-    // cell grid, so it warns and emits nothing.
-    return std::unexpected{detail::unsupported_format(image.format,
-                                                      "fallback")};
   }
   return draw_rgba(cells, image.bytes, image.pixels);
 }

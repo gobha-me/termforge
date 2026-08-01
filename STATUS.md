@@ -63,6 +63,37 @@ ignoring the format tag (→ the format-identity test), the `Rgba32` size check 
 (→ the mismatch test), the virtual made pure (→ compile error). (3) The measured budget
 assertion in `test/37bytes`, which is the one that cannot be faked. 40/40 on GCC and Clang.
 
+**The review pass found one real bug, and it was in the new overload.**
+`image_cell_extent(Extent)`'s ceiling division adds before it divides, so
+`pixels.w + per.w - 1` in `int` is signed overflow at `INT_MAX` — UB, not a wrong
+answer. Unreachable while the only caller was the `Image` overload (an `Image` that
+wide has its pixels actually allocated); trivially reachable now, because
+`EncodedImage` is an aggregate whose extent is caller-declared and, for `Png`,
+deliberately unverified. **Widening a type's domain re-opens every arithmetic
+guard downstream of it** — the same lesson #152 wrote down about loop bounds, in a
+different shape. Now widened like `Rect::intersect`, with a test that fails as a
+plain assertion *and* trips UBSan.
+
+**Two review findings turned into structure rather than comments.** The `Png →
+Warning` branch was hand-written in both non-kitty drivers; it now lives in
+`detail::validate_encoded`, which asks the driver's own `supports_image_format()`.
+The capability query and the emit path therefore **cannot disagree** — that was a
+test before and is an invariant now, and a new tier inherits the refusal by
+answering one query. Separately, `ImageFormat → name` was a non-exhaustive ternary
+that would have silently mislabelled a third enumerator; both it and
+`ImageFormat → f=` are exhaustive switches now, so adding a format is a `-Wswitch`
+error rather than a wrong string on the wire.
+
+**And AGENTS.md was made to stop arguing with itself.** Its degradation rule said
+"severity Info" while every `draw_image` guard in the tree has always used
+`Warning`. The #163 bullet, as first written, added a *second* contradictory
+sentence to the same document. The two severities do carry a real distinction —
+`Info` is "honoured by a lesser route" (`detail/keyboard.hpp`), `Warning` is "not
+honoured, nothing drawn" (every `draw_image` guard) — so the rule now states that
+instead of a number. #152's lesson applied on purpose this time: a latent doc
+disagreement becomes a real one the moment a new case appears, so settle it in the
+same cut.
+
 ⚠ **The emulator gate is open.** This is a terminal-protocol change and
 `tools/png_repro.sh` has not been run on real hardware yet. It tests three things under
 `q=0`: `f=100` acceptance at all, **paletted (colour type 3)** PNG acceptance — the
