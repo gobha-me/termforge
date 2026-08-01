@@ -82,18 +82,29 @@ def truecolour_png(w, h, rgb_rows):
 PAL = [(20, 24, 34), (90, 70, 110), (200, 120, 90), (245, 230, 200)]
 BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
 
-# Stanza 1: 16x16 truecolour, four coloured quadrants. Deliberately the
-# simplest possible PNG -- if this fails, f=100 is unsupported outright.
-quad = [[(220, 60, 60) if (x < 8 and y < 8) else
-         (60, 200, 120) if (x >= 8 and y < 8) else
-         (60, 110, 220) if (x < 8) else
-         (240, 220, 80) for x in range(16)] for y in range(16)]
-small_rgb = truecolour_png(16, 16, quad)
-
-# Stanza 2: the same quadrants as a PALETTED png.
+# Stanzas 1 and 2 are ONE test card in two encodings, and both are built from
+# the single `qidx` below so they cannot drift apart. Same geometry AND same
+# colours is the whole point: it makes stanza 2 a DIFFERENTIAL test against
+# stanza 1, where the observer compares two images rather than judging one.
+# "Did four blocks appear?" is satisfied by a terminal that ignored the PLTE
+# entirely; "are these the same four colours as a moment ago?" is not.
+#
+# The first version of this script gave stanza 2 the plate's dither palette
+# (PAL) instead, so a correct decode rendered in different colours, the
+# "same block again?" prompt was truthfully answered NO, and a passing
+# terminal read as a failed merge gate. A verification tool that asks a
+# misleading question manufactures the failure it was written to detect.
+QUAD = [(220, 60, 60), (60, 200, 120), (60, 110, 220), (240, 220, 80)]
 qidx = [[0 if (x < 8 and y < 8) else 1 if (x >= 8 and y < 8) else
          2 if (x < 8) else 3 for x in range(16)] for y in range(16)]
-small_pal = paletted_png(16, 16, PAL, qidx)
+
+# Stanza 1: 16x16 truecolour, four coloured quadrants. Deliberately the
+# simplest possible PNG -- if this fails, f=100 is unsupported outright.
+small_rgb = truecolour_png(16, 16, [[QUAD[i] for i in row] for row in qidx])
+
+# Stanza 2: that exact card as a PALETTED png -- QUAD becomes the 4-entry
+# PLTE and the quadrants become 8-bit palette indices into it.
+small_pal = paletted_png(16, 16, QUAD, qidx)
 
 # Stanza 3: 240x160, 4 colours, ordered dither -- the downstream plate spec.
 # Radial with texture rather than a smooth ramp, because a smooth ramp zlibs
@@ -172,10 +183,10 @@ read -r -p "Did a four-colour block appear? Press Enter for stanza 2..."
 
 echo
 echo "== Stanza 2: f=100, PALETTED png (colour type 3), single chunk =="
-echo "   Same test card, 4-entry PLTE. This is the format the downstream"
-echo "   8 KB plate budget actually depends on."
+echo "   The SAME test card as stanza 1, pixel for pixel, via a 4-entry PLTE."
+echo "   This is the format the downstream 8 KB plate budget depends on."
 transmit_one "pal-png" 91 16 16 100 "$(read_b64 small_pal)"
-read -r -p "Same block again? Press Enter for stanza 3..."
+read -r -p "Same block AND the same four colours (red/green/blue/yellow)? Enter for stanza 3..."
 
 echo
 echo "== Stanza 3: f=100 CHUNKED — a 240x160 4-colour dithered plate =="
