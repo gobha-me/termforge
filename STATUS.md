@@ -6,7 +6,7 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-01)
 
-**In flight: #169 + #171 — the two features that had to compose (v0.6.11).**
+**Latest work: #169 + #171 — the two features that had to compose (v0.6.11).**
 Picked by re-reading GLOAM#7's blocker table *after* #137 shipped, which is the
 discipline that found it: row 1 is "1:1 placement of a **pre-rendered** plate", and
 a pre-rendered plate is by definition **pre-encoded**. #137 gave `Exact` to the
@@ -34,10 +34,40 @@ check it against the consumer's actual code path.**
   the thing that should have existed three releases ago: every claim in the #171
   commit was read off the byte stream, and the stanza-5 payload was decoded
   independently of its own generator.
-- **Still outstanding: the real-kitty capture.** `./tools/png_repro.sh 5` — see
-  "What the capture must answer" below.
+- **The capture passed, and for once the instrument was fixed BEFORE the run
+  rather than after.** All three commands `;OK` (`i=94`, `i=94,p=1`,
+  `i=94,p=2`), two checkerboards side by side, left visibly larger. So a
+  `f=100` payload placed with `c=`/`r=` omitted **does** render at its true
+  pixel size — which #137 had established only for `f=32`, and which does not
+  follow from it: for PNG the terminal derives the native extent from the
+  datastream and ignores the `s=`/`v=` we send.
 
-### What the capture must answer (#169)
+### What the capture answered (#169) — and the near miss that preceded it
+
+**It passed on the first run.** That is the first time in four releases the gate
+has not itself been the fault, and it is not luck: the script was reviewed *as
+code* before anyone was asked to look at anything.
+
+**The near miss is the part worth keeping.** As first written, stanza 5's comment
+claimed the stretch arm was scaled by a non-integer factor "on both axes". It was
+not. Module unevenness on an axis needs `dst*module/src` to be non-integral, and
+at kitty's nominal 16px cell height `dst_h = 16r`, so with a 64px source and 4px
+modules `dst_h*4/64 = r` — **exactly integer for every possible `r`.** The
+vertical modules were uniform *by construction*, while the narration told the
+observer to expect them uneven. An honest reading would have come back a partial
+NO against a perfectly working terminal, which is #163's failure verbatim, in the
+file written to prevent it.
+
+Two things fixed it, and both generalise:
+
+- **Compute the resample; do not eyeball the geometry.** The source is 48px now
+  (the condition becomes `dst % 12`, which holds at 8x16, 9x18, 10x20, 7x15).
+- **Demote anything that cannot hold at every cell size out of the pass
+  criterion.** Even at 48px, unevenness still fails at 6x12 and 12x24 — so the
+  script now says in so many words that even squares on the left are *not* a
+  failure. The verdict is relative SIZE, which is binary and true everywhere.
+
+Original text of the ask, kept because the reasoning is the reusable part:
 
 Run `./tools/png_repro.sh 5` in real kitty. **One transmit, two placements, live at
 the same time** — `p=1` with `c=11,r=5`, `p=2` with neither. The named uncertainties,
@@ -53,10 +83,12 @@ in the order the observer should read them:
 3. **Are the left arm's squares uneven while the right arm's are uniform?** The
    secondary signal; 1.375x and 1.25x are non-integer on purpose.
 
-Everything checkable without hardware already has been, via `--dump`: the wire
+Everything checkable without hardware was checked first, via `--dump`: the wire
 carries exactly one `a=t` and two `a=p`, the second with no `c=` and no `r=`; the
-payload decodes independently to a 64x64 colour-type-3 PNG with a 4-entry PLTE and
-uniform 4px modules. **What is left is only what a terminal can answer.**
+payload decodes — independently of the generator that produced it — to a 48x48
+colour-type-3 PNG with a 4-entry PLTE and uniform 4px modules. **Only what a
+terminal could answer was left for the terminal.** That is the whole point of
+`--dump`, and it is why this run cost one round trip instead of three.
 
 Read a part-NO against the hazard list in the #137 section below before treating it
 as a blocker — a stanza can be a deliberate demonstration of something the driver
