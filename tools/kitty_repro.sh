@@ -48,6 +48,23 @@ send() {
   fi
 }
 
+# As send(), but leaves the reply in $reply_out instead of printing it. For the
+# case where the cursor position between two commands is load-bearing (stanza
+# 6 places two images side by side) and an echoed response line would both move
+# the cursor and paint over the image classic placement draws at it.
+reply_out=''
+send_quiet() {
+  local payload=$1
+  stty raw -echo
+  printf '%s' "$payload"
+  sleep 0.3
+  reply_out=''
+  local ch
+  while IFS= read -r -t 0.05 -n 1 ch; do reply_out+=$ch; done
+  stty "$saved_stty"
+  [[ -n $reply_out ]] || reply_out='(none)'
+}
+
 echo "== Stanza 1: red 2x2 image, virtual placement, placeholder cells =="
 send "transmit(red)" "${ESC}_Ga=t,t=d,f=32,i=42,s=2,v=2,m=0,q=0;${red_b64}${ST}"
 send "place(U=1)   " "${ESC}_Ga=p,i=42,p=1,U=1,c=2,r=2,q=0${ST}"
@@ -117,36 +134,54 @@ echo "== Stanza 6: c=/r= omitted, so the terminal places at TRUE SIZE =="
 # spelling of "place at native resolution"; this stanza is the empirical check
 # that a real terminal honours it.
 #
-# A fine checkerboard is the test pattern on purpose: it is the cheapest thing
-# whose STRUCTURE a non-integer resample visibly destroys. A solid block would
-# look identical either way and prove nothing.
+# A checkerboard is the test pattern on purpose: it is the cheapest thing whose
+# STRUCTURE a non-integer resample visibly destroys. A solid block would look
+# identical either way and prove nothing. The modules are 2px rather than 1px
+# so that "are the squares the same size" is answerable by eye at native size.
+#
+# BOTH placements are on screen at once, side by side, under distinct placement
+# ids (p=1 and p=2) — never one and then the other. #163's capture reported a
+# failure against a terminal that was working perfectly, because it asked the
+# observer to JUDGE one image instead of COMPARE two. Same file, same trap.
 w='\xff\xff\xff\xff'; k='\x00\x00\x00\xff'
 row_a=''; row_b=''
-for _ in $(seq 8); do row_a+="$w$k"; row_b+="$k$w"; done
+for _ in $(seq 4); do row_a+="$w$w$k$k"; row_b+="$k$k$w$w"; done
 checker=''
-for _ in $(seq 8); do checker+="$row_a$row_b"; done
+for _ in $(seq 4); do checker+="$row_a$row_a$row_b$row_b"; done
 check_b64=$(printf "$checker" | base64 | tr -d '\n')
 
 send "transmit(chk)" \
   "${ESC}_Ga=t,t=d,f=32,i=44,s=16,v=16,m=0,q=0;${check_b64}${ST}"
 
-echo "  6a — STRETCHED into 5x3 cells (c=5,r=3). 16px over 5 cells is not an"
-echo "       integer ratio, so the squares should come out UNEVEN — some one"
-echo "       pixel wide, some two. That unevenness is the bug #137 fixes."
-send "place(c=5,r=3)" "${ESC}_Ga=p,i=44,p=1,c=5,r=3,C=1,q=0${ST}"
-printf '\n\n\n\n'
-read -r -p "Press Enter for 6b (the same image, placed exactly)..."
+echo "  LEFT  (p=1) — STRETCHED into 5x3 cells (c=5,r=3). 16px across 5 cells"
+echo "                is not an integer ratio, so the 2px squares come out"
+echo "                UNEVEN — 5px wide in places, 6px in others, and the rows"
+echo "                likewise. That unevenness is the bug #137 fixes."
+echo "  RIGHT (p=2) — EXACT: the identical a=p with c= and r= simply removed."
+echo "                Expect a much SMALLER block (16x16 device pixels, about"
+echo "                two cells) with every square the same size."
+echo
 
-send "del place    " "${ESC}_Ga=d,d=i,i=44,p=1,q=0${ST}"
-echo "  6b — EXACT: the identical a=p command with c= and r= simply removed."
-echo "       Expect a small, CRISP 16x16-pixel checkerboard (about two cells"
-echo "       wide) with every square the same size."
-send "place(no c/r)" "${ESC}_Ga=p,i=44,p=1,C=1,q=0${ST}"
-printf '\n\n\n'
+# Reserve rows for the images, then step back up to the top of them. Both
+# placements use C=1 so the cursor does not move, which is what lets the second
+# be positioned relative to the first. The responses are held back and printed
+# below the block: send()'s own echo would otherwise land on top of the images.
+printf '\n\n\n\n\n'
+printf '%s[5A' "$ESC"
+send_quiet "${ESC}_Ga=p,i=44,p=1,c=5,r=3,C=1,q=0${ST}"; r6a=$reply_out
+printf '%s[7C' "$ESC"
+send_quiet "${ESC}_Ga=p,i=44,p=2,C=1,q=0${ST}"; r6b=$reply_out
+printf '%s[5B\r' "$ESC"
+
+printf 'place(c=5,r=3) response: %q\n' "$r6a"
+printf 'place(no c/r)  response: %q\n' "$r6b"
 
 echo
 echo "Report: (a) stanza 1 red block, (b) green after stanza 2, (c) stanza 3"
 echo "blue block, (d) YELLOW block after stanza 4, (e) stanza 5 shows a"
-echo "green 2x2 block, (f) stanza 6a's squares uneven and 6b's even — and"
-echo "whether 6b rendered AT ALL, since omitting c=/r= is the whole of #137,"
-echo "(g) any response containing ';E' (an error)."
+echo "green 2x2 block, (f) for stanza 6, COMPARING the two blocks side by"
+echo "side: did the RIGHT one render at all — and if so, is it much smaller"
+echo "than the left with even, crisp squares, while the left is larger with"
+echo "uneven ones? A blank right-hand side is a real answer, not a bug in this"
+echo "script; it would mean this kitty needs c=/r=. (g) any response"
+echo "containing ';E' (an error)."
