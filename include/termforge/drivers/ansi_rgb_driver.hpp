@@ -35,6 +35,12 @@ class AnsiRgbDriver final : public TerminalDriver {
   // and the image covers only the half-cells it has pixels for (#137).
   auto draw_image(Rect cells, const Image& image, PlacementFit fit)
       -> std::expected<void, ErrorEvent> override;
+  // The two composed (#169). Only Rgba32 reaches the emit path here, and
+  // validate_encoded has already matched its length to the declared extent --
+  // so this tier extends no new trust at all, and Exact's identity map into
+  // the caller's span is in bounds by construction.
+  auto draw_image(Rect cells, const EncodedImage& image, PlacementFit fit)
+      -> std::expected<void, ErrorEvent> override;
   using TerminalDriver::draw_image;
   // supports_image_format is NOT overridden here. The base answers
   // Rgba32-only, which is this tier's exact truth; restating it would be dead

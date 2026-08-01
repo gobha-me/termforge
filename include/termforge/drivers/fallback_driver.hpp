@@ -32,6 +32,11 @@ class FallbackDriver final : public TerminalDriver {
   // (#137).
   auto draw_image(Rect cells, const Image& image, PlacementFit fit)
       -> std::expected<void, ErrorEvent> override;
+  // The two composed (#169). As on the half-block tier, only Rgba32 gets this
+  // far, so the extent Exact indexes against is the one validate_encoded has
+  // already checked against the buffer length.
+  auto draw_image(Rect cells, const EncodedImage& image, PlacementFit fit)
+      -> std::expected<void, ErrorEvent> override;
   using TerminalDriver::draw_image;
   // supports_image_format is NOT overridden: the base already answers
   // Rgba32-only, which is this tier's exact truth.
