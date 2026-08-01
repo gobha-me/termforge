@@ -139,24 +139,65 @@ class TerminalDriver {
   // channel -- a Warning, per the degradation-is-an-event rule, rather than a
   // silent no-draw.
   //
-  // THIRD-PARTY DRIVERS: overriding any ONE of the three `draw_image`
+  // THIRD-PARTY DRIVERS: overriding any ONE of the four `draw_image`
   // overloads hides ALL of them for calls made through your concrete type --
   // name hiding in C++ is by name, not by signature. Add
   // `using TerminalDriver::draw_image;` to your class to unhide them.
   // Dispatch through TerminalDriver& is unaffected either way, and the
   // failure mode is a compile error rather than a silent miscall.
   //
-  // This overload takes no PlacementFit. Deliberate, and deferred rather than
-  // forgotten: for Png the library never parses the header, so the only pixel
-  // extent it could enforce a fit against is the caller-DECLARED one, which
-  // EncodedImage::pixels documents as unverifiable. Letting an unverifiable
-  // number decide what we emit is a real change in posture and wants its own
-  // ticket, not a rider on this one.
+  // This overload IS the Stretch case; the three-argument one below is the
+  // general form (#169). It stays non-pure and stays the primitive the drivers
+  // override, so a driver written against #163 needs no change on upgrade.
   virtual auto draw_image(Rect /*cells*/, const EncodedImage& /*image*/)
       -> std::expected<void, ErrorEvent> {
     return std::unexpected{
         ErrorEvent{Severity::Warning, "driver",
                    "draw_image: this tier cannot transmit a pre-encoded image"}};
+  }
+
+  // As above, but with the placement policy named (#169) -- the overload that
+  // makes #163's wire saving and #137's opt-out from stretch COMPOSE. A
+  // pre-rendered plate is by definition pre-encoded, so before this the one
+  // combination an application shipping baked art actually wants could not be
+  // expressed.
+  //
+  // Not pure; the default DELEGATES for Stretch; the branch tests the ENUM and
+  // not supports_placement_fit(); no default argument. All four for exactly
+  // the reasons spelled out on the Image/PlacementFit overload above, and the
+  // delegation means a #163-era driver that overrode only the two-argument
+  // EncodedImage overload keeps running its OWN implementation under Stretch.
+  //
+  // THE FIT IS ENFORCED AGAINST THE CALLER-DECLARED EXTENT
+  // (EncodedImage::pixels), for BOTH formats, with no Png/Rgba32 asymmetry.
+  // #163 deferred this overload on the grounds that for Png that number is
+  // unverifiable. The answer is that it is the only number that exists, and
+  // the library already rests on it everywhere else: s=/v= are emitted from
+  // it, the content hash is keyed on it, and image_cell_extent(Extent) -- how
+  // a caller SIZES a rect for Exact -- answers from it. A caller reaching for
+  // Exact is already trusting it, so making the fit the one place that does
+  // not would be a rule to memorise rather than a safeguard. Nothing here
+  // parses the payload, and nothing here needs to: Rgba32 is still checked
+  // against its buffer length as far as a length can check an extent, and Png
+  // is still not checked at all.
+  //
+  // WHAT A LYING DECLARATION COSTS is placement, never memory safety -- the
+  // tiers that INDEX the payload accept only Rgba32, whose length has already
+  // been matched to the declared extent, so Exact's identity map is in bounds
+  // by construction. Over-declare and Exact refuses a rect the image would
+  // have fitted. UNDER-declare a Png to kitty and the fit guard approves a
+  // rect the terminal then PAINTS OUTSIDE: it reads f=100 geometry out of the
+  // datastream and ignores our s=/v=, and Exact has omitted the c=/r= that
+  // would have clamped it. That is the one input which breaks Exact's promise
+  // to leave the rest of the rect as it was, and it is stated plainly here
+  // rather than softened to "misplaced" -- Stretch cannot do it, because there
+  // c=/r= dominate.
+  virtual auto draw_image(Rect cells, const EncodedImage& image,
+                          PlacementFit fit) -> std::expected<void, ErrorEvent> {
+    if (fit == PlacementFit::Stretch) return draw_image(cells, image);
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "draw_image: this tier cannot place with PlacementFit::Exact"}};
   }
 
   // Whether `f` can actually be drawn on this tier, askable WITHOUT drawing.
