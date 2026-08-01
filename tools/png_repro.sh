@@ -154,23 +154,33 @@ for y in range(160):
     rows.append(row)
 plate = paletted_png(240, 160, PAL, rows)
 
-# Stanza 5 (#169): a paletted checkerboard with 4px modules. The pattern is
-# chosen so the eye can actually answer the question:
+# Stanza 5 (#169): a paletted checkerboard with 4px modules.
 #
 #  - LEAD WITH RELATIVE SIZE. "is the left one bigger than the right one" is
-#    binary and survives a small image; "are the squares even" does not.
+#    binary, needs no reference, and is true at EVERY cell geometry. It is the
+#    only thing the stanza actually asserts.
 #  - 4px modules, not 1px. At native size 1px modules are a grey smudge, and
 #    an unanswerable question is how an ambiguous report gets written.
-#  - The stretch arm's rect is 88x80 against a 64x64 source, so the scale is
-#    1.375x and 1.25x -- NON-INTEGER on both axes. An integer factor would
-#    resample cleanly and hide the artefact; this makes module widths visibly
-#    uneven, which is the secondary signal after size.
+#
+# 48, NOT 64, and the arithmetic is the whole reason. Module unevenness on an
+# axis requires dst*module/src to be non-integral. The first version of this
+# stanza used a 64px source into c=11,r=5, and at kitty's nominal 16px cell
+# height dst_h = 16r, so dst_h*4/64 = r -- EXACTLY INTEGER for every possible
+# r. The vertical modules were uniform by construction while the comment
+# claimed "non-integer on both axes", so an honest observer checking rows
+# would have reported a partial NO against a perfectly working terminal.
+# Caught by computing the resample rather than by looking at it.
+#
+# With src 48 and module 4 the condition is dst % 12 != 0, which holds on both
+# axes at 8x16, 9x18, 10x20 and 7x15. It still fails at 6x12 and 12x24, which
+# is why unevenness is asked as a SECONDARY observation below and never as the
+# pass criterion.
 #
 # Paletted (colour type 3) like the plate, because f=100 + colour type 3 is
 # the combination the downstream budget actually depends on.
-card = paletted_png(64, 64, QUAD,
+card = paletted_png(48, 48, QUAD,
                     [[0 if ((x // 4) + (y // 4)) % 2 == 0 else 3
-                      for x in range(64)] for y in range(64)])
+                      for x in range(48)] for y in range(48)])
 
 # Stanza 4 control: the identical plate as raw RGBA.
 rgba = bytearray()
@@ -198,7 +208,17 @@ raw_size() { cut -d' ' -f1 "$WORK/$1.size"; }
 
 saved_stty=''
 if ((! dump)); then
-  saved_stty=$(stty -g)
+  # Hard-fail rather than degrade. Without a tty every send() would return
+  # "response: (none)" and the script would print a complete, plausible,
+  # exit-0 report of a run that reached no terminal at all -- the single most
+  # dangerous output this file can produce, because it is indistinguishable
+  # from a terminal that accepted everything silently. Redirecting stdout to
+  # capture the transcript is the natural way to hit it.
+  saved_stty=$(stty -g 2>/dev/null) || {
+    echo "$0: needs a real terminal on stdin (or --dump to emit the wire" >&2
+    echo "    with no tty). Refusing to report on a run that cannot happen." >&2
+    exit 3
+  }
 fi
 restore() { [[ -n $saved_stty ]] && stty "$saved_stty"; return 0; }
 trap 'restore; rm -rf "$WORK"' EXIT
@@ -352,31 +372,44 @@ stanza_4() {
 stanza_5() {
   say ""
   say "== Stanza 5 (#169): the same PNG stretched (left) vs native (right) =="
-  say "   64x64 paletted checkerboard, 4px modules, transmitted ONCE as f=100."
-  say "   Left  (p=1): c=11,r=5 -- the terminal resamples it to 88x80."
-  say "   Right (p=2): no c=, no r= -- placed at its own 64x64."
+  say "   48x48 paletted checkerboard, 4px modules, transmitted ONCE as f=100."
+  say "   Left  (p=1): c=11,r=5 -- the terminal resamples it to fill the rect."
+  say "   Right (p=2): no c=, no r= -- placed at its own 48x48."
   send "card transmit" \
-    "${ESC}_Ga=t,t=d,f=100,i=94,s=64,v=64,m=0,q=0;$(read_b64 card)${ST}"
+    "${ESC}_Ga=t,t=d,f=100,i=94,s=48,v=48,m=0,q=0;$(read_b64 card)${ST}"
 
-  local r5a r5b
-  local i
-  for ((i = 0; i < 7; i++)); do printf '\n'; done
-  printf '%s[7A' "$ESC"
+  # 8 rows reserved, not 5. The left arm is 5 rows by construction (r=5), but
+  # the right arm is 48 PIXELS and its height in rows is ceil(48/cell_h),
+  # which this script cannot know -- it is the one placement here not sized in
+  # cells, which is the entire point of it. 8 covers every cell height down to
+  # 6px. Under-reserving would print the response lines over the bottom of the
+  # native arm, which is #171 reintroduced on the one arm that matters most.
+  local r5a r5b i
+  for ((i = 0; i < 8; i++)); do printf '\n'; done
+  printf '%s[8A' "$ESC"
   send_quiet "${ESC}_Ga=p,i=94,p=1,c=11,r=5,C=1,q=0${ST}"
   r5a=$reply_out
   printf '%s[14C' "$ESC"
   send_quiet "${ESC}_Ga=p,i=94,p=2,C=1,q=0${ST}"
   r5b=$reply_out
-  printf '%s[7B\r' "$ESC"
+  printf '%s[8B\r' "$ESC"
 
   say "$(printf 'place(c=11,r=5) response: %q' "$r5a")"
   say "$(printf 'place(no c/r)   response: %q' "$r5b")"
   say ""
-  say "   THE QUESTION, in order: (a) are there TWO checkerboards side by"
-  say "   side, (b) is the LEFT one visibly LARGER than the right, and"
-  say "   (c) are the left one's squares uneven while the right one's are"
-  say "   uniform? (b) is the one that matters; 88x80 from a 64x64 source is"
-  say "   a non-integer scale on both axes, which is what makes (c) visible."
+  say "   THE QUESTION: (a) are there TWO checkerboards side by side, and"
+  say "   (b) is the LEFT one visibly LARGER than the right one?"
+  say ""
+  say "   (b) is the pass criterion and the only one. If it holds, omitting"
+  say "   c=/r= placed the image at its own resolution, which is the whole"
+  say "   ticket."
+  say ""
+  say "   Secondary, worth noting but NOT a pass criterion: the left arm's"
+  say "   squares should look slightly uneven and the right arm's uniform."
+  say "   That depends on your cell size dividing the resample -- at some"
+  say "   cell geometries the left arm is evenly scaled too. Even squares on"
+  say "   the left are NOT a failure; a left arm the same size as the right"
+  say "   one is."
   pause "Press Enter to finish..."
 }
 

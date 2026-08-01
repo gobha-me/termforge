@@ -198,6 +198,22 @@ class TerminalDriver {
   // well. So is the two-argument `draw_image(rect, {})`, and has been since
   // #163. Both are hard errors naming both candidates, never a silent miscall;
   // spell the type (`Image{}` / `EncodedImage{}`) if you want an empty one.
+  //
+  // ⚠ THIRD-PARTY DRIVERS, THE ONE WAY TO HANG YOURSELF HERE. This default
+  // delegates DOWN to the two-argument virtual, and all three in-tree drivers
+  // delegate the other way -- their two-argument overload calls their own
+  // three-argument one with Stretch. That pairing is only safe because they
+  // override BOTH. Override the two-argument overload as a forwarder to the
+  // three-argument one WITHOUT overriding the three-argument one and the two
+  // defaults call each other forever: `draw_image(rect, encoded)` recurses
+  // until the stack is gone. Verified, and it is a SIGSEGV rather than a
+  // diagnostic.
+  //
+  // So: implement the two-argument overload DIRECTLY (the #163-era shape --
+  // this default will then correctly route three-argument Stretch calls into
+  // it), or override both. Never forward from one to a sibling you inherited.
+  // The Image pair cannot do this: its two-argument overload is PURE, so
+  // there is no inherited sibling to forward into.
   virtual auto draw_image(Rect cells, const EncodedImage& image,
                           PlacementFit fit) -> std::expected<void, ErrorEvent> {
     if (fit == PlacementFit::Stretch) return draw_image(cells, image);

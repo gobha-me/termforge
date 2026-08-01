@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstddef>
 #include <span>
 #include <string>
@@ -964,6 +965,140 @@ TEST_CASE("encoded: the resampling tiers refuse an oversize extent too") {
     CHECK(r.error().source == "fallback");
     CHECK(out.empty());
   }
+}
+
+TEST_CASE("encoded: Exact maps 1:1 on the resampling tiers, and covers no more") {
+  // The gap a review mutation found: without this, hardcoding Stretch back
+  // into ansi_rgb's and fallback's encoded emit leaves the WHOLE SUITE green.
+  // The refusal cases fire inside validate_fit, before draw_rgba is reached,
+  // and the byte-identity case pins only Stretch -- so nothing here observed
+  // the one line that actually carries `fit` to the pixels on these tiers.
+  //
+  // A 3x2 source into a 6x4 rect. Under Stretch every cell is painted; under
+  // Exact only the image's own cover is, and the rest is left alone.
+  const Image art = checker(3, 2, kA, kB);
+  const EncodedImage img = as_encoded(art);
+  const Rect dest{0, 0, 6, 4};
+
+  // Count painted CELLS: skip whole CSI sequences (these tiers emit SGR
+  // colour runs as well as cursor moves, so "skip to the next H" is wrong),
+  // and count UTF-8 lead bytes rather than bytes, because the half-block
+  // tier's glyph is three bytes wide.
+  auto painted_cells = [](std::string_view v) {
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < v.size();) {
+      if (v[i] == '\033') {
+        REQUIRE(i + 1 < v.size());
+        REQUIRE(v[i + 1] == '[');
+        i += 2;
+        while (i < v.size() && (std::isdigit(static_cast<unsigned char>(v[i])) ||
+                                v[i] == ';')) {
+          ++i;
+        }
+        REQUIRE(i < v.size());  // the final byte
+        ++i;
+      } else {
+        if ((static_cast<unsigned char>(v[i]) & 0xC0U) != 0x80U) ++n;
+        ++i;
+      }
+    }
+    return n;
+  };
+
+  SECTION("fallback: one source pixel per ramp glyph") {
+    std::string s, e;
+    FallbackDriver ds;
+    ds.set_output(&s);
+    REQUIRE(ds.draw_image(dest, img, PlacementFit::Stretch));
+    ds.flush();
+    FallbackDriver de;
+    de.set_output(&e);
+    REQUIRE(de.draw_image(dest, img, PlacementFit::Exact));
+    de.flush();
+    // 24 cells stretched, 3x2 = 6 exact. The inequality is the assertion; the
+    // exact count pins that Exact covered its own extent and not one cell more.
+    CHECK(painted_cells(s) == 24);
+    CHECK(painted_cells(e) == 6);
+  }
+  SECTION("ansi_rgb: half-blocks, two source rows per cell row") {
+    std::string s, e;
+    AnsiRgbDriver ds;
+    ds.set_output(&s);
+    REQUIRE(ds.draw_image(dest, img, PlacementFit::Stretch));
+    ds.flush();
+    AnsiRgbDriver de;
+    de.set_output(&e);
+    REQUIRE(de.draw_image(dest, img, PlacementFit::Exact));
+    de.flush();
+    CHECK(painted_cells(s) == 24);
+    // 3 wide, and 2 source rows is one half-block row.
+    CHECK(painted_cells(e) == 3);
+  }
+}
+
+TEST_CASE("encoded: an empty rect is refused as EMPTY, not as a fit failure") {
+  // The validation ORDER, which three drivers assert in prose and nothing
+  // asserted in code -- swapping validate_encoded and validate_fit left all
+  // 41 suites green. validate_fit measures the rect with
+  // preferred_pixel_extent(), which is Extent{} for an empty one, so the
+  // reversed order answers a question about pixels when the caller's mistake
+  // was the rect. The message is the only observable difference.
+  const Image art = checker(2, 2, kA, kB);
+  const EncodedImage img = as_encoded(art);
+
+  auto check = [&](auto& d, std::string_view source) {
+    std::string out;
+    d.set_output(&out);
+    const auto r = d.draw_image(Rect{0, 0, 0, 0}, img, PlacementFit::Exact);
+    d.flush();
+    REQUIRE_FALSE(r);
+    CHECK(r.error().source == source);
+    CHECK(r.error().message == "draw_image: empty destination rect");
+    CHECK(out.empty());
+  };
+
+  SECTION("kitty") {
+    KittyDriver d;
+    check(d, "kitty");
+  }
+  SECTION("ansi_rgb") {
+    AnsiRgbDriver d;
+    check(d, "ansi_rgb");
+  }
+  SECTION("fallback") {
+    FallbackDriver d;
+    check(d, "fallback");
+  }
+}
+
+TEST_CASE("encoded: Exact is refused under placeholders, on this overload too") {
+  // supports_placement_fit is RUNTIME state on kitty, and the encoded path
+  // consults it through the same validate_fit as the Image path. Asserted
+  // here because placeholders are the one mode where place_unicode ignores
+  // the fit entirely -- drop the tier check and an Exact encoded draw would
+  // silently become a stretched placeholder placement.
+  const Image art = checker(8, 8, kA, kB);
+  const EncodedImage img = as_encoded(art);
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+
+  CHECK_FALSE(d.supports_placement_fit(PlacementFit::Exact));
+  const auto r = d.draw_image(Rect{0, 0, 4, 4}, img, PlacementFit::Exact);
+  REQUIRE_FALSE(r);
+  CHECK(r.error().source == "kitty");
+  d.flush();
+  CHECK(out.empty());
+  // ...and Stretch still works in the same mode, so the refusal is about the
+  // fit and not about placeholders being broken on this overload.
+  KittyDriver ok;
+  std::string good;
+  ok.set_output(&good);
+  ok.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  REQUIRE(ok.draw_image(Rect{0, 0, 4, 4}, img, PlacementFit::Stretch));
+  ok.flush();
+  CHECK_FALSE(good.empty());
 }
 
 TEST_CASE("encoded: changing only the fit re-places, without retransmitting") {

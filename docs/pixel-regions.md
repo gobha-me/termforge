@@ -431,6 +431,13 @@ Having an opinion would mean owning a decoder — the dependency the whole desig
 exists to avoid — so the disagreement is not an error the library can see or
 will invent.
 
+> Since #169 that sentence needs one qualifier: the disagreement is still never
+> detected, but under `PlacementFit::Exact` the *declared* extent decides
+> whether the call is refused, so a lying declaration can be refused for not
+> fitting even though nothing looked at the payload. See
+> [The declared extent decides the fit](#the-declared-extent-decides-the-fit-169)
+> below.
+
 ### The declared extent decides the fit (#169)
 
 `PlacementFit::Exact` on this overload is enforced against `pixels` — the

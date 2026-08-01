@@ -307,6 +307,9 @@ auto KittyDriver::draw_image(Rect cells, const Image& image, PlacementFit fit)
 
 auto KittyDriver::draw_image(Rect cells, const EncodedImage& image)
     -> std::expected<void, ErrorEvent> {
+  // Safe ONLY because the three-argument overload below is also overridden
+  // here; see TerminalDriver for why forwarding to an INHERITED sibling
+  // instead recurses until the stack is gone.
   // The two-argument overload IS the Stretch case, exactly as on the Image
   // pair above. "the encoded Stretch path emits byte-for-byte what it emitted
   // before #169" is then structural rather than a promise a test has to keep.

@@ -100,6 +100,9 @@ auto FallbackDriver::draw_image(Rect cells, const Image& image,
 
 auto FallbackDriver::draw_image(Rect cells, const EncodedImage& image)
     -> std::expected<void, ErrorEvent> {
+  // Safe ONLY because the three-argument overload below is also overridden
+  // here; see TerminalDriver for why forwarding to an INHERITED sibling
+  // instead recurses until the stack is gone.
   return draw_image(cells, image, PlacementFit::Stretch);
 }
 
