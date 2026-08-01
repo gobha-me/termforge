@@ -84,6 +84,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y g++-14
 
+      # -fsanitize=address is absent here on purpose: it comes from the
+      # toolchain file, which is what makes this job a live test of
+      # cmake/toolchain/address.cmake. Inlining address alongside undefined
+      # would still build sanitized, so a toolchain regression that drops the
+      # flag would go unnoticed -- the silent-unsanitized-build bug #14 fixed.
+      # Only the undefined half travels via CMAKE_CXX_FLAGS.
       - name: Configure (ASan + UBSan)
         run: >
           cmake -B build
