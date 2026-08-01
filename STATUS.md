@@ -4,9 +4,50 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-07-31)
+## Where we are (2026-08-01)
 
-**Latest work: #163 — a pre-encoded image payload path, shipped verbatim (v0.6.9).**
+**Latest work: #137 — `PlacementFit::Exact`, opting out of stretch-to-fill (in flight).**
+Picked because the priority signal lives in the *consumer* trackers: GLOAM#7, its
+centrepiece and explicitly "build it first", names **#137 first** in its blocker table.
+#83 closed and made stretch-to-fill the written contract, which GLOAM's SPEC §3.2 rules
+out by name — resampling a pre-dithered plate is the dither crawl it exists to avoid. The
+blocker did not go away when #83 closed; it **moved**.
+
+**The bug class is general.** A policy correct for content an app *generates* applied
+unconditionally to content it *ships*. A widget that rasterizes re-renders at
+`preferred_pixel_extent`; a QR module grid, a dithered plate or a hairline rule cannot,
+and a 1.0125x nearest-neighbour stretch corrupts them silently — the QR still looks right
+and stops scanning.
+
+**Two things the issue body got wrong or missed, both found before writing code:**
+
+- **Its API sketch is unusable.** A defaulted third parameter on the *pure* virtual would
+  be ambiguous against the existing two-argument overload at every call site in and out of
+  the tree — and defaults on virtuals bind statically. #163's non-pure-virtual shape is the
+  answer, with the base's `Stretch` branch *delegating* to the pure virtual so an
+  out-of-tree driver's own implementation is what runs.
+- **The slot cache would have swallowed the whole feature.** `region_key` is destination
+  geometry and `payload_hash` is content, so the same image redrawn to the same rect under
+  a new fit matches both and the driver emits *nothing*. `RegionSlot::fit` fixes it, and
+  the fix is billed to `image_edit` rather than forcing a 205 KB retransmit.
+
+**The base default tests the enum, not `supports_placement_fit`** — a deliberate exception
+to #163's shared-branch rule. Routing it through the query would mean a driver that claims
+`Exact` and forgets to implement it gets a silent stretch, which is this ticket's own bug
+one level up. There is a driver in the suite that lies about the query to pin it.
+
+**`Exact` is Classic-only on kitty**; under placeholders the painted cell grid and the
+placement extent must agree by construction, so it refuses. That is #115.
+`AnsiRgbDriver`/`FallbackDriver` *do* implement it (identity map instead of
+`sample_index`), because what `Exact` promises is no *resampling*, not device pixels —
+refusing would make the feature kitty-only while looking portable.
+
+**16 mutations, all killed**, including "make the new virtual pure", which fails to
+*compile* on `test/support/legacy_driver.hpp`. One test gap that mutation found and reading
+did not: the fallback-tier case counted glyphs without checking *which* glyphs, so a
+resample painting the right number of wrong pixels survived. Counting is not asserting.
+
+**Previously: #163 — a pre-encoded image payload path, shipped verbatim (v0.6.9).**
 The ticket #139's meter *created*: with a number attached, "images are a bit fat" became
 "a 240x160 plate costs 205,283 bytes against a recorded budget of 8,192." `transmit()`
 emitted `f=32` and nothing else, so the wire cost of a plate was `w*h*4*4/3` no matter how

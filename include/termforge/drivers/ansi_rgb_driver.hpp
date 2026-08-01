@@ -31,10 +31,19 @@ class AnsiRgbDriver final : public TerminalDriver {
   // character out of pixels it must be able to read (#163).
   auto draw_image(Rect cells, const EncodedImage& image)
       -> std::expected<void, ErrorEvent> override;
+  // Exact resamples nothing: the source->destination map becomes the identity
+  // and the image covers only the half-cells it has pixels for (#137).
+  auto draw_image(Rect cells, const Image& image, PlacementFit fit)
+      -> std::expected<void, ErrorEvent> override;
   using TerminalDriver::draw_image;
   // supports_image_format is NOT overridden here. The base answers
   // Rgba32-only, which is this tier's exact truth; restating it would be dead
   // code that also masks a regression of the base's default.
+  //
+  // supports_placement_fit IS overridden, and the asymmetry is the point: the
+  // base answers Stretch-only, which is NOT this tier's truth.
+  [[nodiscard]] auto supports_placement_fit(PlacementFit f) const noexcept
+      -> bool override;
   //
   // Two pixel rows per cell (the half-block split), one pixel per column.
   [[nodiscard]] auto preferred_pixel_extent(Rect cells) const noexcept
@@ -52,8 +61,8 @@ class AnsiRgbDriver final : public TerminalDriver {
   // directly. Reconstructing an Image from the span instead would allocate
   // and copy w*h*4 bytes per frame -- 153 KB for a 240x160 plate, the exact
   // cost #84 removed from the pixel-region path.
-  auto draw_rgba(Rect cells, std::span<const std::byte> rgba, Extent px)
-      -> std::expected<void, ErrorEvent>;
+  auto draw_rgba(Rect cells, std::span<const std::byte> rgba, Extent px,
+                 PlacementFit fit) -> std::expected<void, ErrorEvent>;
 
   // Pack an Rgb into a single int for fast inequality checks (-1 = unset).
   static constexpr auto rgb_id(Rgb c) -> int {

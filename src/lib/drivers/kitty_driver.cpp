@@ -9,6 +9,7 @@
 
 #include "detail/base64.hpp"
 #include "detail/encoded.hpp"
+#include "detail/placement.hpp"
 #include "detail/sgr_attrs.hpp"
 
 namespace termforge {
@@ -250,7 +251,39 @@ auto KittyDriver::supports_image_format(ImageFormat f) const noexcept -> bool {
   return false;
 }
 
+auto KittyDriver::supports_placement_fit(PlacementFit f) const noexcept
+    -> bool {
+  // Exhaustive switch rather than a ternary, for the same reason
+  // supports_image_format is one.
+  switch (f) {
+    case PlacementFit::Stretch:
+      return true;
+    case PlacementFit::Exact:
+      // Classic only. Under Unicode placeholders the image is displayed
+      // THROUGH a cell grid this driver paints, and the virtual placement's
+      // c=/r= declare the footprint those diacritics index into -- so grid
+      // and extent must agree by construction. Omitting c=/r= from a U=1
+      // placement does not mean 1:1; it means the terminal infers a footprint
+      // that the already-painted grid then indexes into. The only
+      // implementable reading is to place at image_cell_extent() instead,
+      // which either paints outside the rect the caller named or clips the
+      // image -- and clipping is the silent loss draw_payload's comment
+      // already rules out. Placeholders plus Exact is really placeholders
+      // plus sub-cell offsets, which is #115.
+      return m_mode == PlacementMode::Classic;
+  }
+  return false;
+}
+
 auto KittyDriver::draw_image(Rect cells, const Image& image)
+    -> std::expected<void, ErrorEvent> {
+  // The two-argument overload IS the Stretch case -- not a parallel
+  // implementation of it. "Stretch emits byte-for-byte what it emitted before
+  // #137" is then structurally true rather than a promise a test has to keep.
+  return draw_image(cells, image, PlacementFit::Stretch);
+}
+
+auto KittyDriver::draw_image(Rect cells, const Image& image, PlacementFit fit)
     -> std::expected<void, ErrorEvent> {
   if (image.empty()) {
     return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
@@ -260,8 +293,16 @@ auto KittyDriver::draw_image(Rect cells, const Image& image)
     return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
                                       "draw_image: empty destination rect"}};
   }
+  // Before draw_payload, never after: a refusal must not have paid for an
+  // upload it then declines to place.
+  if (auto ok = detail::validate_fit(fit, cells,
+                                     Extent{image.width(), image.height()},
+                                     *this, "kitty");
+      !ok) {
+    return ok;
+  }
   return draw_payload(cells, std::as_bytes(image.pixels()), kFormatRgba32,
-                      Extent{image.width(), image.height()});
+                      Extent{image.width(), image.height()}, fit);
 }
 
 auto KittyDriver::draw_image(Rect cells, const EncodedImage& image)
@@ -273,12 +314,14 @@ auto KittyDriver::draw_image(Rect cells, const EncodedImage& image)
   if (auto ok = detail::validate_encoded(image, cells, *this, "kitty"); !ok) {
     return ok;
   }
+  // Always Stretch: the EncodedImage overload takes no PlacementFit (see
+  // terminal_driver.hpp for why it is deferred rather than forgotten).
   return draw_payload(cells, image.bytes, wire_format(image.format),
-                      image.pixels);
+                      image.pixels, PlacementFit::Stretch);
 }
 
 auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
-                               int format_code, Extent px)
+                               int format_code, Extent px, PlacementFit fit)
     -> std::expected<void, ErrorEvent> {
   // Unicode placeholders index cells through a 297-entry diacritic table, so
   // the *placement* cannot exceed that in either axis. Clamp the destination
@@ -333,19 +376,40 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   }
   slot.last_used = ++m_clock;  // per-draw: strictly increasing within a frame
 
+  // #137: the fit is placement state, and nothing else here can see it change.
+  // region_key is the destination geometry and payload_hash is the content, so
+  // the same image redrawn to the same rect under a DIFFERENT fit matches both
+  // — content_changed stays false, slot.placed stays true, and the driver would
+  // emit nothing at all. The opt-out would silently not take effect, which is
+  // indistinguishable from the bug it exists to fix.
+  //
+  // Not folded into region_key: two keys for one rect means two slots, two
+  // image ids and two uploads of identical pixels, with the stale slot alive
+  // until the NEXT flush's gc_regions — one frame showing both placements at
+  // z=0. Not folded into payload_hash either: that would retransmit the whole
+  // payload (205,283 bytes, measured) to change a ~30-byte placement escape,
+  // and bill those bytes to image_transmit, which lies to the #139 meter built
+  // precisely so claims like this could be falsified.
+  const bool fit_changed = slot.fit != fit;
+  slot.fit = fit;
+
   if (m_mode == PlacementMode::Classic) {
     // kitty does NOT refresh an existing classic placement when the image
     // data is replaced (verified empirically) — recreate the placement on
     // every content change. Delete + re-place land in the same flush, so
     // the swap is atomic on screen. Virtual (placeholder) placements DO
     // track the latest data, so the unicode path skips this.
-    if (content_changed && slot.placed) {
+    //
+    // A fit change needs the same treatment for the same reason: c=/r= are
+    // baked into the existing placement and re-placing without deleting would
+    // leave both live.
+    if ((content_changed || fit_changed) && slot.placed) {
       m_buf += std::format("\033_Ga=d,d=i,i={},p={},q=2\033\\",
                            slot.image_id, slot.placement_id);
       slot.placed = false;
     }
     if (!slot.placed) {
-      place_classic(slot, dest.x, dest.y, dest.w, dest.h);
+      place_classic(slot, dest.x, dest.y, dest.w, dest.h, fit);
       slot.placed = true;
     }
   } else {
@@ -478,16 +542,29 @@ auto KittyDriver::transmit(std::span<const std::byte> payload, int format_code,
   }
 }
 
-auto KittyDriver::place_classic(const RegionSlot& slot, int x, int y,
-                                int cols, int rows) -> void {
+auto KittyDriver::place_classic(const RegionSlot& slot, int x, int y, int cols,
+                                int rows, PlacementFit fit) -> void {
   // Position the cursor, then place. a=p displays a transmitted image at
   // the cursor; C=1 keeps the cursor where it is. c=/r= scale the image to
   // the destination cell rect — the terminal does the resampling, which is
   // the spec-intended usage and costs us nothing. Emitted once per slot;
   // retransmitting the image data refreshes the placement in-place.
+  //
+  // Under Exact those two keys are simply OMITTED (#137), which is the kitty
+  // protocol's own spelling of "place at true size" — c=/r= are optional
+  // precisely so a client can choose. This is not a new capability, it is one
+  // the driver used to hard-code away.
+  //
+  // Built as a fragment inside ONE format string rather than as two whole
+  // strings, so the C=1,q=2 tail cannot drift between the two branches. The
+  // allocation is nothing beside the base64 payload, and placements are only
+  // re-emitted on a content or fit change.
+  const std::string scale =
+      fit == PlacementFit::Exact ? std::string{}
+                                 : std::format(",c={},r={}", cols, rows);
   m_buf += std::format("\033[{};{}H", y + 1, x + 1);
-  m_buf += std::format("\033_Ga=p,i={},p={},c={},r={},C=1,q=2\033\\",
-                       slot.image_id, slot.placement_id, cols, rows);
+  m_buf += std::format("\033_Ga=p,i={},p={}{},C=1,q=2\033\\", slot.image_id,
+                       slot.placement_id, scale);
 }
 
 auto KittyDriver::place_unicode(const RegionSlot& slot, int x, int y,

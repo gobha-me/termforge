@@ -149,11 +149,79 @@ Each driver resolves the mismatch natively:
 | AnsiRgb | nearest-neighbour sample into a `w × 2h` grid of half-blocks | `{w, h × 2}` |
 | Fallback | nearest-neighbour sample, one ramp glyph per cell | `{w, h}` |
 
-**Stretch-to-fill, nearest neighbour, and nothing else.** Letterboxing is
-a border policy and resampling quality is a filter library; both are out
-of scope, for the same reason `Image::sub` returns the clipped overlap
-rather than padding it back out. Scaling is the *contract*, so it is not
-a degradation and raises no `ErrorEvent`.
+**Stretch-to-fill, nearest neighbour — and since #137 that is the
+*default*, not the only option.** Scaling is the contract for content a
+widget *generates*, so it is not a degradation and raises no
+`ErrorEvent`. See [Placing at native resolution](#placing-at-native-resolution)
+for the opt-out.
+
+Letterboxing is still out of scope, and resampling *quality* is still a
+filter library — both for the same reason `Image::sub` returns the
+clipped overlap rather than padding it back out.
+
+### Placing at native resolution
+
+`PlacementFit::Exact` places an image at its own pixel resolution,
+anchored top-left, with the remainder of the rect left as it was:
+
+```cpp
+enum class PlacementFit { Stretch, Exact };
+
+auto draw_image(Rect cells, const Image&, PlacementFit fit)
+    -> std::expected<void, ErrorEvent>;
+auto supports_placement_fit(PlacementFit) const noexcept -> bool;
+```
+
+The distinction is **generated versus shipped**, and it is not about
+games or art. It is about whether the pixel *grid* carries meaning. A QR
+code stretched by 1.0125 has non-uniform modules: it renders, it looks
+approximately right, and it stops scanning. Ordered dither is a periodic
+pattern, so resampling it at a non-integer ratio beats against the dither
+period into moiré. Hairlines, line art, rendered text-as-image and
+anything captured rather than drawn fail the same way — nearest neighbour
+duplicates or drops whole rows, so a 1px rule becomes 2px in places and
+0px in others. A widget that generates its image can re-rasterize at
+`preferred_pixel_extent`; a shipped asset cannot, because the authored
+pixels *are* the deliverable.
+
+**The safe call site** sizes the rect from the helper:
+
+```cpp
+const auto ext = driver.image_cell_extent(img);
+driver.draw_image(Rect{x, y, ext.w, ext.h}, img, PlacementFit::Exact);
+```
+
+`image_cell_extent` rounds *up*, and `preferred_pixel_extent` is the
+per-cell size times the cell count, so the rect it names always has at
+least as many pixels as the image. The ceiling division that used to be a
+hazard — under `Stretch` it *guaranteed* a scale, since the rounded-up
+rect is always at least as large as the image — is the guardrail under
+`Exact`. The helper flips from trap to safety rail with no change to it.
+
+An image that does *not* fit is refused with a `Warning` and nothing is
+emitted: clipping would be a silent loss for a reason the caller cannot
+see, and overflowing would paint outside the region the caller named.
+
+| tier | what `Exact` does | supported? |
+|---|---|---|
+| Kitty, classic placement | omits `c=`/`r=` — the protocol's own "place at true size" | yes |
+| Kitty, Unicode placeholders | — | **no**; the painted cell grid and the placement extent must agree by construction. That is #115 (sub-cell offsets) |
+| AnsiRgb | source→destination becomes the identity map; one source pixel per half-cell | yes |
+| Fallback | identity map, one source pixel per ramp glyph | yes |
+
+`supports_placement_fit` is **runtime**, not a property of the driver's
+type: `set_placement_mode` moves kitty's answer. Ask before committing an
+asset pipeline to it, exactly as with `supports_image_format`.
+
+On the resampling tiers a half-cell is not a square device pixel, and the
+ASCII ramp discards colour regardless — but what `Exact` promises is *no
+resampling*, and the identity map delivers exactly that. A dither survives
+as a pattern, aspect-distorted but structurally intact.
+
+An exactly-placed image will usually not fill its last row and column of
+cells (480px at a 9px cell is 53.33 cells, so 54 are reserved and 6px are
+spare). That overhang is the app's, which is correct; placing the image
+*within* the cell needs sub-cell offsets, which is #115.
 
 This is the standard DPI pattern: cells are logical units and
 `preferred_pixel_extent` is `devicePixelRatio`. A caller that merely
@@ -463,8 +531,15 @@ bars. Same widget, same code, no branching.
   half-block and ASCII tiers' `preferred_pixel_extent` is exercised only
   by direct `draw_image` callers. Widening it also changes which widgets
   get their cells blanked, so it is its own behaviour change.
-- **Letterbox / fit modes** — deliberately deferred; #83 v1 is
-  stretch-to-fill only.
+- **Letterbox / centring** — still deliberately deferred. A border policy,
+  out of scope here as it is on `Image`. `PlacementFit::Exact` (#137)
+  landed the *no-scaling* half and anchors top-left; it is not a fit mode
+  and adds no border behaviour.
+- **`PlacementFit` for the `EncodedImage` overload** — deferred: for `Png`
+  the library never parses the header, so a fit could only be enforced
+  against the caller-declared, deliberately-unverified extent.
+- **`Exact` under Unicode placeholders** — folded into #115, where
+  sub-cell offsets make it expressible.
 - **MapWidget** — tile-based maps fit naturally: `draw_pixels` renders
   the tile grid, `draw` provides the half-block approximation.
 - **Animation** — frame-based image replacement for animated widgets

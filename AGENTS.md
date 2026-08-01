@@ -68,6 +68,24 @@ file is the tactical version.
   payload: `Rgba32`'s length is derivable and is validated, `Png`'s is not and
   deliberately is not. A tier that cannot carry a format says so via
   `supports_image_format` *and* returns a `Warning` — never a guess.
+- **Scaling is the default, not the only option** (#137). Stretch-to-fill is
+  right for content a widget *generates*, because it can re-rasterize at
+  `preferred_pixel_extent`. `PlacementFit::Exact` is for content the app
+  *ships*, where the pixel grid carries meaning and a non-integer resample is a
+  silent corruption rather than a quality loss. `supports_placement_fit`
+  answers before anything is drawn, and its answer can change at runtime.
+  `Exact` anchors top-left and refuses an image that does not fit; it is not a
+  fit mode and adds no border policy.
+- **A virtual an out-of-tree driver could not have implemented is never pure.**
+  Third-party drivers are a stated extensibility goal, so a new pure virtual
+  breaks every one of them at compile time on upgrade. #163 and #137 each add a
+  NON-pure overload with an honest default — delegate where there is something
+  correct to delegate to, otherwise a `Warning`. Nothing else in the tree
+  derives from `TerminalDriver`, so CI cannot see this on its own: every such
+  addition also extends `test/support/legacy_driver.hpp`'s case, and "make the
+  virtual pure" is then a mutation that fails to *compile*. Do not give the new
+  overload a default argument either — it would be ambiguous against the
+  existing one at every call site, and defaults on virtuals bind statically.
 - **Raw mode is RAII** — `Terminal` restores termios on destruction. Never
   leave the terminal in raw mode on any exit path, **including one an exception
   takes**: a destructor is not a guarantee (an exception escaping `main`

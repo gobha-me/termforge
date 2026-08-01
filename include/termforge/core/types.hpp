@@ -330,6 +330,44 @@ struct EncodedImage {
   }
 };
 
+// ── image placement ──────────────────────────────────────────────────────
+// How a driver resolves the mismatch between an image's pixel extent and the
+// cell rect it was asked to fill (#137).
+//
+// #83 made stretch-to-fill the contract, and for what it was solving that is
+// right. But it is a policy correct for content an application GENERATES
+// applied unconditionally to content an application SHIPS, and TermForge's
+// own doc already half-states the split: a widget that generates its image
+// re-rasterizes at preferred_pixel_extent() and wants the driver to scale; a
+// pre-rendered asset cannot re-rasterize, because the authored pixels are the
+// deliverable.
+//
+// The distinction is not about games or about art. It is about whether the
+// pixel GRID carries meaning. Stretch a QR code's module grid by 1.0125 and
+// the modules stop being uniform: it renders, it looks approximately right,
+// and it stops scanning. Ordered dither is a periodic pattern, and resampling
+// it at a non-integer ratio beats against the dither period into moiré. Line
+// art, hairlines, rendered text-as-image and anything captured rather than
+// drawn fail the same way -- nearest neighbour duplicates or drops whole
+// rows, so a 1px rule becomes 2px in places and 0px in others.
+
+enum class PlacementFit {
+  // Scale the image to fill the destination rect. The contract since #83, the
+  // default, and still the right answer for anything that can be regenerated
+  // at the extent the driver asks for.
+  Stretch,
+  // Place at native resolution, anchored top-left, with the remainder of the
+  // rect left as it was. Still no letterbox and no fit modes -- centring is a
+  // border policy and borders are out of scope here as they are on Image. The
+  // one thing Exact adds is NOT SCALING.
+  //
+  // Ask supports_placement_fit() before committing to it: a tier that cannot
+  // place at native resolution refuses with a Warning rather than silently
+  // stretching, which would be indistinguishable from the bug this exists to
+  // remove.
+  Exact,
+};
+
 // ── capabilities ─────────────────────────────────────────────────────────
 // Result of probing the *terminal* (never the display server). Drives driver
 // selection.
