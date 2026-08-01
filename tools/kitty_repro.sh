@@ -5,6 +5,12 @@
 #   ./tools/kitty_repro.sh          # all six stanzas, with a pause between each
 #   ./tools/kitty_repro.sh 6        # ONLY stanza 6
 #   ./tools/kitty_repro.sh 3 4      # a subset, in the order given
+#   ./tools/kitty_repro.sh --dump   # emit the wire bytes, touch no terminal
+#
+# --dump needs no tty, so what this script EMITS can be checked before a human
+# is asked to look at anything. That is not a luxury: this file has been the
+# fault of three consecutive release gates, and in every case the terminal was
+# working. Narration goes to stderr under --dump, so stdout is pure wire.
 #
 # Take the argument form when only one stanza is in question. Most of this file
 # is settled history re-run for context, and walking an observer through five
@@ -29,6 +35,21 @@
 
 set -u
 
+# Parsed first: --dump must touch nothing, and `stty -g` below fails outright
+# with no tty.
+dump=0
+stanzas=()
+for arg in "$@"; do
+  case $arg in
+    --dump) dump=1 ;;
+    [1-6]) stanzas+=("$arg") ;;
+    *)
+      echo "usage: $0 [--dump] [1-6]..." >&2
+      exit 2
+      ;;
+  esac
+done
+
 ESC=$'\033'
 ST="${ESC}\\"          # string terminator
 PH=$'\xf4\x8f\xbb\xae' # U+10EEEE placeholder
@@ -40,13 +61,25 @@ green_b64=$(printf '\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff\x00
 blue_b64=$(printf '\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\xff\xff' | base64)
 yellow_b64=$(printf '\xff\xff\x00\xff\xff\xff\x00\xff\xff\xff\x00\xff\xff\xff\x00\xff' | base64)
 
-saved_stty=$(stty -g)
-restore() { stty "$saved_stty"; }
+saved_stty=''
+if ((! dump)); then
+  saved_stty=$(stty -g)
+fi
+restore() { [[ -n $saved_stty ]] && stty "$saved_stty"; return 0; }
 trap restore EXIT
 
+# Narration. Under --dump it goes to stderr so stdout stays pure wire.
+say() { if ((dump)); then printf '%s\n' "$*" >&2; else printf '%s\n' "$*"; fi; }
+
 # Send a command, then drain and echo any terminal response (readable form).
+#
+# SAFE ONLY WHERE NO PLACEMENT HAS BEEN DRAWN AT THE CURSOR -- see place_below.
 send() {
   local label=$1 payload=$2
+  if ((dump)); then
+    printf '%s' "$payload"
+    return 0
+  fi
   stty raw -echo
   printf '%s' "$payload"
   sleep 0.3
@@ -67,6 +100,11 @@ send() {
 reply_out=''
 send_quiet() {
   local payload=$1
+  if ((dump)); then
+    printf '%s' "$payload"
+    reply_out='(dump)'
+    return 0
+  fi
   stty raw -echo
   printf '%s' "$payload"
   sleep 0.3
@@ -77,10 +115,30 @@ send_quiet() {
   [[ -n $reply_out ]] || reply_out='(none)'
 }
 
+# Place classically, leaving the cursor BELOW the image and printing the
+# response line there rather than on top of it (#171).
+#
+# The bug this replaces was subtle enough to survive review twice: send()
+# drops raw mode BEFORE printing, so its response line starts wherever the
+# terminal left the cursor -- and a C=1 placement draws its top-left corner at
+# exactly that cell and deliberately does not move the cursor. The image was
+# therefore always stamped over by the report of its own success. Reserve the
+# rows, come back up, place, drop below, and only then speak.
+place_below() {
+  local label=$1 payload=$2 rows=$3
+  local i r
+  for ((i = 0; i < rows + 1; i++)); do printf '\n'; done
+  printf '%s[%dA' "$ESC" "$((rows + 1))"
+  send_quiet "$payload"
+  r=$reply_out
+  printf '%s[%dB\r' "$ESC" "$((rows + 1))"
+  say "$(printf '%s response: %q' "$label" "$r")"
+}
+
 # Pauses only exist to separate stanzas in a full run. Selecting stanzas
 # explicitly means the observer already knows what they are looking at.
 run_all=1
-pause() { (( run_all )) && read -r -p "$1"; return 0; }
+pause() { (( run_all && ! dump )) && read -r -p "$1"; return 0; }
 
 # The 2x2 placeholder grid for image id 42, given an SGR foreground that
 # encodes the id. Stanzas 1 and 5 differ ONLY in that argument, so they share
@@ -94,62 +152,60 @@ placeholder_grid() {
 }
 
 stanza_1() {
-  echo "== Stanza 1: red 2x2 image, virtual placement, placeholder cells =="
+  say "== Stanza 1: red 2x2 image, virtual placement, placeholder cells =="
   send "transmit(red)" "${ESC}_Ga=t,t=d,f=32,i=42,s=2,v=2,m=0,q=0;${red_b64}${ST}"
   send "place(U=1)   " "${ESC}_Ga=p,i=42,p=1,U=1,c=2,r=2,q=0${ST}"
   placeholder_grid '[38;2;0;0;42m'
-  echo
-  echo "You should see a 2x2-cell RED block above."
+  say ""
+  say "You should see a 2x2-cell RED block above."
   pause "Press Enter for stanza 2 (retransmit same id as GREEN)..."
 }
 
 stanza_2() {
-  echo "== Stanza 2: retransmit id 42 as green (no new placement) =="
+  say "== Stanza 2: retransmit id 42 as green (no new placement) =="
   send "transmit(grn)" "${ESC}_Ga=t,t=d,f=32,i=42,s=2,v=2,m=0,q=0;${green_b64}${ST}"
-  echo
-  echo "Did the red block turn GREEN?"
+  say ""
+  say "Did the red block turn GREEN?"
   pause "Press Enter for stanza 3 (classic placement, KittyDriver's default)..."
 }
 
 stanza_3() {
-  echo "== Stanza 3: classic placement — transmit id 43, place at cursor with c=2,r=2,C=1 =="
+  say "== Stanza 3: classic placement — transmit id 43, place at cursor with c=2,r=2,C=1 =="
   send "transmit(blu)" "${ESC}_Ga=t,t=d,f=32,i=43,s=2,v=2,m=0,q=0;${blue_b64}${ST}"
-  send "place(C=1)   " "${ESC}_Ga=p,i=43,p=1,c=2,r=2,C=1,q=0${ST}"
-  printf '\n\n\n'  # scroll past the placement so the prompt doesn't overwrite it
-  echo
+  place_below "place(C=1)   " "${ESC}_Ga=p,i=43,p=1,c=2,r=2,C=1,q=0${ST}" 2
+  say ""
   pause "Press Enter for stanza 4 (retransmit id 43 as YELLOW — classic refresh)..."
 }
 
 stanza_4() {
-  echo "== Stanza 4: retransmit id 43 as yellow + recreate the placement =="
+  say "== Stanza 4: retransmit id 43 as yellow + recreate the placement =="
   # Finding from earlier runs: kitty replaces the image data on retransmit
   # but does NOT refresh an existing classic placement — so KittyDriver now
   # deletes and recreates the placement on every content change. This stanza
   # mirrors that exact sequence.
   send "transmit(yel)" "${ESC}_Ga=t,t=d,f=32,i=43,s=2,v=2,m=0,q=0;${yellow_b64}${ST}"
   send "del place    " "${ESC}_Ga=d,d=i,i=43,p=1,q=0${ST}"
-  send "place(C=1)   " "${ESC}_Ga=p,i=43,p=1,c=2,r=2,C=1,q=0${ST}"
-  printf '\n\n\n'
-  echo
-  echo "A YELLOW block should appear at the cursor (the old blue one is gone"
-  echo "with its deleted placement)."
+  place_below "place(C=1)   " "${ESC}_Ga=p,i=43,p=1,c=2,r=2,C=1,q=0${ST}" 2
+  say ""
+  say "A YELLOW block should appear at the cursor (the old blue one is gone"
+  say "with its deleted placement)."
   pause "Press Enter for stanza 5 (placeholders again, 38;5 id encoding)..."
 }
 
 stanza_5() {
-  echo "== Stanza 5: placeholder cells for id 42 with 256-color id encoding =="
+  say "== Stanza 5: placeholder cells for id 42 with 256-color id encoding =="
   # Same virtual placement as stanza 1 (already created); only the cell fg
   # encoding differs: 38;5;42 instead of 38;2;0;0;42. kitten icat uses this
   # form for ids < 256 — if THIS renders where stanza 1 didn't, the 24-bit
   # id encoding is what this kitty rejects.
   placeholder_grid '[38;5;42m'
-  echo
+  say ""
   pause "Press Enter for stanza 6 (PlacementFit::Exact — #137)..."
 }
 
 stanza_6() {
-  echo
-  echo "== Stanza 6: c=/r= omitted, so the terminal places at TRUE SIZE =="
+  say ""
+  say "== Stanza 6: c=/r= omitted, so the terminal places at TRUE SIZE =="
   # #137. KittyDriver emitted c=/r= on every placement, which made the terminal
   # resample — correct for a widget that generates its image, wrong for one the
   # app ships pre-rendered. Omitting the two keys is the kitty protocol's own
@@ -175,14 +231,14 @@ stanza_6() {
   send "transmit(chk)" \
     "${ESC}_Ga=t,t=d,f=32,i=44,s=16,v=16,m=0,q=0;${check_b64}${ST}"
 
-  echo "  LEFT  (p=1) — STRETCHED into 5x3 cells (c=5,r=3). 16px across 5 cells"
-  echo "                is not an integer ratio, so the 2px squares come out"
-  echo "                UNEVEN — 5px wide in places, 6px in others, and the rows"
-  echo "                likewise. That unevenness is the bug #137 fixes."
-  echo "  RIGHT (p=2) — EXACT: the identical a=p with c= and r= simply removed."
-  echo "                Expect a much SMALLER block (16x16 device pixels, about"
-  echo "                two cells) with every square the same size."
-  echo
+  say "  LEFT  (p=1) — STRETCHED into 5x3 cells (c=5,r=3). 16px across 5 cells"
+  say "                is not an integer ratio, so the 2px squares come out"
+  say "                UNEVEN — 5px wide in places, 6px in others, and the rows"
+  say "                likewise. That unevenness is the bug #137 fixes."
+  say "  RIGHT (p=2) — EXACT: the identical a=p with c= and r= simply removed."
+  say "                Expect a much SMALLER block (16x16 device pixels, about"
+  say "                two cells) with every square the same size."
+  say ""
 
   # Reserve rows for the images, then step back up to the top of them. Both
   # placements use C=1 so the cursor does not move, which is what lets the second
@@ -196,29 +252,24 @@ stanza_6() {
   send_quiet "${ESC}_Ga=p,i=44,p=2,C=1,q=0${ST}"; r6b=$reply_out
   printf '%s[5B\r' "$ESC"
 
-  printf 'place(c=5,r=3) response: %q\n' "$r6a"
-  printf 'place(no c/r)  response: %q\n' "$r6b"
-  echo
-  echo "Report, COMPARING the two blocks side by side: did the RIGHT one render"
-  echo "at all — and if so, is it much smaller than the left with even, crisp"
-  echo "squares, while the left is larger with uneven ones? A blank right-hand"
-  echo "side is a real answer, not a bug in this script; it would mean this"
-  echo "kitty needs c=/r=. Also report any response containing ';E' (an error)."
+  say "$(printf 'place(c=5,r=3) response: %q' "$r6a")"
+  say "$(printf 'place(no c/r)  response: %q' "$r6b")"
+  say ""
+  say "Report, COMPARING the two blocks side by side: did the RIGHT one render"
+  say "at all — and if so, is it much smaller than the left with even, crisp"
+  say "squares, while the left is larger with uneven ones? A blank right-hand"
+  say "side is a real answer, not a bug in this script; it would mean this"
+  say "kitty needs c=/r=. Also report any response containing ';E' (an error)."
 }
 
-if (( $# )); then
+if (( ${#stanzas[@]} )); then
   run_all=0
-  for n in "$@"; do
-    case $n in
-      [1-6]) "stanza_$n" ;;
-      *) echo "usage: $0 [1-6]..." >&2; exit 2 ;;
-    esac
-  done
+  for n in "${stanzas[@]}"; do "stanza_$n"; done
 else
   for n in 1 2 3 4 5 6; do "stanza_$n"; done
-  echo
-  echo "Report: (a) stanza 1 red block, (b) green after stanza 2, (c) stanza 3"
-  echo "blue block, (d) YELLOW block after stanza 4, (e) stanza 5 shows a"
-  echo "green 2x2 block, (f) stanza 6 as described above, (g) any response"
-  echo "containing ';E' (an error)."
+  say ""
+  say "Report: (a) stanza 1 red block, (b) green after stanza 2, (c) stanza 3"
+  say "blue block, (d) YELLOW block after stanza 4, (e) stanza 5 shows a"
+  say "green 2x2 block, (f) stanza 6 as described above, (g) any response"
+  say "containing ';E' (an error)."
 fi
