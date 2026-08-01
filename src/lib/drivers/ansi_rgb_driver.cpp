@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <format>
+#include <limits>
 #include <span>
 
 #include "detail/encoded.hpp"
@@ -62,7 +63,10 @@ void AnsiRgbDriver::draw_text(int x, int y, std::string_view text, Rgb fg,
 auto AnsiRgbDriver::preferred_pixel_extent(Rect cells) const noexcept
     -> Extent {
   if (cells.empty()) return Extent{};
-  return Extent{cells.w, cells.h * 2};  // two pixel rows per half-block cell
+  // w at int; h*2 in int64_t, clamped -- see terminal_driver.hpp (#173).
+  const auto h = static_cast<std::int64_t>(cells.h) * 2;
+  const auto max = std::numeric_limits<int>::max();
+  return Extent{cells.w, h > max ? max : static_cast<int>(h)};
 }
 
 auto AnsiRgbDriver::supports_placement_fit(PlacementFit f) const noexcept

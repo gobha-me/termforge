@@ -29,6 +29,7 @@
 #include <array>
 #include <cctype>
 #include <cstddef>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -771,6 +772,132 @@ TEST_CASE("image_cell_extent sizes a rect that Exact always accepts") {
       CHECK(d.draw_image(Rect{0, 0, ext.w, ext.h}, img, PlacementFit::Exact));
     }
   }
+}
+
+TEST_CASE("a declared extent at the int limit does not overflow", "[fit][failure]") {
+  // #173: preferred_pixel_extent() multiplied in int, and a caller can hand
+  // the guard a rect whose pixel extent is not representable in int -- a Png
+  // declared at INT_MAX pixels is legal on the aggregate, and only UB once
+  // multiplied by a per-cell size. The product is now computed in int64_t and
+  // CLAMPS, and validate_fit's `pixels > room` comparison then refuses
+  // correctly under Exact. The pass/fail signal below comes partly from
+  // CHECKs and partly from UBSan staying quiet -- a plain build is green
+  // either way, which is exactly why the case must run under build-asan.
+
+  constexpr int kMax = std::numeric_limits<int>::max();
+
+  SECTION("kitty clamps the worst dimension, and the huge draw transmits without overflow") {
+    KittyDriver k;
+    std::string ko;
+    k.set_output(&ko);
+    constexpr int kHuge = kMax / 16 + 1;  // h * 16 overflows int past this
+
+    // 1x{huge} cells: w = 8 (fits), h = huge*16 (overflows -> clamps).
+    // BEFORE the fix this was signed overflow: UB, and under wraparound a
+    // NEGATIVE room -- 268435456 > -2147483648, refused with a nonsense
+    // negative number in the message.
+    const Extent big = k.preferred_pixel_extent(Rect{0, 0, 1, kHuge});
+    CHECK(big.w == 8);
+    CHECK(big.h == kMax);
+
+    // Exact at declared 2x2 vs room 8 x INT_MAX: 2 <= 8 and 2 <= INT_MAX, so
+    // validate_fit ACCEPTS and the payload transmits. The bytes land at
+    // flush(), not during draw_image. The load-bearing assertion is that
+    // the whole path completes without UB -- which only build-asan's UBSan
+    // can actuallyfail on -- plus a well-formed upload on the wire.
+    const EncodedImage img = opaque();  // declared 2x2
+    REQUIRE(k.draw_image(Rect{0, 0, 1, kHuge}, img, PlacementFit::Exact));
+    k.flush();
+    CHECK(ko.find("a=t") != std::string::npos);  // the payload did transmit
+    CHECK(ko.find("a=p") != std::string::npos);  // ... and was placed
+  }
+
+  SECTION("the half-block tier clamps too -- it overflows for SMALLER inputs") {
+    // {w, h*2} has no per-cell belief to scale by, so its worst dimension is
+    // always H, and it overflows at h > INT_MAX/2 -- well below kitty's
+    // INT_MAX/16.
+    AnsiRgbDriver a;
+    std::string ao;
+    a.set_output(&ao);
+    constexpr int kHuge = kMax / 2 + 1;  // 2 * kHuge overflows int
+
+    const Extent big = a.preferred_pixel_extent(Rect{0, 0, 1, kHuge});
+    CHECK(big.w == 1);
+    CHECK(big.h == kMax);
+
+    // A Png payload never reaches the fit here: this tier supports only
+    // Rgba32 (it must READ the pixels to build a cell grid), and
+    // validate_encoded refuses on supports_image_format BEFORE validate_fit
+    // runs. That is the honest degradation this tier has always promised --
+    // so assert the real refusal, then prove the clamped fit with Rgba32.
+    const EncodedImage png = opaque();
+    const auto blocked = a.draw_image(Rect{0, 0, 1, kHuge}, png, PlacementFit::Exact);
+    REQUIRE_FALSE(blocked);
+    CHECK(blocked.error().severity == Severity::Warning);
+    CHECK(blocked.error().source == "ansi_rgb");
+    CHECK(ao.empty());
+
+    // The actual fit: Rgba32 length is matched to its declared 2x2, and the
+    // clamped room is 1 x INT_MAX -- so 2 <= 1 is TRUE in neither axis and
+    // validate_fit refuses with the named-room message. Overflowing h*2 in
+    // int would have made room a non-positive number and possibly inverted
+    // this.
+    const EncodedImage fits = as_encoded(solid(2, 2, kA));
+    const auto fit_call = a.draw_image(Rect{0, 0, 1, kHuge}, fits, PlacementFit::Exact);
+    REQUIRE_FALSE(fit_call);
+    CHECK(fit_call.error().severity == Severity::Warning);
+    CHECK(fit_call.error().message.find("PlacementFit::Exact needs 2x2 pixels but "
+                                        "1x1073741824 cells hold only 1x2147483647") !=
+          std::string::npos);
+  }
+
+  SECTION("the ASCII floor is honest, needing no clamp") {
+    // cells' units ARE pixels' units on this tier (1 px == 1 cell), so there
+    // is no int64 multiplication to widen -- `cells` passes through
+    // unchanged. The case would only ever be UB for cells beyond INT_MAX,
+    // which the type itself cannot express.
+    FallbackDriver f;
+    std::string fo;
+    f.set_output(&fo);
+    const Extent big = f.preferred_pixel_extent(Rect{0, 0, 100, 100});
+    CHECK(big == Extent{100, 100});
+  }
+}
+
+TEST_CASE("the clamped room sizes a rect that always accepts at the documented call site",
+          "[fit][failure]") {
+  // The documented safe call site, at the extreme (#173 is #163's own lesson
+  // one layer out: widening one type's domain re-opens every guard it
+  // feeds):
+  //
+  //     const Extent cells = driver.image_cell_extent(declared);
+  //     driver.preferred_pixel_extent(Rect{0, 0, cells.w, cells.h})
+  //
+  // is what validate_fit compares the declared extent against. Before the
+  // clamp that second line was the int multiplication #173 reproduces with
+  // 268435456 cells x 8 px. Now: cells = ceil(max/8), and
+  // preferred_pixel_extent of exactly that many cells gives a clamped but
+  // still-positive room which the declared extent FITS UNDER.
+  constexpr int kMax = std::numeric_limits<int>::max();
+
+  KittyDriver k;
+  std::string ko;
+  k.set_output(&ko);
+
+  const Extent cells = k.image_cell_extent(Extent{kMax, kMax});
+  CHECK(cells.w == 268435456);   // ceil(INT_MAX/8), computed in int64
+  CHECK(cells.h == 134217728);   // ceil(INT_MAX/16)
+
+  const Extent room = k.preferred_pixel_extent(Rect{0, 0, cells.w, cells.h});
+  CHECK(room.w == kMax);  // 268435456 * 8 == INT_MAX exactly: un-clamped
+  CHECK(room.h == kMax);  // 134217728 * 16 == INT_MAX + 16: clamped
+
+  // Both fits run through and transmit. The declared 2x2 is genuinely inside
+  // even the 1-cell-wide rect's room of 8 wide. Before the clamp the
+  // underlying multiplication was the UB the ticket reproduces.
+  const EncodedImage img = opaque();  // declared 2x2
+  CHECK(k.draw_image(Rect{0, 0, cells.w, cells.h}, img, PlacementFit::Stretch));
+  CHECK(k.draw_image(Rect{0, 0, 1, cells.h}, img, PlacementFit::Exact));
 }
 
 TEST_CASE("the guardrail holds at a non-nominal cell size too") {

@@ -6,7 +6,41 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-01)
 
-**Latest work: #169 + #171 — the two features that had to compose (v0.6.11).**
+**Latest work: #173 — `preferred_pixel_extent` clamped against int overflow (v0.6.12).
+A signed-overflow UB the UBSan build already carried a reproducer for, in the
+function `image_cell_extent`'s ceiling division feeds into every
+`validate_fit`: each driver multiplied `cells * per_cell` in int, and a rect
+with an unrepresentable pixel extent overflowed to a **negative** room that
+then inverts `pixels > room`. `image_cell_extent`'s widening (#163) was the
+same lesson one layer in; #173 is that lesson recurring one layer out:
+**widen a type's domain and every arithmetic guard downstream of it
+re-opens**. This is the follow-up that guard deserved as #169 made the
+consumer reachable.
+
+- **The contract, now WRITTEN on the public virtual** (`terminal_driver.hpp`)
+  since an out-of-tree driver has to be able to implement it: the product is
+  computed in `int64_t`, and a result above `INT_MAX` **clamps to `INT_MAX`
+  rather than wrapping. Clamping keeps `room` additive, so `validate_fit`'s
+  comparison stays meaningful and *refuses correctly*; the natural-sounding
+  alternative (return `Extent{}` — `image_cell_extent`'s own empty-input
+  behaviour) was **stated and rejected**, because it would make room ZERO and
+  produce a nonsense error message for a caller whose rect is very much not
+  empty.
+- **`KittyDriver`** and **`AnsiRgbDriver`** got the int64 widen-with-clamp.
+  **`FallbackDriver`** got a comment instead of a clamp: `{w, h}` is already
+  in cells' units (1 px ≡ 1 cell on the ASCII floor), so there is no
+  multiplication to widen; a caller-authored region beyond `INT_MAX` is beyond
+  what `Rect` can even name.
+- **Regression test in `test/39fit`**  ([fit][failure]), shaped after
+  `test/38encoded`'s and run under `build-asan` — the pass/fail signal is
+  the **UBSan silence**, not just the `REQUIRE`s (a plain build is green
+  under wraparound). The cases assert both arms: a huge rect *through* a
+  clamped room completes a kitty `Exact` draw without UB, and the half-block
+  tier (which overflows for SMALLER inputs — its h×2 needs no per-cell
+  belief) refuses a 2x2 on a 1-wide rect whose room is 1xINT_MAX, naming
+  the clamped geometry in the error message.
+
+**Previous: #169 + #171 — the two features that had to compose (v0.6.11).**
 Picked by re-reading GLOAM#7's blocker table *after* #137 shipped, which is the
 discipline that found it: row 1 is "1:1 placement of a **pre-rendered** plate", and
 a pre-rendered plate is by definition **pre-encoded**. #137 gave `Exact` to the
