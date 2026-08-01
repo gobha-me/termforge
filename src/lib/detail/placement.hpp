@@ -6,8 +6,11 @@
 // test/22headers compiles every public header against the public include path
 // alone and fails the build the moment one reaches in here.
 //
-// Separate from encoded.hpp rather than folded into it: that header is scoped
-// to EncodedImage, and a fit applies to the Image overload.
+// Separate from encoded.hpp rather than folded into it. Since #169 a fit
+// applies to BOTH overloads, so the old reason ("a fit applies to the Image
+// overload") no longer holds -- but the split does: encoded.hpp is scoped to
+// EncodedImage, and folding this in would make the Image path depend on a
+// header about a type it never mentions.
 //
 // Two refusals, both of which every tier would otherwise write for itself:
 //
@@ -43,9 +46,16 @@ namespace termforge::detail {
   return "?";
 }
 
-// The guards every tier applies before it honours a PlacementFit. `pixels` is
-// the image's true pixel extent and `source` the driver's name, so the
-// ErrorEvent points at the tier that refused.
+// The guards every tier applies before it honours a PlacementFit. `source` is
+// the driver's name, so the ErrorEvent points at the tier that refused.
+//
+// `pixels` is the extent AS THE CALLER STATES IT, which is not the same claim
+// for both overloads (#169). An Image's is measured from a real allocation.
+// An EncodedImage's is declared: verified against the buffer length for
+// Rgba32, and for Png neither verified nor verifiable, because the library
+// does not parse the payload. Enforcing a fit against the declared number is
+// the deliberate posture -- see TerminalDriver's three-argument EncodedImage
+// overload for the argument and for what an under-declared Png costs.
 //
 // Call this BEFORE transmitting anything. Reversed, a refused call still pays
 // the upload -- 205,283 bytes for the plate #163 measured -- and skips only
