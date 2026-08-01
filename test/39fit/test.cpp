@@ -20,7 +20,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -36,10 +38,12 @@
 using termforge::AnsiRgbDriver;
 using termforge::Attr;
 using termforge::Capabilities;
+using termforge::EncodedImage;
 using termforge::ErrorEvent;
 using termforge::Extent;
 using termforge::FallbackDriver;
 using termforge::Image;
+using termforge::ImageFormat;
 using termforge::KittyDriver;
 using termforge::Pixel;
 using termforge::PlacementFit;
@@ -77,6 +81,15 @@ class FitClaimingDriver final : public TerminalDriver {
     m_drew_image = true;
     return {};
   }
+  // The #163-era EncodedImage overload, and nothing more -- this driver is a
+  // stand-in for one that shipped a pre-encoded path before #169 existed. No
+  // `using TerminalDriver::draw_image;`: every call in this suite goes through
+  // TerminalDriver&, and unhiding would change what the cases exercise.
+  auto draw_image(Rect, const EncodedImage&)
+      -> std::expected<void, ErrorEvent> override {
+    m_drew_encoded = true;
+    return {};
+  }
   [[nodiscard]] auto supports_placement_fit(PlacementFit) const noexcept
       -> bool override {
     return true;  // a lie, and the base must not take its word for it
@@ -90,10 +103,23 @@ class FitClaimingDriver final : public TerminalDriver {
     return Capabilities{};
   }
   [[nodiscard]] auto drew_image() const -> bool { return m_drew_image; }
+  [[nodiscard]] auto drew_encoded() const -> bool { return m_drew_encoded; }
 
  private:
   bool m_drew_image{false};
+  bool m_drew_encoded{false};
 };
+
+// Bytes for the cases that never reach a wire. Their content is irrelevant --
+// the drivers below refuse before looking -- but they must be non-empty in
+// both fields, or EncodedImage::empty() would refuse them for the wrong
+// reason and the message assertions would pass vacuously.
+constexpr std::array<unsigned char, 4> kOpaque{0xDE, 0xAD, 0xBE, 0xEF};
+
+auto opaque() -> EncodedImage {
+  return EncodedImage{ImageFormat::Png, std::as_bytes(std::span{kOpaque}),
+                      Extent{2, 2}};
+}
 
 // One kitty frame's output for a single draw.
 auto kitty_frame(Rect dest, const Image& img, PlacementFit fit,
@@ -743,6 +769,73 @@ TEST_CASE("the guardrail holds at a non-nominal cell size too") {
                            PlacementFit::Exact));
   CHECK_FALSE(d.draw_image(Rect{0, 0, ext.w, ext.h - 1}, img,
                            PlacementFit::Exact));
+}
+
+// ── 12. the base default on the EncodedImage overload (#169) ────────────────
+//
+// These two cases assert the BASE, not any driver, and they were written to
+// pass against the base-class commit alone -- which is what makes them an
+// argument that the default is right independently of who overrides it.
+
+TEST_CASE("encoded: a driver written before #169 still compiles and degrades") {
+  // If the new virtual were PURE this file would not compile, on the
+  // LegacyDriver line. That is the whole reason this class exists, and it is
+  // the only mutation in the suite whose failure mode is a build error.
+  LegacyDriver legacy;
+  static_assert(termforge::DriverImpl<LegacyDriver>);
+  TerminalDriver& base = legacy;
+  const EncodedImage img = opaque();
+  const Rect dest{0, 0, 2, 2};
+
+  // The two sections are told apart by the MESSAGE, not by the failure. Both
+  // refuse, and a test that only checked `REQUIRE_FALSE` would stay green if
+  // the Stretch branch stopped delegating -- so the message is what pins that
+  // Stretch went THROUGH the #163 overload and Exact never did.
+  SECTION("Stretch delegates into the driver's own two-argument path") {
+    const auto r = base.draw_image(dest, img, PlacementFit::Stretch);
+    REQUIRE_FALSE(r);
+    CHECK(r.error().severity == Severity::Warning);
+    CHECK(r.error().source == "driver");
+    CHECK(r.error().message ==
+          "draw_image: this tier cannot transmit a pre-encoded image");
+  }
+  SECTION("Exact is refused by the new default, before any delegation") {
+    const auto r = base.draw_image(dest, img, PlacementFit::Exact);
+    REQUIRE_FALSE(r);
+    CHECK(r.error().severity == Severity::Warning);
+    CHECK(r.error().source == "driver");
+    CHECK(r.error().message ==
+          "draw_image: this tier cannot place with PlacementFit::Exact");
+  }
+  SECTION("the overload it DOES implement is untouched") {
+    REQUIRE(base.draw_image(dest, solid(2, 2, kA), PlacementFit::Stretch));
+    CHECK(legacy.drew_image());
+  }
+}
+
+TEST_CASE("encoded: claiming Exact is not implementing it here either") {
+  // The #163-era driver that overrode the two-argument EncodedImage overload
+  // and the query, but not the new one. Same doctrine as case 9: the base
+  // default branches on the ENUM, so this driver's lie cannot turn Exact into
+  // a silent Stretch through a path it never implemented.
+  const EncodedImage img = opaque();
+  const Rect dest{0, 0, 2, 2};
+
+  SECTION("Stretch reaches the driver, so the next section is not vacuous") {
+    FitClaimingDriver claimer;
+    TerminalDriver& base = claimer;
+    CHECK(base.supports_placement_fit(PlacementFit::Exact));  // it lies
+    REQUIRE(base.draw_image(dest, img, PlacementFit::Stretch));
+    CHECK(claimer.drew_encoded());
+  }
+  SECTION("Exact is refused, and does not reach the driver") {
+    FitClaimingDriver claimer;
+    TerminalDriver& base = claimer;
+    const auto r = base.draw_image(dest, img, PlacementFit::Exact);
+    REQUIRE_FALSE(r);
+    CHECK(r.error().severity == Severity::Warning);
+    CHECK_FALSE(claimer.drew_encoded());
+  }
 }
 
 // ── the empty guards are unchanged by the new parameter ─────────────────────
