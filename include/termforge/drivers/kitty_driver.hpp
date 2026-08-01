@@ -61,7 +61,14 @@ class KittyDriver final : public TerminalDriver {
   // supports_placement_fit.
   auto draw_image(Rect cells, const Image& image, PlacementFit fit)
       -> std::expected<void, ErrorEvent> override;
-  // Unhide the base overload set (see TerminalDriver). All three are
+  // The two composed (#169): a pre-encoded plate at its native resolution,
+  // which is the combination baked art actually wants. The fit is enforced
+  // against the DECLARED extent for both formats -- see TerminalDriver for
+  // why that is the only number available and what an under-declared Png
+  // costs.
+  auto draw_image(Rect cells, const EncodedImage& image, PlacementFit fit)
+      -> std::expected<void, ErrorEvent> override;
+  // Unhide the base overload set (see TerminalDriver). All four are
   // overridden here so nothing is actually hidden today; the declaration keeps
   // that true if one of them is ever removed.
   using TerminalDriver::draw_image;

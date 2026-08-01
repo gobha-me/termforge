@@ -131,6 +131,24 @@ auto kitty_frame(Rect dest, const Image& img, PlacementFit fit,
   return r;
 }
 
+// The same, for a pre-encoded payload (#169).
+auto kitty_frame(Rect dest, const EncodedImage& img, PlacementFit fit,
+                 std::string* out) -> std::expected<void, ErrorEvent> {
+  KittyDriver d;
+  d.set_output(out);
+  auto r = d.draw_image(dest, img, fit);
+  d.flush();
+  return r;
+}
+
+// An Image's pixels borrowed as an Rgba32 EncodedImage. Same bytes, same
+// extent, different overload -- which is what lets a case assert that the two
+// paths agree rather than merely that each works.
+auto as_encoded(const Image& img) -> EncodedImage {
+  return EncodedImage{ImageFormat::Rgba32, std::as_bytes(img.pixels()),
+                      Extent{img.width(), img.height()}};
+}
+
 }  // namespace
 
 // ── 1. the placement escape omits c= and r= under Exact ─────────────────────
@@ -836,6 +854,82 @@ TEST_CASE("encoded: claiming Exact is not implementing it here either") {
     CHECK(r.error().severity == Severity::Warning);
     CHECK_FALSE(claimer.drew_encoded());
   }
+}
+
+// ── 13. kitty honours the fit on a pre-encoded payload (#169) ───────────────
+
+TEST_CASE("encoded: Exact omits c= and r= from the placement") {
+  // Case 1's assertion, on the other overload. 30x30 into a 4x2 rect: 32x32 of
+  // room at the nominal 8x16 cell, so the image fits and is deliberately NOT a
+  // whole cell multiple -- the arithmetic that would tempt a c=/r= back in.
+  const Image art = checker(30, 30, kA, kB);
+  std::string out;
+  REQUIRE(kitty_frame(Rect{0, 0, 4, 2}, as_encoded(art), PlacementFit::Exact,
+                      &out));
+
+  const auto places = placements(out);
+  REQUIRE(places.size() == 1);
+  CHECK_FALSE(has_key(places[0], "c"));
+  CHECK_FALSE(has_key(places[0], "r"));
+  // The positive half, so "absent" cannot have been achieved by refusing or by
+  // emitting a broken command.
+  CHECK(key_value(places[0], "a") == "p");
+  CHECK(has_key(places[0], "i"));
+  CHECK(count_of(out, "a=t") == 1);
+}
+
+TEST_CASE("encoded: Exact refuses an oversize DECLARED extent, emitting all") {
+  // A real 40x40 buffer, so the Rgba32 length check passes and the fit guard
+  // is unambiguously what refused. Into a 2x1 rect: 16x16 of room on kitty.
+  const Image art = checker(40, 40, kA, kB);
+  const EncodedImage img = as_encoded(art);
+  std::string out;
+  const auto r = kitty_frame(Rect{0, 0, 2, 1}, img, PlacementFit::Exact, &out);
+
+  REQUIRE_FALSE(r);
+  CHECK(r.error().severity == Severity::Warning);
+  CHECK(r.error().source == "kitty");
+
+  // The ordering assertion, and the reason validate_fit runs before
+  // draw_payload rather than after. Refusing AFTER the upload would still
+  // return this same error, having already paid for every byte of it.
+  CHECK(count_of(out, "a=t") == 0);
+  CHECK(count_of(out, "a=p") == 0);
+  CHECK(out.empty());
+}
+
+TEST_CASE("encoded: changing only the fit re-places, without retransmitting") {
+  // Case 6 on the encoded path. The slot is keyed on the payload hash and the
+  // region, neither of which moves here -- so a fit that did not participate
+  // in the cache would make this frame silently empty.
+  const Image art = checker(30, 30, kA, kB);
+  const EncodedImage img = as_encoded(art);
+  const Rect dest{0, 0, 4, 2};
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  REQUIRE(d.draw_image(dest, img, PlacementFit::Stretch));
+  d.flush();
+  {
+    const auto places = placements(out);
+    REQUIRE(places.size() == 1);
+    CHECK(key_value(places[0], "c") == "4");
+    CHECK(count_of(out, "a=t") == 1);
+  }
+
+  out.clear();
+  REQUIRE(d.draw_image(dest, img, PlacementFit::Exact));
+  d.flush();
+  CHECK_FALSE(out.empty());
+  const auto places = placements(out);
+  REQUIRE(places.size() == 1);
+  CHECK_FALSE(has_key(places[0], "c"));
+  CHECK_FALSE(has_key(places[0], "r"));
+  CHECK(count_of(out, "a=d,d=i") == 1);  // the old placement deleted
+  CHECK(count_of(out, "a=t") == 0);      // and the payload NOT re-sent
+  CHECK(d.last_frame_bytes().image_transmit == 0);
+  CHECK(d.last_frame_bytes().image_edit > 0);
 }
 
 // ── the empty guards are unchanged by the new parameter ─────────────────────

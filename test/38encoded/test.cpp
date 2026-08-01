@@ -45,6 +45,7 @@ using termforge::Image;
 using termforge::ImageFormat;
 using termforge::KittyDriver;
 using termforge::Pixel;
+using termforge::PlacementFit;
 using termforge::Rect;
 using termforge::Rgb;
 using termforge::Severity;
@@ -217,6 +218,61 @@ TEST_CASE("encoded: s=/v= carry the DECLARED extent, because we never parse",
   CHECK(out.find("s=640,v=480") != std::string::npos);
   const std::vector<std::byte> want(png_bytes().begin(), png_bytes().end());
   CHECK(reassemble(out) == want);
+}
+
+TEST_CASE("encoded: Exact places against the DECLARED extent, still unparsed",
+          "[encoded][kitty]") {
+  // #169's posture, and the case above is why it needs stating. The same
+  // lying EncodedImage -- a genuine 2x2 PNG declaring 640x480 -- now decides
+  // an Exact fit. Both halves are required: neither mutation below kills the
+  // other, so either alone would leave the posture looking accidental.
+  const EncodedImage lying{ImageFormat::Png, png_bytes(), Extent{640, 480}};
+
+  SECTION("a rect that holds the DECLARED extent transmits, unexamined") {
+    // 80x30 cells is exactly 640x480 at kitty's nominal 8x16. We never open
+    // the datastream, so the declaration is what we measure and what we ship.
+    // Mutation: parse the header and substitute the real 2x2 -- s=640,v=480
+    // fails, and so does the fit, since 2x2 would then fit anywhere.
+    KittyDriver d;
+    std::string out;
+    d.set_output(&out);
+    REQUIRE(d.draw_image(Rect{0, 0, 80, 30}, lying, PlacementFit::Exact));
+    d.flush();
+
+    CHECK(out.find("s=640,v=480") != std::string::npos);
+    const std::vector<std::byte> want(png_bytes().begin(), png_bytes().end());
+    CHECK(reassemble(out) == want);
+  }
+  SECTION("a rect the REAL image would fit in is refused") {
+    // 4x4 cells holds 32x64 -- room to spare for the 2x2 the payload actually
+    // is, and nowhere near the 640x480 the caller declared. Refusing here is
+    // the whole decision: the declaration is the contract, and the library
+    // does not go looking for a second opinion.
+    //
+    // Mutation: skip validate_fit for Png -- the asymmetric alternative that
+    // was considered and rejected -- and this refusal disappears while the
+    // section above stays green.
+    KittyDriver d;
+    std::string out;
+    d.set_output(&out);
+    const auto r = d.draw_image(Rect{0, 0, 4, 4}, lying, PlacementFit::Exact);
+    d.flush();
+
+    REQUIRE_FALSE(r);
+    CHECK(r.error().severity == Severity::Warning);
+    CHECK(r.error().source == "kitty");
+    CHECK(out.empty());
+  }
+  SECTION("under Stretch it is transmitted either way, as before #169") {
+    // The 4x4 rect again. c=/r= dominate, so no extent has to be believed and
+    // nothing about the #163 behaviour moved.
+    KittyDriver d;
+    std::string out;
+    d.set_output(&out);
+    REQUIRE(d.draw_image(Rect{0, 0, 4, 4}, lying, PlacementFit::Stretch));
+    d.flush();
+    CHECK(out.find("s=640,v=480") != std::string::npos);
+  }
 }
 
 // ── identity: what makes two payloads the same payload ──────────────────────

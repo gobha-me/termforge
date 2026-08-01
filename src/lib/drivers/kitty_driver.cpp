@@ -307,17 +307,37 @@ auto KittyDriver::draw_image(Rect cells, const Image& image, PlacementFit fit)
 
 auto KittyDriver::draw_image(Rect cells, const EncodedImage& image)
     -> std::expected<void, ErrorEvent> {
+  // The two-argument overload IS the Stretch case, exactly as on the Image
+  // pair above. "the encoded Stretch path emits byte-for-byte what it emitted
+  // before #169" is then structural rather than a promise a test has to keep.
+  return draw_image(cells, image, PlacementFit::Stretch);
+}
+
+auto KittyDriver::draw_image(Rect cells, const EncodedImage& image,
+                             PlacementFit fit)
+    -> std::expected<void, ErrorEvent> {
   // Empty, empty rect, the supports_image_format() check, and the Rgba32
   // length check. Png is deliberately unvalidated for length: we do not parse
   // the datastream, so we have no opinion about whether its header agrees
   // with the declared extent.
+  //
+  // FIRST, and not merely by habit: validate_fit measures the rect with
+  // preferred_pixel_extent(), which is Extent{} for an empty one -- so an
+  // empty rect would come back complaining about pixels instead of about
+  // being empty.
   if (auto ok = detail::validate_encoded(image, cells, *this, "kitty"); !ok) {
     return ok;
   }
-  // Always Stretch: the EncodedImage overload takes no PlacementFit (see
-  // terminal_driver.hpp for why it is deferred rather than forgotten).
+  // Against the DECLARED extent, for both formats (#169). Before draw_payload
+  // and never after: a refusal must not have paid for the upload -- 205,283
+  // bytes for the plate #163 measured, which is the most expensive possible
+  // way to draw nothing.
+  if (auto ok = detail::validate_fit(fit, cells, image.pixels, *this, "kitty");
+      !ok) {
+    return ok;
+  }
   return draw_payload(cells, image.bytes, wire_format(image.format),
-                      image.pixels, PlacementFit::Stretch);
+                      image.pixels, fit);
 }
 
 auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
