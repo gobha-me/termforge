@@ -6,7 +6,7 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-01)
 
-**Latest work: #137 — `PlacementFit::Exact`, opting out of stretch-to-fill (in flight).**
+**Latest work: #137 — `PlacementFit::Exact`, opting out of stretch-to-fill (v0.6.10).**
 Picked because the priority signal lives in the *consumer* trackers: GLOAM#7, its
 centrepiece and explicitly "build it first", names **#137 first** in its blocker table.
 #83 closed and made stretch-to-fill the written contract, which GLOAM's SPEC §3.2 rules
@@ -46,6 +46,34 @@ refusing would make the feature kitty-only while looking portable.
 *compile* on `test/support/legacy_driver.hpp`. One test gap that mutation found and reading
 did not: the fallback-tier case counted glyphs without checking *which* glyphs, so a
 resample painting the right number of wrong pixels survived. Counting is not asserting.
+
+**The capture passed, and the gate needed fixing twice to get there.** In real kitty the
+same checkerboard placed side by side came out large-and-uneven stretched and
+small-and-crisp exact, both `;OK` — so omitting `c=`/`r=` does render at true size. Two
+defects in `tools/kitty_repro.sh` had to be cleared first, and both are the *observer's*
+side of the experiment rather than the terminal's:
+
+- Stanza 6 as first written **deleted** the stretched placement before drawing the exact
+  one, with a pause between. That asks for two verdicts, not one comparison — #163's exact
+  mistake, in the same file, one release later. The commit message even called it "a
+  side-by-side"; a script's claim about itself is not evidence.
+- The five settled stanzas in front of it cost a capture outright: the ask was "run the
+  repro script", there are two, and the wrong one came back. Stanzas are now functions
+  with a dispatcher, so `./tools/kitty_repro.sh 6` runs only what is in question.
+
+**Three of the six stanzas reported NO and none of them is a regression** — worth writing
+down, because a later reader will find this capture and see a half-failure:
+
+- **1 NO / 5 YES is the discriminator firing correctly.** They differ only in how the image
+  id is encoded as the placeholder cells' SGR foreground, and `emit_id_as_sgr`
+  (`src/lib/drivers/kitty_driver.cpp:606`) already routes around it: the 24-bit `38;2` form
+  is accepted and then ignored, so the driver uses `38;5;<id>`. Stanza 1 emits the raw
+  24-bit form on purpose.
+- **2 NO is vacuous** — no red block existed to turn green.
+- **3 NO is the tool again**, now filed as **#171**: `send()` prints its response line at
+  the cursor, which is exactly where a classic placement draws. Stanza 6's *stretched* arm
+  is the same code path and rendered fine, because #137 added `send_quiet()`. Stanzas 3
+  and 4 want the same treatment.
 
 **Previously: #163 — a pre-encoded image payload path, shipped verbatim (v0.6.9).**
 The ticket #139's meter *created*: with a number attached, "images are a bit fat" became
