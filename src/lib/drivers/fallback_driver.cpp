@@ -1,11 +1,13 @@
 #include "termforge/drivers/fallback_driver.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <format>
 #include <span>
 
 #include "detail/encoded.hpp"
+#include "detail/placement.hpp"
 #include "detail/sample.hpp"
 
 namespace termforge {
@@ -57,7 +59,26 @@ auto FallbackDriver::preferred_pixel_extent(Rect cells) const noexcept
   return Extent{cells.w, cells.h};  // one ramp glyph per cell
 }
 
+auto FallbackDriver::supports_placement_fit(PlacementFit f) const noexcept
+    -> bool {
+  // Both -- see AnsiRgbDriver for the argument. On the floor tier Exact means
+  // one source pixel per ramp glyph rather than a resampled one; the colour is
+  // gone either way, but the STRUCTURE the caller authored survives.
+  switch (f) {
+    case PlacementFit::Stretch:
+    case PlacementFit::Exact:
+      return true;
+  }
+  return false;
+}
+
 auto FallbackDriver::draw_image(Rect cells, const Image& image)
+    -> std::expected<void, ErrorEvent> {
+  return draw_image(cells, image, PlacementFit::Stretch);
+}
+
+auto FallbackDriver::draw_image(Rect cells, const Image& image,
+                                PlacementFit fit)
     -> std::expected<void, ErrorEvent> {
   if (image.empty()) {
     return std::unexpected{ErrorEvent{Severity::Warning, "fallback",
@@ -67,8 +88,14 @@ auto FallbackDriver::draw_image(Rect cells, const Image& image)
     return std::unexpected{ErrorEvent{Severity::Warning, "fallback",
                                       "draw_image: empty destination rect"}};
   }
+  if (auto ok = detail::validate_fit(fit, cells,
+                                     Extent{image.width(), image.height()},
+                                     *this, "fallback");
+      !ok) {
+    return ok;
+  }
   return draw_rgba(cells, std::as_bytes(image.pixels()),
-                   Extent{image.width(), image.height()});
+                   Extent{image.width(), image.height()}, fit);
 }
 
 auto FallbackDriver::draw_image(Rect cells, const EncodedImage& image)
@@ -81,18 +108,31 @@ auto FallbackDriver::draw_image(Rect cells, const EncodedImage& image)
       !ok) {
     return ok;
   }
-  return draw_rgba(cells, image.bytes, image.pixels);
+  return draw_rgba(cells, image.bytes, image.pixels, PlacementFit::Stretch);
 }
 
 auto FallbackDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
-                               Extent px) -> std::expected<void, ErrorEvent> {
+                               Extent px, PlacementFit fit)
+    -> std::expected<void, ErrorEvent> {
   // One glyph per cell, each sampling the nearest source pixel (#83). At 1:1
   // every index maps to itself, so this is the pre-#83 loop exactly.
-  for (int row = 0; row < cells.h; ++row) {
+  //
+  // #137: under Exact the map is the identity outright and the image covers
+  // only min(cells, px); glyphs past that are not emitted, leaving the rest of
+  // the rect as it was. This tier's pixel grid IS its cell grid, so there is
+  // no half-cell straddle to handle as there is on the RGB tier.
+  const bool exact = fit == PlacementFit::Exact;
+  const int cover_w = exact ? std::min(cells.w, px.w) : cells.w;
+  const int cover_h = exact ? std::min(cells.h, px.h) : cells.h;
+  const auto map = [exact](int i, int src_dim, int dst_dim) {
+    return exact ? i : detail::sample_index(i, src_dim, dst_dim);
+  };
+
+  for (int row = 0; row < cover_h; ++row) {
     m_buf += std::format("\033[{};{}H", cells.y + row + 1, cells.x + 1);
-    const int sy = detail::sample_index(row, px.h, cells.h);
-    for (int col = 0; col < cells.w; ++col) {
-      const int sx = detail::sample_index(col, px.w, cells.w);
+    const int sy = map(row, px.h, cells.h);
+    for (int col = 0; col < cover_w; ++col) {
+      const int sx = map(col, px.w, cells.w);
       m_buf += luminance_char(detail::rgba_at(rgba, px, sx, sy));
     }
   }

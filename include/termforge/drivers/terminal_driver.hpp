@@ -68,11 +68,64 @@ class TerminalDriver {
   // dimensions became the cell count, which capped the whole graphics path at
   // one solid colour per cell.
   //
-  // Stretch-to-fill, nearest neighbour. No letterbox or fit modes: that is a
-  // border policy, and borders are out of scope here as they are on Image.
-  // Scaling is the contract, so it is not a degradation and raises no event.
+  // Stretch-to-fill, nearest neighbour -- and since #137 that is the DEFAULT
+  // rather than the only option. Scaling is the contract for content the
+  // application GENERATES, which can re-rasterize at preferred_pixel_extent,
+  // so it is not a degradation and raises no event. Content the application
+  // SHIPS pre-rendered cannot re-rasterize; see PlacementFit and the overload
+  // below for the opt-out.
+  //
+  // Still no letterbox and no fit modes: that is a border policy, and borders
+  // are out of scope here as they are on Image.
   virtual auto draw_image(Rect cells, const Image& image)
       -> std::expected<void, ErrorEvent> = 0;
+
+  // As above, but with the scaling policy named (#137).
+  //
+  // NOT pure, for the same reason as the EncodedImage overload below: a new
+  // pure virtual breaks every out-of-tree driver at compile time on upgrade.
+  //
+  // The default DELEGATES for Stretch rather than reimplementing it, so an
+  // out-of-tree driver's existing draw_image is what actually runs -- that is
+  // what makes this default correct and not merely non-breaking. Exact is
+  // refused, because a tier that has not implemented it has no way to honour
+  // it.
+  //
+  // The Stretch branch tests the ENUM, deliberately, and not
+  // `supports_placement_fit(fit)`. Routing it through the virtual query would
+  // mean a driver that overrides the query to claim Exact but forgets to
+  // override this function gets a SILENT STRETCH -- which is precisely the
+  // bug #137 exists to remove, reintroduced one level up. The base's answer
+  // about what the BASE can do must not depend on what a subclass claims.
+  // (This is a considered exception to #163's shared-branch rule, which holds
+  // for validate_encoded/validate_fit where query and emit path are two
+  // halves of ONE driver's behaviour.)
+  //
+  // NO DEFAULT ARGUMENT, and do not add one: `PlacementFit fit = Stretch`
+  // here would make `draw_image(rect, img)` ambiguous against the two-argument
+  // overload at every call site in and out of the tree. Default arguments on
+  // virtuals are also bound statically, so a derived class that respells the
+  // default makes the same function body mean a different fit depending on
+  // which static type the call went through, with no diagnostic.
+  virtual auto draw_image(Rect cells, const Image& image, PlacementFit fit)
+      -> std::expected<void, ErrorEvent> {
+    if (fit == PlacementFit::Stretch) return draw_image(cells, image);
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "draw_image: this tier cannot place with PlacementFit::Exact"}};
+  }
+
+  // Whether `fit` can actually be honoured on this tier, askable WITHOUT
+  // drawing -- the same contract, and for the same reason, as
+  // supports_image_format below.
+  //
+  // The answer can change at RUNTIME: kitty can only place at native
+  // resolution under classic placement, so set_placement_mode moves it. An
+  // application cannot infer this from the driver's type and must ask.
+  [[nodiscard]] virtual auto supports_placement_fit(
+      PlacementFit fit) const noexcept -> bool {
+    return fit == PlacementFit::Stretch;
+  }
 
   // Fill `cells` with an already-encoded payload, shipped to the terminal
   // VERBATIM (#163). Same cell-rect destination contract as the overload
@@ -86,11 +139,19 @@ class TerminalDriver {
   // channel -- a Warning, per the degradation-is-an-event rule, rather than a
   // silent no-draw.
   //
-  // THIRD-PARTY DRIVERS: overriding only one of the two `draw_image`
-  // overloads hides the other for calls made through your concrete type. Add
-  // `using TerminalDriver::draw_image;` to your class to unhide it. Dispatch
-  // through TerminalDriver& is unaffected either way, and the failure mode is
-  // a compile error rather than a silent miscall.
+  // THIRD-PARTY DRIVERS: overriding any ONE of the three `draw_image`
+  // overloads hides ALL of them for calls made through your concrete type --
+  // name hiding in C++ is by name, not by signature. Add
+  // `using TerminalDriver::draw_image;` to your class to unhide them.
+  // Dispatch through TerminalDriver& is unaffected either way, and the
+  // failure mode is a compile error rather than a silent miscall.
+  //
+  // This overload takes no PlacementFit. Deliberate, and deferred rather than
+  // forgotten: for Png the library never parses the header, so the only pixel
+  // extent it could enforce a fit against is the caller-DECLARED one, which
+  // EncodedImage::pixels documents as unverifiable. Letting an unverifiable
+  // number decide what we emit is a real change in posture and wants its own
+  // ticket, not a rider on this one.
   virtual auto draw_image(Rect /*cells*/, const EncodedImage& /*image*/)
       -> std::expected<void, ErrorEvent> {
     return std::unexpected{

@@ -26,7 +26,9 @@
 #include <vector>
 
 #include "detail/base64.hpp"
+#include "support/apc.hpp"
 #include "support/image.hpp"
+#include "support/legacy_driver.hpp"
 #include "termforge/core/types.hpp"
 #include "termforge/drivers/ansi_rgb_driver.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
@@ -92,140 +94,17 @@ auto blob(std::size_t n, unsigned seed = 0) -> std::vector<std::byte> {
 }
 
 // ── reading the wire back ───────────────────────────────────────────────────
-
-struct Apc {
-  std::string keys;     // everything before the ';', e.g. "a=t,t=d,f=100,..."
-  std::string payload;  // everything after it (empty for a keys-only command)
-  bool has_payload{false};
-};
-
-// Every APC (ESC _ G ... ESC \) sequence in `out`, in emission order. Safe to
-// scan for naively: the base64 alphabet contains no ESC and no ';', and the
-// interleaved cursor positioning is CSI, not APC.
-auto apcs(std::string_view out) -> std::vector<Apc> {
-  std::vector<Apc> found;
-  for (std::size_t at = 0; (at = out.find("\033_G", at)) != std::string_view::npos;) {
-    const std::size_t body = at + 3;
-    const std::size_t end = out.find("\033\\", body);
-    REQUIRE(end != std::string_view::npos);  // an unterminated APC is a bug
-    const std::string_view seq = out.substr(body, end - body);
-    const std::size_t semi = seq.find(';');
-    Apc a;
-    if (semi == std::string_view::npos) {
-      a.keys = std::string{seq};
-    } else {
-      a.keys = std::string{seq.substr(0, semi)};
-      a.payload = std::string{seq.substr(semi + 1)};
-      a.has_payload = true;
-    }
-    found.push_back(std::move(a));
-    at = end + 2;
-  }
-  return found;
-}
-
-// The transmit chunks only: a=t opens a transmission, and the continuation
-// chunks that follow carry m= and nothing else.
-auto transmit_chunks(const std::vector<Apc>& all) -> std::vector<Apc> {
-  std::vector<Apc> out;
-  for (const Apc& a : all) {
-    const bool opener = a.keys.find("a=t") != std::string::npos;
-    const bool continuation = a.has_payload && a.keys.starts_with("m=");
-    if (opener || continuation) out.push_back(a);
-  }
-  return out;
-}
-
-// Independent base64 DECODER, deliberately not detail::base64_encode run
-// backwards. Asserting that the emitted payload equals base64_encode(input)
-// would put the driver and the test on the same side of the same function; a
-// decoder makes the assertion "a terminal reading this gets the bytes the
-// application handed us", which is the actual contract. base64 correctness
-// itself is test/07base64's job.
-auto b64_decode(std::string_view s) -> std::vector<std::byte> {
-  auto sextet = [](char c) -> int {
-    if (c >= 'A' && c <= 'Z') return c - 'A';
-    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-    if (c >= '0' && c <= '9') return c - '0' + 52;
-    if (c == '+') return 62;
-    if (c == '/') return 63;
-    return -1;  // '=' padding, or junk
-  };
-  std::vector<std::byte> out;
-  std::uint32_t acc = 0;
-  int bits = 0;
-  for (const char c : s) {
-    const int v = sextet(c);
-    if (v < 0) continue;
-    acc = (acc << 6) | static_cast<std::uint32_t>(v);
-    bits += 6;
-    if (bits >= 8) {
-      bits -= 8;
-      out.push_back(static_cast<std::byte>((acc >> bits) & 0xFFU));
-    }
-  }
-  return out;
-}
-
-// The payloads the terminal reassembles, in order, concatenated.
 //
-// Decoded PER TRANSMISSION, not over one joined string: each a=t opens an
-// independent base64 stream with its own padding, so running two of them
-// together through one decoder shifts everything after the first stream's
-// pad by a couple of bits. That is a bug in this helper's arithmetic, not in
-// the driver -- a terminal decodes each transmission on its own.
-auto reassemble(std::string_view out) -> std::vector<std::byte> {
-  std::vector<std::byte> all;
-  std::string stream;
-  auto finish = [&] {
-    if (stream.empty()) return;
-    const auto decoded = b64_decode(stream);
-    all.insert(all.end(), decoded.begin(), decoded.end());
-    stream.clear();
-  };
-  for (const Apc& a : transmit_chunks(apcs(out))) {
-    if (a.keys.find("a=t") != std::string::npos) finish();  // a new upload
-    stream += a.payload;
-  }
-  finish();
-  return all;
-}
-
-auto count_of(std::string_view hay, std::string_view needle) -> int {
-  int n = 0;
-  for (std::size_t at = 0; (at = hay.find(needle, at)) != std::string_view::npos;
-       at += needle.size()) {
-    ++n;
-  }
-  return n;
-}
-
-// A driver written against the pre-#163 interface: it overrides the four pure
-// virtuals and knows nothing about EncodedImage. Its existence IS the test in
-// "a legacy driver still compiles" below.
-class LegacyDriver final : public TerminalDriver {
- public:
-  auto init() -> std::expected<void, ErrorEvent> override { return {}; }
-  auto draw_text(int, int, std::string_view, Rgb, Rgb, Attr) -> void override {}
-  auto draw_image(Rect, const Image&)
-      -> std::expected<void, ErrorEvent> override {
-    m_drew_image = true;
-    return {};
-  }
-  [[nodiscard]] auto preferred_pixel_extent(Rect cells) const noexcept
-      -> Extent override {
-    return Extent{cells.w, cells.h};
-  }
-  auto flush() -> void override { tally_frame(0); }
-  [[nodiscard]] auto capabilities() const noexcept -> Capabilities override {
-    return Capabilities{};
-  }
-
-  [[nodiscard]] auto drew_image() const -> bool { return m_drew_image; }
-
- private:
-  bool m_drew_image{false};
-};
+// The APC parser, the independent base64 decoder and LegacyDriver all live in
+// test/support/ now: test/39fit (#137) needs the same tools, and two copies of
+// a parser is two things that can drift apart while both stay green.
+using tfsupport::apcs;
+using tfsupport::Apc;
+using tfsupport::b64_decode;
+using tfsupport::count_of;
+using tfsupport::LegacyDriver;
+using tfsupport::reassemble;
+using tfsupport::transmit_chunks;
 
 constexpr Pixel kP1{10, 20, 30, 255};
 constexpr Pixel kP2{200, 150, 100, 255};

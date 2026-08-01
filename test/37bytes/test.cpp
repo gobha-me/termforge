@@ -348,6 +348,35 @@ TEST_CASE("meter: a placement-mode switch bills its teardown to image_edit",
   CHECK(f.cells == 0);
 }
 
+TEST_CASE("meter: a fit change bills its re-placement to image_edit, not "
+          "image_transmit", "[bytes]") {
+  // #137. Changing only the PlacementFit re-places without re-uploading, so
+  // every byte of that frame is edit traffic. This is the assertion that pins
+  // the CHOICE and not merely the behaviour: folding the fit into
+  // payload_hash would also produce a correct placement, at the cost of
+  // retransmitting the payload -- and would then bill those bytes to
+  // image_transmit, telling an application watching its image budget that it
+  // had uploaded a plate it had not.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  REQUIRE(d.draw_image(Rect{0, 0, 4, 2}, solid(16, 16, kP1),
+                       termforge::PlacementFit::Stretch));
+  const std::size_t first = flush_and_measure(d, out);
+  REQUIRE(first > 0);
+  REQUIRE(d.last_frame_bytes().image_transmit > 0);  // the upload happened once
+
+  REQUIRE(d.draw_image(Rect{0, 0, 4, 2}, solid(16, 16, kP1),
+                       termforge::PlacementFit::Exact));
+  const std::size_t written = flush_and_measure(d, out);
+  const FrameBytes f = d.last_frame_bytes();
+  REQUIRE(written > 0);  // something was emitted -- the #137 cache bug
+  CHECK(f.image_transmit == 0);
+  CHECK(f.image_edit == written);
+  CHECK(f.cells == 0);
+}
+
 // ── Cumulative, and the #147 scoping check ──────────────────────────────────
 
 TEST_CASE("meter: totals accumulate across frames", "[bytes]") {

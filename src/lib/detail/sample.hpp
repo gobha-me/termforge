@@ -14,10 +14,15 @@
 // tiers have no such lever — they build the output character by character, so
 // they resample here.
 //
-// Stretch-to-fill, nearest neighbour, and nothing else. Letterboxing is a
-// border policy and resampling quality is a filter library; both are out of
-// scope, deliberately, for the same reason Image::sub returns the clipped
-// overlap rather than padding it back out.
+// Stretch-to-fill, nearest neighbour — the default, and since #137 not the
+// only option: under PlacementFit::Exact those tiers bypass this map entirely
+// and use the identity instead, so the caller's authored pixels are not
+// resampled at all. This header stays the STRETCH map; there is nothing for it
+// to do in the exact case.
+//
+// Letterboxing is still a border policy and resampling quality is still a
+// filter library; both are out of scope, deliberately, for the same reason
+// Image::sub returns the clipped overlap rather than padding it back out.
 //
 // ── the index map ───────────────────────────────────────────────────────────
 //

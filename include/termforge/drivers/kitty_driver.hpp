@@ -56,12 +56,21 @@ class KittyDriver final : public TerminalDriver {
   // only the f= value and the source of the bytes differ.
   auto draw_image(Rect cells, const EncodedImage& image)
       -> std::expected<void, ErrorEvent> override;
-  // Unhide the base overload set (see TerminalDriver). Both are overridden
-  // here so nothing is actually hidden today; the declaration keeps that true
-  // if one of them is ever removed.
+  // PlacementFit::Exact omits c=/r= so the terminal places at the image's
+  // transmitted resolution (#137). Classic placement only -- see
+  // supports_placement_fit.
+  auto draw_image(Rect cells, const Image& image, PlacementFit fit)
+      -> std::expected<void, ErrorEvent> override;
+  // Unhide the base overload set (see TerminalDriver). All three are
+  // overridden here so nothing is actually hidden today; the declaration keeps
+  // that true if one of them is ever removed.
   using TerminalDriver::draw_image;
   // The flagship tier is the only one with an opaque-payload channel.
   [[nodiscard]] auto supports_image_format(ImageFormat f) const noexcept
+      -> bool override;
+  // Mode-dependent: Exact is Classic-only, so this answer MOVES when
+  // set_placement_mode is called.
+  [[nodiscard]] auto supports_placement_fit(PlacementFit f) const noexcept
       -> bool override;
   // The terminal's real cell geometry (see set_cell_pixels), so a widget can
   // rasterize at native resolution instead of guessing.
@@ -75,6 +84,11 @@ class KittyDriver final : public TerminalDriver {
   // deleted terminal-side) so the new mode re-places cleanly — otherwise a
   // region placed in Classic keeps placed=true and the placeholder path
   // would reference a virtual placement that was never created.
+  //
+  // This also moves supports_placement_fit(Exact) (#137): switching to
+  // UnicodePlaceholders after a successful Exact draw makes the NEXT Exact
+  // draw refuse, and gc_regions will then delete the region it had placed —
+  // a hole in the UI for an application that does not re-ask.
   void set_placement_mode(PlacementMode mode);
   [[nodiscard]] auto placement_mode() const noexcept -> PlacementMode {
     return m_mode;
@@ -110,6 +124,11 @@ class KittyDriver final : public TerminalDriver {
     std::uint64_t content_hash{0};  // 0 = nothing transmitted yet
     std::uint64_t last_used{0};     // per-draw LRU clock (strictly increasing)
     bool placed{false};             // placement command already emitted
+    // Placement state, not content (#137). A fit change invalidates `placed`
+    // exactly as a content change does; without it the same image redrawn to
+    // the same rect under a new fit matches both region_key and content_hash
+    // and emits nothing at all.
+    PlacementFit fit{PlacementFit::Stretch};
   };
 
   // Transmit an opaque payload under `id` via chunked APC sequences.
@@ -126,13 +145,14 @@ class KittyDriver final : public TerminalDriver {
   // makes "the format participates in image identity" impossible to forget at
   // a call site.
   auto draw_payload(Rect cells, std::span<const std::byte> payload,
-                    int format_code, Extent px)
+                    int format_code, Extent px, PlacementFit fit)
       -> std::expected<void, ErrorEvent>;
 
-  // Classic placement: position the cursor and place (a=p, C=1), scaled
-  // to cols x rows cells.
-  auto place_classic(const RegionSlot& slot, int x, int y, int cols,
-                     int rows) -> void;
+  // Classic placement: position the cursor and place (a=p, C=1), scaled to
+  // cols x rows cells under Stretch, or at the transmitted resolution under
+  // Exact (which omits c=/r= entirely).
+  auto place_classic(const RegionSlot& slot, int x, int y, int cols, int rows,
+                     PlacementFit fit) -> void;
 
   // Create a virtual placement and emit Unicode placeholder cells.
   // The image becomes part of the text grid (tmux-safe).

@@ -107,6 +107,46 @@ printf '%s%s%s%s%s%s' "$PH" "$D1" "$D0" "$PH" "$D1" "$D1"
 printf '%s[0m\n' "$ESC"
 
 echo
+read -r -p "Press Enter for stanza 6 (PlacementFit::Exact — #137)..."
+
+echo
+echo "== Stanza 6: c=/r= omitted, so the terminal places at TRUE SIZE =="
+# #137. KittyDriver emitted c=/r= on every placement, which made the terminal
+# resample — correct for a widget that generates its image, wrong for one the
+# app ships pre-rendered. Omitting the two keys is the kitty protocol's own
+# spelling of "place at native resolution"; this stanza is the empirical check
+# that a real terminal honours it.
+#
+# A fine checkerboard is the test pattern on purpose: it is the cheapest thing
+# whose STRUCTURE a non-integer resample visibly destroys. A solid block would
+# look identical either way and prove nothing.
+w='\xff\xff\xff\xff'; k='\x00\x00\x00\xff'
+row_a=''; row_b=''
+for _ in $(seq 8); do row_a+="$w$k"; row_b+="$k$w"; done
+checker=''
+for _ in $(seq 8); do checker+="$row_a$row_b"; done
+check_b64=$(printf "$checker" | base64 | tr -d '\n')
+
+send "transmit(chk)" \
+  "${ESC}_Ga=t,t=d,f=32,i=44,s=16,v=16,m=0,q=0;${check_b64}${ST}"
+
+echo "  6a — STRETCHED into 5x3 cells (c=5,r=3). 16px over 5 cells is not an"
+echo "       integer ratio, so the squares should come out UNEVEN — some one"
+echo "       pixel wide, some two. That unevenness is the bug #137 fixes."
+send "place(c=5,r=3)" "${ESC}_Ga=p,i=44,p=1,c=5,r=3,C=1,q=0${ST}"
+printf '\n\n\n\n'
+read -r -p "Press Enter for 6b (the same image, placed exactly)..."
+
+send "del place    " "${ESC}_Ga=d,d=i,i=44,p=1,q=0${ST}"
+echo "  6b — EXACT: the identical a=p command with c= and r= simply removed."
+echo "       Expect a small, CRISP 16x16-pixel checkerboard (about two cells"
+echo "       wide) with every square the same size."
+send "place(no c/r)" "${ESC}_Ga=p,i=44,p=1,C=1,q=0${ST}"
+printf '\n\n\n'
+
+echo
 echo "Report: (a) stanza 1 red block, (b) green after stanza 2, (c) stanza 3"
 echo "blue block, (d) YELLOW block after stanza 4, (e) stanza 5 shows a"
-echo "green 2x2 block, (f) any response containing ';E' (an error)."
+echo "green 2x2 block, (f) stanza 6a's squares uneven and 6b's even — and"
+echo "whether 6b rendered AT ALL, since omitting c=/r= is the whole of #137,"
+echo "(g) any response containing ';E' (an error)."
