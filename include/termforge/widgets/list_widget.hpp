@@ -115,9 +115,13 @@ class ListWidget final : public Widget {
     mark_dirty();
   }
 
-  // The marker actually drawn. mark_glyphs() returns by value, but its fields
-  // are views into string literals, so this outlives the temporary. Do NOT
-  // "fix" it by binding a const MarkGlyphs& and returning a view into a member.
+  // The marker actually drawn. The m_marker branch was sanitized by
+  // set_marker(); the fallback returns the style's selector RAW -- sound
+  // only because every in-tree MarkGlyphs family sanitizes to itself, which
+  // test/35glyphfit pins executably (#158's second finding). mark_glyphs()
+  // returns by value, but its fields are views into string literals, so this
+  // outlives the temporary. Do NOT "fix" it by binding a const MarkGlyphs&
+  // and returning a view into a member.
   [[nodiscard]] auto marker() const noexcept -> std::string_view {
     return m_marker.empty() ? mark_glyphs(m_style).selector
                             : std::string_view{m_marker};
@@ -127,22 +131,19 @@ class ListWidget final : public Widget {
   // plus one separator column, or 0 when it is off.
   //
   // This is what draw() actually uses, so it never lies about the layout --
-  // including the narrow-rect case, where a rect with no room for both the
-  // gutter and a text column drops the gutter and reports 0. Before geometry is
-  // set (rect().w == 0) it reports the configured width instead, which is the
-  // answer a caller sizing the widget in the first place needs.
+  // including the narrow-rect case, where a rect with no room for the gutter,
+  // the one column reserved beside it, and a text column drops the gutter and
+  // reports 0. Before geometry is set (rect().w == 0) it reports the
+  // configured width instead, which is the answer a caller sizing the widget
+  // in the first place needs.
   [[nodiscard]] auto gutter_cols() const noexcept -> int {
     if (!m_marker_enabled) return 0;
-    const int w = detail::display_width(marker());
-    // A zero-width "marker" (a lone combining mark) would reserve a column
-    // write_text then drops, denting every row permanently.
-    if (w <= 0) return 0;
-    const int rw = rect().w;
-    // The right-hand column stays reserved for #21's scrollbar, hence the
-    // extra -1: the marker must never be the reason a list has no room for
-    // its items.
-    if (rw > 0 && rw - (w + 1) - 1 <= 0) return 0;
-    return w + 1;
+    // detail::gutter_cols does the measurement and the clamp; the 1 is the
+    // right-hand column that stays reserved for #21's scrollbar -- the
+    // marker must never be the reason a list has no room for its items. This
+    // is the value TableWidget chose NOT to reserve (#158); the difference
+    // is spelled in digits so it cannot silently drift again.
+    return detail::gutter_cols(marker(), rect().w, 1);
   }
 
   // Whether draw() paints #21's scrollbar in the reserved right-hand column:

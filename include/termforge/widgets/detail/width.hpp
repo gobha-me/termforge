@@ -149,6 +149,55 @@ inline constexpr std::array<WidthInterval, 16> kWide{{
   return w;
 }
 
+// Columns a selection-marker gutter takes from a rect: the marker's display
+// width plus one separator column, or 0 when it cannot fit honestly. This is
+// the shared narrow-rect clamp ListWidget and TableWidget each carried a copy
+// of -- and the copies had already drifted (#158): ListWidget subtracted one
+// extra column ("The right-hand column stays reserved for #21's scrollbar"),
+// TableWidget did not, and a reader could not tell which was the rule and
+// which the local variation -- the exact problem #153 was filed about, one
+// shape over.
+//
+// The extraction makes the difference an ARGUMENT. `reserve` is the number of
+// right-hand columns the caller refuses to let the gutter be the reason to
+// lose: ListWidget passes 1 because its scrollbar comment says the marker
+// must never be what leaves a list no room for its items, TableWidget passes
+// 0 because its own clamp never reserved that column and there is no comment
+// saying it should -- settling whether it SHOULD is a behaviour decision,
+// deliberately not smuggled into a zero-delta extraction (same discipline
+// #153 followed). A gutter is dropped, never truncated, when the rect cannot
+// hold the gutter, the reserved column(s), and at least one text column:
+// half a gutter is a one-column lie every row pays for.
+//
+// Three clauses, each load-bearing:
+//   * rect_w <= 0 is NOT the narrow case -- it is "no geometry yet", and the
+//     answer is the configured width, which is what a caller sizing the
+//     widget in the first place needs;
+//   * w <= 0 rejects the zero-column "marker" (a lone combining mark, a ZWSP)
+//     that write_text paints nothing of while a naive w + 1 would dent every
+//     row permanently -- the same lower bound glyph_fit.hpp's fitted_glyph
+//     documents;
+//   * the clamp only fires on a real rect, so the configured width survives
+//     until set_geometry lands.
+//
+// The CALLER's contract, not checked here: `marker` must be the string that
+// will be painted, post-normalisation -- both widgets' set_marker() runs
+// Screen::sanitize, and their fallback is an in-tree MarkGlyphs selector
+// (pinned clean by test/35glyphfit), so display_width(marker) measures the
+// glyph write_text draws. Unlike fitted_glyph next door this CANNOT sanitize
+// itself: sanitize() is a non-constexpr, allocating call into core, and this
+// header must stay dependency-free (#54; the glyph_fit.hpp file comment
+// carries the argument). That is also why the signature is string_view +
+// noexcept + constexpr where fitted_glyph could be none of those -- it is
+// the reason #158's prose put the helper here rather than in glyph_fit.hpp.
+[[nodiscard]] constexpr auto gutter_cols(std::string_view marker, int rect_w,
+                                         int reserve) noexcept -> int {
+  const int w = display_width(marker);
+  if (w <= 0) return 0;
+  if (rect_w > 0 && rect_w - (w + 1) - reserve <= 0) return 0;
+  return w + 1;
+}
+
 // Longest prefix of `s` whose display width is <= max_cols, never splitting a
 // code point and never including a width-2 glyph that would straddle the
 // boundary (so the returned view fits in max_cols columns exactly or short).

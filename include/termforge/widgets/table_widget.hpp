@@ -159,9 +159,13 @@ class TableWidget final : public Widget {
     mark_dirty();
   }
 
-  // The marker actually drawn. mark_glyphs() returns by value, but its fields
-  // are views into string literals, so this outlives the temporary. Do NOT
-  // "fix" it by binding a const MarkGlyphs& and returning a view into a member.
+  // The marker actually drawn. The m_marker branch was sanitized by
+  // set_marker(); the fallback returns the style's selector RAW -- sound
+  // only because every in-tree MarkGlyphs family sanitizes to itself, which
+  // test/35glyphfit pins executably (#158's second finding). mark_glyphs()
+  // returns by value, but its fields are views into string literals, so this
+  // outlives the temporary. Do NOT "fix" it by binding a const MarkGlyphs&
+  // and returning a view into a member.
   [[nodiscard]] auto marker() const noexcept -> std::string_view {
     return m_marker.empty() ? mark_glyphs(m_style).selector
                             : std::string_view{m_marker};
@@ -177,13 +181,15 @@ class TableWidget final : public Widget {
   // the answer a caller sizing the widget in the first place needs.
   [[nodiscard]] auto gutter_cols() const noexcept -> int {
     if (!m_marker_enabled) return 0;
-    const int w = detail::display_width(marker());
-    // A zero-width "marker" (a lone combining mark) would reserve a column
-    // write_text then drops, denting every column permanently.
-    if (w <= 0) return 0;
-    const int rw = rect().w;
-    if (rw > 0 && rw - (w + 1) <= 0) return 0;
-    return w + 1;
+    // detail::gutter_cols does the measurement and the clamp; the 0 says
+    // this widget reserves NO column beside the gutter, deliberately unlike
+    // ListWidget's 1 (#158): ListWidget's comment documented its -1 as
+    // #21's scrollbar reservation, and nothing here documents that Table
+    // should match it. Whether it SHOULD is a behaviour question, answered
+    // on the issue -- not smuggled into this zero-delta extraction. Spelling
+    // the 0 is the point of the extraction: the difference is now visible
+    // and cannot silently drift.
+    return detail::gutter_cols(marker(), rect().w, 0);
   }
 
  private:
