@@ -253,15 +253,21 @@ class WidgetsDemo final : public App {
     m_wave.draw(screen);
     render_pixel_regions(m_wave);
 
-    // Status bar.
+    // Status bar: status text on the left, the focus indicator right-aligned
+    // in a strip beside it. Row 0 (where the indicator used to live) is the
+    // MenuBar's row, and the MenuBar draws last, so it overpainted the
+    // indicator every frame (#156).
+    const int focus_w = 18;
     m_status.set_text(m_status_text);
     m_status.set_colors(Rgb{0x80, 0x80, 0x80}, Rgb{0x10, 0x10, 0x20});
-    m_status.set_geometry({0, H - 1, W, 1});
+    m_status.set_geometry({0, H - 1, std::max(0, W - focus_w), 1});
     m_status.draw(screen);
 
-    // Focus indicator in title.
-    screen.write_text(W - 18, 0, std::format(" Focus: {:6}", focus_name()),
-                      Rgb{0x60, 0x60, 0x80}, Rgb{0x20, 0x20, 0x40});
+    m_focus.set_text(std::format("Focus: {:6}", focus_name()));
+    m_focus.set_align(Label::Align::Right);
+    m_focus.set_colors(Rgb{0x60, 0x60, 0x80}, Rgb{0x10, 0x10, 0x20});
+    m_focus.set_geometry({W - focus_w, H - 1, focus_w, 1});
+    m_focus.draw(screen);
 
     // Menu bar drawn LAST so the dropdown overlays all other content
     // (and listed last in route_mouse above so it's topmost for clicks).
@@ -316,7 +322,7 @@ class WidgetsDemo final : public App {
     set_status(std::format("Border: {}", name));
   }
 
-  // Name of the currently-focused widget, for the title indicator.
+  // Name of the currently-focused widget, for the status-bar indicator.
   [[nodiscard]] auto focus_name() const -> const char* {
     const Widget* c = m_ring.current();
     if (c == &m_input) return "Input";
@@ -330,7 +336,7 @@ class WidgetsDemo final : public App {
 
   MenuBar m_menu;
   Frame m_left_frame, m_right_frame, m_wave_frame;
-  Label m_label, m_status;
+  Label m_label, m_status, m_focus;
   TextInput m_input;
   Button m_btn_ok, m_btn_cancel;
   ProgressBar m_progress;
