@@ -16,19 +16,18 @@ TabBar::TabBar(std::vector<std::string> titles) {
 }
 
 auto TabBar::set_tabs(std::vector<std::string> titles) -> void {
-  // Sanitized ONCE, here, so the string this widget measures is byte-for-byte
-  // the string it paints (#10/#22). write_text would sanitize it anyway; doing
-  // it only there is what leaves a title's click span 6 columns from its
-  // glyphs. The sanitize pass composes in FRONT of set_all, which owns the
-  // -1-iff-empty invariant for all four widgets that carry this state.
-  for (auto& title : titles) title = Screen::sanitize(title);
+  // Sanitized ONCE, inside set_all, so the string this widget measures is
+  // byte-for-byte the string it paints (#10/#22). write_text would sanitize
+  // it anyway; doing it only there is what leaves a title's click span 6
+  // columns from its glyphs. set_all also owns the -1-iff-empty invariant for
+  // all four widgets that carry this state.
   m_list.set_all(std::move(titles));
   m_first = 0;  // every sibling setter rewinds its viewport
   mark_dirty();
 }
 
 auto TabBar::add_tab(std::string title) -> void {
-  m_list.add(Screen::sanitize(title));
+  m_list.add(std::move(title));
   mark_dirty();
 }
 

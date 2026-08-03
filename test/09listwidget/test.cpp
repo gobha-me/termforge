@@ -430,6 +430,105 @@ TEST_CASE("ListWidget: a click in the marker gutter selects (#72)", "[listwidget
   REQUIRE(l.selected() == 2);
 }
 
+// ── #154: OptionsList sanitizes at the setter ────────────────────────────────
+// Before OptionsList::set_all/add ran Screen::sanitize, the #10 bug class that
+// #22 (TabBar) and #129 (MenuBar) closed was still live here: an item carrying
+// an escape was measured raw by the widget and painted sanitized by
+// write_text. The sharpest drift is a TAB -- sanitize converts it to a space
+// (one column), but write_text on the RAW string measured it as a zero-width
+// C0 control, so the painted text was one column SHORTER than the measured
+// one -- the measurement-side analogue of #129's click-span drift, at a cost
+// of zero bytes. A plain single-column escape never drifts the geometry at
+// all (multi-column escapes do: the raw view overruns the rect; single-column
+// escapes were the #22 vector and stay pinned as the stored-copy contract).
+
+TEST_CASE("ListWidget: items are sanitized at the setter (#154)",
+          "[listwidget]") {
+  ListWidget l;
+  l.set_items({"safe", "evil\033[2Jhere"});
+  REQUIRE(l.selected_text() == "safe");
+  l.set_selected(1);
+  // "evil" + "here": the CSI sequence is gone, not munged into printable
+  // garbage, and the stored copy is what draw() will paint byte-for-byte.
+  REQUIRE(l.selected_text() == "evilhere");
+  // A round-trip claim, not a "sanitize was called" one: an app reading the
+  // item back gets the painted form, never the caller's raw bytes.
+  l.add_item("mo\tre");
+  l.set_selected(2);
+  REQUIRE(l.selected_text() == "mo re");  // tab -> space, at the seam
+}
+
+TEST_CASE("ListWidget: an item's tab paints the width the setter measured (#154)",
+          "[listwidget]") {
+  // The drift pin: pre-fix, "mo\tre" was STORED raw, so draw() handed
+  // write_text a string in which \t is a zero-width C0 control and the row
+  // painted "more" -- while any caller measuring the stored string via
+  // display_width (char_width('\t') == 1) counted 5. Post-fix the stored copy
+  // is "mo re" and the two agree by construction: this assertion reads back
+  // the painted row and asserts the SPACE is on the glass.
+  Screen s{20, 3};
+  ListWidget l;
+  l.set_geometry({0, 0, 20, 3});
+  l.set_items({"mo\tre"});
+  l.draw(s);
+  // Text starts past the marker gutter (mark + separator == 2).
+  REQUIRE(row_text(s, 0, 2, 6) == "mo re ");
+  REQUIRE(s.at(4, 0).text == " ");  // the tab's column is a painted space
+  REQUIRE(s.at(5, 0).text == "r");  // not pulled left onto column 4
+}
+
+TEST_CASE("ListWidget: a click in an escape-carrying item resolves to the row painted",
+          "[listwidget][mouse]") {
+  // #10's shape: the click resolves to an INDEX from (x,y), so it can only
+  // drift if the row's GEOMETRY moved. A multi-column escape in the item
+  // above the clicked one does not move rows -- but the row's own content
+  // must still be the sanitized copy the callback hands out, and the painted
+  // text must sit where a user would point at it.
+  Screen s{20, 3};
+  ListWidget l;
+  l.set_geometry({0, 0, 20, 3});
+  l.set_items({"one", "t\033[31mwo", "three"});
+  l.draw(s);
+  REQUIRE(row_text(s, 1, 2, 6) == "two   ");  // escape stripped pre-paint
+
+  int got_index = -1;
+  std::string got_text;
+  l.on_select([&](int idx, const std::string& text) {
+    got_index = idx;
+    got_text = text;
+  });
+  Event click = MouseEvent{.x = 3, .y = 1, .button = 0, .pressed = true};
+  REQUIRE(l.on_event(click));
+  REQUIRE(got_index == 1);
+  REQUIRE(got_text == "two");
+}
+
+TEST_CASE("ListWidget: every sanitation arm applied at the seam (#154)",
+          "[listwidget]") {
+  // The arms Screen::sanitize owns (test/02screen pins them on the function);
+  // these pin that set_all/add actually ROUTE through them, which is the
+  // mutation that must fail red: drop the OptionsList sanitize and every one
+  // of these expectations disagrees with the stored copy.
+  // Hex escapes are split across adjacent literals so a trailing 'B'/'f' is
+  // not eaten as a hex digit, and BEL is spelled \a (\b is backspace).
+  ListWidget l;
+  l.set_items({
+      "a\033[1mb",              // CSI styling: stripped whole sequence -> "ab"
+      "c\033]8;;http://x\ad",   // OSC with BEL terminator -> "cd"
+      "e\xC2\x9B" "f",          // two-byte C1 CSI -> "ef"
+      std::string{"g\0h", 3},   // NUL, a C0, dropped -> "gh" (literal needs a length)
+      "i\b" "j",                // backspace, a C0, dropped -> "ij"
+      "k\xE4\xB8\x96",      // well-formed multibyte: kept -> "k\xE4\xB8\x96"
+  });
+  REQUIRE(l.item_count() == 6);
+  REQUIRE(l.selected() == 0);
+  const char* want[6] = {"ab", "cd", "ef", "gh", "ij", "k\xE4\xB8\x96"};
+  for (int i = 0; i < 6; ++i) {
+    l.set_selected(i);
+    REQUIRE(l.selected_text() == want[i]);
+  }
+}
+
 TEST_CASE("ListWidget: colors are settable", "[listwidget]") {
   Screen s{20, 3};
   ListWidget l;

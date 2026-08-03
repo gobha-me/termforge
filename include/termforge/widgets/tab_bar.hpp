@@ -65,10 +65,11 @@
 //::write_text sanitizes whatever it is handed, so measuring the caller's raw
 // string means the two disagree: "\033[7mX\033[0m" measures 7 columns and
 // paints 1, and every tab to its right gets a click span 6 columns from its
-// glyphs. ListWidget's set_marker is the precedent followed here, and MenuBar
-// -- which carried the bug when this was written -- sanitizes at its own two
-// setters since #129, so a shared strip layout (#130) can assume the rule
-// rather than carry a raw-measure path for one caller.
+// glyphs. Since #154 the pass lives inside detail::OptionsList::set_all/add,
+// the one seam this widget funnels its titles through (the hand-rolled loops
+// here pre-dated it); MenuBar's sanitize_menu remains the single bespoke case
+// because a Menu is not an OptionsList, so a shared strip layout (#130) can
+// assume the rule rather than carry a raw-measure path for one caller.
 
 #include <functional>
 #include <string>
