@@ -52,6 +52,9 @@ class RadioGroup final : public Widget {
 
   // Replaces the options and selects the first (or nothing, if empty). Does
   // not fire on_change — programmatic setters are silent (see Checkbox).
+  // Options are SANITIZED at this seam (#154): the stored copy is what the
+  // widget both measures and paints, and selected_text() hands that copy back
+  // (the TabBar::title() precedent) — keep your own string if you need it raw.
   auto set_options(std::vector<std::string> options) -> void;
   auto add_option(std::string option) -> void;
   auto clear() -> void;

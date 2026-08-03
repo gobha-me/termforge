@@ -666,6 +666,24 @@ TEST_CASE("RadioGroup: the dirty flag round-trips through every setter",
   REQUIRE(g.selected() == -1);
 }
 
+TEST_CASE("RadioGroup: options are sanitized at the setter (#154)",
+          "[form][radio]") {
+  // The seam is shared with ListWidget/Select/TabBar, so the sanitation arms
+  // live in test/09listwidget; here the pin is that RadioGroup ROUTES through
+  // it: an escape-carrying option is stored -- and therefore painted and
+  // handed back -- sanitized.
+  RadioGroup g;
+  g.set_options({"plain", "evil\033[2Jhere", "mo\tre"});
+  REQUIRE(g.option_count() == 3);
+  g.set_selected(1);
+  REQUIRE(g.selected_text() == "evilhere");
+  g.set_selected(2);
+  REQUIRE(g.selected_text() == "mo re");  // tab -> space, at the seam
+  g.add_option("la\033[31mst");
+  g.set_selected(3);
+  REQUIRE(g.selected_text() == "last");
+}
+
 TEST_CASE("RadioGroup: on_change may call set_options (drill-down)",
           "[form][radio][uaf]") {
   RadioGroup g;
@@ -1581,6 +1599,62 @@ TEST_CASE("Select: the Ascii style emits only 7-bit glyphs, open and closed",
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(s);
   REQUIRE(rect_is_ascii(s, {0, 0, 20, 5}));
+}
+
+TEST_CASE("Select: options are sanitized at the setter (#154)",
+          "[form][select]") {
+  // The OptionsList seam sanitizes at set_all/add; these cases pin that
+  // Select ROUTES through it. The closed box's m_line cache is rebuilt from
+  // the stored copy, so a raw box value would prove sanitize never ran.
+  Screen s{20, 6};
+  Select sel;
+  sel.set_options({"kitty", "evil\033[2Jhere", "mo\tre"});
+  sel.set_geometry({0, 0, 14, 1});
+
+  sel.set_selected(1);
+  sel.draw(s);
+  // "evil" + "here" = 8 columns of value, padded to the inner width; the CSI
+  // never reaches the box line, and the round-tripped copy is the painted one.
+  REQUIRE(row_text(s, 0, 0, 14) == "[ evilhere \xE2\x96\xBE ]");
+  REQUIRE(sel.selected_text() == "evilhere");
+
+  sel.set_selected(2);
+  sel.draw(s);
+  REQUIRE(row_text(s, 0, 0, 14) == "[ mo re    \xE2\x96\xBE ]");  // tab -> space
+  REQUIRE(sel.selected_text() == "mo re");
+
+  sel.add_option("la\033[31mst");
+  sel.set_selected(3);
+  REQUIRE(sel.selected_text() == "last");
+}
+
+TEST_CASE("Select: a click commits the sanitized option painted on that row (#154)",
+          "[form][select][mouse]") {
+  // The #10 shape for the dropdown: the click resolves by row geometry, so it
+  // cannot drift -- but the value committed must be the sanitized copy whose
+  // glyphs the user pointed at, never the caller's raw bytes.
+  Screen s{20, 6};
+  Select sel;
+  sel.set_options({"one", "t\033[31mwo", "three"});
+  sel.set_geometry({0, 0, 14, 1});
+  std::vector<std::pair<int, std::string>> seen;
+  sel.on_change([&](int i, const std::string& t) { seen.emplace_back(i, t); });
+
+  REQUIRE(sel.on_event(key(Key::Enter)));  // open
+  sel.draw(s);
+  // Row 2 (dropdown option 1) shows the sanitized form; the label sits past
+  // the one-column marker pad, truncated/padded into the dropdown window.
+  REQUIRE(s.at(1, 2).text == "t");
+  REQUIRE(s.at(2, 2).text == "w");
+  REQUIRE(s.at(3, 2).text == "o");
+
+  Event click = MouseEvent{.x = 2, .y = 2, .button = 0, .pressed = true};
+  REQUIRE(sel.on_event(click));
+  REQUIRE_FALSE(sel.dropdown_open());
+  REQUIRE(sel.selected() == 1);
+  REQUIRE(seen.size() == 1);
+  REQUIRE(seen[0].first == 1);
+  REQUIRE(seen[0].second == "two");
 }
 
 TEST_CASE("Select: a wide value glyph is never split",

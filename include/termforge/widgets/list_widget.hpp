@@ -35,10 +35,13 @@ class ListWidget final : public Widget {
  public:
   ListWidget() = default;
 
-  // Set the list items (replaces existing).
+  // Set the list items (replaces existing). Items are SANITIZED at this seam
+  // (#154): the stored copy is what the widget both measures and paints, and
+  // selected_text() hands that copy back -- a caller that needs its original
+  // string should keep it (the TabBar::title() precedent).
   auto set_items(std::vector<std::string> items) -> void;
 
-  // Add a single item to the end.
+  // Add a single item to the end (sanitized like set_items).
   auto add_item(std::string item) -> void;
 
   // Remove all items.

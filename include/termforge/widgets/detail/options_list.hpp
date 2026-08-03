@@ -32,11 +32,25 @@
 // divergence is load-bearing; see the matching note in table_widget.hpp.
 //
 // Pure: no Widget base, no dirty flags; callers mark_dirty as they already do.
+//
+// ITEMS ARE SANITIZED AT THE SETTER (#154), and the sanitized copy is what
+// every consumer both measures and paints. This is the one seam ListWidget,
+// RadioGroup and Select all funnel options through; before it, TabBar spelled
+// the same Screen::sanitize pass by hand at its own two setters (#22), the
+// copies ListWidget/RadioGroup/Select needed never existed, and an option
+// carrying an escape was measured raw wherever the widget measured it and
+// painted sanitized by Screen::write_text -- #10's bug class left open for
+// three of the four widgets. MenuBar's sanitize_menu stays the single
+// justified bespoke case (a Menu is not an OptionsList). Round-trip: the
+// stored copy is returned by at()/options()/selected_text(); a caller that
+// needs its original string back should keep it.
 
 #include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "termforge/core/screen.hpp"
 
 namespace termforge::detail {
 
@@ -46,13 +60,14 @@ class OptionsList {
 
   // Replace the whole list; selection resets to the first entry (or -1).
   auto set_all(std::vector<std::string> options) -> void {
+    for (auto& option : options) option = Screen::sanitize(option);
     m_options = std::move(options);
     m_selected = m_options.empty() ? -1 : 0;
   }
 
   // Append; selects the first entry if the list was empty.
   auto add(std::string option) -> void {
-    m_options.push_back(std::move(option));
+    m_options.push_back(Screen::sanitize(option));
     if (m_selected < 0) m_selected = 0;
   }
 
