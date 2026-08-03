@@ -103,8 +103,6 @@ KittyDriver::KittyDriver() = default;
 
 KittyDriver::~KittyDriver() { delete_all(); }
 
-void KittyDriver::set_output(std::string* sink) { m_sink = sink; }
-
 auto KittyDriver::init() -> std::expected<void, ErrorEvent> { return {}; }
 
 auto KittyDriver::capabilities() const noexcept -> Capabilities {
@@ -469,14 +467,10 @@ void KittyDriver::flush() {
   gc_regions();
   tally_image_edit(m_buf.size() - before_gc);  // #139: deletes are image traffic
 
-  const std::size_t written = m_buf.size();
-  if (m_sink != nullptr) {
-    *m_sink += m_buf;
-  } else {
-    std::fwrite(m_buf.data(), 1, m_buf.size(), stdout);
-    std::fflush(stdout);
-  }
-  tally_frame(written);
+  // #178: emit_frame is the sink AND the meter -- it writes m_buf wherever the
+  // output is pointed and calls tally_frame with exactly that count. It must
+  // stay AFTER gc_regions() above, or the deletions land in the next frame.
+  emit_frame(m_buf);
   m_buf.clear();
   ++m_frame;  // advance the frame window used by gc_regions()
 }
@@ -674,8 +668,22 @@ auto KittyDriver::delete_image(std::uint32_t image_id) -> void {
 auto KittyDriver::delete_all() -> void {
   if (m_next_image_id <= 1) return;  // nothing uploaded
   // Delete all images: a=d (delete), d=A (all).
-  // Write directly to stdout (never through m_sink) — the destructor runs
-  // after local test strings may already be destroyed.
+  //
+  // Written directly to stdout, NEVER through emit_frame — and #178 did not
+  // change that, deliberately. The reason is sharper than "a test string might
+  // already be gone": TerminalDriver's sink is NON-OWNING in both flavours. It
+  // borrows a ByteSink*, or points at its own StringSink adapter which borrows
+  // a std::string* — so a destructor has no grounds to assume the destination
+  // is still alive, whoever supplied it. test/01drivers is the concrete case:
+  // it constructs `KittyDriver d;` before `std::string out;` throughout, so the
+  // driver outlives the string in about ten cases and routing this through the
+  // sink would turn a harmless stdout write into a use-after-free.
+  //
+  // What fixes it is sink OWNERSHIP whose lifetime is the session's (#144's
+  // own precondition), or an explicit pre-destruction shutdown() — not a
+  // base-class sink. Until then this stays, and it is a real bug for a server:
+  // #144 row 7, one session ending wipes every OTHER session's images off the
+  // terminal.
   //
   // #139: these bytes are deliberately NOT metered. This is the sink bypass
   // #148 names, and the only caller is ~KittyDriver — a counter incremented

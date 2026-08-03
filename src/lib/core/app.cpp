@@ -190,6 +190,14 @@ auto App::frame_step() -> void {
   m_renderer->present(*m_screen);
   restore_backdrop(*m_screen);  // the overlay pass leaves no trace behind
   flush_pixel_regions();
+  // #178: a sink that refused this frame's bytes surfaces as an ErrorEvent
+  // rather than a silently dropped frame. flush() is `-> void` and pure, so
+  // the driver latches the refusal and this is where it is read -- after BOTH
+  // flushes above, so a frame carrying pixel regions is drained once and not
+  // twice. Queued through the same channel setup() uses for degradations, so
+  // it drains on the next frame's pump and dispatch_event routes it past the
+  // overlay stack.
+  if (auto e = m_driver->take_output_error()) m_input.push_error(std::move(*e));
   wait_frame(frame_start);
 }
 
@@ -299,9 +307,15 @@ auto App::test_wire_headless(int cols, int rows, std::string* sink) -> void {
   // no capability probe, no alt-screen, no SIGWINCH handler. The frame body
   // itself is the real one, so cadence and input handling are the shipped
   // code paths and not a reimplementation.
-  auto driver = std::make_unique<FallbackDriver>();
-  driver->set_output(sink);
-  m_driver = std::move(driver);
+  //
+  // The set_output call goes through m_driver -- the BASE pointer -- since
+  // #178. It used to have to construct a concrete FallbackDriver, redirect it,
+  // and upcast afterwards, because set_output existed only on the concrete
+  // drivers; that ordering is why headless tests were pinned to the fallback
+  // tier and could never exercise KittyDriver offline. The tier here is now a
+  // free choice, and only the default is still FallbackDriver.
+  m_driver = std::make_unique<FallbackDriver>();
+  m_driver->set_output(sink);
   m_screen = std::make_unique<Screen>(cols, rows);
   m_renderer = std::make_unique<Renderer>(*m_driver);
 }

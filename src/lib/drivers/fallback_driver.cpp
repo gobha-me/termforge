@@ -23,7 +23,6 @@ auto luminance_char(const Pixel& p) -> char {
 }  // namespace
 
 FallbackDriver::FallbackDriver() = default;
-void FallbackDriver::set_output(std::string* sink) { m_sink = sink; }
 
 auto FallbackDriver::init() -> std::expected<void, ErrorEvent> { return {}; }
 
@@ -163,14 +162,10 @@ void FallbackDriver::flush() {
   // #139: the floor tier has no out-of-band image channel, so it tallies no
   // image buckets at all — draw_image's ramp glyphs ARE cell traffic, and
   // tally_frame's remainder lands them in `cells`, which is the honest answer.
-  const std::size_t written = m_buf.size();
-  if (m_sink != nullptr) {
-    *m_sink += m_buf;
-  } else {
-    std::fwrite(m_buf.data(), 1, m_buf.size(), stdout);
-    std::fflush(stdout);
-  }
-  tally_frame(written);
+  //
+  // #178: emit_frame is the sink AND the meter -- it writes m_buf wherever the
+  // output is pointed and calls tally_frame with exactly that count.
+  emit_frame(m_buf);
   m_buf.clear();
 }
 

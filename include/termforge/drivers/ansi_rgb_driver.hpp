@@ -57,8 +57,9 @@ class AnsiRgbDriver final : public TerminalDriver {
   auto flush() -> void override;
   [[nodiscard]] auto capabilities() const noexcept -> Capabilities override;
 
-  // Test hook: redirect output away from stdout.
-  void set_output(std::string* sink);
+  // set_output moved to TerminalDriver in #178 -- do not re-declare it here.
+  // Name hiding would make the ByteSink* overload invisible to any call made
+  // through AnsiRgbDriver's static type.
 
  private:
   // The half-block renderer, over a row-major RGBA span rather than an Image.
@@ -75,7 +76,8 @@ class AnsiRgbDriver final : public TerminalDriver {
     return (static_cast<int>(c.r) << 16) | (static_cast<int>(c.g) << 8) | c.b;
   }
 
-  std::string* m_sink{nullptr};  // when set, render here instead of stdout
+  // The sink lives on TerminalDriver since #178; m_buf stays per-driver
+  // because hoisting the frame buffer is #148's business, not this one's.
   std::string m_buf;
   int m_cur_fg{-1};  // active SGR foreground, -1 = no SGR emitted yet
   int m_cur_bg{-1};  // active SGR background

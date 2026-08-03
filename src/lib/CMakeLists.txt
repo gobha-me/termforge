@@ -27,6 +27,7 @@ add_library(${PROJECT_NAME}_lib STATIC
   widgets/file_picker_dialog.cpp
   widgets/map_widget.cpp
   widgets/tab_bar.cpp
+  drivers/terminal_driver.cpp
   drivers/ansi_rgb_driver.cpp
   drivers/fallback_driver.cpp
   drivers/kitty_driver.cpp

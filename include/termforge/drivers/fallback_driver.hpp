@@ -51,7 +51,9 @@ class FallbackDriver final : public TerminalDriver {
   auto flush() -> void override;
   [[nodiscard]] auto capabilities() const noexcept -> Capabilities override;
 
-  void set_output(std::string* sink);
+  // set_output moved to TerminalDriver in #178 -- do not re-declare it here.
+  // Name hiding would make the ByteSink* overload invisible to any call made
+  // through FallbackDriver's static type.
 
  private:
   // The ASCII-ramp renderer, over a row-major RGBA span rather than an Image.
@@ -60,7 +62,8 @@ class FallbackDriver final : public TerminalDriver {
   auto draw_rgba(Rect cells, std::span<const std::byte> rgba, Extent px,
                  PlacementFit fit) -> std::expected<void, ErrorEvent>;
 
-  std::string* m_sink{nullptr};
+  // The sink lives on TerminalDriver since #178; m_buf stays per-driver
+  // because hoisting the frame buffer is #148's business, not this one's.
   std::string m_buf;
 };
 

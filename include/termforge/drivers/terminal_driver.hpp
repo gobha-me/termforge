@@ -17,9 +17,12 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <type_traits>
 
+#include "termforge/core/byte_sink.hpp"
 #include "termforge/core/types.hpp"
 
 namespace termforge {
@@ -52,7 +55,27 @@ struct FrameBytes {
 
 class TerminalDriver {
  public:
+  // Defaulted explicitly: declaring the copy operations below suppresses the
+  // implicit default constructor, and every driver in and out of the tree
+  // relies on it.
+  TerminalDriver() = default;
   virtual ~TerminalDriver() = default;
+
+  // COPY AND MOVE ARE DELETED (#178), and this is a behaviour change: a
+  // user-declared destructor suppresses the implicit MOVES but leaves the
+  // implicit COPIES, so `FallbackDriver b = a;` compiled before this.
+  //
+  // It cannot now. The base holds a StringSink member that m_sink may point
+  // AT, so a copy would carry a pointer into the SOURCE object and dangle the
+  // moment the source died. Nothing in the tree copies a driver — they are
+  // held as unique_ptr and select_driver_for moves the pointer, not the object
+  // — and the failure mode of putting these back is silent, which is the
+  // argument for deleting rather than documenting. An out-of-tree driver that
+  // copied one gets a compile error, not a surprise.
+  TerminalDriver(const TerminalDriver&) = delete;
+  auto operator=(const TerminalDriver&) -> TerminalDriver& = delete;
+  TerminalDriver(TerminalDriver&&) = delete;
+  auto operator=(TerminalDriver&&) -> TerminalDriver& = delete;
 
   virtual auto init() -> std::expected<void, ErrorEvent> = 0;
   // Emit one run of text at (x,y). `attrs` carries the per-cell display
@@ -336,6 +359,77 @@ class TerminalDriver {
     return m_total_bytes;
   }
 
+  // ── the output sink (#178, #144 Split A1) ──────────────────────────────
+  // Where this driver's bytes go. No sink (the default) means stdout.
+  //
+  // ON THE BASE, and that is the point: before #178 this was three identical
+  // non-virtual declarations on the three concrete drivers, so it was
+  // unreachable through the std::unique_ptr<TerminalDriver> that App actually
+  // holds and every caller had to know the tier before it could redirect it.
+  //
+  // NON-VIRTUAL, and that is the design. The sink is base-owned state: there
+  // is exactly one correct implementation and nothing for a subclass to
+  // override. That sidesteps the standing rule about pure virtuals (AGENTS.md)
+  // rather than merely satisfying it — test/support/legacy_driver.hpp needs no
+  // new line, and "make this virtual and pure" is still a mutation that fails
+  // to compile.
+  //
+  // DO NOT RE-DECLARE set_output ON A DERIVED DRIVER. C++ hides by NAME and
+  // not by signature, so a `void set_output(std::string*)` on a subclass hides
+  // the ByteSink* overload for every call made through that subclass's static
+  // type — the same trap documented for draw_image below.
+  //
+  // THE LIMITATION, STATED: a driver that emits bytes WITHOUT going through
+  // emit_frame() silently ignores this. That is exactly as true of
+  // tally_frame() today, and for the same reason — the base cannot intercept a
+  // write it never sees. emit_frame is the funnel, and a driver that skips it
+  // opts out of the sink and the meter at once. Pinned by
+  // test/support/bypass_driver.hpp so this stays a tested property rather than
+  // a paragraph.
+  auto set_output(ByteSink* sink) noexcept -> void;
+
+  // Convenience: the in-memory string sink every driver test uses. Backed by a
+  // base-owned StringSink, so this path goes THROUGH ByteSink::write like any
+  // other rather than around it — which is what makes the ~150 existing
+  // set_output(&out) call sites in test/ coverage of the new code and not
+  // merely compatibility with it.
+  //
+  // A null target detaches, as it always did. Prefer clear_output().
+  auto set_output(std::string* sink) noexcept -> void;
+
+  // set_output(nullptr) would be AMBIGUOUS between the two overloads above:
+  // std::nullptr_t converts to both pointer types at identical rank. Deleted
+  // rather than left ambiguous because a deleted overload is an EXACT match,
+  // so it wins resolution and the diagnostic is "use of deleted function"
+  // pointing here — at a comment naming the fix — instead of a two-candidate
+  // ambiguity dump. Use clear_output().
+  auto set_output(std::nullptr_t) -> void = delete;
+
+  // Back to stdout.
+  auto clear_output() noexcept -> void;
+  [[nodiscard]] auto has_output() const noexcept -> bool;
+
+  // The last sink refusal, taken and cleared.
+  //
+  // Latched rather than returned because flush() is `-> void` and pure: giving
+  // it a return type would break every out-of-tree driver at compile time,
+  // which the rule above forbids. So this is forced, not preferred.
+  //
+  // FIRST FAILURE WINS while one is pending. On a broken socket every
+  // subsequent frame fails too, and the first message is the one that says
+  // why; overwriting would leave the app holding the least informative of N
+  // identical errors.
+  //
+  // App drains this once per frame into an ErrorEvent, so a refused write
+  // surfaces to the application rather than being a silently dropped frame.
+  // Which means "first wins" holds only WHILE ONE IS PENDING: the latch
+  // re-arms every frame, so a permanently dead sink reports once per frame
+  // rather than once ever. That is the right way round -- a report-once latch
+  // would leave an application that recovered and broke again permanently
+  // uninformed -- but the correct response to the FIRST event is to tear the
+  // session down, not to ignore it and collect sixty a second.
+  [[nodiscard]] auto take_output_error() noexcept -> std::optional<ErrorEvent>;
+
  protected:
   // Attribute `n` bytes of the pending frame to an image bucket. A driver
   // calls these as it appends. `cells` is deliberately not tallied here — see
@@ -371,10 +465,33 @@ class TerminalDriver {
     m_pending = FrameBytes{};
   }
 
+  // THE write boundary and the meter boundary, in one function (#178).
+  //
+  // Hands `bytes` to the sink — or to stdout when there is none — and closes
+  // the frame with exactly that count. Every driver's flush() is this call
+  // plus whatever it needs to reset its own buffer. Folding the two boundaries
+  // together is deliberate: it makes "metered but not sent" and "sent but not
+  // metered" both unspellable, where three hand-written copies of the branch
+  // made each of them one edit away.
+  //
+  // tally_frame RUNS ON BOTH BRANCHES, including a refused write. Not because
+  // the bytes reached a wire — they did not — but because tally_frame also
+  // RESETS m_pending, and skipping it would carry this frame's image tallies
+  // into the next one and over-report it. The meter measures what the driver
+  // handed over; take_output_error() is what says whether it was accepted.
+  auto emit_frame(std::string_view bytes) -> void;
+
  private:
   FrameBytes m_pending{};  // this frame, so far
   FrameBytes m_last_frame_bytes{};
   FrameBytes m_total_bytes{};
+
+  // Borrowed, never owned; null means stdout. m_string_sink backs the
+  // std::string* overload and m_sink may point AT it, which is why copy and
+  // move are deleted above.
+  ByteSink* m_sink{nullptr};
+  StringSink m_string_sink{};
+  std::optional<ErrorEvent> m_output_error{};
 };
 
 // Compile-time conformance check for concrete drivers. Not a dispatch tool.
