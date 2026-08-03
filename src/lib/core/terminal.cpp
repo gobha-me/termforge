@@ -38,25 +38,103 @@ struct Terminal::Impl {
   // neither stream is a tty and we must not write control bytes anywhere.
   int out_fd{isatty(STDOUT_FILENO) != 0 ? STDOUT_FILENO
                                         : (isatty(STDIN_FILENO) != 0 ? STDIN_FILENO : -1)};
+  // #179: the fds above were discovered; set_io() replaces them and latches
+  // this. enter_raw() branches on it — see the header's "statement of intent".
+  bool injected{false};
+  // The F_GETFL word enter_raw() replaced on a stream with no termios, and its
+  // validity witness. The termios pair above is the same idea for a tty; a
+  // Terminal is only ever in one of the two modes, never both.
+  int saved_flags{0};
+  bool flags_valid{false};
+  // Whether *this* Terminal installed the fatal-signal handlers. A session that
+  // declined to arm must not uninstall on the way out: the dispositions it would
+  // clear belong to the embedding program, which never asked us to touch them.
+  bool installed_handlers{false};
 };
 
 Terminal::Terminal() : m_impl(std::make_unique<Impl>()) {}
 Terminal::~Terminal() {
   leave_raw();  // no-op if teardown() or an earlier call already did it
-  // Disarm the signal-restore path: this Terminal's saved state is gone, so a
-  // later fatal signal must not tcsetattr() with it. Return the handlers we
-  // installed to their default disposition.
+  // Disarm the signal-restore path *if it was ours*. This Terminal's saved
+  // state is gone, so a later fatal signal must not tcsetattr() with it — but a
+  // Terminal that never armed has nothing to disarm, and clearing the shared
+  // slot or the dispositions on its way out would be reaching into state that
+  // belongs to whoever did arm, or to the embedding program.
   auto& rs = detail::restore_state();
+  // The screen half is ours to clear exactly when we are the one that put a
+  // screen up — which is not the same condition as having armed the termios
+  // half, since enter_screen() does not require enter_raw(). The state describes
+  // *this* Terminal's alt-screen on *this* Terminal's fd; leaving it behind
+  // points a later crash at a stream that is gone.
+  if (m_impl->in_screen) {
+    rs.in_screen = 0;
+    m_impl->in_screen = false;
+  }
+  if (!m_impl->installed_handlers) return;
   rs.armed = 0;
-  rs.in_screen = 0;
   detail::uninstall_fatal_handlers();
+  m_impl->installed_handlers = false;
+}
+
+// ── which streams this Terminal talks to (#179) ─────────────────────────────
+
+auto Terminal::set_io(TerminalIo io) -> std::expected<void, ErrorEvent> {
+  // Every guard runs before anything is applied: a refusal leaves the previous
+  // pair whole. Half-applying would be the worst outcome available here — a
+  // session reading its own channel and writing the daemon's terminal.
+  if (m_raw) {
+    return std::unexpected{ErrorEvent{Severity::Error, "terminal",
+                                      "set_io: already in raw mode"}};
+  }
+  if (m_impl->in_screen) {
+    return std::unexpected{ErrorEvent{Severity::Error, "terminal",
+                                      "set_io: a screen is up"}};
+  }
+  if (io.in < 0) {
+    return std::unexpected{ErrorEvent{Severity::Error, "terminal",
+                                      "set_io: input fd must be >= 0"}};
+  }
+  m_impl->tty_fd = io.in;
+  m_impl->out_fd = io.out;  // < 0 is the documented "emit nothing" sentinel
+  m_impl->injected = true;
+  return {};
+}
+
+auto Terminal::io() const noexcept -> TerminalIo {
+  return TerminalIo{m_impl->tty_fd, m_impl->out_fd};
+}
+
+auto Terminal::io_injected() const noexcept -> bool { return m_impl->injected; }
+
+auto Terminal::owns_termios() const noexcept -> bool {
+  // Both halves: saved_valid alone outlives leave_raw() (the captured termios is
+  // kept so a later enter_raw() has something to compare against), and the
+  // question this answers is about the mode in force right now.
+  return m_raw && m_impl->saved_valid;
 }
 
 auto Terminal::enter_raw() -> std::expected<void, ErrorEvent> {
   if (m_raw) return {};
-  if (!isatty(m_impl->tty_fd)) {
+  // Three ways out, and the first two are byte-for-byte what they always were.
+  //
+  // A *discovered* stdin that is not a tty is the accident this refusal was
+  // written for (`./app < file`), and it still fails. An *injected* one is a
+  // caller telling us what its streams are, which is not a mistake to catch —
+  // so it falls through to the non-termios path below rather than being refused
+  // on behalf of a terminal nobody claimed to have. (#179)
+  if (!m_impl->injected && !isatty(m_impl->tty_fd)) {
     return std::unexpected{ErrorEvent{Severity::Error, "terminal",
                                       "stdin/stdout is not a tty"}};
+  }
+  if (!isatty(m_impl->tty_fd)) {
+    if (auto r = enter_nonblocking(); !r) return r;
+    // Falls through to the same arm_restore() the termios path uses, and that
+    // is deliberate: whether to arm is arm_restore()'s decision, made from the
+    // facts, and there is exactly one place to read it. An early return here
+    // would move the rule into the control flow, where deleting the check
+    // inside arm_restore() would stop meaning anything.
+    arm_restore();
+    return {};
   }
   termios raw{};
   if (tcgetattr(m_impl->tty_fd, &m_impl->saved) != 0) {
@@ -78,23 +156,83 @@ auto Terminal::enter_raw() -> std::expected<void, ErrorEvent> {
   }
   m_raw = true;
 
-  // Arm the async-signal-safe restore path now that cooked-mode termios is
-  // captured: SIGTERM/SIGHUP or a crash bypasses the destructor, so the handler
-  // needs the saved termios + the tty fds to put the terminal back. atexit()
-  // covers exit(); the local-static init guarantees a single registration.
-  auto& rs = detail::restore_state();
-  rs.saved = m_impl->saved;
-  rs.tty_fd = m_impl->tty_fd;
-  rs.out_fd = m_impl->out_fd;
-  rs.armed = 1;
-  detail::install_fatal_handlers();
-  [[maybe_unused]] static const int atexit_once =
-      std::atexit(detail::restore_terminal);
+  arm_restore();
   return {};
 }
 
+// The mode a stream with no termios can be in: non-blocking. Reached only for
+// an injected fd (see enter_raw's discriminator), and it is not a courtesy —
+// App's input drain reads until a read comes back empty, so a blocking stream
+// does not slow that loop down, it never leaves it. On a tty the same guarantee
+// comes from VMIN=0/VTIME=0, which is why nothing needed this before. (#179)
+auto Terminal::enter_nonblocking() -> std::expected<void, ErrorEvent> {
+  const int flags = ::fcntl(m_impl->tty_fd, F_GETFL);
+  if (flags < 0) {
+    return std::unexpected{ErrorEvent{Severity::Error, "terminal",
+                                      std::string{"fcntl(F_GETFL): "} + std::strerror(errno)}};
+  }
+  if (::fcntl(m_impl->tty_fd, F_SETFL, flags | O_NONBLOCK) != 0) {
+    return std::unexpected{ErrorEvent{Severity::Error, "terminal",
+                                      std::string{"fcntl(F_SETFL): "} + std::strerror(errno)}};
+  }
+  // Saved, not assumed: a caller may well hand us a stream that was already
+  // non-blocking, and leave_raw() must put back what was there rather than
+  // normalize to blocking.
+  m_impl->saved_flags = flags;
+  m_impl->flags_valid = true;
+  m_raw = true;
+  return {};
+}
+
+// Arm the async-signal-safe restore path. Two halves with two different
+// predicates, because they rescue two different things and the fds they need
+// are not interchangeable (#179):
+//
+//   termios half — armed only when we actually captured and replaced a tty's
+//   termios. Arming it otherwise hands the handler a zeroed termios to apply.
+//
+//   screen half — enter_screen()'s business, armed only when out_fd is a tty.
+//   The handler's job there is to write 48 bytes of leave sequence, which
+//   restores a terminal and corrupts anything else. An injected out_fd may be
+//   one end of a pipe a pump thread muxes into an ssh channel; a fatal-signal
+//   handler is exactly the context where that thread is not running.
+//
+// Installing the handlers rides with the termios half, and it is the more
+// consequential of the two: install_fatal_handlers() replaces nine dispositions
+// process-wide, so a session that armed for no reason turns its own SIGSEGV
+// into everyone's. On the discovered path both predicates are *tautologies* —
+// out_fd was chosen by isatty() in Impl — which is the whole argument that no
+// existing program's behaviour changes here by one byte.
+auto Terminal::arm_restore() -> void {
+  if (!m_impl->saved_valid) return;
+  auto& rs = detail::restore_state();
+  rs.saved = m_impl->saved;
+  rs.tty_fd = m_impl->tty_fd;
+  rs.armed = 1;
+  detail::install_fatal_handlers();
+  m_impl->installed_handlers = true;
+  // atexit() covers exit(); the local-static init guarantees a single
+  // registration. Note it is once per *process*, not per Terminal — which is
+  // the sharpest reason the screen half (enter_screen) must never record a
+  // session fd: those numbers get recycled by the next accept(), and this hook
+  // fires long after the session that owned them is gone.
+  [[maybe_unused]] static const int atexit_once =
+      std::atexit(detail::restore_terminal);
+}
+
 auto Terminal::leave_raw() -> void {
-  if (!m_raw || !m_impl->saved_valid) return;
+  if (!m_raw) return;
+  // The non-termios mode (#179): put back the file status flags enter_raw()
+  // replaced, exactly. A stream handed to us already non-blocking goes back
+  // non-blocking — this is a restore, not a normalization. Nothing to disarm:
+  // that path armed nothing.
+  if (m_impl->flags_valid) {
+    if (::fcntl(m_impl->tty_fd, F_SETFL, m_impl->saved_flags) != 0) return;
+    m_impl->flags_valid = false;
+    m_raw = false;
+    return;
+  }
+  if (!m_impl->saved_valid) return;
   // Failure leaves everything as it was, deliberately: still m_raw, still
   // armed. There is nowhere to report it — teardown() and ~Terminal have no
   // event loop left to raise an ErrorEvent into — so the only useful response
@@ -156,8 +294,17 @@ auto env_has(const char* name, const char* needle) -> bool {
 
 // Escape emission to the terminal's output fd. No-op when `fd` is < 0 (neither
 // stream is a tty — writing control bytes into a redirected file/pipe would
-// corrupt it). Retries EINTR and short writes so a multi-byte escape sequence
-// can't be truncated into a state-corrupting fragment.
+// corrupt it). Retries EINTR, EAGAIN and short writes so a multi-byte escape
+// sequence can't be truncated into a state-corrupting fragment.
+//
+// EAGAIN used to break out here, on the reasoning that there is nothing
+// actionable at this layer. That was true while the destination was always a
+// tty, where a full output buffer is close to unheard of. #179 made it reachable
+// on purpose: a caller may inject one socketpair fd as both `in` and `out`, and
+// enter_raw() then sets O_NONBLOCK on it — so a slow peer turns "unheard of"
+// into routine, and half an escape sequence is worse than none. Wait for the
+// stream to drain instead. Bounded, because a peer that never reads must not
+// wedge a frame.
 void emit(int fd, const char* seq) {
   if (fd < 0) return;
   const char* p = seq;
@@ -169,8 +316,11 @@ void emit(int fd, const char* seq) {
       left -= static_cast<std::size_t>(n);
     } else if (n < 0 && errno == EINTR) {
       continue;
+    } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      pollfd pfd{fd, POLLOUT, 0};
+      if (::poll(&pfd, 1, 100) <= 0) break;  // gave it a chance; move on
     } else {
-      break;  // EAGAIN / closed fd: nothing actionable at this layer
+      break;  // closed fd: nothing actionable at this layer
     }
   }
 }
@@ -263,8 +413,22 @@ auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
 
 // ── read modes ──────────────────────────────────────────────────────────────
 
+// Set O_NONBLOCK on the input stream, or clear it. The non-termios spelling of
+// the two read modes (#179); a no-op if the stream has no flags to read.
+auto Terminal::set_nonblocking(bool on) -> void {
+  const int flags = ::fcntl(m_impl->tty_fd, F_GETFL);
+  if (flags < 0) return;
+  const int want = on ? (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK);
+  if (want != flags) ::fcntl(m_impl->tty_fd, F_SETFL, want);
+}
+
 auto Terminal::set_read_timeout(int deciseconds) -> void {
   if (!m_raw) return;
+  // No termios on this stream: non-blocking is the whole of "poll, don't
+  // block", and `deciseconds` has no equivalent to be honoured with. Documented
+  // in the header rather than approximated — wait_readable() is the wait, and
+  // it has millisecond granularity where VTIME has 100ms.
+  if (m_impl->flags_valid) return set_nonblocking(true);
   termios t{};
   if (tcgetattr(m_impl->tty_fd, &t) != 0) return;
   t.c_cc[VMIN] = 0;
@@ -295,6 +459,7 @@ auto Terminal::wait_readable(int timeout_ms) -> bool {
 
 auto Terminal::set_read_blocking() -> void {
   if (!m_raw) return;
+  if (m_impl->flags_valid) return set_nonblocking(false);
   termios t{};
   if (tcgetattr(m_impl->tty_fd, &t) != 0) return;
   t.c_cc[VMIN] = 1;
@@ -324,7 +489,19 @@ auto Terminal::enter_screen() -> void {
   m_impl->in_screen = true;
   // Arm the escape half of the signal-restore path (termios half is armed in
   // enter_raw). Now a fatal signal will also leave the alt-screen + mouse/paste.
-  detail::restore_state().in_screen = 1;
+  //
+  // Only when out_fd is a terminal, though (#179). The bytes above went out
+  // regardless — a session's alt-screen is its own business and the emit is not
+  // gated — but the *handler* writing them is a different claim: it says these
+  // bytes restore something. Into an injected socket they would be an unframed
+  // blob written from a context where nothing is muxing, and the fd number
+  // itself outlives the session via the atexit hook. Emit and arm are separate
+  // decisions here, deliberately.
+  if (isatty(m_impl->out_fd) != 0) {
+    auto& rs = detail::restore_state();
+    rs.out_fd = m_impl->out_fd;
+    rs.in_screen = 1;
+  }
 }
 
 auto Terminal::set_mouse_mode(MouseMode mode) -> void {

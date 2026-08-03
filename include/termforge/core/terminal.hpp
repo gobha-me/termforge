@@ -2,15 +2,29 @@
 
 // TermForge — Terminal: raw-mode lifecycle + capability probing.
 //
-// Raw mode is RAII: enter_raw() sets termios, leave_raw() or the destructor
-// restores it (whichever comes first — the destructor is the guarantee, an
-// explicit leave_raw() is for exit paths where no destructor is guaranteed). A
-// crash or early exit can't wedge the user's terminal because entering raw mode
-// also arms an async-signal-safe restore path (see detail/tty_restore.hpp):
-// SIGTERM/SIGHUP and hard crashes (SIGSEGV, …) that bypass destructors still
-// leave the alt-screen and restore cooked mode, then re-raise. Capability
-// detection queries the *terminal* (escape-sequence responses), never the
-// display server — $WAYLAND_DISPLAY/$DISPLAY say nothing about what the
+// Raw mode is RAII: enter_raw() puts the input stream into the mode the event
+// loop requires, leave_raw() or the destructor puts it back (whichever comes
+// first — the destructor is the guarantee, an explicit leave_raw() is for exit
+// paths where no destructor is guaranteed).
+//
+// By default the two streams are *discovered* from stdin/stdout. set_io() (#179)
+// hands them over instead, which is what lets one process serve a session whose
+// bytes arrive from somewhere other than its own terminal. That distinction
+// runs through the rest of this header, because two things a terminal makes
+// true are not true of a socket: it has termios, and writing an escape sequence
+// at it is a restore rather than a protocol violation.
+//
+// **The crash guarantee is about the user's terminal, and it holds exactly when
+// there is one.** When enter_raw() captures a real tty's termios it also arms an
+// async-signal-safe restore path (see detail/tty_restore.hpp): SIGTERM/SIGHUP
+// and hard crashes (SIGSEGV, …) that bypass destructors still leave the
+// alt-screen and restore cooked mode, then re-raise. An injected fd that is not
+// a tty arms nothing and installs no handler — there is no termios to put back,
+// and a signal handler writing the 48-byte leave sequence into an
+// application-level stream is not a restore, it is a blob in someone's protocol.
+//
+// Capability detection queries the *terminal* (escape-sequence responses), never
+// the display server — $WAYLAND_DISPLAY/$DISPLAY say nothing about what the
 // attached emulator can render.
 
 #include <expected>
@@ -22,6 +36,16 @@
 
 namespace termforge {
 
+// The two streams a Terminal talks to. `in` is read from AND is the fd the read
+// mode is applied to — they must be the same fd, or read timeouts are set on
+// one stream and the reads happen on another, which fails silently. `out` is
+// where escape sequences go; -1 means "emit nothing anywhere", the sentinel a
+// process with no terminal on either stream already resolves to.
+struct TerminalIo {
+  int in{-1};
+  int out{-1};
+};
+
 class Terminal {
  public:
   Terminal();
@@ -32,11 +56,71 @@ class Terminal {
   Terminal(Terminal&&) = delete;
   auto operator=(Terminal&&) = delete;
 
-  // Enter raw mode (noecho, noncanonical, disable signals we handle
-  // ourselves). Idempotent. Failure -> ErrorEvent.
+  // ── which streams this Terminal talks to (#179) ──
+  // Hand over the fds instead of letting the constructor discover them from
+  // stdin/stdout. This is what lets a session's bytes come from somewhere that
+  // is not the process's own terminal — an ssh channel, a pty this process
+  // allocated, a socketpair in a test.
+  //
+  // THE FDS ARE BORROWED, NEVER OWNED. Terminal does not close them, does not
+  // dup them, and does not extend their lifetime — the same posture, for the
+  // same reason, as the ByteSink on TerminalDriver (#178).
+  //
+  // Legal only before enter_raw() and only with no screen up; otherwise an
+  // ErrorEvent. Refusal is TOTAL — on refusal nothing is applied, so a caller
+  // that drops the result keeps the fds it had rather than half of each pair.
+  // (Swapping `out` while a screen is up would strand the alt-screen on the old
+  // stream with nothing able to leave it, which is why that half is refused
+  // too.) A screen-less re-injection after leave_raw() is fine.
+  //
+  // `in` must be >= 0: there is no such thing as a session you cannot read.
+  // `out` may be -1, meaning emit nothing — an input-only session is a real
+  // thing, and -1 is already the sentinel for it.
+  //
+  // INJECTION IS A STATEMENT OF INTENT, and that is the whole difference from
+  // discovery. enter_raw()'s "stdin/stdout is not a tty" refusal exists to catch
+  // `./app < file`, an accident; a caller that named its fds has made no such
+  // mistake, so an injected non-tty enters raw mode successfully. See
+  // enter_raw().
+  auto set_io(TerminalIo io) -> std::expected<void, ErrorEvent>;
+
+  // The fds in force, discovered or injected. `out` is what a caller pointing a
+  // driver's ByteSink at the same destination wants (nothing routes the two
+  // together for you), and what App::current_size() asks TIOCGWINSZ.
+  [[nodiscard]] auto io() const noexcept -> TerminalIo;
+
+  // True when set_io() supplied the fds rather than the constructor finding
+  // them. It is the discriminator enter_raw() branches on, not a diagnostic.
+  [[nodiscard]] auto io_injected() const noexcept -> bool;
+
+  // True when enter_raw() captured and replaced a real tty's termios — so
+  // leave_raw() has a tcsetattr to undo and the fatal-signal backstop is armed
+  // on this Terminal's behalf. Deliberately NOT the same question as raw(),
+  // which answers "did enter_raw() succeed": over an injected pipe or socket
+  // raw() is true and this is false, because the mode that was entered was
+  // O_NONBLOCK and there is no terminal state to rescue.
+  [[nodiscard]] auto owns_termios() const noexcept -> bool;
+
+  // Put the input stream into the mode the event loop requires. On a tty that
+  // mode is termios — noecho, noncanonical, signals we handle ourselves
+  // disabled — and entering it also arms the crash-restore path. On an injected
+  // pipe or socket there is no termios and the mode is O_NONBLOCK; nothing is
+  // armed. It does whichever applies, and leave_raw() undoes whichever it did.
+  //
+  // O_NONBLOCK is not a detail. App's input drain loops until a read comes back
+  // empty, so a blocking stream does not merely slow the loop down, it stops it
+  // — and set_read_timeout(), the call that arranges non-blocking reads on a
+  // tty, is a silent no-op on anything else.
+  //
+  // Idempotent. Failure -> ErrorEvent, and the one failure left is a
+  // *discovered* stdin that is not a tty (see set_io: an injected one is a
+  // deliberate choice, not the accident this refusal is for).
   auto enter_raw() -> std::expected<void, ErrorEvent>;
 
-  // Restore the termios enter_raw() captured. Idempotent; a no-op if raw mode
+  // Restore what enter_raw() replaced — the captured termios on a tty, the
+  // captured O_NONBLOCK-or-not file status flags on anything else. A stream the
+  // caller handed us already non-blocking is left non-blocking: this restores,
+  // it does not normalize. Idempotent; a no-op if raw mode
   // was never entered. Exists so a caller can put the terminal back at a
   // chosen moment instead of waiting for the destructor — App::teardown() uses
   // it to restore on an exception, where no destructor is guaranteed to run.
@@ -60,6 +144,12 @@ class Terminal {
   // The capability probe needs a short timeout (a terminal may never reply),
   // while an event loop wants to block until input arrives. These switch the
   // tty between the two; they only take effect after enter_raw().
+  //
+  // On a stream with no termios (an injected pipe or socket) the two collapse
+  // to setting and clearing O_NONBLOCK, and `deciseconds` is IGNORED — VTIME
+  // has no equivalent there and emulating one would mean changing what
+  // read_input() means. Nothing is lost: wait_readable() already expresses the
+  // same wait with better granularity, which is why the event loop uses it.
   auto set_read_timeout(int deciseconds) -> void;  // VMIN=0, VTIME=n (poll)
   auto set_read_blocking() -> void;                // VMIN=1, VTIME=0 (block)
 
@@ -123,6 +213,9 @@ class Terminal {
   // only case where the optional framebuffer driver is even considered.
   [[nodiscard]] auto is_console_vt() const noexcept -> bool;
 
+  // True between a successful enter_raw() and leave_raw(): the input stream is
+  // in the mode the loop needs and leave_raw() has work to do. It says nothing
+  // about *which* mode — see owns_termios() for that.
   [[nodiscard]] auto raw() const noexcept -> bool { return m_raw; }
 
  private:
@@ -133,6 +226,13 @@ class Terminal {
   // Push the configured keyboard tier, once. Non-const: it latches the "we
   // have an entry on the stack" witness that decides push vs. overwrite.
   auto emit_keyboard_mode() -> void;
+
+  // enter_raw()'s non-termios arm, and the read modes' spelling of it (#179).
+  auto enter_nonblocking() -> std::expected<void, ErrorEvent>;
+  auto set_nonblocking(bool on) -> void;
+
+  // Arm the termios half of the fatal-signal restore path, if there is one.
+  auto arm_restore() -> void;
 
   struct Impl;
   std::unique_ptr<Impl> m_impl;

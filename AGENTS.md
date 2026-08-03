@@ -62,7 +62,10 @@ file is the tactical version.
   and giving it a return type would break every out-of-tree driver), and `App`
   drains it into an `ErrorEvent` each frame. **The sink is borrowed, never
   owned**, which is why `~KittyDriver`'s `delete_all()` still bypasses to
-  stdout — see #148 and #144 row 7.
+  stdout — see #148 and #144 row 7. **State, not behaviour, means base-owned
+  non-virtual data** — that has now been the right answer twice, here and for
+  `Terminal::set_io` below, so treat it as settled rather than re-arguing it the
+  third time. It sidesteps the pure/non-pure question instead of answering it.
 - **Runtime polymorphism for drivers** (`std::unique_ptr<TerminalDriver>`);
   the `DriverImpl` concept is a `static_assert` check only, not dispatch.
   Don't convert drivers to a closed `std::variant`.
@@ -117,6 +120,27 @@ file is the tactical version.
   mode, SIGWINCH, the resize registration. The fatal-signal backstop is for
   crashes, not for exceptions;
   if it is what restores your terminal, that is the bug (#71).
+- **The fds are injectable, and the backstop follows the tty — not the
+  `Terminal`** (#179). `Terminal::set_io` hands over the two streams instead of
+  discovering stdin/stdout; it is base-owned non-virtual state for the same
+  reason `set_output` is, and refusal is *total* — a half-applied pair is a
+  session reading its own channel and writing somebody else's terminal.
+  `enter_raw()` puts the input stream into the mode the loop **requires**:
+  termios on a tty, `O_NONBLOCK` on anything else. That second half is not a
+  nicety. `App::drain_input()` reads until a read comes back empty, and
+  `set_read_timeout()` — the call that arranges that on a tty — is a silent
+  no-op on a socket, so a "raw mode that does nothing" ships a hang rather than
+  a limitation. The refusal that remains is for a **discovered** non-tty stdin
+  (`./app < file` is an accident); an injected one is a caller's deliberate
+  choice, which is the whole discriminator.
+  The crash backstop then arms in two halves with two predicates — termios when a
+  real tty's termios was captured, the alt-screen when `out_fd` is a tty — and
+  the nine signal handlers go in only with the first. A session that arms for no
+  reason turns its own `SIGSEGV` into the whole server's, and leaves an fd
+  *number* behind for the once-per-process `atexit` hook to write into long after
+  that fd has been recycled. On the discovered path both predicates are
+  tautologies (`out_fd` was chosen *by* `isatty`), which is exactly why nothing
+  an existing program does changes by one byte.
 
 ## Protocol priority (driver selection)
 
