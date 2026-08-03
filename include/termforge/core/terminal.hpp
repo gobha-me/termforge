@@ -49,7 +49,7 @@ struct TerminalIo {
 class Terminal {
  public:
   Terminal();
-  ~Terminal();  // restores cooked mode if raw mode was entered
+  ~Terminal();  // undoes whatever enter_raw() did, if it ran
 
   Terminal(const Terminal&) = delete;
   auto operator=(const Terminal&) = delete;
