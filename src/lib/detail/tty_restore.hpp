@@ -16,6 +16,13 @@
 // State is a single process-wide instance — one TUI per process, matching the
 // g_active single-app assumption in app.cpp. Header-only so the leave sequence
 // and the arming logic stay unit-testable without a real tty (test/16signals).
+//
+// Since #179 a Terminal arms this only when it owns a real tty: the termios half
+// when it captured one, the screen half when out_fd is one. A session Terminal
+// over an injected socket therefore no longer competes for the slot, and no
+// longer leaves a session fd *number* here for the atexit hook to write into
+// after that fd has been recycled. That narrows who arms — it does not make the
+// single slot safe for two who do. Concurrent sessions are still #144.
 
 #include <cerrno>
 #include <csignal>

@@ -6,7 +6,149 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-03)
 
-**Latest work: #178 — the driver output sink, moved onto `TerminalDriver` (#144 Split A1).**
+**Latest work: #179 — injectable fds on `Terminal` (#144 Split A2).**
+
+**How it got picked: it was already sequenced.** No re-derivation needed —
+#144's split comment lists A1 [#178, shipped v0.7.0], **A2 [#179]**, A3 [#180],
+A4 [#181], and the v0.7.0 release note said in as many words that **#178 was not
+the gate; #179 is.** `enter_raw()` hard-failed on a non-tty stdin, so #178 gave a
+session's bytes somewhere to go while the loop still could not start. The
+reusable half: when a previous cut *told you what comes next*, that beats
+re-reading the trackers.
+
+**What the ticket asked for, and the two corrections its body needed.**
+
+1. It said a constructor-shape change "reaches `App`'s member layout". It does
+   not. Layout comes from members, and the fds live in `Terminal`'s pimpl; the
+   real cost of a ctor overload is ergonomic — `Terminal` is non-movable and held
+   **by value**, so it would force `App(TerminalIo)`, force every subclass ctor to
+   forward, and strand the eleven bare `Terminal t;` sites in the suite and
+   examples. `set_io()` as base-owned non-virtual state costs none of that and
+   needs **zero new `App` API**: a subclass reaches it through the `terminal()`
+   accessor that already exists, which is #178's shape a second time.
+2. `App::current_size()` is *private*, so the size ride-along is observable only
+   through `screen()` after `setup()` — which is the better assertion anyway.
+
+**The finding the ticket did not know about, and the one to carry forward: a
+socketpair-injected `App::run()` would have HUNG.** `App::drain_input()` loops
+until a read comes back empty, and it terminates only because reads never block —
+arranged by the single line `m_term.set_read_timeout(0)` in `setup()`. On a
+non-tty that call is `tcgetattr` all the way down, gets `ENOTTY`, and **silently
+returns having done nothing.** So the tempting reading of this ticket — "an
+injected non-tty enters raw mode as a documented no-op" — ships a hang on the
+first frame that carries input. The mode a stream with no termios can be in is
+`O_NONBLOCK`, and `enter_raw()` now sets it (saving `F_GETFL`, which `leave_raw()`
+puts back *exactly* — a stream handed over already non-blocking stays that way).
+
+> **Generalise it:** grep for what makes a loop *terminate*, then check whether
+> the new input type still provides it. #178's lesson was "grep for what the
+> tests never do"; this is the same move aimed at control flow.
+
+**The backstop follows the tty, not the `Terminal`.** Arming split into two
+halves with two predicates — termios when a real tty's termios was captured, the
+alt-screen when `out_fd` is a tty — because they rescue different things and
+their fds are not interchangeable. Three things break if a session arms anyway,
+in ascending nastiness: `install_fatal_handlers()` replaces nine dispositions
+process-wide, so one session's `SIGSEGV` kills the server (#144 row 2 /
+anvil#15); it silently overwrites the embedding program's own SIGTERM/SIGHUP;
+and — the one nobody had written down — `std::atexit(restore_terminal)` registers
+**once per process, forever**, so a session fd *number* left in the shared slot
+gets written into at daemon exit after `accept()` has recycled it. Silent,
+non-deterministic, undiagnosable in the field.
+
+The other direction is safe **by tautology**: on the discovered path `out_fd` was
+chosen *by* `isatty`, so both predicates are always true and no existing
+program's behaviour changes by one byte. That tautology is the whole argument for
+a patch release, and it is checkable in review rather than asserted.
+
+**What this does and does not do for #144 row 2.** It makes an *unarmed* session
+harmless — a daemon whose sessions are all non-tty never reaches
+`install_fatal_handlers()` at all, which is real and is what anvil needs. It does
+**not** make a *second armed* session correct, and the handler design (nine
+signals, `SIG_DFL` re-raise rather than chaining, one shared slot) is untouched.
+Row 2 stays open.
+
+**Rode along, and it qualifies by code path rather than by size:**
+`App::current_size()`'s `ioctl(STDOUT_FILENO, TIOCGWINSZ)` — literally "an fd
+resolved from STDOUT", which is this issue's title. Left alone it sizes a remote
+session to the *daemon's* window, silently and plausibly. It is the **pull**;
+#180's `set_size` push sits above it and neither pre-empts the other. A socket
+answers `ENOTTY` and falls through to 80×24, which is the honest handoff.
+
+**`emit()` now retries `EAGAIN`** with a bounded `poll(POLLOUT)`. It used to give
+up, correctly, while the destination was always a tty. #179 makes a full output
+buffer routine: inject one socketpair fd as both `in` and `out` and `enter_raw()`
+makes it non-blocking, so a slow peer truncates an escape sequence mid-flight.
+Same lesson as #163's, one layer out — **widening a type's domain re-opens every
+guard downstream of it.**
+
+### The mutation sweep — 32 enumerated, 31 killed, and two structural findings
+
+Both survivors were the code's fault, not the suite's, which is the useful shape:
+
+1. **Two mutations survived because a guard was unreachable.** `arm_restore()`'s
+   `if (!saved_valid) return` was called only from the termios path, which sets
+   `saved_valid` immediately before — so deleting the guard, *and* adding a
+   handler install to its dead branch, both changed nothing. The fix was not a
+   test: route the non-termios path through the same `arm_restore()` so the
+   decision has one reader and the guard does the work its comment claims. Both
+   mutations then died. **A guard whose removal is invisible is not covered; it
+   is unreachable, and the answer is usually structural.**
+2. **A positive control that asserted something else was already guaranteeing.**
+   "Handlers came back out on destruction" was pinned by `rs.armed == 0` — which
+   `leave_raw()` clears on its own, so a `Terminal` that forgot it had installed
+   the handlers still passed. The real assertion is the *disposition*. Same case
+   again for the screen half: `~Terminal` gated the `in_screen` clear on having
+   armed the **termios** half, but `enter_screen()` does not require
+   `enter_raw()`, so a screen-without-raw left the flag set beside a dead fd.
+   Found by mutation, fixed in the code, pinned by a case that says so.
+
+The one honest survivor, declared in advance rather than discovered: dropping
+`current_size()`'s `fd >= 0` guard. `ioctl(-1, …)` fails into the identical 80×24
+default, so the guard buys a syscall and not a behaviour. Kept, and said so.
+
+Also worth recording: **the mutation dictated a test's shape.** "`current_size()`
+reads `io().in`" survives on a symmetric pty pair, so the case injects an
+*asymmetric* one — a socketpair for `in`, a 100×40 pty slave for `out`. The test
+came from the mutation, not the other way round.
+
+### `test/42fds` — and there is no `dup2` in it
+
+That is the point of the whole ticket, stated as a file. `test/26mousemode` and
+`test/31keyboard` have to point the process's own fd 0 and fd 1 at a pty for the
+duration of a case, because a `Terminal` built anywhere else resolves `out_fd` to
+-1 and captures nothing; the new suite hands the fds over instead. It includes
+`setup()`/`test_pump`/`teardown()` over an injected `openpty` pair with the probe
+reply fed on the master — i.e. the thing 31keyboard needs the `dup2` to do.
+**Migrating 31keyboard itself is a follow-up**, per the repo's own
+copy-don't-hoist convention: mixing a new capability with a rewrite of a green
+suite makes the mutation sweep unreadable.
+
+The `EAGAIN` retry needed a thread to test — fill the send buffer, have a reader
+drain 20ms later, assert the alt-screen enter arrives *whole*. Worth the
+awkwardness: without it the retry was a survivor, i.e. four lines of prose.
+(First attempt hung: the reader parked in a blocking `read` and never re-checked
+its stop flag. A test harness gets the same review as the code.)
+
+### Still open, and deliberately
+
+- **The probe costs a session ~150 ms and eats its first keystrokes.**
+  `query_capabilities()` → `read_available(in_fd, 150)` selects in 20 ms slices
+  and *consumes* whatever arrives; over an injected socket with no DA1 responder
+  that is a fixed per-session startup cost plus swallowed input. This is #144 row
+  10 arriving early — #181 covers the env half, not the stall. A
+  caller-supplied-`Capabilities` path would fix it and is its own ticket.
+- **There is no `FdSink`.** `byte_sink.hpp` has only `StringSink`, so a caller
+  must route the driver's sink at the same fd it injected as `out` — the two
+  output channels reach the wire independently. Benign today (`enter_screen`
+  strictly precedes any frame), but it is a pairing requirement, not an
+  invariant, and it belongs in anvil's integration notes.
+
+---
+
+## Previously (2026-08-03)
+
+**#178 — the driver output sink, moved onto `TerminalDriver` (#144 Split A1).**
 
 **How this ticket got picked, because the method matters more than the ticket.**
 The queue memory said v0.6.11; `gh release list` said **v0.6.15**. Re-deriving

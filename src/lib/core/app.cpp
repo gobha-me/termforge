@@ -619,7 +619,19 @@ auto App::flush_pixel_regions() -> void {
 
 auto App::current_size() const -> Size {
   winsize ws{};
-  if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0 && ws.ws_row > 0)
+  // Ask the stream this Terminal actually writes to, not STDOUT_FILENO (#179).
+  // The two are the same thing for a program that owns its terminal, and are
+  // not for a session whose fds were injected — where the old spelling reported
+  // the *daemon's* window, silently and plausibly.
+  //
+  // A stream with no window (a socket, a pipe) answers ENOTTY and falls through
+  // to the default below. That is correct-by-default rather than correct: the
+  // real answer for a remote session arrives as a protocol message and has to
+  // be pushed in, which is #180's job. The guard is for the -1 "no output
+  // stream" sentinel, and it buys a syscall rather than a behaviour — ioctl(-1)
+  // fails into the same default.
+  const int fd = m_term.io().out;
+  if (fd >= 0 && ioctl(fd, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0 && ws.ws_row > 0)
     return {ws.ws_col, ws.ws_row, ws.ws_xpixel, ws.ws_ypixel};
   return {80, 24};  // sane default if ioctl fails
 }
