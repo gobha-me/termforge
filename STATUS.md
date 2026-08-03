@@ -4,6 +4,154 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
+## Where we are (2026-08-03)
+
+**Latest work: #178 — the driver output sink, moved onto `TerminalDriver` (#144 Split A1).**
+
+**How this ticket got picked, because the method matters more than the ticket.**
+The queue memory said v0.6.11; `gh release list` said **v0.6.15**. Re-deriving
+from the *downstream* trackers instead of from this repo turned up
+[anvil#67](https://github.com/gobha-me/anvil/issues/67) row 1, reading **"OPEN
+— the whole of M0"**. Nothing in termforge's own tracker says that.
+
+**The bug, and why it was invisible from inside.** `set_output` was three
+identical non-virtual declarations on the three concrete drivers, so it was
+unreachable through the `std::unique_ptr<TerminalDriver>` that `App` holds.
+The in-tree consequence, which is the part worth internalising: **nothing in
+`test/` drove a real driver through a `TerminalDriver&` at all.** The only
+base-typed handles in the whole suite bound to local stubs (`LegacyDriver`,
+`FitClaimingDriver`), so `KittyDriver`'s virtual dispatch path was exercised by
+production code and never by CI — while `AGENTS.md:120` has asked for offline
+driver tests since the beginning. `App::test_wire_headless` was pinned to
+`FallbackDriver` *because* of the concrete-first `set_output` dance, not by
+choice. **A missing base-class hook can hide as a testing-convention artefact
+for months; the way to see it is to grep for what the tests never do.**
+
+- **`ByteSink`** (`include/termforge/core/byte_sink.hpp`) — one virtual,
+  `write(std::span<const char>) -> std::expected<void, ErrorEvent>`, which
+  must consume the **whole** span. A short write is the sink's problem: a
+  driver hands over one assembled frame and cannot resume a half-written
+  escape sequence, so a partial write reported as success leaves the terminal
+  parsing a fragment. `StringSink` is the in-memory one, and is **public on
+  purpose** — see the coverage note below.
+- **Nothing about the sink is virtual, and that is the design.** It is
+  base-owned state: one correct implementation, nothing to override. That
+  *sidesteps* the pure-virtual rule rather than satisfying it —
+  `test/support/legacy_driver.hpp` needed **no new line**, and its unchanged
+  compilation is the assertion. Worth reaching for again: when a new facility
+  is state rather than behaviour, putting it on the base as non-virtual data is
+  strictly better than the most careful non-pure virtual.
+- **`emit_frame(bytes)` is the write boundary and the meter boundary in one
+  function.** Three structurally identical `flush()` bodies collapsed to
+  `emit_frame(m_buf); m_buf.clear();`. Folding them makes "sent but not
+  metered" and "metered but not sent" both unspellable, where three
+  hand-written copies made each one edit away.
+- **`tally_frame` runs on the REFUSED branch too**, and the reason is not
+  obvious: it also resets `m_pending`, so skipping it would bill a refused
+  frame's image tallies to the *next* frame and over-report a session that is
+  already failing. Pinned by its own case.
+- **Copy and move are deleted on `TerminalDriver`** — the one behaviour change
+  outward. A user-declared destructor suppressed the implicit *moves* but left
+  the implicit *copies*, so `FallbackDriver b = a;` compiled before this; now
+  the base holds a `StringSink` that `m_sink` may point AT, and a copy would
+  carry a pointer into the source object. `static_assert`-pinned, because
+  restoring them has no runtime observable and would otherwise be a silent
+  mutation survivor.
+- **`set_output(nullptr)` is DELETED, not left ambiguous.** Both overloads
+  match `std::nullptr_t` at identical rank. A deleted exact match wins
+  resolution, so the diagnostic is "use of deleted function" pointing at a
+  comment naming `clear_output()` instead of a two-candidate ambiguity dump.
+- **The `std::string*` overload is an adapter over the real path, not a second
+  path** — and that choice is where most of the test coverage came from. The
+  ~150 existing `set_output(&out)` call sites across six suites compile and
+  pass **verbatim**, and every one of their byte-exact escape assertions is now
+  coverage of `ByteSink::write` and `emit_frame`. The alternative (a second
+  `std::string*` member, branch three ways) is copy-safe for free and would
+  have left the new code covered only by the new suite.
+- **A refusal reaches the application.** `flush()` is `-> void` and pure, so
+  giving it a return type would break every out-of-tree driver — the error is
+  latched and `App::frame_step` drains it into an `ErrorEvent` through the same
+  `m_input.push_error` channel `setup()` already uses for degradations. Zero
+  new `App` API: the test probe swaps its own sink from `on_render` via the
+  protected `driver()` accessor, which is only expressible *because* of this
+  change.
+- **"First failure wins" holds only while one is pending.** The test found this,
+  not the design: `App` drains every frame, so the latch re-arms and a
+  permanently dead sink reports **once per frame**. That is the right way round
+  — a report-once latch would leave an app that recovered and broke again
+  permanently uninformed — but the correct response to the first event is to
+  tear the session down. Both halves have a case.
+
+**What stayed out, deliberately.** `KittyDriver::delete_all()` still bypasses
+to stdout from `~KittyDriver`. The sharpened reason is now in the comment: A1's
+sink is **non-owning in both flavours**, so a destructor has no grounds to
+assume the destination is alive — #144's own stated precondition ("an owning
+sink whose lifetime is the session's") is unmet. Concretely, rerouting it today
+is a use-after-free in about ten existing cases, because `test/01drivers`
+constructs `KittyDriver d;` before `std::string out;` throughout. Stays with
+#148 and #144 row 7. **This is also what keeps the change off the wire.**
+
+**Verification.** GCC, Clang and ASan+UBSan all 43/43 (was 42 — the new
+`test/41sink`; the counts were compared across configs, not asserted per
+config). No real-terminal capture: the diff adds no byte to any `m_buf` and
+touches no escape constant, chunking or placement logic — only the
+*destination* of an already-assembled buffer moves — and that claim is
+falsifiable rather than asserted, since 01drivers/38encoded/39fit assert exact
+escape sequences and 37bytes exact byte counts, all against sink growth. The
+**stdout branch** is the one no test covers, so it was checked by running
+`examples/dashboard` under a real pty: 21,831 bytes of frames, clean startup,
+full restore sequence at the tail, exit 0.
+
+**The mutation sweep, and the three things it caught that review had not.**
+28 mutations enumerated from the lines *added*; 27 killed. Worth recording
+because the first pass was wrong in both directions:
+
+1. **A mutation I chose too weakly.** "Skip `tally_frame` on refusal" was
+   written as `tally_frame(0); return;` — which still resets `m_pending`, so it
+   survived. The real gap it exposed: nothing asserted a refused frame's byte
+   *count*. Fixing that surfaced a second-order trap — `cells` is the
+   *remainder* (#139), so on an **image-only** frame it is zero whether the
+   driver tallies the true count or zero, and the mutation stays invisible. The
+   case now draws an image *and* text, and asserts `cells > 0` and
+   `total() == accepted_total`. **A remainder-derived field cannot pin a total
+   unless the frame has something in the other buckets.**
+2. **A bogus KILL, which is as bad as a survivor.** Two mutations came back
+   "killed" by a test that was itself broken: the new stdout-capture harness
+   performed its `dup2` *inside* a `REQUIRE`, and ctest runs these binaries
+   with `-s`, so Catch2's own "PASSED" line for that assertion was written into
+   the capture file. It passed standalone and failed under ctest. **Run the
+   suite the way CI runs it before believing a kill** — no Catch2 macro may
+   execute while fd 1 is redirected, and `std::cout` must be flushed before the
+   redirect since it shares the fd.
+3. **The two survivors I had pre-declared were killable after all.** Dropping
+   `emit_frame`'s `fflush`, and writing to *both* the sink and stdout, were
+   written off as needing "#148's territory". They needed ~25 lines. The
+   capture harness deliberately does **not** flush on the test's behalf: a
+   redirected stdout is fully-buffered and these frames are far smaller than
+   the buffer, so a dropped `fflush` leaves the capture empty. That is the
+   assertion. **"Untestable" was a guess, and it was wrong; three of the four
+   named survivors died to one harness.**
+
+**The one real survivor**: removing the deleted `set_output(std::nullptr_t)`
+overload. Without it the call is merely *ambiguous*, which is equally
+ill-formed, so the `static_assert` stays green either way. The deleted overload
+buys a better **diagnostic** and nothing else, and a diagnostic is not
+observable from a test. Kept deliberately, and the test comment says so rather
+than looking like coverage.
+
+**Also filed, so Split A is now trackable at the granularity ANVIL needs:**
+**#179** (injectable fds on `Terminal` — `enter_raw()` hard-fails when stdin is
+not a tty, so *a daemon cannot call `App::run()` today*), **#180** (a pushable
+size; `current_size()` ioctls `STDOUT_FILENO` and a remote resize has no
+SIGWINCH), **#181** (per-session `TERM`/`COLORTERM`, since every session
+otherwise inherits the daemon's). **#144 now holds Split B only.**
+
+**Note on this file's own currency:** v0.6.13 (#156), v0.6.14 (#158) and
+v0.6.15 (#154) shipped without STATUS entries — the section below still opens
+at v0.6.12. Read `gh release list` before trusting any ordering here.
+
+---
+
 ## Where we are (2026-08-01)
 
 **Latest work: #173 — `preferred_pixel_extent` clamped against int overflow (v0.6.12).

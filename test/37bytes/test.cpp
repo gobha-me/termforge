@@ -442,7 +442,7 @@ class MeterProbe : public termforge::App {
     s.write_text(0, 0, "bandwidth", kFg, kBg);
   }
   // One call, n frames. It has to be one call: test_wire_headless builds a
-  // FRESH driver each time (app.cpp:302), so calling this twice would hand the
+  // FRESH driver each time, so calling this twice would hand the
   // second frame a driver whose counters start at zero while the sink keeps
   // accumulating — the meter would look broken and would not be. A downstream
   // consumer writing its first bandwidth test will meet this exact edge.

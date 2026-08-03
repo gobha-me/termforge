@@ -48,6 +48,21 @@ file is the tactical version.
   state — one driver is one session, and a `static` here makes a server unable
   to bill any single connection. If you add an emit path that is image traffic,
   tally it; if you add one that is not, it is already counted.
+- **`emit_frame` is the write boundary AND the meter boundary** (#178). They
+  are one function on `TerminalDriver` precisely so that "sent but not metered"
+  and "metered but not sent" are both unspellable — a driver's `flush()` is
+  `emit_frame(m_buf)` plus its own buffer reset, and `emit_frame` calls
+  `tally_frame` itself. `set_output` is **base-owned non-virtual state**, so it
+  is reachable through the `unique_ptr<TerminalDriver>` an application actually
+  holds; do not re-declare it on a driver (C++ hides by *name*, so a subclass
+  copy makes the `ByteSink*` overload invisible). The limitation is real and
+  tested: a driver that emits without going through `emit_frame` opts out of
+  the sink *and* the meter at once — `test/support/bypass_driver.hpp` pins it.
+  A sink refusal is latched, not returned (`flush()` is pure and `-> void`,
+  and giving it a return type would break every out-of-tree driver), and `App`
+  drains it into an `ErrorEvent` each frame. **The sink is borrowed, never
+  owned**, which is why `~KittyDriver`'s `delete_all()` still bypasses to
+  stdout — see #148 and #144 row 7.
 - **Runtime polymorphism for drivers** (`std::unique_ptr<TerminalDriver>`);
   the `DriverImpl` concept is a `static_assert` check only, not dispatch.
   Don't convert drivers to a closed `std::variant`.

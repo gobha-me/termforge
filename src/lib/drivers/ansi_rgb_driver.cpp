@@ -16,8 +16,6 @@ namespace termforge {
 
 AnsiRgbDriver::AnsiRgbDriver() = default;
 
-void AnsiRgbDriver::set_output(std::string* sink) { m_sink = sink; }
-
 auto AnsiRgbDriver::init() -> std::expected<void, ErrorEvent> { return {}; }
 
 auto AnsiRgbDriver::capabilities() const noexcept -> Capabilities {
@@ -222,14 +220,10 @@ void AnsiRgbDriver::flush() {
   // image is SGR-per-cell, so it is cell traffic and tally_frame's remainder
   // bills it there. That it is *expensive* cell traffic is exactly what an
   // application comparing tiers wants the meter to show.
-  const std::size_t written = m_buf.size();
-  if (m_sink != nullptr) {
-    *m_sink += m_buf;
-  } else {
-    std::fwrite(m_buf.data(), 1, m_buf.size(), stdout);
-    std::fflush(stdout);
-  }
-  tally_frame(written);
+  //
+  // #178: emit_frame is the sink AND the meter -- it writes m_buf wherever the
+  // output is pointed and calls tally_frame with exactly that count.
+  emit_frame(m_buf);
   m_buf.clear();
 }
 

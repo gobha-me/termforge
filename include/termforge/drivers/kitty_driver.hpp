@@ -101,8 +101,9 @@ class KittyDriver final : public TerminalDriver {
     return m_mode;
   }
 
-  // Test hook: redirect output away from stdout.
-  void set_output(std::string* sink);
+  // set_output moved to TerminalDriver in #178 -- do not re-declare it here.
+  // Name hiding would make the ByteSink* overload invisible to any call made
+  // through KittyDriver's static type.
 
   // One cell's size in pixels. Kitty is the only tier whose answer depends on
   // the font, so it is the only driver that overrides this. A non-positive
@@ -189,7 +190,8 @@ class KittyDriver final : public TerminalDriver {
   // row/col are 0-based indices within the image placement.
   static void append_placeholder(std::string& buf, int row, int col);
 
-  std::string* m_sink{nullptr};
+  // The sink lives on TerminalDriver since #178; m_buf stays per-driver
+  // because hoisting the frame buffer is #148's business, not this one's.
   std::string m_buf;
   int m_cur_fg{-1};
   int m_cur_bg{-1};
