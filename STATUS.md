@@ -4,9 +4,124 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-04)
+## Where we are (2026-08-04, later)
 
-**Latest work: #149 — sanitize leaves the write path and becomes a
+**Latest work: #180 — the terminal size becomes pushable. Shipped as v0.7.3
+(#144 Split A3).**
+
+**How it got picked, which is the reusable part: neither tracker said, so the
+downstream gate did.** Termforge's own queue offered #180 and #181, and
+v0.7.1's release note had *asked anvil to sequence them and got no answer* —
+the second time a question we asked ourselves went unanswered for days. Rather
+than wait again: anvil#67 row 1's M0 gate reads "a stranger ssh's in from an
+untested client and sees a working termforge widget that **survives a window
+resize**", and #180 is literally the resize half of that sentence. #181 is the
+identity half but sits beside an *unsettled* design question (the probe's
+fixed-window stall and swallowed keystrokes, which #181 does not fix and a
+caller-supplied `Capabilities` path would), so taking it now would half-fix an
+area that wants one decision.
+
+**What shipped.** `App::set_size(Size)`, `clear_size()`, `has_pushed_size()`,
+and `current_size()` promoted from private to **public** (#143's accessor half —
+#143 itself stays open). Precedence is **pushed size → `TIOCGWINSZ` on the
+Terminal's `out` fd → 80×24**. `Size` gained a defaulted `operator==`, the way
+`Extent` already had one.
+
+**The design decision worth keeping: the push ARMS, it does not resize.**
+`set_size` stores a value and calls the existing `request_resize()`; `frame_step`
+still owns the Screen resize, the renderer invalidation, the cell-geometry push
+and the `ResizeEvent`, in that order. **`frame_step()` and `setup()` changed by
+zero lines**, which is the whole argument that a pushed resize and a signalled
+one cannot drift apart — and it is what the suite had to prove, since the diff
+cannot assert it.
+
+Corollaries settled here:
+- **Arming is unconditional**, on `set_size` *and* `clear_size`. There is no cheap
+  correct definition of "changed": the last pushed value is not the Screen's size
+  (a `clear_size()` and a real resize can sit between them), and comparing against
+  the Screen means reading a member that does not exist before `setup()`. The cost
+  is one no-change `ResizeEvent` — which a spurious SIGWINCH already produces, so
+  no app was ever entitled to assume otherwise. Pinned *as* the contract by its own
+  case rather than tolerated.
+- **`setup()` must never clear `m_resize_pending`** — because the caller may have
+  armed it *before* `setup()` ran, and clearing it there discards a resize somebody
+  asked for. The first draft justified this with "a SIGWINCH could land during the
+  capability probe", which review showed is **fiction**: the handler is installed
+  *after* the probe, and a remote session has no SIGWINCH at all. The rule survived,
+  the reason did not. **A rule defended by an unreachable hazard is one the next
+  reader is entitled to delete** — say the weaker true thing.
+- **The `<= kMaxPushedDim` guard is domain parity, not safety**, and it covers **all
+  four fields**. `Screen::resize` widens to `size_t` *before* multiplying, so there
+  is no overflow to prevent. The first draft bounded only the grid, which left the
+  #173 lesson half-applied *on the very call that re-opened it*: the pixel pair is
+  the half with teeth, since `push_cell_pixel_size` divides it by the grid, so an
+  unbounded `px_w` over a small grid hands the driver a cell of `INT_MAX` and stops
+  `PlacementFit::Exact` refusing anything for the rest of the session.
+  `kMaxPushedDim` is **public**, derived from `unsigned short`'s max — a caller told
+  to pre-validate a peer's numbers must be able to name the ceiling instead of
+  hardcoding it. And "accepted" is not "safe": at the top of the range
+  `Screen::resize` throws `bad_alloc`, which `run_loop()` rethrows, so on the shape
+  the examples teach that is `std::terminate`. Documented as such.
+- **A half-answered pixel pair (`px_w > 0, px_h == 0`) is accepted, not refused** —
+  zero is exactly what tmux and the Linux console report, and refusing it would make
+  the push stricter than the pull it overrides. **But it then means UNKNOWN, not
+  "keep what the fd said"**: a grid-only push over a pty gives up an ioctl-derived
+  cell size, and ssh clients commonly send 0/0 in `window-change`, so that is the
+  *common* path. Deliberate — the alternative divides the pty's 800px by the peer's
+  *new* 120 columns, and a cell size derived from two different moments is a
+  confidently wrong number where the nominal cell is an honestly shaped guess (which
+  `push_cell_pixel_size` already declines to call a degradation). Now pinned by a
+  case that distinguishes all three candidate answers, and `pixel-fallback` — the
+  rejected design — is a named mutation.
+- **`Severity::Warning`, not `Error`.** `set_io` uses `Error` because its refusals
+  are *lifecycle* failures; `set_size` has no wrong time, so every refusal is about
+  the *value* — usually a number some peer sent.
+
+**Harness limitation found, worth handing on:** `test_run_frames` replaces the
+driver with a `FallbackDriver` (whose `preferred_pixel_extent` is one pixel per
+cell), so **no pixel-geometry claim can be asserted through it**. The pushed-px
+case therefore asserts on the `setup()` path, where the probe-selected driver
+survives, with three distinguishable answers (pushed 10×30, ioctl-derived 8×20,
+kitty nominal 8×16). Injecting a driver into the headless harness would fix this
+and was declined as a new test seam for one assertion.
+
+**Verified.** 46/46 on default, clang and ASan+UBSan (matching counts, so no
+stale side build), all three `tools/consume/run.sh` modes, a real-pty run of
+`examples/dashboard` (probe, alt-screen in and out, exit 0 — the discovered path
+unchanged), and a **14-mutation sweep, 14 killed** (one a compile-fail mutation:
+re-privatising `current_size()` must stop the suite building). Every
+single-assertion kill was traced to the *case that claims the behaviour*, not
+just to a red suite.
+
+**The process lesson, which cost the most here: do not run a mutation sweep and
+tree-writing review agents over the same working tree.** Three review agents were
+launched while a sweep was running; one of them mutated `app.cpp` to verify its
+own finding, a clean rebuild compiled *that*, and the suite came back 10/14 red
+in a way that looked like a real regression. Separately the build dir wedged
+(`No rule to make target libtermforge.a`) and produced a **green run against a
+stale binary** — the failure mode the mutation-testing memory warns about, this
+time inverted. Both were resolved by rebuilding from scratch on a quiescent tree
+and re-running the *whole* sweep. Give reviewers a read-only copy, or sweep
+first and review after.
+
+**No emulator capture, and the argument is on the record:** no new escape
+sequence, no probe change, no byte spelling. The only downstream difference is a
+differently-sized grid — the path SIGWINCH already drives — and a cell `Extent`
+from the same division over pushed rather than ioctl'd pixels. Values, not
+sequences. The empirical check that matters is anvil's own M0 run.
+
+**NEXT PICK:** **#181** is now the last of Split A (per-session `$TERM`/
+`$COLORTERM`) — and the decision to make first is whether it lands together with
+a caller-supplied `Capabilities` path, which would also kill the probe stall.
+After that: the terminal read-side cluster (#165, #145, #148), #150's fixed-rate
+loop, kitty-depth (#140–#143, #109–#117), #131 horizontal scrollbar, then the big
+rocks (#26 Composer, #92 `Cell::text`). #144 still holds Split B only.
+
+---
+
+## Previously (2026-08-04)
+
+**#149 — sanitize leaves the write path and becomes a
 first-class facility. Shipped as v0.7.2 (PR #184, 8/8 CI green).**
 
 **How it got picked: the resume-point memory named it.** The #154 session

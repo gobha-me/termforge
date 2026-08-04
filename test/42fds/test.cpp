@@ -560,8 +560,10 @@ class SessionApp final : public App {
     if (const auto* k = std::get_if<KeyEvent>(&ev)) keys.push_back(*k);
     if (const auto* e = std::get_if<ErrorEvent>(&ev)) errors.push_back(*e);
   }
-  // setup() sizes the Screen before any frame runs, so read it there too --
-  // current_size() is private and this is the observable consequence of it.
+  // setup() sizes the Screen before any frame runs, so read it there too. The
+  // Screen stays the oracle even now that #180 has made current_size() public:
+  // that accessor is the SOURCE of the next resize, and what these cases claim
+  // is that a frame was sized from it.
   auto measure() -> void {
     m_cols = screen().cols();
     m_rows = screen().rows();

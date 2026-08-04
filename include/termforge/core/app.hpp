@@ -36,6 +36,8 @@
 #include <chrono>
 #include <concepts>
 #include <cstddef>
+#include <expected>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <ranges>
@@ -440,7 +442,167 @@ class App {
   // when the terminal reports one (TIOCGWINSZ ws_xpixel/ws_ypixel). Zero means
   // "it would not say", which is the common case under tmux and on the Linux
   // console. Appended fields, so existing aggregate init still compiles.
-  struct Size { int cols; int rows; int px_w{0}; int px_h{0}; };
+  //
+  // Comparable since #180, the way Extent already is: once a caller can push a
+  // size and read one back, "is this the size I pushed" is the obvious next
+  // question, and every hand-rolled answer to it forgets the pixel pair.
+  struct Size {
+    int cols;
+    int rows;
+    int px_w{0};
+    int px_h{0};
+
+    constexpr auto operator==(const Size&) const noexcept -> bool = default;
+  };
+
+  // ── the pushed size (#180) ──
+  // Tell the App what the terminal's dimensions are instead of letting it ask.
+  //
+  // The pull — TIOCGWINSZ on the stream the Terminal writes to — answers for a
+  // program that owns a window. A remote session has no window to interrogate:
+  // its dimensions arrive as protocol messages (ssh `pty-req` at connect,
+  // `window-change` on every resize), the fd is a socket that answers ENOTTY,
+  // and there is no SIGWINCH to hook because the resize happened on somebody
+  // else's machine. This is the entry point for that number.
+  //
+  // PRECEDENCE: a pushed size wins over the ioctl, which wins over 80x24. A
+  // pty-backed session has both and the push still wins — it is the peer's
+  // statement about its own window, where the pty's winsize is a copy of that
+  // statement at best, and a stale one the moment the peer drags a corner.
+  //
+  // It ARMS THE RESIZE PATH rather than touching the Screen: the next
+  // frame_step() re-measures through current_size(), resizes the Screen,
+  // invalidates the renderer, re-pushes the cell geometry and dispatches one
+  // ResizeEvent — the same five steps a SIGWINCH produces, in the same order,
+  // through the same code. Nothing about resizing is duplicated here, which is
+  // why a pushed resize and a signalled one cannot drift apart.
+  //
+  // ARMED ON EVERY ACCEPTED CALL, including one that pushes the size already in
+  // force. There is no cheap correct definition of "changed": the last pushed
+  // value is not the Screen's size (a clear_size() and a real resize can sit
+  // between them), and comparing against the Screen means reading a member that
+  // does not exist until setup() has run. The cost of arming anyway is one
+  // no-change ResizeEvent, which every app already had to tolerate — a spurious
+  // SIGWINCH produces exactly that, and request_resize() is public.
+  //
+  // Legal at any point in the lifecycle, which is the opposite of
+  // Terminal::set_io's rule (#179) and deliberately so: set_io swaps the fds
+  // the alt-screen is standing on, while this changes a value and a flag the
+  // loop is *designed* to re-read mid-run. A push before run() is the `pty-req`
+  // case and needs nothing special — setup() sizes its Screen through this same
+  // current_size(), and the flag the push left armed then produces one
+  // ResizeEvent on the first frame.
+  //
+  // **setup() must never clear that flag**, and the reason is the pre-run push
+  // above and nothing more exotic: the caller armed it deliberately, before
+  // setup() was ever called, so clearing it there discards a resize somebody
+  // asked for. (It is *not* that a signal could arrive during the capability
+  // probe — the SIGWINCH handler is installed after the probe, so during it
+  // there is nothing armed to lose, and a remote session has no SIGWINCH at
+  // all. Stating the weaker true reason on purpose: a rule defended by an
+  // unreachable hazard is one a future reader is entitled to delete.)
+  //
+  // REFUSAL IS TOTAL and arms nothing: a rejected push leaves the previous size
+  // — pushed or ioctl'd — exactly as it was, so a caller forwarding a peer's
+  // numbers without reading the result keeps a working session rather than half
+  // of a broken one. All refusals are Severity::Warning (the request was not
+  // honoured and nothing changed):
+  //   * cols or rows <= 0. Zero is the pull's "the terminal would not say"
+  //     sentinel, and a zero-column Screen is a grid nothing can be drawn into.
+  //     Neither is a window a peer could be looking at.
+  //   * a negative px_w or px_h. Zero is fine on either axis and means what it
+  //     means coming out of TIOCGWINSZ — "unknown", which push_cell_pixel_size
+  //     already resolves to the driver's nominal cell. Refusing a half-answered
+  //     pixel pair would make the push stricter than the pull it overrides.
+  //   * ANY of the four above kMaxPushedDim. That is the pull's entire domain
+  //     (every winsize field is an unsigned short), and it is a DOMAIN MATCH
+  //     rather than a memory bound: Screen::resize widens to size_t before
+  //     multiplying, so there is no overflow to prevent, and the largest size
+  //     this admits still throws bad_alloc. What it buys is that a push cannot
+  //     claim a window an ioctl could never have reported (#173: widening a
+  //     type's domain re-opens the guards below it). The pixel pair is the half
+  //     with teeth — push_cell_pixel_size divides it by the grid, so an
+  //     unbounded pixel dimension over a small grid hands the driver a cell of
+  //     INT_MAX and stops PlacementFit::Exact refusing anything all session.
+  //     Deciding what dimensions an *untrusted* peer may claim is a policy
+  //     question, and it stays with the embedding program — but the bound this
+  //     one enforces is `kMaxPushedDim`, public so that a caller pre-validating
+  //     a peer's numbers can name it instead of hardcoding 65535.
+  //
+  // WHAT AN ACCEPTED-BUT-ENORMOUS SIZE COSTS, stated because "accepted" is not
+  // "safe": the next frame_step() hands cols x rows to Screen::resize, which
+  // allocates that many Cells. At the top of the admitted range that throws
+  // std::bad_alloc, and frame_step does not catch it — run_loop() restores the
+  // terminal and rethrows, so for the shape the examples teach
+  // (`MyApp app; return app.run();`) an unhandled bad_alloc is std::terminate.
+  // A hostile peer that can push a size can therefore end its own session. That
+  // is why the policy question above is a real one and not a formality: clamp
+  // to something a window could plausibly be before forwarding it.
+  //
+  // THE PIXEL PAIR IS PART OF THE PUSH, and a push that omits it (0 on either
+  // axis) leaves the cell geometry UNKNOWN — the driver falls back to its
+  // nominal cell, and it does NOT keep whatever the fd was reporting before.
+  // That is deliberate, and it is the one place where "the push wins" costs
+  // something: ssh's `window-change` carries a pixel pair that clients commonly
+  // send as 0/0, so a session forwarding one verbatim gives up an ioctl-derived
+  // cell size it used to have. The alternative — pushed cells with the fd's
+  // pixels — is worse, because it *derives* a cell size from two measurements
+  // of different moments: 800px of pty divided by the peer's new 120 columns is
+  // a confidently wrong number, where the nominal cell is an honestly shaped
+  // guess (push_cell_pixel_size says so, and treats "unknown" as no error at
+  // all). If your client tells you its pixel geometry, push it; if it does not,
+  // the nominal cell is the correct answer and not a degradation.
+  //
+  // THREADING: loop thread only, exactly like every other method on App. A
+  // remote window-change usually arrives on a reader thread, and that thread
+  // must hand the number over rather than call this — store it under your own
+  // lock and push from on_tick/on_event. (m_resize_pending happens to be
+  // atomic because a signal handler writes it; the Size beside it is not, and
+  // one atomic does not make a pair of stores a thread-safe operation.) A
+  // genuine cross-thread entry point is #28's job — a wakeup plus a posted
+  // event, not a mutex bolted onto one setter.
+  auto set_size(Size size) -> std::expected<void, ErrorEvent>;
+
+  // The largest value set_size accepts in any field of a Size, and the pull's
+  // whole domain: every field of a `winsize` — ws_col, ws_row, ws_xpixel,
+  // ws_ypixel — is an unsigned short, so an ioctl can never report more than
+  // this in any of them. Derived from the type rather than spelled 65535, so
+  // the constant cannot drift from the reason for it.
+  //
+  // Public because set_size's documentation hands the untrusted-peer policy to
+  // the caller, and a caller told to pre-validate needs to be able to name the
+  // library's ceiling rather than re-derive it and go silently out of step.
+  static constexpr int kMaxPushedDim{std::numeric_limits<unsigned short>::max()};
+
+  // Give the session back to the ioctl. Arms the resize path for the same
+  // reason set_size does and by the same unconditional rule: dropping a 120x40
+  // push on a session whose pty says 100x40 IS a size change, and a size change
+  // no frame notices is the bug this whole issue is about. On an App that never
+  // pushed, this is exactly request_resize().
+  //
+  // It needs a name because there is no in-band spelling for it — every value
+  // that could have meant "unset" is refused by set_size. That is the argument
+  // clear_output() shipped on (#178).
+  auto clear_size() noexcept -> void;
+
+  // Whether the size in force came from a push or from the fd. NOT derivable
+  // from current_size(): a push of 80x24 over an 80x24 window reads identically,
+  // and "is this number the peer's or the kernel's" is what a session manager
+  // asks when a late window-change has to be reconciled against a pty.
+  [[nodiscard]] auto has_pushed_size() const noexcept -> bool;
+
+  // The size the next resize will use: the pushed size if one is set, else
+  // TIOCGWINSZ on the Terminal's `out` fd, else 80x24.
+  //
+  // Public since #180, as #143 asked — it wants an application-reachable size
+  // query, and this is the function whose precedence #180 changed; a caller
+  // that can push a size has to be able to read one back. It is the SOURCE of
+  // the next resize, not a report of the current frame: between a push and the
+  // frame that consumes it this and screen().cols() disagree, and that is the
+  // honest answer both times. #143's other halves — a cell-pixel query on the
+  // TerminalDriver base, and an event for a cell-size change with the grid
+  // unchanged — are untouched, and #143 stays open.
+  [[nodiscard]] auto current_size() const -> Size;
 
  protected:
   [[nodiscard]] auto screen() -> Screen& { return *m_screen; }
@@ -649,6 +811,11 @@ class App {
   // Set from the SIGWINCH handler — must be atomic (lock-free atomics are
   // async-signal-safe; a plain bool write from a handler is a data race).
   std::atomic<bool> m_resize_pending{false};
+  // The peer's statement about its own window (#180), or nothing while the size
+  // is still being pulled from the fd. An optional rather than a sentinel Size:
+  // "nobody has said" is a real state, and every value that could stand in for
+  // it is one set_size refuses.
+  std::optional<Size> m_pushed_size;
   int m_frame_ms{33};  // ~30fps: the loop's default frame budget
   // How long an incomplete escape sequence gets to finish arriving before a
   // lone ESC is committed as a genuine Escape keypress. A frame holding one
@@ -676,8 +843,6 @@ class App {
   // would fail to notice.
   static constexpr std::chrono::duration<double> kDefaultMaxTickDt{0.25};
   std::chrono::duration<double> m_max_tick_dt{kDefaultMaxTickDt};
-
-  [[nodiscard]] auto current_size() const -> Size;
 
   // Push the terminal's cell geometry to the driver, so a rasterizing widget
   // can be told what resolution to render at (#83). Called at setup and again
