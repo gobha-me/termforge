@@ -4,6 +4,7 @@
 
 #include "detail/utf8.hpp"
 #include "detail/width.hpp"
+#include "termforge/core/text.hpp"
 
 namespace termforge {
 
@@ -181,81 +182,9 @@ auto Screen::write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
 }
 
 auto Screen::sanitize(std::string_view in) -> std::string {
-  std::string out;
-  out.reserve(in.size());
-  for (std::size_t i = 0; i < in.size(); ++i) {
-    const auto c = static_cast<unsigned char>(in[i]);
-
-    // ESC: strip the whole escape sequence, not just the ESC byte — leaving
-    // the trailing "[2J" would leak it as printable garbage. Consume:
-    //   ESC [ ... <final 0x40-0x7E>   (CSI)
-    //   ESC ] ... (BEL | ESC \)       (OSC)
-    //   ESC <intermediate 0x20-0x2F>* <final 0x30-0x7E>  (other Fe)
-    if (c == 0x1B) {
-      if (i + 1 < in.size()) {
-        const auto n = static_cast<unsigned char>(in[i + 1]);
-        if (n == '[') {  // CSI: params/intermediates until a final byte
-          i += 2;
-          while (i < in.size()) {
-            const auto b = static_cast<unsigned char>(in[i]);
-            if (b >= 0x40 && b <= 0x7E) break;  // final byte
-            ++i;
-          }
-        } else if (n == ']') {  // OSC: until BEL, or ST (ESC + backslash)
-          i += 2;
-          while (i < in.size()) {
-            const auto b = static_cast<unsigned char>(in[i]);
-            if (b == 0x07) break;
-            if (b == 0x1B && i + 1 < in.size() && in[i + 1] == '\\') { ++i; break; }
-            ++i;
-          }
-        } else if (n >= 0x20 && n <= 0x2F) {  // intermediates then final
-          i += 1;
-          while (i < in.size() && static_cast<unsigned char>(in[i]) >= 0x20 &&
-                 static_cast<unsigned char>(in[i]) <= 0x2F) ++i;
-        } else {
-          i += 1;  // two-byte sequence (ESC + one byte)
-        }
-      }
-      continue;  // drop the whole sequence
-    }
-
-    if (c < 0x20) {
-      if (c == '\t') { out += ' '; }  // tab -> space; drop other C0
-      continue;
-    }
-
-    // Multi-byte UTF-8: pass a *complete, well-formed* sequence through
-    // untouched. "Well-formed" is the RFC 3629 sense — correct continuation
-    // structure AND a legal code point. Overlong forms (e.g. 0xC0 0x9B =
-    // overlong ESC, 0xE0 0x80 0x9B) are structurally plausible yet decode to
-    // C0/C1 controls on a lenient terminal — precisely the injection this
-    // function exists to stop — and UTF-16 surrogate encodings are invalid.
-    // Continuation bytes live in 0x80..0xBF (overlapping the C1 range), so we
-    // must NOT strip them here; only a genuine C1 control is dangerous, and
-    // we handle that below.
-    if ((c & 0xE0) == 0xC0 || (c & 0xF0) == 0xE0 || (c & 0xF8) == 0xF0) {
-      std::size_t len = 0;
-      if (detail::utf8_validate(in.substr(i), len)) {
-        // A 2-byte 0xC2 0x80..0x9F is a genuine C1 control — strip it.
-        if (len == 2 && c == 0xC2 &&
-            static_cast<unsigned char>(in[i + 1]) <= 0x9F) {
-          i += 1;  // consume the pair, emit nothing
-          continue;
-        }
-        out.append(in, i, len);  // well-formed glyph: keep whole sequence
-        i += len - 1;
-        continue;
-      }
-      continue;  // overlong / surrogate / out-of-range / truncated: drop it
-    }
-
-    // Bare continuation byte or stray C1-range byte with no valid lead: drop.
-    if (c >= 0x80 && c <= 0xBF) continue;
-
-    out += static_cast<char>(c);
-  }
-  return out;
+  // #149: the policy lives in text::sanitize so callers can measure what will
+  // paint without a Screen; the write path runs through the same bytes here.
+  return text::sanitize(in, text::SanitizeMode::Strip);
 }
 
 }  // namespace termforge

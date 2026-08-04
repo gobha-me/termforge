@@ -2,6 +2,7 @@
 add_library(${PROJECT_NAME}_lib STATIC
   core/terminal.cpp
   core/screen.cpp
+  core/text.cpp
   core/renderer.cpp
   core/input.cpp
   core/app.cpp

@@ -515,14 +515,17 @@ TEST_CASE("ListWidget: every sanitation arm applied at the seam (#154)",
   l.set_items({
       "a\033[1mb",              // CSI styling: stripped whole sequence -> "ab"
       "c\033]8;;http://x\ad",   // OSC with BEL terminator -> "cd"
-      "e\xC2\x9B" "f",          // two-byte C1 CSI -> "ef"
+      "e\xC2\x9B",              // two-byte C1 CSI pair -> "e". #149: the pair
+                                // IS CSI, so any text after it would be its
+                                // parameters/final and go with it (43text pins
+                                // that); ending the item here isolates the pair.
       std::string{"g\0h", 3},   // NUL, a C0, dropped -> "gh" (literal needs a length)
       "i\b" "j",                // backspace, a C0, dropped -> "ij"
       "k\xE4\xB8\x96",      // well-formed multibyte: kept -> "k\xE4\xB8\x96"
   });
   REQUIRE(l.item_count() == 6);
   REQUIRE(l.selected() == 0);
-  const char* want[6] = {"ab", "cd", "ef", "gh", "ij", "k\xE4\xB8\x96"};
+  const char* want[6] = {"ab", "cd", "e", "gh", "ij", "k\xE4\xB8\x96"};
   for (int i = 0; i < 6; ++i) {
     l.set_selected(i);
     REQUIRE(l.selected_text() == want[i]);

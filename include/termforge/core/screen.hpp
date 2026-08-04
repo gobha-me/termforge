@@ -75,7 +75,9 @@ class Screen {
                   Attr attrs = Attr::None) -> int;
 
   // Sanitize untrusted text: drop C0/C1 control chars and ESC, keep printable
-  // + valid UTF-8 continuation bytes. Exposed for testing.
+  // + valid UTF-8 continuation bytes. Delegates to text::sanitize(in, Strip)
+  // (#149) — the write path and every measure-what-will-paint caller share
+  // one policy; see termforge/core/text.hpp.
   static auto sanitize(std::string_view in) -> std::string;
 
  private:
