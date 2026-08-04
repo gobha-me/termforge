@@ -5,6 +5,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
+#include <format>
 #include <initializer_list>
 #include <span>
 #include <variant>
@@ -617,7 +618,71 @@ auto App::flush_pixel_regions() -> void {
   if (!m_pixel_regions.empty()) m_driver->flush();
 }
 
+auto App::set_size(Size size) -> std::expected<void, ErrorEvent> {
+  // Every guard runs before anything is stored, the way set_io's do (#179): a
+  // caller forwarding a peer's window-change and dropping the result keeps the
+  // size it had rather than half of the one it was sent.
+  if (size.cols <= 0 || size.rows <= 0) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "app",
+        std::format("set_size: cols and rows must be > 0, got {}x{}", size.cols,
+                    size.rows)}};
+  }
+  // Zero is legal on either axis and is not a degradation: it is what tmux and
+  // the Linux console report, and push_cell_pixel_size already reads it as
+  // "unknown". Negative is not a measurement of anything.
+  if (size.px_w < 0 || size.px_h < 0) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "app",
+        std::format("set_size: pixel dimensions must be >= 0, got {}x{}",
+                    size.px_w, size.px_h)}};
+  }
+  // A domain match, not an allocation guard -- see the header. Screen::resize
+  // widens to size_t before multiplying, so there is nothing here to keep from
+  // overflowing; what this refuses is a window no ioctl could have reported.
+  //
+  // All FOUR fields, not just the grid: ws_xpixel/ws_ypixel are unsigned shorts
+  // too, and the pixel pair is the half with teeth. push_cell_pixel_size divides
+  // it by the grid, so an unbounded pixel dimension over a 1x1 grid hands the
+  // driver a cell of INT_MAX -- which makes preferred_pixel_extent's room
+  // effectively infinite and stops PlacementFit::Exact refusing anything for the
+  // rest of the session. Bounding cols/rows alone would leave the #173 lesson
+  // half-applied on the very call that re-opened it.
+  if (size.cols > kMaxPushedDim || size.rows > kMaxPushedDim ||
+      size.px_w > kMaxPushedDim || size.px_h > kMaxPushedDim) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "app",
+        std::format("set_size: no dimension may exceed {} ({}x{} cells, "
+                    "{}x{} pixels)",
+                    kMaxPushedDim, size.cols, size.rows, size.px_w,
+                    size.px_h)}};
+  }
+  m_pushed_size = size;
+  // A resize REQUEST, never a resize: the Screen, the renderer invalidation,
+  // the cell geometry and the ResizeEvent are all frame_step()'s to produce,
+  // off this one flag, in the order a SIGWINCH already produces them.
+  request_resize();
+  return {};
+}
+
+auto App::clear_size() noexcept -> void {
+  m_pushed_size.reset();
+  // Unconditional, and not merely for symmetry: the effective size may have
+  // just changed by several tens of columns without anybody touching a window.
+  request_resize();
+}
+
+auto App::has_pushed_size() const noexcept -> bool {
+  return m_pushed_size.has_value();
+}
+
 auto App::current_size() const -> Size {
+  // The push wins (#180). The peer is the only party that knows: a socket has
+  // no window to interrogate at all, and a pty that does answer answers with
+  // whatever was last written into its winsize -- a copy of the peer's number
+  // at best, and stale the moment the peer drags a corner. Ordered FIRST rather
+  // than used as a fallback, so no single measurement can consult both sources.
+  if (m_pushed_size) return *m_pushed_size;
   winsize ws{};
   // Ask the stream this Terminal actually writes to, not STDOUT_FILENO (#179).
   // The two are the same thing for a program that owns its terminal, and are
@@ -627,9 +692,9 @@ auto App::current_size() const -> Size {
   // A stream with no window (a socket, a pipe) answers ENOTTY and falls through
   // to the default below. That is correct-by-default rather than correct: the
   // real answer for a remote session arrives as a protocol message and has to
-  // be pushed in, which is #180's job. The guard is for the -1 "no output
-  // stream" sentinel, and it buys a syscall rather than a behaviour — ioctl(-1)
-  // fails into the same default.
+  // be pushed in, which is what the branch above is (#180). The guard is for the
+  // -1 "no output stream" sentinel, and it buys a syscall rather than a
+  // behaviour — ioctl(-1) fails into the same default.
   const int fd = m_term.io().out;
   if (fd >= 0 && ioctl(fd, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0 && ws.ws_row > 0)
     return {ws.ws_col, ws.ws_row, ws.ws_xpixel, ws.ws_ypixel};

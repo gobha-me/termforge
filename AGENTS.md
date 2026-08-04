@@ -141,6 +141,17 @@ file is the tactical version.
   that fd has been recycled. On the discovered path both predicates are
   tautologies (`out_fd` was chosen *by* `isatty`), which is exactly why nothing
   an existing program does changes by one byte.
+  **The size is pushed too** (#180). `App::set_size` takes the dimensions the
+  peer reported and the pull moves behind it: **pushed size → `TIOCGWINSZ` on the
+  Terminal's `out` fd → 80×24**. A remote resize arrives as a protocol message,
+  so there is no SIGWINCH to hook and no window to interrogate; the push
+  therefore **arms the resize path** rather than touching the Screen, and one
+  code path produces the Screen resize, the renderer invalidation, the cell
+  geometry and the `ResizeEvent` whether a signal or a peer asked for it.
+  Refusal is *total* like `set_io`'s and arms nothing. Its `<= 65535` guard is a
+  **domain match, not a memory bound** — `winsize` holds unsigned shorts, so it
+  refuses a window no ioctl could have reported; what an untrusted peer may
+  claim is the embedding program's policy and stays there.
 
 ## Protocol priority (driver selection)
 
