@@ -4,7 +4,63 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-03)
+## Where we are (2026-08-04)
+
+**Latest work: #149 — sanitize leaves the write path and becomes a
+first-class facility. Shipped as v0.7.2 (PR #184, 8/8 CI green).**
+
+**How it got picked: the resume-point memory named it.** The #154 session
+ended with "the sanitize cluster #149 is the remaining arc; then kitty-depth,
+terminal read-side, #150, big rocks" — and #149's own blocker (#129) closed
+via #154's setter-sanitize, so the arc was unblocked. Medium priority,
+prescriptive acceptance tests, right size: the logical next thing, no 50/50.
+
+**What shipped.** `termforge::text` (`include/termforge/core/text.hpp` +
+`src/lib/core/text.cpp`): `sanitize(string_view, SanitizeMode)` with
+**Strip** (the historical behaviour) and **Escape** (visible inert
+caret/hex notation — nothing a user typed silently vanishes; output is a
+fixpoint of Strip); `sanitized_width(string_view, SanitizeMode)` =
+`display_width(sanitize(...))` *by construction* — the #129 bug class is
+unspellable at the measurement seam because measurement and paint can no
+longer run two different transforms. `Screen::sanitize` keeps its signature
+and delegates, so OptionsList/glyph_fit/MenuBar/markers all share the seam
+with zero API churn; 02screen's pins stayed green untouched.
+
+**The finding sharper than the issue body: C1 consumption had to become
+honest to stay safe.** A raw `0x9B` IS CSI on a Latin-1 terminal, so dropping
+only the byte leaks its parameters as printable text — raw/UTF-8/ESC-Fe C1
+now consume exactly what their ESC-Fe twins consume (params+final, BEL/ST,
+ST-through for DCS/SOS/PM/APC). Making that true surfaced two pre-existing
+gaps the old sanitize carried: impossible leads **0xF8–0xFF were passed
+through verbatim** (violating "sanitize emits only well-formed UTF-8",
+papered over by write_text's decoder), and a malformed lead's continuation
+bytes were dropped *one at a time*, so an overlong form's tail could be
+re-read as fresh input (a lone 0x9B read as raw CSI!). Both closed: strays
+drop; malformed sequences drop **as a unit**. One #154 routing pin in
+09listwidget updated to the strengthened policy (`"e\xC2\x9B" "f"` → `"e"`,
+the `f` is the pair's CSI final byte).
+
+**The mutation the issue named, verified.** `sanitized_width` returning the
+raw width fails exactly the wide-glyph case (43text:73) and only it — red,
+then reverted. Also verified locally: default, Release `-Werror`, g++-13,
+clang, ASan+UBSan all 45/45; cold-context review clean on the policy code.
+
+**Gotchas hit:** the issue's own hex-escape trap (a `\x9B` followed by a hex
+digit char eats it — split adjacent literals), and a ctest-with-tty-stdin
+hang in `37bytes-test` unrelated to this work (runs fine with stdin closed,
+as CI does — backgrounded ctest with `</dev/null` is the safe local form).
+
+**NEXT PICK landscape:** the remaining arc pieces are the terminal read-side
+cluster (#165 q=2 silent reject, #145 negotiation budget/cache, #148
+one-frame-one-write contract), #150 fixed-rate frame loop, kitty-depth
+(#140–#143, #109–#117), #131 horizontal scrollbar (TabBar's ‹ › columns),
+then big rocks #26 Composer / #92 Cell::text (0.2.0 break, also unblocks
+#149's deferred grapheme-cap item 4). Cadence unchanged: consumer bugs +
+small epics first.
+
+---
+
+## Previously (2026-08-03)
 
 **Latest work: #179 — injectable fds on `Terminal` (#144 Split A2).**
 
