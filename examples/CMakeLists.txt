@@ -6,6 +6,7 @@ set(EXAMPLES
   colors
   image
   sprites
+  pinned
   input
   chat
   low_level
