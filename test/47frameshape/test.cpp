@@ -18,15 +18,17 @@
 // `flush(); draw...(); flush();` deliberately, and a case that draws before it
 // flushes belongs in another directory.
 //
-// There is no App-level test here, and that is a limitation rather than a
-// choice: `App::test_wire_headless` builds a `FallbackDriver`, whose
-// `capabilities().kitty_graphics` is false, so `App::collect_pixel_regions`
-// returns before the pixel path -- and `frame_step()` is private, reachable
-// only through the two hooks that rebuild the driver first. `test/44size`
-// declined to add a driver-injection seam for one assertion; #189 asks for it.
-// Until then the frame shape is REPLAYED here rather than observed, and the
-// cadence the replay assumes is itself pinned by a case below, so a change to
-// `App`'s cadence fails here rather than in a consumer.
+// THE FRAME SHAPE IS REPLAYED HERE, NOT OBSERVED, and that is now a division
+// of labour rather than a limitation. `test/48apppixels` drives a real `App`
+// over a real `KittyDriver` through the seam #189 added and reads the same wire;
+// what stays here is every claim about the DRIVER under a cadence, including
+// cadences no `App` produces. A case that needs an `App` to be true belongs
+// over there, and a case that draws before it flushes belongs somewhere else
+// again.
+//
+// The cadence the replay assumes is itself pinned by a case below AND by an
+// App-level case in 48apppixels, so a change to `App`'s frame shape fails in
+// both places rather than in a consumer's byte budget.
 //
 // HALF OF THIS FILE RUNS UNDER UnicodePlaceholders, deliberately. That is the
 // mode where #187 was fatal rather than merely expensive (a region id past 255
@@ -400,12 +402,17 @@ TEST_CASE("frame shape: a region that disappears while another still draws is "
 
 TEST_CASE("frame shape: the LAST region to disappear is collected at the next "
           "flush, and not later", "[frameshape][kitty]") {
-  // The whole cost of the fix, as an equality rather than a description. When
-  // the vanishing region was the only one, App issues no second flush that
-  // frame (flush_pixel_regions returns early on an empty list), so the
-  // collection cannot happen until the next frame's first flush. One frame --
-  // 16ms at 60fps -- and the second half of this case is what stops that
-  // becoming two.
+  // The whole cost of the fix, as an equality rather than a description: the
+  // vanishing region's delete is deferred by exactly one drawless flush and no
+  // more.
+  //
+  // The two flushes below were App's frame N and frame N+1's first write when
+  // this case was written; since #191 they are ONE frame -- App flushes at the
+  // end of every graphics frame whether or not it drew, so a frame that removes
+  // the last region spends the grace on its own first write and collects on its
+  // second. The bytes are identical and the delete now lands in the frame that
+  // removed the region rather than in the next one. That improvement is
+  // asserted where it is visible, at the App layer, in test/48apppixels.
   //
   // This is the only case that pins kDrawlessFlushGrace itself: at 0 the first
   // CHECK fails, at 2 the third does.
@@ -525,12 +532,13 @@ TEST_CASE("frame shape: THREE flushes per frame with two drawless loses the "
   // per frame -- and the header says in as many words that a caller flushing
   // three times per frame with the first two drawless would lose the dedup
   // again. That is a real limit of the constant rather than a general
-  // property, so it is asserted here: if App's cadence ever changes, this
-  // fails in the repo rather than in a consumer's byte budget.
+  // property, so it is asserted here.
   //
-  // An App-level test would be the honest home for this (#189). Until then
-  // this case is what makes the replayed cadence above a claim and not an
-  // assumption.
+  // Since #191 App's side of it is a guarantee rather than a coincidence: every
+  // graphics frame is exactly two writes, counted at the sink in
+  // test/48apppixels. This case is the other half -- what the constant costs a
+  // caller who is NOT App -- and it is why the constant cannot simply be raised
+  // without deciding what cadence it is defending.
   KittyDriver d;
   std::string out;
   d.set_output(&out);
@@ -545,24 +553,26 @@ TEST_CASE("frame shape: THREE flushes per frame with two drawless loses the "
   CHECK(total_transmits(out) > 1);
 }
 
-TEST_CASE("frame shape: draws in BOTH of App's windows defeat the guard (#191)",
-          "[frameshape][kitty][pinned]") {
-  // The limit that matters most, and the one a heuristic cannot reach.
+TEST_CASE("frame shape: draws in two writes defeat the guard, for a caller "
+          "that is not App (#191)", "[frameshape][kitty][pinned]") {
+  // The limit that matters most, and the one a heuristic cannot reach: when
+  // every flush has drawn something, `drew` is true at both, the grace never
+  // fires, and each collection destroys whatever the other write drew.
   //
-  // `App` has no draw hook between `Renderer::present`'s flush and
-  // `flush_pixel_regions`, so a subclass that draws through the protected
-  // `driver()` accessor -- which is #109's ONLY App call site for a pinned image
-  // -- draws in window 1 while App's own pixel regions draw in window 2. Then
-  // BOTH flushes have drawn something, `drew` is true at both, the grace never
-  // fires, and each collection destroys whatever the other window drew.
+  // THIS IS NO LONGER A SHAPE `App` PRODUCES. It was: `App` had no draw hook
+  // between `Renderer::present`'s flush and `flush_pixel_regions`, so a
+  // subclass drawing through the protected `driver()` accessor -- #109's only
+  // App call site for a pinned image -- drew in window 1 while App's own pixel
+  // regions drew in window 2. #191 gave App a hook in the second window
+  // (`App::on_pixels`) and both now land in one write; test/48apppixels asserts
+  // that at the App layer, with this straddle as its negative control.
   //
-  // Not a regression: these numbers are byte-for-byte what the driver produced
-  // before the guard existed (verified by disabling it). The guard simply does
-  // not reach this shape, and no cadence heuristic can -- it needs a real frame
-  // boundary, which is #191.
-  //
-  // Written as a characterisation case so the cost is a number here rather than
-  // a caveat in a doc, and so #191 is told by the suite which line to change.
+  // The case stays here because the DRIVER is unchanged and still cannot defend
+  // itself. Any caller that is not `App` can still produce this, and the fix
+  // for that is a real frame boundary on `TerminalDriver` (#191 option (a)),
+  // which has to be decided with #148. These numbers are the standing argument
+  // for keeping it open -- and they are byte-for-byte what the driver produced
+  // before the guard existed, verified by disabling it.
   KittyDriver d;
   std::string out;
   d.set_output(&out);
@@ -612,18 +622,24 @@ TEST_CASE("frame shape: draws in BOTH of App's windows defeat the guard (#191)",
   CHECK(placements_of(one, p2->id) == 1);
 }
 
-TEST_CASE("frame shape: a region that misses ONE frame is re-uploaded (#191)",
-          "[frameshape][kitty]") {
-  // The other half of #191, and the reason kDrawlessFlushGrace at 1 has no
-  // slack: one drawless flush per frame is exactly the steady-state
-  // consumption, so a frame that draws NO region -- `draw_pixels` returning
-  // nullptr, which WaveformWidget does whenever its sample buffer is empty --
-  // spends the grace, and the next frame's first flush collects before its
-  // draws. The region comes back under a new id with a full re-upload, and the
-  // delete is in one write while the re-place is in the next.
+TEST_CASE("frame shape: a region that misses ONE frame is re-uploaded, and "
+          "#191 did not change that (#191)", "[frameshape][kitty]") {
+  // The other half of #191, and the half the hook did not fix. Say it plainly:
+  // a frame that draws NO region -- `draw_pixels` returning nullptr, which
+  // WaveformWidget does whenever its sample buffer is empty -- costs a delete,
+  // a spent id and a full re-upload of pixels the terminal had a moment ago.
   //
-  // Also not a regression: pre-fix the delete simply landed a frame earlier.
-  // Characterisation, like the case above.
+  // What #191 moved is WHERE, not how much. The replay below is App's cadence
+  // after the fix: two writes per graphics frame, unconditionally. So frame
+  // N+1's own second write spends the grace and collects, instead of the
+  // collection landing inside frame N+2 before its draws. The delete is now on
+  // a true frame boundary and the cost is identical, which is the honest
+  // statement and the reason this case was rewritten rather than deleted.
+  //
+  // The only lever that would make it cheaper is kDrawlessFlushGrace at 2, and
+  // that trades directly against the linger bound two cases above -- a removed
+  // region's placement would survive two frames instead of one. Deliberately
+  // not taken. `pin_image` is the API answer for content an app keeps.
   KittyDriver d;
   std::string out;
   d.set_output(&out);
@@ -633,16 +649,20 @@ TEST_CASE("frame shape: a region that misses ONE frame is re-uploaded (#191)",
   REQUIRE(d.draw_image(Rect{0, 0, 4, 2}, img).has_value());
   d.flush();  // frame N: drawn, id 1
 
+  // Everything from here is one segment, so the two frames can be read against
+  // each other rather than one clear at a time.
   out.clear();
-  d.flush();  // frame N+1: draw_pixels returned nullptr, so ONE flush
+  d.flush();  // frame N+1 window 1: drawless, the grace absorbs it
   CHECK(data_deletes_of(out, 1) == 0);  // deferred, not avoided
+  d.flush();  // frame N+1 window 2: drawless too, so the FRAME ends here
+  CHECK(data_deletes_of(out, 1) == 1);   // and this is where it goes
 
-  out.clear();
-  d.flush();  // frame N+2 window 1: the grace is spent, so this collects
-  CHECK(data_deletes_of(out, 1) == 1);
+  d.flush();  // frame N+2 window 1: nothing left to collect
+  CHECK(data_deletes_of(out, 1) == 1);   // still one, not two
   REQUIRE(d.draw_image(Rect{0, 0, 4, 2}, img).has_value());
   d.flush();
   // A fresh id and a full re-upload for pixels the terminal had a moment ago.
+  // Unchanged by #191, and measured rather than asserted in prose.
   CHECK(total_transmits(out) == 1);
   CHECK(ids_named(out) == std::set<std::uint32_t>{1, 2});
 }

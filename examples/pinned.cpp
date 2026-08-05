@@ -116,9 +116,14 @@ class PinnedDemo final : public App {
     }
   }
 
-  // Unpin on the way out. Not required for correctness -- the driver frees
-  // everything it uploaded when it goes -- but it is the half of the API an
-  // application that pins and unpins over a long session actually uses.
+  // Unpin on the way out, for the shape rather than for the effect. Be honest
+  // about which is which: `unpin_image` QUEUES its `d=I` like every other draw,
+  // and nothing flushes after on_stop(), so on this path the escape never
+  // reaches the terminal -- ~KittyDriver's own `a=d,d=A` is what actually frees
+  // it. What the call does buy here is the driver-side budget (one of the 239
+  // resident slots), which is the thing that matters to a long-lived session
+  // that pins and unpins as views come and go. That session should unpin when a
+  // view CLOSES, not at exit.
   auto on_stop() noexcept -> void override {
     if (m_pin) (void)driver().unpin_image(m_pin);
   }

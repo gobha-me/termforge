@@ -163,6 +163,21 @@ are skipped and the widget's own cell fallback — already in the Screen from
 pixel regions; `render_overlays` collects them after it draws, so its images
 flush last and land above everything.
 
+`App::on_pixels` (#191) is suppressed on the same rule, and the *reason* is
+worth separating from the rule. Only the first half above applies to it: a
+direct `draw_pinned` touches no Screen cell, so nothing gets blanked and nothing
+would be holed. It is suppressed because images are emitted after the cell diff
+and would paint through the dialog, and because an app drawing through **both**
+paths must not keep half its images and lose the other half — a split-brain
+frame is worse than either uniform answer. The standing rule is that only the
+topmost thing puts pixels on screen, and `on_pixels` is not the topmost thing.
+
+One consequence in the app's favour: a placement you stop drawing is retired on
+that frame's own boundary, so a pinned sprite goes away **with** the dialog that
+covered it rather than a frame behind it. If your app wants its sprites to keep
+drawing behind a `Backdrop::None` toast, that is the coarse-guard cost described
+below, and `modal()` is what you check.
+
 The guard is deliberately coarse — it keys off *any* overlay being up, not off
 actual overlap. A small `Backdrop::None` toast in a corner therefore drops the
 app's images to their cell fallback for as long as it is visible, even though

@@ -371,11 +371,21 @@ class KittyDriver final : public TerminalDriver {
   // The constant means three things at once, which is why it is named: how many
   // flushes a caller may make within one frame before drawing, how many frames
   // a removed region's placement may linger, and the cadence being assumed.
-  // App's cadence is exactly one -- Renderer::present flushes before
-  // flush_pixel_regions draws -- so 1 costs nothing on a steady frame and
-  // bounds the leak at one frame. A caller that flushed three times per frame
-  // with the first two drawless would lose the dedup again; that is a real
-  // limit of this constant and not a general property.
+  //
+  // App's cadence is exactly one drawless flush per frame -- Renderer::present
+  // flushes before flush_pixel_regions draws -- so 1 costs nothing on a steady
+  // frame. Since #191 that is a GUARANTEE rather than an observation: App
+  // flushes at the end of every graphics frame whether or not the frame drew,
+  // so the count is 1 on a frame with images and 2 on one without, and the
+  // second write is always the frame's own boundary. A caller that flushed
+  // three times per frame with the first two drawless would lose the dedup
+  // again; that is a real limit of this constant and not a general property.
+  //
+  // It is therefore a clean single-constant lever now, which it was not before:
+  // raising it to 2 would let a region survive a frame nobody drew it in --
+  // #191's second shape, which still costs a full re-upload -- at the price of
+  // doubling how long a removed region's placement lingers on screen. Both
+  // sides of that trade are pinned in test/47frameshape, deliberately.
   static constexpr std::uint32_t kDrawlessFlushGrace = 1;
   std::uint32_t m_drawless_flushes{0};
   // Region key (packed x,y,w,h) -> slot. Bounded: LRU-evicted past

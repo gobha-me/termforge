@@ -404,10 +404,14 @@ TEST_CASE("app pixels: the same sprite drawn from on_render still blinks (#191)"
 
 TEST_CASE("app pixels: on_pixels draws AFTER App's own regions",
           "[apppixels][kitty][pinned]") {
-  // The compositing order, as a byte fact rather than a claim: later is above,
-  // which is the rule render_overlays already states for its own images. A
-  // subclass cannot ask to go BELOW App's regions -- that needs named layers
-  // and is #114 -- so the order has to be pinned here or it drifts.
+  // The EMISSION order, as a byte fact. Deliberately not a claim about what
+  // the terminal composites: two placements at the same z are ordered by the
+  // terminal and termforge does not specify that tie-break (#114 is where a
+  // named layer would go). What this order really decides is who loses a
+  // same-rect collision under UnicodePlaceholders -- App's region stamps the
+  // rect first, so the draw_pinned is the one refused -- and that is a
+  // behaviour a caller can observe, so the order has to be pinned or it
+  // drifts.
   SpriteApp app{Window::OnPixels};
   app.run(1);
 

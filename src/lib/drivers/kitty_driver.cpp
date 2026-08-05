@@ -844,19 +844,30 @@ auto KittyDriver::gc_regions() -> void {
   // and `>` vs `>=` there is now load-bearing. test/47frameshape drives both
   // cross-frame handoffs for that reason.
   //
-  // kDrawlessFlushGrace is what bounds the other side. Skipping forever would
-  // leak the last region's placement forever, because the frame that removes
-  // it is the frame App issues no second flush on.
+  // kDrawlessFlushGrace bounds the other side: skipping forever would leak the
+  // last region's placement forever. Since #191 App flushes on every graphics
+  // frame whether or not it drew, so the grace is spent by the frame's own
+  // second write and a removed region's placement lingers no longer than the
+  // frame that removed it.
   //
-  // WHAT THIS DOES NOT FIX, because a heuristic cannot: if the caller draws
-  // images in BOTH of App's windows -- some before Renderer::present's flush,
-  // some in flush_pixel_regions -- then every flush has drawn something, the
-  // guard never fires, and each collection destroys what the other window drew.
-  // Measured at 10 transmits and 9 d=I for 10 frames of one unchanged image,
-  // identical to the behaviour before this guard existed. That is the shape a
-  // subclass calling driver().draw_pinned() from on_render produces, i.e. #109's
-  // only App call site, and it needs a real frame boundary rather than a better
-  // guess: #191.
+  // WHAT THIS DOES NOT FIX, because a heuristic cannot: a caller that draws
+  // images in BOTH of the windows App's cell flush separates -- some before
+  // Renderer::present's flush, some after -- makes every flush non-drawless, so
+  // the guard never fires and each collection destroys what the other window
+  // drew. Measured at 10 transmits and 9 d=I for 10 frames of one unchanged
+  // image, identical to the behaviour before this guard existed.
+  //
+  // App no longer produces that shape: #191 gave it a draw hook in the second
+  // window (App::on_pixels), so an application's own draw_pinned lands with
+  // App's pixel regions instead of before them. Measured through a real App
+  // over a pty answering as kitty, 4 seconds of examples/pinned: 88,569 bytes
+  // / 2 transmits / 0 d=I from on_pixels, against 12,653,726 bytes / 256
+  // transmits / 256 d=I / 258 ids from on_render.
+  //
+  // It is still reachable by any caller that is not App, and this driver still
+  // cannot defend itself: when every flush has drawn something there is nothing
+  // left to infer. Defending it needs a real frame boundary on TerminalDriver,
+  // which is #191's option (a) and has to be decided with #148.
   const bool drew = m_clock > m_frame_start_clock;
   if (!drew && ++m_drawless_flushes <= kDrawlessFlushGrace) return;
   m_drawless_flushes = 0;

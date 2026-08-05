@@ -645,8 +645,13 @@ auto App::flush_pixel_regions() -> void {
     m_driver->draw_image(pr.rect, *pr.image);
   }
 
-  // After the regions, so a subclass's images land above the widget tree's;
-  // suppressed under an overlay for the reason render_pixel_regions gives.
+  // After the regions, so a same-rect collision resolves in the widget tree's
+  // favour (see the hook's doc -- it is an emission order, not a claim about
+  // what the terminal composites). Suppressed under an overlay: not for
+  // render_pixel_regions' reason, which is about blanked cells and does not
+  // apply to a direct driver draw, but because images are emitted after the
+  // cell diff and would paint through the dialog -- and because an app drawing
+  // through both paths must not keep half its images and lose the other half.
   if (graphics && m_overlays.empty()) on_pixels(*m_driver);
 
   // Unconditional on the tier, where it used to be conditional on there being

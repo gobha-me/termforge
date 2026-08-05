@@ -234,13 +234,15 @@ class App {
   // image escape of the frame lands in one write, which is what makes the
   // guard exact rather than approximate.
   //
-  // Called after App has issued its own pixel regions, so a region and a pinned
-  // placement competing for the same rect resolve in the widget tree's favour:
-  // under UnicodePlaceholders the second of the two is refused, and here that
-  // is the draw_pinned. Anything drawn here therefore composites ABOVE App's
-  // own regions and there is no way to ask for below -- that is #114's job, not
-  // a parameter here. Unlike App's own region draws, whose std::expected is
-  // discarded, yours comes straight back to you: handle it.
+  // Called after App has issued its own pixel regions. That is an EMISSION
+  // order, not a compositing promise: two placements at the same z are ordered
+  // by the terminal, and termforge does not specify that tie-break -- naming
+  // a layer is #114. What the order does decide, concretely, is who loses a
+  // same-rect collision under UnicodePlaceholders, where two cell grids would
+  // overwrite each other: App's region is drawn first and stamps the rect, so
+  // the draw_pinned from here is the one refused. The widget tree wins, and you
+  // are told. Unlike App's own region draws, whose std::expected is discarded,
+  // yours comes straight back to you: handle it.
   //
   // TWO THINGS SUPPRESS THIS CALL ENTIRELY, and both are properties of the
   // frame rather than of what you draw:
@@ -265,8 +267,16 @@ class App {
   // restore_backdrop() after it, so a cell written now is either lost or
   // smuggled into the next frame's diff. Do not call flush() either -- App
   // flushes immediately after, and a third flush per frame walks back into the
-  // limit kDrawlessFlushGrace documents. An exception propagates exactly as one
-  // from on_render does.
+  // limit kDrawlessFlushGrace documents.
+  //
+  // An exception leaves here the way one from on_render does -- out through
+  // frame_step, run_loop's catch, on_stop() and teardown(), and on to the
+  // caller. What it costs is different and smaller: on_render throwing
+  // abandons present(), restore_backdrop() and this whole window, while
+  // throwing HERE abandons only the frame's final flush, so anything already
+  // drawn stays in the driver's buffer and goes out with the next frame that
+  // flushes. On the way to a teardown that hardly matters; in an app that
+  // catches and continues, it is one frame of latency and not a lost draw.
   //
   // The driver is the one this frame is being drawn with, the same object
   // driver() returns. It is a parameter because the hook exists for it.
