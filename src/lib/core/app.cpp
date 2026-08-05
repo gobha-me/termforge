@@ -632,10 +632,39 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
 }
 
 auto App::flush_pixel_regions() -> void {
+  // App's SECOND window, and since #191 the only correct place in the frame for
+  // an image draw. One predicate decides the whole window -- the same one
+  // collect_pixel_regions opens with -- because the hook and the write it
+  // depends on cannot be gated differently: bytes drawn with no flush behind
+  // them surface in the next frame, under that frame's cell diff.
+  const bool graphics = m_driver && m_driver->capabilities().kitty_graphics;
+
+  // Ungated: m_pixel_regions can only be non-empty if collect_pixel_regions
+  // already passed the same test.
   for (const auto& pr : m_pixel_regions) {
     m_driver->draw_image(pr.rect, *pr.image);
   }
-  if (!m_pixel_regions.empty()) m_driver->flush();
+
+  // After the regions, so a subclass's images land above the widget tree's;
+  // suppressed under an overlay for the reason render_pixel_regions gives.
+  if (graphics && m_overlays.empty()) on_pixels(*m_driver);
+
+  // Unconditional on the tier, where it used to be conditional on there being
+  // regions to write. Two reasons, and the second is the one #191 turns on:
+  //
+  //  * a frame whose only image draws came from on_pixels has an empty
+  //    m_pixel_regions and still has bytes to write;
+  //  * every graphics frame now costs exactly two writes, the first of which
+  //    has drawn nothing. That is what kDrawlessFlushGrace was calibrated
+  //    against, and making it a property of App rather than of what the frame
+  //    happened to contain is what turns the driver's guard from a heuristic
+  //    into an exact answer.
+  //
+  // The cost is that on a graphics tier last_frame_bytes() now always reports
+  // this second write -- already true of any frame carrying an image, and now
+  // true of one carrying none, where it reads zero. total_bytes() is the number
+  // that did not move. Non-graphics tiers are untouched at one write per frame.
+  if (graphics) m_driver->flush();
 }
 
 auto App::set_size(Size size) -> std::expected<void, ErrorEvent> {
