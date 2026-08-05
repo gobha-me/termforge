@@ -69,8 +69,10 @@ auto art(int seed) -> Image {
 // d=I (data) is a different counter from d=i (one placement) because telling
 // those apart is the whole of this suite's subject.
 using tfsupport::data_deletes_of;
+using tfsupport::ids_named;
 using tfsupport::placement_deletes_of;
 using tfsupport::placements_of;
+using tfsupport::total_transmits;
 using tfsupport::transmits_of;
 
 // Every cursor-positioning CSI in emission order, as (col, row) ONE-BASED --
@@ -557,12 +559,19 @@ TEST_CASE("pinned: switching placement mode retires the placement, not the "
   CHECK(placements_of(out, p->id) == 1);
 }
 
-TEST_CASE("pinned: a region never gets an id a pin is holding",
-          "[pinned][kitty]") {
-  // Region ids walk upward and they still walk without bound, so "the two
-  // ranges cannot meet" is not a property this code has. Handing a region an id
-  // the terminal holds an application's image under would overwrite that image
-  // on the region's next transmit.
+TEST_CASE("pinned: region ids never enter the pinned range, however hard the "
+          "churn (#190)", "[pinned][kitty]") {
+  // Region ids used to walk upward without bound, so "the two ranges cannot
+  // meet" was not a property this code had, and this case covered the
+  // `while (m_pinned.contains(...)) ++m_next_image_id` skip that stood in for
+  // it. #190 deleted that skip along with the counter: region_slot now derives
+  // the smallest free id in [1, kMaxRegionSlots] and pin_payload the largest
+  // free one in [kFirstPinnedImageId, 255], so the pools are disjoint by
+  // construction and neither reads the other's map.
+  //
+  // The case therefore asserts the INVARIANT rather than the guard. It is the
+  // churn side of it; the saturation side is "a saturated region pool cannot
+  // reach the pinned range" below.
   KittyDriver d;
   std::string out;
   d.set_output(&out);
@@ -570,21 +579,31 @@ TEST_CASE("pinned: a region never gets an id a pin is holding",
   const auto p = d.pin_image(art(14));
   REQUIRE(p.has_value());
 
-  // Drive the region allocator past the pinned id, via region CHURN: a new
-  // destination rect every frame, so the previous slot is legitimately
-  // collected and the next draw takes the fresh-id branch.
+  // The hardest churn available: a new destination rect every frame, so the
+  // previous slot is legitimately collected and the next draw takes the
+  // fresh-id branch rather than the LRU one. This is what produced 300 distinct
+  // ids and a maximum of 300 before the fix.
   //
-  // This used to be `flush(); draw the SAME rect; flush();`, which climbed one
-  // id per frame because #187 emptied the map on the drawless flush. That is
-  // fixed, so a fixture built on it would pass vacuously — and the case would
-  // stop covering the `while (m_pinned.contains(...)) ++m_next_image_id` skip
-  // it exists for. Churn is the id-growth path that REMAINS (#190).
+  // It used to be `flush(); draw the SAME rect; flush();`, which climbed one id
+  // per frame only because #187 emptied the map on the drawless flush. That was
+  // fixed and this fixture rebuilt on churn, which is the growth path that
+  // remained.
   for (int i = 0; i < 300; ++i) {
     REQUIRE(d.draw_image(Rect{i % 80, i / 80, 2, 2}, art(i % 200)).has_value());
     d.flush();
   }
 
-  // No region ever transmitted under the pinned image's id.
+  // The precondition, asserted rather than assumed: 300 rects really were drawn
+  // and really did upload. Without it a driver that refused every draw after
+  // the first would satisfy everything below.
+  REQUIRE(total_transmits(out) == 301);  // 300 regions, plus the pin once
+
+  // Two region ids for 300 rects, and the pin untouched at the top of its own
+  // pool. One assertion carrying three properties: the ids recycle, they stay
+  // inside the region pool, and nothing ever named anything in between.
+  CHECK(ids_named(out) == std::set<std::uint32_t>{1, 2, p->id});
+  // No region ever transmitted under the pinned image's id, and no collection
+  // ever reached its data.
   CHECK(transmits_of(out, p->id) == 1);
   CHECK(data_deletes_of(out, p->id) == 0);
 }
@@ -794,40 +813,47 @@ TEST_CASE("pinned: a recycled id does not resurrect a stale handle",
   REQUIRE(d.draw_pinned(Rect{1, 2, 3, 2}, *second).has_value());
 }
 
-TEST_CASE("pinned: a pin never takes an id a live region is holding",
-          "[pinned][kitty][failure]") {
-  // Region ids climb on CHURN -- every rect a widget stops drawing frees a slot
-  // and the replacement takes a fresh id -- so over a long session they still
-  // reach the pinned range (#190). A pin issued a live region's id is not a
-  // near-miss: the region's next transmit overwrites the application's pixels
-  // and its collection emits a=d,d=I on them, silently, because q=2 means the
-  // terminal's objection reaches nobody.
+TEST_CASE("pinned: a saturated region pool cannot reach the pinned range "
+          "(#190)", "[pinned][kitty][failure]") {
+  // This case used to drive the region counter to 255 by moving a rect every
+  // frame -- 255 distinct rects, the 255th holding the top of the one-byte
+  // range -- and then assert that a pin issued afterwards avoided it. #190
+  // removed the counter, so there is no longer any way to drive a region id
+  // into the pinned range at all. That is the whole point of the fix, and it
+  // takes the old precondition with it.
+  //
+  // So the case is re-pointed rather than deleted: the property (a pin is
+  // unreachable from region pressure) still needs one, and the strongest
+  // pressure available now is a SATURATED pool rather than a climbing counter.
+  // The churn side is asserted by "region ids never enter the pinned range,
+  // however hard the churn" above; this is the other side.
   KittyDriver d;
   std::string out;
   d.set_output(&out);
-  const Image img{1, 1, {Pixel{9, 9, 9, 255}}};
 
-  // Drive the region counter to the top of the one-byte range by moving the
-  // rect every frame. The 255th distinct rect takes id 255, and it is still
-  // holding it below: the collection that runs in the same flush drops the rect
-  // it LEFT, not the one just drawn.
-  //
-  // This used to be `flush(); draw the same rect; flush();`, which climbed one
-  // id per frame only because #187 emptied the map on the drawless flush --
-  // exactly the vacuity the REQUIRE below was put here to catch.
-  for (int f = 0; f < 255; ++f) {
-    REQUIRE(d.draw_image(Rect{f % 80, f / 80, 1, 1}, img).has_value());
-    d.flush();
-  }
+  // Fill the region pool -- all of it, in ONE frame, so nothing is collected
+  // and every slot is genuinely live at once when the pin is issued. 16 is
+  // kMaxRegionSlots, which is file-local to the driver and deliberately not
+  // exported; spelled as a literal here rather than promoted to the header for
+  // a test.
+  for (int i = 0; i < 16; ++i)
+    REQUIRE(d.draw_image(Rect{i, 0, 1, 1}, art(i)).has_value());
+  d.flush();
 
-  // The precondition this case rests on, asserted rather than assumed: without
-  // it a pin that happened to avoid 255 for some unrelated reason would look
-  // like evidence of the skip.
-  REQUIRE(transmits_of(out, 255) == 1);
+  // The precondition, asserted rather than assumed: sixteen live regions
+  // holding sixteen DISTINCT ids, which is the state the pin is issued into.
+  // Without it a driver that handed every region id 1 would look like evidence.
+  std::set<std::uint32_t> pool;
+  for (std::uint32_t id = 1; id <= 16; ++id) pool.insert(id);
+  REQUIRE(ids_named(out) == pool);
 
   const auto p = d.pin_image(art(37));
   REQUIRE(p.has_value());
-  CHECK(p->id != 255);
+  // The top of the pin pool, undisturbed. Asserted as the exact id and not
+  // merely as ">= kFirstPinnedImageId": pin_payload no longer scans m_regions,
+  // so a scan that still did would find nothing to avoid and land in the same
+  // place for a different reason. The exact value is what tells the two apart.
+  CHECK(p->id == 255);
   CHECK(p->id >= KittyDriver::kFirstPinnedImageId);
 }
 
@@ -1024,10 +1050,16 @@ TEST_CASE("pinned: a driver that only ever pinned still cleans up after itself",
 
 // ── nothing moved for callers who do not pin ────────────────────────────────
 
-TEST_CASE("pinned: the unpinned path emits exactly what it always did",
-          "[pinned][kitty]") {
-  // If this needs an edit, the change moved bytes it promised not to. Mirrors
-  // test/01drivers' eviction case with no pins in play.
+TEST_CASE("pinned: the unpinned path is untouched by PINNING, and bounded by "
+          "#190", "[pinned][kitty]") {
+  // If the COUNTS below need an edit, a pinning change moved bytes it promised
+  // not to. Mirrors test/01drivers' eviction case with no pins in play.
+  //
+  // The ids did need an edit, at #190, and the distinction is the point of the
+  // rename. These 17 rects are drawn one at a time with a flush between, so
+  // each is collected one flush behind and at most two slots are ever live --
+  // which is a fact about the ALLOCATOR, not about pinning. Before #190 the
+  // ids ran 1..17; now they alternate 1, 2.
   KittyDriver d;
   std::string out;
   d.set_output(&out);
@@ -1038,8 +1070,10 @@ TEST_CASE("pinned: the unpinned path emits exactly what it always did",
   }
   // Parsed, not grepped: `out.find("a=d,d=I,i=1")` is satisfied by i=10 and
   // i=17, which is the false green this file's header condemns.
-  CHECK(data_deletes_of(out, 1) == 1);
-  for (std::uint32_t id = 256; id < 260; ++id) {
-    CHECK(transmits_of(out, id) == 0);
-  }
+  CHECK(total_transmits(out) == 17);
+  // The set equality subsumes the old spot check for ids 256..259 -- and it is
+  // strictly stronger, since a spot check at four arbitrary large values says
+  // nothing about 18 or about 255.
+  CHECK(ids_named(out) == std::set<std::uint32_t>{1, 2});
+  CHECK(data_deletes_of(out, 1) + data_deletes_of(out, 2) == 16);
 }
