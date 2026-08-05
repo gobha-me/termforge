@@ -210,7 +210,11 @@ constexpr std::size_t kMaxRegionSlots = 16;
 // that a kFirstPinnedImageId above 255 produces -- which would then surface at
 // runtime as "all 0 resident slots are in use" refusing every pin.
 static_assert(KittyDriver::kFirstPinnedImageId > kMaxRegionSlots,
-              "pinned ids must start above the region pool");
+              "pinned ids must start above the region pool -- since #190 this "
+              "static_assert IS the disjointness rather than a tidiness check: "
+              "region_slot derives from [1, kMaxRegionSlots] and pin_payload "
+              "from [kFirstPinnedImageId, 255], and neither reads the other's "
+              "map any more");
 static_assert(KittyDriver::kMaxPinnedImages > 0, "the pin budget is empty");
 static_assert(KittyDriver::kFirstPinnedImageId +
                       KittyDriver::kMaxPinnedImages - 1 ==
@@ -289,28 +293,56 @@ auto KittyDriver::region_slot(std::uint64_t key) -> RegionSlot& {
     for (auto it = m_regions.begin(); it != m_regions.end(); ++it)
       if (it->second.last_used < lru->second.last_used) lru = it;
     delete_image(lru->second.image_id);
-    // Recycle the evicted ids: with at most kMaxRegionSlots slots alive,
-    // image ids stay small (<= 255), which the placeholder path needs —
-    // kitty resolves placeholder cells reliably only via the 38;5;<id>
-    // fg encoding, which caps the id at one byte.
+    // Reuse the evicted ids on the spot. This is the same pool the branch
+    // below derives from -- eviction just happens to know which id came free
+    // without having to look for it.
     slot.image_id = lru->second.image_id;
     slot.placement_id = lru->second.placement_id;
     m_regions.erase(lru);
   } else {
-    // Step over anything a pin currently holds (#109). This counter is
-    // monotonic and never gives an id back: a collected slot frees its map
-    // entry without lowering it, so a rect the caller stops drawing costs an id
-    // permanently. For a MOVING region that is one id per frame -- a sprite
-    // stepping one cell per frame is a new key every frame -- so it reaches 255
-    // in about four seconds at 60fps just as #187 did, measured (300 frames of
-    // motion produce 300 distinct ids). #187 fixed the STATIC case only; the
-    // motion case is #190, and #109's pin_image is the API answer for motion
-    // because draw_pinned allocates no image id at all. So "the two ranges
-    // cannot meet" is not a property this code has, and handing a region an id
-    // the terminal is holding an application's image under would overwrite that
-    // image on the next transmit.
-    while (m_pinned.contains(m_next_image_id)) ++m_next_image_id;
-    slot.image_id = m_next_image_id++;
+    // The smallest id in [1, kMaxRegionSlots] that no live region is holding.
+    //
+    // DERIVED FROM THE MAP, not tracked beside it -- pin_payload's bargain, for
+    // pin_payload's reason. The counter this replaces owned the fact alone and
+    // still got it wrong, because nothing ever gave a collected id back: a
+    // region's identity is its destination RECT, so a region that MOVES is a
+    // new key every frame and the vacated slot was collected without returning
+    // what it held. One id per frame -- measured, 300 frames of motion produced
+    // 300 distinct ids with a maximum of 300 -- so the one-byte ceiling arrived
+    // in about four seconds at 60fps, after which emit_id_as_sgr falls to the
+    // 38;2 form kitty accepts and IGNORES: a UnicodePlaceholders session that
+    // renders nothing at all, silently, under q=2 (#190).
+    //
+    // THE BOUND IS THE ALGORITHM, not a guard on it. The walk stops at
+    // kMaxRegionSlots and by pigeonhole that id is free when it arrives: this
+    // branch runs only when fewer than kMaxRegionSlots slots are live, and
+    // every live slot holds an id from this same range. So the result is inside
+    // the region pool BY CONSTRUCTION -- which is what makes the two pools
+    // disjoint (kFirstPinnedImageId > kMaxRegionSlots, asserted at the top of
+    // this file) instead of merely usually apart, and why neither allocator
+    // reads the other's map any more. There is nothing left to step over.
+    //
+    // WHAT THIS DOES NOT FIX: the upload. A new rect is a new key with no
+    // content hash to compare against, so motion still costs one full transmit
+    // per frame. This bounds IDS, not bytes. The byte answer is pin_image
+    // (#109) -- draw_pinned allocates no image id at all.
+    //
+    // At most kMaxRegionSlots^2 id compares, on a path that runs once per new
+    // rect, beside a base64 encode of the payload. A used-id bitmask plus
+    // std::countr_one is ~16 operations instead of ~240 and was declined: it
+    // has to range-filter every id before shifting by it, and that filter is
+    // dead code the moment the invariant above holds -- or undefined behaviour
+    // the moment it does not. This scan's failure mode under the same breakage
+    // is a duplicate id inside the region pool: bad, bounded, and unable to
+    // reach either the pin range or the one-byte ceiling.
+    const auto held = [this](std::uint32_t candidate) {
+      for (const auto& [key, slot] : m_regions)
+        if (slot.image_id == candidate) return true;
+      return false;
+    };
+    std::uint32_t id = 1;
+    while (id < static_cast<std::uint32_t>(kMaxRegionSlots) && held(id)) ++id;
+    slot.image_id = id;
     slot.placement_id = m_next_placement_id++;
   }
   return m_regions.emplace(key, slot).first->second;
@@ -468,52 +500,41 @@ auto KittyDriver::pin_image(const EncodedImage& image)
 auto KittyDriver::pin_payload(std::span<const std::byte> payload,
                               int format_code, Extent px)
     -> std::expected<PinnedImage, ErrorEvent> {
-  if (m_pinned.size() >= kMaxPinnedImages) {
+  // Downward from the one-byte ceiling, so the region pool's upward walk has
+  // the whole rest of the range before the two meet.
+  //
+  // Derived from the live map rather than tracked alongside it. A counter plus
+  // a free list would be two containers agreeing about a fact only one of them
+  // owns -- and an id pushed to the free list on a path that forgot to erase
+  // the entry (or the reverse) hands one terminal-side image to two live
+  // handles, enforced by nothing but two adjacent lines staying adjacent. The
+  // scan costs at most kMaxPinnedImages probes on an operation an application
+  // performs at cold start, which is the cheapest invariant this file has.
+  //
+  // ONE POOL IS CONSULTED SINCE #190, and that is a strengthening rather than a
+  // relaxation. region_slot derives every region id from [1, kMaxRegionSlots]
+  // and the static_assert at the top of this file puts kFirstPinnedImageId
+  // above that range, so the two pools are disjoint by construction and a scan
+  // of m_regions here would be a search for a value it cannot hold. The scan
+  // that used to be here was not paranoia -- the region counter was monotonic,
+  // so a MOVING region reached this range in about four seconds -- it was the
+  // price of an id allocator that could not give an id back.
+  //
+  // THE REFUSAL IS THE SCAN'S, and it used to be asked twice. "All the resident
+  // slots are in use" is a fact about this one map; computing it once as a size
+  // and again as a search is the same two-containers-one-fact shape the
+  // paragraph above objects to, one level up, and two computations of one
+  // predicate can disagree. So the walk running off the bottom of the pool IS
+  // the pool being full, and it says so with the message the cap check used to.
+  std::uint32_t id = kFirstPinnedImageId + kMaxPinnedImages - 1;
+  while (id >= kFirstPinnedImageId && m_pinned.contains(id)) --id;
+  if (id < kFirstPinnedImageId) {
     return std::unexpected{ErrorEvent{
         Severity::Warning, "kitty",
         std::format("pin_image: all {} resident slots are in use -- unpin "
                     "one, or ask max_pinned_images() before committing to an "
                     "art set",
                     kMaxPinnedImages)}};
-  }
-
-  // Downward from the one-byte ceiling, so the region pool's upward walk has
-  // the whole rest of the range before the two meet.
-  //
-  // Derived from the live maps rather than tracked alongside them. A counter
-  // plus a free list would be two containers agreeing about a fact only one of
-  // them owns -- and an id pushed to the free list on a path that forgot to
-  // erase the entry (or the reverse) hands one terminal-side image to two live
-  // handles, enforced by nothing but two adjacent lines staying adjacent. The
-  // scan costs at most kMaxPinnedImages probes on an operation an application
-  // performs at cold start, which is the cheapest invariant this file has.
-  //
-  // BOTH POOLS ARE CONSULTED, and the symmetry is load-bearing. region_slot
-  // steps over pinned ids; if this did not step over region ids the guard
-  // would be one-directional, and the id space is shared. The region counter
-  // never gives a collected id back (#190), so a moving unpinned region still
-  // reaches this range in about four seconds -- and a pin issued an id a live
-  // region owns is not a near-miss: the region's next transmit overwrites the
-  // application's pixels, and the region's collection emits a=d,d=I on them.
-  // Silently, because q=2 means the terminal's objection reaches nobody.
-  const auto region_holds = [this](std::uint32_t candidate) {
-    for (const auto& [key, slot] : m_regions)
-      if (slot.image_id == candidate) return true;
-    return false;
-  };
-  std::uint32_t id = kFirstPinnedImageId + kMaxPinnedImages - 1;
-  while (id >= kFirstPinnedImageId &&
-         (m_pinned.contains(id) || region_holds(id))) {
-    --id;
-  }
-  if (id < kFirstPinnedImageId) {
-    // The cap above guarantees a free id in the PIN pool; regions squatting on
-    // the rest is the case it cannot guarantee, and refusing is the only
-    // honest answer -- issuing a colliding id would corrupt both.
-    return std::unexpected{ErrorEvent{
-        Severity::Warning, "kitty",
-        "pin_image: no resident id is free -- unpinned regions currently hold "
-        "the rest of the one-byte id range (see #190)"}};
   }
 
   // #139: the payload is image_transmit and nothing else here emits. These
@@ -879,6 +900,16 @@ auto KittyDriver::gc_regions() -> void {
   // last_used is stamped with the per-draw clock. A region drawn since the
   // previous collection has a last_used above the boundary that collection
   // recorded; anything at or below it is gone from the UI.
+  //
+  // THE DELETE IS EMITTED BEFORE THE ERASE, and since #190 that ordering is
+  // load-bearing rather than incidental. region_slot derives free ids from
+  // this map, so it will hand this id out again the instant the entry is gone;
+  // what keeps the reuse safe is that the a=d,d=I is already ahead of it in
+  // m_buf. A path that erased a region without deleting its image would hand
+  // one terminal-side image to two rects. Both erases in this file (here and
+  // the LRU branch of region_slot) satisfy it, and nothing but these two
+  // adjacent lines enforces it -- test/49regionids asserts the ORDER on the
+  // wire for exactly that reason.
   for (auto it = m_regions.begin(); it != m_regions.end();) {
     if (it->second.last_used <= m_frame_start_clock) {
       delete_image(it->second.image_id);
@@ -1031,8 +1062,19 @@ auto KittyDriver::emit_id_as_sgr(std::uint32_t id) -> void {
   // 256-color mode (38;5;<id>) for one-byte ids — kitty resolves this
   // form reliably, while the 24-bit (38;2) form was observed to be
   // ignored (accepted placement, nothing rendered). Ids stay <= 255 by
-  // construction (region_slot recycles evicted ids); the 24-bit form is
-  // kept only as a fallback for out-of-range ids.
+  // construction since #190: region ids are derived from
+  // [1, kMaxRegionSlots] and pinned ids from [kFirstPinnedImageId, 255].
+  //
+  // So the else branch is unreachable for every id this driver allocates --
+  // and it stays, which is the opposite call from the two #109 guards #190
+  // deleted for being unreachable. The difference is what they were defending.
+  // Those guarded an INVARIANT, and once the invariant became structural they
+  // were dead weight advertising a hazard that no longer exists. This branch
+  // TOTALIZES A FUNCTION over its parameter's type, and std::uint32_t is wider
+  // than the invariant: delete it and emit_id_as_sgr(300) writes
+  // "\033[38;5;300m", a malformed SGR parameter a terminal may clamp, ignore,
+  // or leave bleeding into the text after it. Ignored-but-well-formed is the
+  // better of the two failures.
   if (id <= 0xFF) {
     m_buf += std::format("\033[38;5;{}m", id);
   } else {
@@ -1079,8 +1121,9 @@ auto KittyDriver::delete_all() -> void {
   // Nothing was ever uploaded, so there is nothing on the terminal to clear.
   //
   // Asked of the TRANSMIT PATH rather than reconstructed from the maps. Both
-  // obvious spellings are wrong: `m_next_image_id <= 1` misses a driver that
-  // only ever pinned, and adding `&& m_pinned.empty()` still misses pin ->
+  // obvious spellings are wrong: a counter over region ids misses a driver
+  // that only ever pinned (and since #190 there is no such counter to reach
+  // for), and adding `&& m_pinned.empty()` still misses pin ->
   // flush -> unpin -> destruct, where the unpin's d=I is queued in m_buf and
   // dies there unflushed while the image is very much still resident. One
   // flag set where the bytes are actually produced cannot disagree with any of
