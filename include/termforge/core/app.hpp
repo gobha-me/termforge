@@ -217,6 +217,61 @@ class App {
   // stands still, a Button's press flash sticks on.
   virtual auto on_tick(std::chrono::duration<double> /*dt*/) -> void {}
 
+  // Draw images the cell grid does not own — a resident image from pin_image()
+  // placed with draw_pinned(), or a raw draw_image() the widget tree has no
+  // Widget for. **This is the only correct place in App to do it** (#191).
+  //
+  // A frame has two writes and the boundary between them is not where it looks.
+  // on_render runs BEFORE Renderer::present, and present ends in flush() -- so
+  // an image drawn from on_render is written, and then App issues this frame's
+  // pixel regions and writes AGAIN. The driver is told where a WRITE ends and
+  // never where a FRAME does, and its collection has to guess: #187's guard
+  // works by noticing that App's first flush drew nothing. Draw in on_render
+  // and that stops being true, the guard never fires, and each of the two
+  // collections deletes what the other window drew -- measured at ten full
+  // re-uploads and a sprite retired and re-placed in different writes (it
+  // blinks off) for ten frames of one unchanged image. Draw here and every
+  // image escape of the frame lands in one write, which is what makes the
+  // guard exact rather than approximate.
+  //
+  // Called after App has issued its own pixel regions, so a region and a pinned
+  // placement competing for the same rect resolve in the widget tree's favour:
+  // under UnicodePlaceholders the second of the two is refused, and here that
+  // is the draw_pinned. Anything drawn here therefore composites ABOVE App's
+  // own regions and there is no way to ask for below -- that is #114's job, not
+  // a parameter here. Unlike App's own region draws, whose std::expected is
+  // discarded, yours comes straight back to you: handle it.
+  //
+  // TWO THINGS SUPPRESS THIS CALL ENTIRELY, and both are properties of the
+  // frame rather than of what you draw:
+  //
+  //   * a driver without kitty_graphics. Not a policy -- the flush that would
+  //     carry these bytes is gated the same way, so calling it on a tier that
+  //     will not flush would leave the bytes in the driver's buffer until the
+  //     NEXT frame, where present() appends its cell diff after them and the
+  //     image comes out a frame late AND underneath the text it was meant to
+  //     cover. One gate for the call and the write, or neither is correct.
+  //     Widening it is #108, alongside the same gate on the region path.
+  //   * an overlay on the stack, matching render_pixel_regions. The reason
+  //     differs -- there are no Screen cells to blank here -- but the answer has
+  //     to be the same one, or an app that draws through both paths keeps half
+  //     its images under a dialog and loses the other half. The standing rule is
+  //     that only the TOPMOST thing may put pixels on screen, and the overlay's
+  //     own pixel regions are still collected. A placement you stop drawing is
+  //     retired on the frame's own boundary, so the sprite goes away with the
+  //     frame the dialog opened on rather than one frame later.
+  //
+  // Do not write to screen() from here: present() has already run, and
+  // restore_backdrop() after it, so a cell written now is either lost or
+  // smuggled into the next frame's diff. Do not call flush() either -- App
+  // flushes immediately after, and a third flush per frame walks back into the
+  // limit kDrawlessFlushGrace documents. An exception propagates exactly as one
+  // from on_render does.
+  //
+  // The driver is the one this frame is being drawn with, the same object
+  // driver() returns. It is a parameter because the hook exists for it.
+  virtual auto on_pixels(TerminalDriver& /*driver*/) -> void {}
+
   // ── lifecycle hooks (#97) ──
   // Bring up and tear down the app's own resources INSIDE the terminal's
   // lifetime. App::setup()/teardown() are private and non-virtual on purpose
