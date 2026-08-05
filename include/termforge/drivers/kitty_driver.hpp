@@ -11,20 +11,28 @@
 // does not refresh an existing classic placement when data is replaced).
 // Stale regions are deleted (a=d,d=I) two ways: by LRU eviction when the
 // slot cap is reached, and by the collection in flush() when a region stops
-// being drawn. Evicted ids are recycled so ids stay one byte — required by
-// the placeholder path's 38;5;<id> foreground encoding.
+// being drawn. Both paths give the id back — the eviction reuses it on the
+// spot, the collection returns it to the pool for the next rect that needs
+// one — so ids stay one byte, required by the placeholder path's 38;5;<id>
+// foreground encoding.
 //
 // Ids come from two pools and the split is the id budget (#109). Regions
 // allocate upward from 1 and pinned images take the rest of the one-byte
-// range (kFirstPinnedImageId..255). Region ids stay inside their pool only
-// while the slots are REUSED: the counter is monotonic and never gives a
-// collected id back, so a region that MOVES costs an id per frame and reaches
-// 255 in about four seconds — #190, and the reason both allocators step over
-// what the other holds rather than trusting the ranges to be disjoint. For
-// content that moves, pin it: draw_pinned allocates no image id at all, which
-// is the point of #109. A pinned image is exempt from both the LRU scan and
-// the collection: its lifetime is the application's, and only its PLACEMENTS
-// are collected.
+// range (kFirstPinnedImageId..255). THE POOLS ARE DISJOINT BY CONSTRUCTION
+// (#190): each allocator DERIVES a free id from its own live map — region_slot
+// walks up from 1 and stops at kMaxRegionSlots, pin_payload walks down from
+// 255 and stops at kFirstPinnedImageId — and the static_assert in the .cpp
+// orders the two ranges. So neither allocator reads the other's map; there is
+// nothing to step over. Before #190 the region side was a monotonic counter
+// that never gave a collected id back, a region that MOVED cost an id per
+// frame, and the ranges met in about four seconds.
+//
+// That fixed the ids and not the bytes. A region's identity is its destination
+// RECT, so content that moves is a new key with no content hash to compare
+// against and still re-uploads every frame. For that, pin it: draw_pinned
+// allocates no image id at all, which is the point of #109. A pinned image is
+// exempt from both the LRU scan and the collection: its lifetime is the
+// application's, and only its PLACEMENTS are collected.
 //
 // The collection needs a FRAME and a flush is only a WRITE, so a flush that
 // has drawn nothing collects nothing (#187). See gc_regions().
@@ -119,8 +127,9 @@ class KittyDriver final : public TerminalDriver {
   // emit_id_as_sgr writes the image id as an SGR foreground, and the 24-bit
   // (38;2) form was observed to be ignored by kitty -- accepted placement,
   // nothing rendered -- so a rendered id must fit the 256-colour form. Region
-  // ids occupy 1..kMaxRegionSlots by construction (the eviction path recycles
-  // rather than allocating), which leaves everything above them for pins.
+  // ids occupy 1..kMaxRegionSlots by construction (region_slot derives every
+  // one of them from that range and the eviction path reuses rather than
+  // allocating -- #190), which leaves everything above them for pins.
   static constexpr std::uint32_t kFirstPinnedImageId = 17;
   static constexpr std::size_t kMaxPinnedImages = 255 - kFirstPinnedImageId + 1;
   // The flagship tier is the only one with an opaque-payload channel.
@@ -302,7 +311,9 @@ class KittyDriver final : public TerminalDriver {
   [[nodiscard]] auto clamp_dest(Rect cells, bool& clamped) const noexcept
       -> Rect;
 
-  // Fetch (or create, evicting LRU past the cap) the slot for a region.
+  // Fetch (or create, evicting LRU past the cap) the slot for a region. A
+  // created slot's image id is DERIVED from the live map -- the smallest free
+  // id in [1, kMaxRegionSlots] -- never taken from a counter (#190).
   auto region_slot(std::uint64_t key) -> RegionSlot&;
 
   // Delete one region's image (and its placements) from terminal memory.
@@ -349,7 +360,23 @@ class KittyDriver final : public TerminalDriver {
   int m_cur_attrs{-1};
 
   PlacementMode m_mode{PlacementMode::Classic};
-  std::uint32_t m_next_image_id{1};
+  // There is deliberately no m_next_image_id beside this. Image ids are
+  // DERIVED from the live maps by both allocators (#190) -- region_slot walks
+  // up from 1, pin_payload walks down from 255 -- because a counter is a
+  // second container agreeing about a fact only one of them owns, and the one
+  // that used to be here disagreed by three orders of magnitude.
+  //
+  // Placement ids are still a counter, and the asymmetry is deliberate rather
+  // than an oversight: p= is never SGR-encoded, so it has no one-byte ceiling
+  // and none of #190's urgency. It is not free of the shape, though, and the
+  // arithmetic belongs next to the declaration rather than in a ticket: this
+  // counter is shared by region slots and pinned placements and takes one per
+  // new rect per frame, so kMaxRegionSlots regions churning at 60fps exhaust
+  // 2^32 in about 52 days -- inside a long-lived server session's lifetime,
+  // and at wrap it emits p=0, which kitty reads as "unspecified". Filed
+  // separately; the likely answer is that p= is scoped per image id and a
+  // region owns its image id exclusively, so a region placement could simply
+  // always be p=1.
   std::uint32_t m_next_placement_id{1};
   // Monotonic per-draw clock, advanced ONLY where a draw stamps a slot. It is
   // not a frame counter and not a flush counter: every draw bumps it, so slots
