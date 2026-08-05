@@ -9,16 +9,23 @@
 // the stored data) instead of accumulating a new image per frame, and in
 // classic mode the placement is recreated on each content change (kitty
 // does not refresh an existing classic placement when data is replaced).
-// Stale regions are deleted (a=d,d=I) via LRU eviction, and evicted ids
-// are recycled so ids stay one byte — required by the placeholder path's
-// 38;5;<id> foreground encoding.
+// Stale regions are deleted (a=d,d=I) two ways: by LRU eviction when the
+// slot cap is reached, and by the collection in flush() when a region stops
+// being drawn. Evicted ids are recycled so ids stay one byte — required by
+// the placeholder path's 38;5;<id> foreground encoding.
 //
 // Ids come from two pools and the split is the id budget (#109). Regions
-// occupy 1..kMaxRegionSlots and never grow past it, because eviction
-// recycles rather than allocating; pinned images take the rest of the
-// one-byte range (kFirstPinnedImageId..255). A pinned image is exempt from
-// both the LRU scan and the per-frame collection — its lifetime is the
+// allocate upward from 1 and pinned images take the rest of the one-byte
+// range (kFirstPinnedImageId..255). Region ids stay inside their pool for as
+// long as the slots are reused; they do NOT stay there across region CHURN,
+// because the counter is monotonic and never gives a collected id back
+// (#190) — which is why both allocators step over what the other holds
+// rather than trusting the ranges to be disjoint. A pinned image is exempt
+// from both the LRU scan and the collection: its lifetime is the
 // application's, and only its PLACEMENTS are collected.
+//
+// The collection needs a FRAME and a flush is only a WRITE, so a flush that
+// has drawn nothing collects nothing (#187). See gc_regions().
 //
 // Two placement modes:
 //  * Classic (default): cursor-positioned placement (a=p, C=1). The
@@ -299,9 +306,14 @@ class KittyDriver final : public TerminalDriver {
   // Delete one region's image (and its placements) from terminal memory.
   auto delete_image(std::uint32_t image_id) -> void;
 
-  // Per-frame GC (called from flush): delete terminal-side and drop every
-  // region not drawn during the frame just rendered, so a disappeared
-  // region's classic placement can't linger above the text grid.
+  // GC (called from flush): delete terminal-side and drop every region not
+  // drawn since the previous collection, so a disappeared region's classic
+  // placement can't linger above the text grid.
+  //
+  // "Since the previous collection" and not "this frame", because a flush is a
+  // write boundary and nothing tells this driver where a frame ends (#187). A
+  // flush that has seen no draw collects nothing -- see the implementation for
+  // why that is safe and what kDrawlessFlushGrace bounds.
   //
   // Collects pinned PLACEMENTS on the same boundary and by the same argument,
   // but with the placement-only delete: the image is the application's and
@@ -337,18 +349,33 @@ class KittyDriver final : public TerminalDriver {
   PlacementMode m_mode{PlacementMode::Classic};
   std::uint32_t m_next_image_id{1};
   std::uint32_t m_next_placement_id{1};
-  // Monotonic per-draw clock for LRU eviction. This is NOT the frame
-  // counter: every draw_image bumps it, so slots drawn within one flush get
-  // distinct timestamps and a 17th region evicts the genuinely-oldest draw
-  // rather than a same-frame sibling (which would place+delete it
-  // atomically in one buffer and never show it).
+  // Monotonic per-draw clock, advanced ONLY where a draw stamps a slot. It is
+  // not a frame counter and not a flush counter: every draw bumps it, so slots
+  // drawn within one flush get distinct timestamps and a 17th region evicts the
+  // genuinely-oldest draw rather than a same-frame sibling (which would
+  // place+delete it atomically in one buffer and never show it). gc_regions()
+  // also reads "did anything get drawn" off it, which only works because
+  // nothing else touches it.
   std::uint64_t m_clock{0};
-  // Frame counter, bumped in flush().
-  std::uint64_t m_frame{0};
-  // Value of m_clock at the end of the previous flush. A region whose
-  // last_used is at or below this was not drawn during the frame just
-  // rendered, so gc_regions() deletes it terminal-side and drops the slot.
+  // Value of m_clock at the last collection that ran. A region whose last_used
+  // is at or below this was not drawn since, so gc_regions() deletes it
+  // terminal-side and drops the slot. Also the frame window draw_pinned's two
+  // placeholder conflict guards and draw_payload's reciprocal are written
+  // against, so anything that changes WHEN this advances moves all four.
   std::uint64_t m_frame_start_clock{0};
+  // Consecutive collections that had no draw to look at, and the number
+  // tolerated before one is treated as a frame boundary anyway (#187).
+  //
+  // The constant means three things at once, which is why it is named: how many
+  // flushes a caller may make within one frame before drawing, how many frames
+  // a removed region's placement may linger, and the cadence being assumed.
+  // App's cadence is exactly one -- Renderer::present flushes before
+  // flush_pixel_regions draws -- so 1 costs nothing on a steady frame and
+  // bounds the leak at one frame. A caller that flushed three times per frame
+  // with the first two drawless would lose the dedup again; that is a real
+  // limit of this constant and not a general property.
+  static constexpr std::uint32_t kDrawlessFlushGrace = 1;
+  std::uint32_t m_drawless_flushes{0};
   // Region key (packed x,y,w,h) -> slot. Bounded: LRU-evicted past
   // kMaxRegionSlots, freeing the terminal-side image data too.
   std::unordered_map<std::uint64_t, RegionSlot> m_regions;

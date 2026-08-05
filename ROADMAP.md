@@ -151,9 +151,10 @@ completed items.
   kitty with `tools/kitty_repro.sh`.
   Since #109 an application can opt out of that cache entirely
   (`pin_image`/`draw_pinned`/`unpin_image`): a pinned image is exempt from
-  the LRU scan and the per-frame collection, and only its placements are
-  collected. #187 tracks the collection running on a flush that drew
-  nothing, which re-uploads every *unpinned* region every frame.
+  the LRU scan and the collection, and only its placements are collected.
+  #187 fixed the collection running on a flush that drew nothing, which had
+  been re-uploading every *unpinned* region every frame and blinking every
+  pinned placement — a flush is a write boundary, not a frame boundary.
 
 ---
 

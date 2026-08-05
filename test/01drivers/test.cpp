@@ -3,6 +3,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
+#include <set>
+#include <string>
+#include <string_view>
+
+#include "support/apc.hpp"
 #include "support/image.hpp"
 #include "termforge/drivers/ansi_rgb_driver.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
@@ -23,6 +29,36 @@ using termforge::Rgb;
 using termforge::Severity;
 using tfsupport::checker;
 using tfsupport::solid;
+
+namespace {
+
+// Most of this file asserts with out.find(), which cannot tell `i=1` from
+// `i=16`. Where an assertion is about a COUNT or about the absence of an id,
+// that is a false green waiting to happen, so those go through the parser in
+// test/support/apc.hpp instead. Introduced here for the LRU case; the older
+// substring checks are left alone rather than swept in an unrelated cut.
+auto deletes_of(std::string_view out, std::uint32_t id) -> int {
+  int n = 0;
+  for (const auto& c : tfsupport::apcs(out)) {
+    if (tfsupport::key_value(c, "a") != "d") continue;
+    if (tfsupport::key_value(c, "d") != "I") continue;
+    if (tfsupport::key_value(c, "i") == std::to_string(id)) ++n;
+  }
+  return n;
+}
+
+// Every distinct image id named anywhere in the stream. An id ceiling is a
+// property of the whole set, so it has to be collected rather than spot-checked.
+auto ids_named(std::string_view out) -> std::set<std::uint32_t> {
+  std::set<std::uint32_t> ids;
+  for (const auto& c : tfsupport::apcs(out)) {
+    const std::string i = tfsupport::key_value(c, "i");
+    if (!i.empty()) ids.insert(static_cast<std::uint32_t>(std::stoul(i)));
+  }
+  return ids;
+}
+
+}  // namespace
 
 // The DriverImpl concept must hold for concrete drivers (compile-time check).
 static_assert(DriverImpl<AnsiRgbDriver>);
@@ -238,16 +274,30 @@ TEST_CASE("KittyDriver: stale regions are LRU-evicted terminal-side",
   Image img{1, 1, {Pixel{255, 0, 0, 255}}};
   // 16 slots is the cap; the 17th distinct region evicts one (a=d,d=I
   // frees the image data and its placements).
+  //
+  // NO flush inside the loop, and that is the whole test. With one, every
+  // region is collected before the next is drawn, the map never reaches the
+  // cap, and the LRU scan in region_slot() is never entered — so this case
+  // asserted on the COLLECTION for its entire life while claiming eviction.
+  // It passed either way, which is what made it invisible.
   for (int i = 0; i < 17; ++i) {
     REQUIRE(d.draw_image(Rect{i, 0, 1, 1}, img).has_value());
-    d.flush();  // advance the LRU clock between regions
   }
-  REQUIRE(out.find("a=d,d=I,i=1") != std::string::npos);
+  d.flush();
+  // Region 1 was the least-recently-drawn, so it is the victim.
+  REQUIRE(deletes_of(out, 1) == 1);
   // Evicted ids are recycled, so ids stay within the one-byte range the
-  // placeholder path's 38;5;<id> foreground encoding requires — nothing
-  // beyond 255 is ever allocated even with many distinct regions.
-  REQUIRE(out.find("i=256") == std::string::npos);
-  REQUIRE(out.find("i=999") == std::string::npos);
+  // placeholder path's 38;5;<id> foreground encoding requires. Asserted as a
+  // bound over every id on the wire rather than by grepping for two arbitrary
+  // large ones: `out.find("i=256")` is a spot check that 17 regions could never
+  // have reached anyway.
+  // 17 distinct regions, but only 16 ids: the 17th recycles the evicted one.
+  // kFirstPinnedImageId is the public spelling of "one past the region pool",
+  // and a region id at or above it is one that would collide with a pin (#109).
+  for (const std::uint32_t id : ids_named(out)) {
+    INFO("id " << id);
+    CHECK(id < KittyDriver::kFirstPinnedImageId);
+  }
 }
 
 TEST_CASE("KittyDriver: oversized destination is clamped to the placeholder limit",

@@ -253,10 +253,17 @@ worth recording**, because the same reasoning applies to every future pixel
 consumer.
 
 The cost #64 is worried about is retransmitting a full-viewport image every
-frame. That cost is already eliminated one layer down: `KittyDriver` hashes
-each region's content and only re-transmits when the hash changes
-(`src/lib/drivers/kitty_driver.cpp:227-237`), keyed by
+frame. That cost is eliminated one layer down: `KittyDriver` hashes each
+region's content and only re-transmits when the hash changes, keyed by
 `region_key(x, y, w, h)`. An unchanged map costs a hash, not a transmit.
+
+**That sentence was false when it was written, and it is worth saying so.** The
+dedup is a property of the *slot*, and until #187 the collection deleted every
+slot on `App`'s drawless first flush — so an unchanged map cost a hash *and a
+full transmit*, every frame. The claim was true of the hash and untrue of the
+system, which is the failure mode a doc citing a line number invites. Verified
+now by `test/47frameshape`, which asserts one upload across 24 frames by
+replaying `App`'s call order rather than the driver's.
 
 What is *not* deduplicated is the **rasterization** — building the `Image`
 every frame. That is widget-local, so the widget memoizes it locally:
