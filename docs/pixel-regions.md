@@ -665,9 +665,33 @@ the last region's placement forever: the frame that removes the last region is
 the frame `App` issues no second flush on. At 1 it costs nothing on a steady
 frame and a removed region's placement lingers at most one frame — and only when
 it was the *last* one, since any other live region makes the second flush a real
-collection. A caller that flushed three times per frame with the first two
-drawless would lose the dedup again; the constant is that cadence assumption,
-not a general property.
+collection.
+
+### What the guard does not cover, and why a better guess would not help
+
+**It works when every image draw for a frame happens in ONE of App's two
+windows**, which is what `App`'s own pixel-region path does: `render_pixel_regions`
+only *records*, and every `draw_image` is issued later by `flush_pixel_regions`.
+That is the path measured above.
+
+It does nothing when draws **straddle** both windows. There is no draw hook
+between `Renderer::present`'s flush and `flush_pixel_regions`, so a subclass
+drawing through the protected `driver()` accessor draws *before* App's regions do.
+Then neither flush is drawless, the guard never fires, and each collection
+destroys what the other window drew — measured at **10 transmits and 9 `d=I` for
+10 frames of one unchanged image**, byte-for-byte what the driver did before the
+guard existed, plus a pinned sprite retired and re-placed in *different writes*
+once per frame.
+
+That shape is `draw_pinned`'s only `App` call site, so **#109 has no correct App
+call site today.** It is #191, and it cannot be fixed by a smarter heuristic: when
+every flush has drawn something there is nothing left to infer from. It needs
+either a real frame boundary on the driver or a draw hook in App's second window.
+
+Two smaller residues, both characterised as numbers in `test/47frameshape`:
+a frame that draws **no** region spends the whole grace, so a single intermittent
+frame (a widget returning `nullptr`) costs a delete, a fresh id and a full
+re-upload; and a region that **moves** takes a new id every frame (#190).
 
 The remaining caveat is unchanged: **"unchanged content is not re-uploaded" is a
 property of the _slot_**, so it is worth nothing once the slot has been

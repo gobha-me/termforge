@@ -163,6 +163,52 @@ file and line* to argue MapWidget needs no cache. The dedup is a property of the
 hash **and** a full transmit every frame. Said so in the doc rather than quietly
 making it true.
 
+**What the fix does NOT cover, found by the second review agent and measured
+before believing it — this is the most important paragraph here.** The guard
+works when every image draw for a frame lands in **one** of App's two windows,
+which is what App's own pixel-region path does (`render_pixel_regions` only
+records; every `draw_image` is issued later by `flush_pixel_regions`). It does
+nothing when draws **straddle** both windows, because then neither flush is
+drawless and there is nothing left to infer.
+
+There is no draw hook between `present()`'s flush and `flush_pixel_regions`, so a
+subclass drawing through the protected `driver()` accessor draws in window 1 while
+App's regions draw in window 2. Measured, 10 frames, one unchanged image plus one
+pinned sprite:
+
+| | transmits | `d=I` | `d=i` | placements | ids |
+| --- | --- | --- | --- | --- | --- |
+| straddling both windows | 10 | 9 | 10 | 20 | 11 |
+| the same work in one window | 1 | 0 | 0 | 2 | 2 |
+
+**Byte-for-byte identical to the pre-guard numbers** (verified by disabling the
+guard), so it is not a regression — the fix does not reach that shape. And that
+shape is **`draw_pinned`'s only App call site**, because #109 shipped with "App
+gained zero API; a consumer reaches this through the existing protected `driver()`
+accessor". So **#109 has no correct App call site today**, and the sprite blinks
+once per frame there. Filed as **#191** with both measurements and the two
+candidate fixes; a characterisation case in `test/47frameshape` asserts the
+current numbers so whoever fixes it is told which lines to change.
+
+The rejection of `end_frame()` above therefore needs re-reading: it was rejected
+on the grounds that a driver correct under any flush cadence is better layering,
+and that is still true — but "correct under any cadence" is what this guard is
+*not*, for the mixed-window shape. #191 carries that decision with the evidence.
+
+**Two smaller residues, also characterised rather than described:** a frame that
+draws no region at all spends the whole grace (one drawless flush per frame *is*
+the steady-state consumption), so a single intermittent frame — `draw_pixels`
+returning `nullptr`, which `WaveformWidget` does on an empty sample buffer — costs
+a delete, a fresh id and a full re-upload; and the moving-region case is #190.
+
+**And one claim that had to be withdrawn.** The commit said the fix's no-op proof
+meant the three other readers of the frame window "see byte-identical state". The
+proof covers the **clock** and not the **maps** — the maps differ, which is the
+entire point of the fix, and those guards read them. The conclusion survived (a
+retained entry is by definition at or below the boundary, so both predicates are
+false for it either way) but the stated reason did not, and `>` vs `>=` there went
+from dead to load-bearing.
+
 **No real-kitty capture, and the reason is checkable in review:** nothing new
 reaches the wire. The change only *removes* escapes from a flush that drew
 nothing, and every escape still emitted is byte-identical and in the same order.
