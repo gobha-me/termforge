@@ -198,6 +198,28 @@ sanitization, empty images, resize-mid-render, driver init failure surfacing
 **offline** (render to an in-memory sink) — don't require a live TTY in unit
 tests.
 
+**Test the CALLER's call order, not the API's** (#187). A suite can be
+exhaustive about *what* a unit does and blind to *when* its only real caller
+does it. `gc_regions()` had ~90 assertions across four suites and none of them
+saw that it deleted and re-uploaded every image every frame — because every one
+of them drew before it flushed, and `App` flushes twice per frame with the first
+flush having drawn nothing. So: **a flush is a write boundary, not a frame
+boundary**, and more generally, before trusting a suite, check whether any case
+makes the calls in the order production makes them. `test/47frameshape` is the
+model — one suite whose entire subject is the caller's cadence, where a case
+that draws before it flushes belongs somewhere else. When the harness cannot
+reach the production path at all (`test_wire_headless` hardcodes a
+`FallbackDriver`, so no test can run `App`'s loop over the pixel path — #189),
+say so **in the suite header** and treat the replayed order as the limitation it
+is rather than as coverage.
+
+**Grep for tests that DEPEND on the bug before fixing it.** Two `test/46pinned`
+cases drove an id counter using #187's per-frame allocation as a fixture. One
+failed loudly when it was fixed; the other went **vacuous and stayed green**,
+which is the dangerous one. A precondition asserted rather than assumed is what
+made the first survivable — if a case rests on a defect, `REQUIRE` the defect so
+its removal breaks the case instead of hollowing it.
+
 ## How to verify before a PR
 
 ```bash
