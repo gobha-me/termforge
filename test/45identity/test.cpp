@@ -21,10 +21,12 @@
 //    on env corroboration run setenv/unsetenv in pairs -- a build that quietly
 //    read the daemon's environment instead of the session's would still pass
 //    if the daemon's TERM happened to contain the needle the case is about.
-// 3. **test_run_frames swaps in a FallbackDriver**, so driver-selection
-//    assertions live on the setup() path (assert on capabilities() and the
-//    selected driver's own capabilities() report), where the probe-selected
-//    driver survives.
+// 3. **test_run_frames' three-argument form swaps in a FallbackDriver**, so
+//    driver-selection assertions live on the setup() path (assert on
+//    capabilities() and the selected driver's own capabilities() report), where
+//    the probe-selected driver survives. #189 added a four-argument form that
+//    takes a driver, but it does not help here: an injected driver bypasses the
+//    probe, which is the thing these cases are about.
 
 #include <catch2/catch_test_macros.hpp>
 

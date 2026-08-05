@@ -254,18 +254,22 @@ class App {
   //     image comes out a frame late AND underneath the text it was meant to
   //     cover. One gate for the call and the write, or neither is correct.
   //     Widening it is #108, alongside the same gate on the region path.
-  //   * an overlay on the stack, matching render_pixel_regions. The reason
-  //     differs -- there are no Screen cells to blank here -- but the answer has
-  //     to be the same one, or an app that draws through both paths keeps half
-  //     its images under a dialog and loses the other half. The standing rule is
+  //   * an overlay on the stack, matching render_pixel_regions. They share the
+  //     first of that guard's two reasons -- images are emitted after the cell
+  //     diff and would paint through the dialog -- and not its second, since
+  //     there are no Screen cells to blank here. What settles it is that an app
+  //     drawing through both paths must not keep half its images under a dialog
+  //     and lose the other half. The standing rule is
   //     that only the TOPMOST thing may put pixels on screen, and the overlay's
   //     own pixel regions are still collected. A placement you stop drawing is
   //     retired on the frame's own boundary, so the sprite goes away with the
   //     frame the dialog opened on rather than one frame later.
   //
-  // Do not write to screen() from here: present() has already run, and
-  // restore_backdrop() after it, so a cell written now is either lost or
-  // smuggled into the next frame's diff. Do not call flush() either -- App
+  // Do not write to screen() from here: present() has already diffed it, so a
+  // cell written now is either lost or smuggled into the next frame's diff.
+  // (restore_backdrop() runs in between but cannot be the mechanism -- it is a
+  // no-op whenever this hook is reached, since it only has work to do under a
+  // Fill/Dim overlay and an overlay suppresses the hook.) Do not call flush() either -- App
   // flushes immediately after, and a third flush per frame walks back into the
   // limit kDrawlessFlushGrace documents.
   //

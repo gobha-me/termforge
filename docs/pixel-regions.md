@@ -698,15 +698,20 @@ window 1 by construction — so `#109` shipped with no correct `App` call site a
 all. Measured through a real `App` over a pty answering as kitty, the same
 binary and the same four seconds, only the window differing:
 
-| drawn from | bytes | `a=t` | `d=I` | ids |
+| drawn from | bytes | `a=t` | `d=I` | image ids |
 | --- | --- | --- | --- | --- |
-| `on_pixels` | 88,569 | 2 | 0 | 3 |
-| `on_render` | 12,653,726 | 256 | 256 | 258 |
+| `on_pixels` | 88,744 | 2 | 0 | 2 |
+| `on_render` | 12,781,041 | 259 | 257 | 259 |
 
-143x the bytes, and the id counter is past the one-byte ceiling in about four
+144x the bytes, and the id counter is past the one-byte ceiling in about four
 seconds — after which `emit_id_as_sgr` falls to the 24-bit form kitty accepts and
 ignores, so a `UnicodePlaceholders` session renders nothing at all, silently.
-`examples/pinned` is that measurement, and `W` switches the window live.
+`examples/pinned` is that measurement (`--on-render` for the second row), and
+`W` switches the window live. `d=I` is `a=t − 2` by construction: the pin's
+upload is never collected, and neither is the last frame's plate. Counting
+*image* ids and not every id on the wire matters — the capability probe puts an
+`a=q` on the stream under an id of its own, which is not an image and inflated
+an earlier version of this table.
 
 Two consequences of the hook worth knowing before you use it:
 
@@ -724,10 +729,13 @@ Two consequences of the hook worth knowing before you use it:
 
 ### What the guard does not cover, and why a better guess would not help
 
-The straddle above is still reachable by **any caller that is not `App`**, and
-the driver cannot defend itself: when every flush has drawn something there is
-nothing left to infer from. That needs a real frame boundary on
-`TerminalDriver` — #191's option (a) — which has to be decided with #148.
+The hook offers a correct call site; it does not take the broken one away. An
+`App` subclass that draws from `on_render` still produces the straddle exactly
+as the second row above shows, so the population is **any caller that draws in
+both windows — `App` subclasses included** — and the driver cannot defend itself
+against them: when every flush has drawn something there is nothing left to
+infer from. That needs a real frame boundary on `TerminalDriver` — #191's
+option (a) — which has to be decided with #148.
 
 Two smaller residues, both characterised as numbers in `test/47frameshape`:
 
@@ -736,8 +744,13 @@ Two smaller residues, both characterised as numbers in `test/47frameshape`:
   re-upload. **#191 did not make this cheaper**; it moved the delete onto a true
   frame boundary — the collection now runs at the end of the frame that drew
   nothing rather than inside the next one. The only lever is
-  `kDrawlessFlushGrace`, and raising it to 2 trades this directly against the
-  linger bound. `pin_image` is the answer for content an app keeps.
+  `kDrawlessFlushGrace`, and **the obvious value for it is the wrong one**: a
+  blank frame now spends *two* drawless writes, so the first value that carries
+  a region across one is **3**, not 2. At 2 the delete simply slides one write
+  later. Measured at 1/2/3/4 rather than derived, because this is arithmetic
+  #191 itself falsified — before it, a blank frame issued one write and 2 would
+  have worked. Raising it to 3 triples the linger bound. `pin_image` is the
+  answer for content an app keeps.
 - A region that **moves** takes a new id every frame (#190).
 
 ### A graphics frame is two writes, and the meter reads the second

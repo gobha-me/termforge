@@ -857,17 +857,21 @@ auto KittyDriver::gc_regions() -> void {
   // drew. Measured at 10 transmits and 9 d=I for 10 frames of one unchanged
   // image, identical to the behaviour before this guard existed.
   //
-  // App no longer produces that shape: #191 gave it a draw hook in the second
-  // window (App::on_pixels), so an application's own draw_pinned lands with
-  // App's pixel regions instead of before them. Measured through a real App
-  // over a pty answering as kitty, 4 seconds of examples/pinned: 88,569 bytes
-  // / 2 transmits / 0 d=I from on_pixels, against 12,653,726 bytes / 256
-  // transmits / 256 d=I / 258 ids from on_render.
+  // #191 gave App a draw hook in the second window (App::on_pixels), so an
+  // application's own draw_pinned CAN land with App's pixel regions instead of
+  // before them. Measured through a real App over a pty answering as kitty,
+  // 4 seconds of examples/pinned each way: 88,744 bytes / 2 transmits / 0 d=I
+  // from on_pixels, against 12,781,041 bytes / 259 transmits / 257 d=I from
+  // on_render. 144x.
   //
-  // It is still reachable by any caller that is not App, and this driver still
-  // cannot defend itself: when every flush has drawn something there is nothing
-  // left to infer. Defending it needs a real frame boundary on TerminalDriver,
-  // which is #191's option (a) and has to be decided with #148.
+  // Note "can", not "does". The hook offers a correct call site; it does not
+  // take the broken one away, and an App subclass that draws from on_render is
+  // still exactly this shape -- test/48apppixels measures one doing it. So the
+  // population is "any caller that draws in both windows", App subclasses
+  // included, and this driver still cannot defend itself against them: when
+  // every flush has drawn something there is nothing left to infer. Defending
+  // it needs a real frame boundary on TerminalDriver, which is #191's option
+  // (a) and has to be decided with #148.
   const bool drew = m_clock > m_frame_start_clock;
   if (!drew && ++m_drawless_flushes <= kDrawlessFlushGrace) return;
   m_drawless_flushes = 0;

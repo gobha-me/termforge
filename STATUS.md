@@ -28,12 +28,12 @@ other window drew.
 **Measured through a real `App` over a pty answering as kitty** — same binary,
 same four seconds of `examples/pinned`, only the window differing:
 
-| drawn from | bytes | `a=t` | `d=I` | ids |
+| drawn from | bytes | `a=t` | `d=I` | image ids |
 | --- | --- | --- | --- | --- |
-| `on_pixels` (correct) | 88,569 | 2 | 0 | 3 |
-| `on_render` (straddle) | 12,653,726 | 256 | 256 | 258 |
+| `on_pixels` (correct) | 88,744 | 2 | 0 | 2 |
+| `on_render` (straddle) | 12,781,041 | 259 | 257 | 259 |
 
-**143x, and the id counter is past 255 in four seconds** — after which
+**144x, and the id counter is past 255 in four seconds** — after which
 `emit_id_as_sgr` falls to the 24-bit form kitty accepts and ignores, so a
 `UnicodePlaceholders` session renders nothing at all, silently, under `q=2`.
 Twelve seconds on the correct path stays at `a=t 2 / d=I 0 / ids 3`.
@@ -72,17 +72,28 @@ on that frame's own boundary, so a sprite goes away *with* the dialog.
 - **A region that misses one frame still costs a delete, a spent id and a full
   re-upload.** #191 moved *where*, not *how much*: the collection now runs at
   the end of the frame that drew nothing instead of inside the next one, which
-  is correct rather than cheaper. The only lever is `kDrawlessFlushGrace`, and
-  raising it to 2 trades directly against the linger bound; both sides are
-  pinned in `test/47frameshape`. `pin_image` is the API answer.
-- **The driver still cannot defend itself against a non-`App` caller** that
-  straddles two writes. That needs a real frame boundary on `TerminalDriver`
+  is correct rather than cheaper. The only lever is `kDrawlessFlushGrace` — and
+  **the obvious value for it is the wrong one, because this cut is what made it
+  wrong.** A blank frame now spends TWO drawless writes, so the first value that
+  carries a region across one is **3**; at 2 the delete slides one write later
+  and nothing else changes. Measured at 1/2/3/4 after review flagged it, not
+  derived. Pre-#191 a blank frame issued one write and 2 would have worked, so
+  this is inherited arithmetic the cadence change falsified — **the class of bug
+  worth watching for: a change that quietly invalidates a constant's documented
+  tuning without touching the constant.** `pin_image` is the API answer.
+- **The driver still cannot defend itself against a caller that straddles two
+  writes — and that includes `App` subclasses.** The hook offers a correct call
+  site; it does not remove the broken one, and `test/48apppixels` measures a
+  real `App` still producing the straddle from `on_render`. Scope the claim to
+  "App no longer FORCES this", not "App no longer produces it". That needs a real frame boundary on `TerminalDriver`
   (#191 option (a)) and has to be decided with #148. The straddle case stays in
   `test/47frameshape` as the standing argument for keeping it open.
 - **#190** (the monotonic region id counter) is untouched and still carries the
   decision about two now-unreachable #109 guards.
-- **z-order below App's own regions is not expressible** — `on_pixels` draws
-  land above, and asking for below is #114.
+- **z-order is not expressible in either direction.** `on_pixels` is issued
+  after App's regions, but that is an EMISSION order and not a compositing
+  promise: two placements at the same z are the terminal's to order and
+  termforge does not specify that tie-break. Naming a layer is #114.
 
 ### The cost that ships deliberately
 
@@ -96,8 +107,9 @@ because obscura's "2 KB idle" assertion reads exactly this on a still frame.
 
 `App::test_wire_headless` hardcoded a `FallbackDriver`, so **no test could run
 App's frame loop over the pixel path at all** — which is how #187 hid and why
-#191 was found by review rather than CI. One overload
-(`test_run_frames(..., std::unique_ptr<TerminalDriver>)`) and a delegating line.
+#191 was found by review rather than CI. Two overloads
+(`test_run_frames` and the private `test_wire_headless` behind it) and two
+delegating bodies.
 Without it #191's proof would have been another replay, which is the exact
 shape that produced #187.
 
