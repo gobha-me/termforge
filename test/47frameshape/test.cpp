@@ -595,7 +595,13 @@ TEST_CASE("frame shape: draws in two writes defeat the guard, for a caller "
 
   // One unchanged image, ten uploads and nine data deletes: #187 in full.
   CHECK(total_transmits(out) == 10);
-  CHECK(ids_named(out).size() == 11);  // ten region ids plus the pin's
+  // Ten uploads of one unchanged image under ONE recycled region id since
+  // #190: each collection empties the map before the next window's draw
+  // allocates, so the smallest free id is always 1 again. The bytes are
+  // unchanged -- which is the point of this case -- and it is now visible that
+  // they are unchanged for a reason having nothing to do with the id budget.
+  // Before #190 this read eleven ids for ten frames.
+  CHECK(ids_named(out) == std::set<std::uint32_t>{1, pinned->id});
   int deleted = 0;
   for (const std::uint32_t id : ids_named(out))
     deleted += data_deletes_of(out, id);
@@ -670,27 +676,33 @@ TEST_CASE("frame shape: a region that misses ONE frame is re-uploaded, and "
   CHECK(data_deletes_of(out, 1) == 1);   // still one, not two
   REQUIRE(d.draw_image(Rect{0, 0, 4, 2}, img).has_value());
   d.flush();
-  // A fresh id and a full re-upload for pixels the terminal had a moment ago.
-  // Unchanged by #191, and measured rather than asserted in prose.
+  // A full re-upload for pixels the terminal had a moment ago. Unchanged by
+  // #191, unchanged by #190, and measured rather than asserted in prose.
   CHECK(total_transmits(out) == 1);
-  CHECK(ids_named(out) == std::set<std::uint32_t>{1, 2});
+  // What #190 did change is that the id is no longer part of the cost. The
+  // collection above emptied the map, so the re-draw derives the smallest free
+  // id and gets the one it just gave up -- and this segment therefore holds a
+  // d=I and an a=t under the SAME id, which is the recycle at its tightest.
+  // The delete is emitted before the erase and lands in the earlier write, so
+  // the ordering is safe; test/49regionids asserts that as order rather than
+  // as counts.
+  CHECK(ids_named(out) == std::set<std::uint32_t>{1});
 }
 
-TEST_CASE("frame shape: a MOVING region still walks one id per frame (#190)",
+TEST_CASE("frame shape: a MOVING region gives its id back (#190)",
           "[frameshape][kitty]") {
-  // #187 fixed the STATIC case. Motion is a different defect and this case
+  // #187 fixed the STATIC case. Motion was a different defect and this case
   // exists so nobody has to rediscover which: a region keyed on a new rect is a
-  // new slot, the vacated slot is collected WITHOUT returning its id, and
-  // m_next_image_id is monotonic. So a sprite stepping one cell per frame still
-  // burns one id per frame and reaches the placeholder path's one-byte ceiling
+  // new slot, and the vacated slot used to be collected WITHOUT returning its
+  // id against a monotonic counter. So a sprite stepping one cell per frame
+  // burned one id per frame and reached the placeholder path's one-byte ceiling
   // in about four seconds at 60fps -- measured, not estimated: 300 frames of
-  // this loop produce 300 distinct ids with a maximum of 300.
+  // this loop produced 300 distinct ids with a maximum of 300.
   //
-  // The API answer for motion is #109's pin_image/draw_pinned, which allocates
-  // no image id at all; #190 is the fix for applications that have not adopted
-  // it. This case is deliberately written to FAIL when #190 lands -- a
-  // characterisation test, so the cost is a number in the suite rather than a
-  // sentence in a doc.
+  // #190 made both allocators derive a free id from their own live map, so the
+  // ids below recycle. The case was a deliberately-failing characterisation
+  // test until then; it is now the acceptance test for the half that changed
+  // sitting beside the half that did not.
   KittyDriver d;
   std::string out;
   d.set_output(&out);
@@ -703,13 +715,24 @@ TEST_CASE("frame shape: a MOVING region still walks one id per frame (#190)",
   }
 
   // Motion legitimately costs an upload per frame: it is a different rect, so
-  // the content hash has nothing to compare against. That half is correct.
+  // the content hash has nothing to compare against. That half is correct, it
+  // is unchanged by #190, and pin_image is the answer for it (#109) -- which is
+  // why this assertion sits first rather than being dropped for being boring.
   CHECK(total_transmits(out) == 8);
-  // This half is not: eight ids for one image, none recycled.
-  CHECK(ids_named(out).size() == 8);
-  // Each vacated slot is collected exactly once, which is the part #187 fixed.
-  for (const std::uint32_t id : ids_named(out)) {
-    INFO("id " << id);
-    CHECK(data_deletes_of(out, id) <= 1);
-  }
+  // The half #190 fixed. TWO ids for eight frames, not eight -- and not one,
+  // because the vacated slot is still LIVE when the next rect allocates: the
+  // collection runs at the end of the frame that stopped drawing it, which is
+  // after that frame's draw. So the ids alternate.
+  //
+  // Stated as a set equality rather than as a bound. A bound over a set that
+  // is already known exactly is a dead assertion dressed as a guard, and it
+  // would survive a driver that had gone back to a counter for the first two
+  // frames. The genuinely open-ended bound is asserted where it is open-ended,
+  // in test/49regionids.
+  CHECK(ids_named(out) == std::set<std::uint32_t>{1, 2});
+  // Every vacated slot is still collected exactly once, which is what #187
+  // fixed and what makes the reuse above safe: seven frames vacate a slot,
+  // seven d=I. Summed rather than checked per id, because "<= 1 each" is
+  // satisfied by a driver that stopped collecting altogether.
+  CHECK(data_deletes_of(out, 1) + data_deletes_of(out, 2) == 7);
 }

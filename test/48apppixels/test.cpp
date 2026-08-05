@@ -393,7 +393,12 @@ TEST_CASE("app pixels: the same sprite drawn from on_render still blinks (#191)"
   // Ten uploads of one unchanged plate, plus the pin's own one at pin time.
   CHECK(total_transmits(app.wire()) == 11);
   CHECK(transmits_of(app.wire(), app.pin_id()) == 1);
-  CHECK(ids_named(app.wire()).size() == 11);  // ten region ids plus the pin's
+  // ONE region id, recycled ten times, plus the pin's (#190). Each collection
+  // empties the map before the next frame's draw allocates, so the smallest
+  // free id is 1 again every time. The byte cost above is what this case is
+  // about and it did not move; before #190 this read eleven distinct ids and
+  // the id budget was part of the damage.
+  CHECK(ids_named(app.wire()) == std::set<std::uint32_t>{1, app.pin_id()});
   int deleted = 0;
   for (const std::uint32_t id : ids_named(app.wire()))
     deleted += data_deletes_of(app.wire(), id);
@@ -509,8 +514,8 @@ TEST_CASE("app pixels: a frame that draws no region collects on ITS OWN "
   // Before the flush became cadence, that frame issued one write and the
   // collection landed inside the NEXT frame, before its draws. Same delete,
   // same re-upload, different boundary. The cost is unchanged and that is the
-  // honest statement: the region comes back under a fresh id either way, which
-  // is why pin_image and not this is the answer for content an app keeps.
+  // honest statement: the region is fully re-uploaded either way, which is why
+  // pin_image and not this is the answer for content an app keeps.
   // Per-WRITE, not per-run: the cost is identical either way, so a total is
   // exactly the assertion that cannot tell the two apart. Only the segment the
   // delete lands in distinguishes them, which is why this case needs a sink.
@@ -539,9 +544,12 @@ TEST_CASE("app pixels: a frame that draws no region collects on ITS OWN "
   const auto& seg = app.sink.segments;
   CHECK(data_deletes_of(seg[5], 1) == 1);  // the gap frame's OWN second write
   CHECK(data_deletes_of(seg[6], 1) == 0);  // and not the next frame's first
-  // The cost, unchanged and stated: a fresh id and a full re-upload.
+  // The cost, unchanged and stated: a full re-upload. The id is no longer part
+  // of it (#190) -- the gap frame's collection emptied the map, so the region
+  // comes back under the id it just gave up, and this whole run names exactly
+  // one. The two transmits are the damage; the single id is what #190 removed.
   CHECK(data_deletes_of(app.sink.bytes, 1) == 1);
-  CHECK(ids_named(app.sink.bytes) == std::set<std::uint32_t>{1, 2});
+  CHECK(ids_named(app.sink.bytes) == std::set<std::uint32_t>{1});
   CHECK(total_transmits(app.sink.bytes) == 2);
 }
 
