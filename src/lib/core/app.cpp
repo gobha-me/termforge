@@ -39,6 +39,9 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
   if (auto r = m_term.enter_raw(); !r) return r;
   // Probe once, then select the driver from that single result. A probe
   // failure isn't fatal: degrade to the fallback driver on empty caps.
+  // A caller that pushed capabilities (a cached tier, a user override) gets
+  // them served here without any probe traffic (#181) — query_capabilities()
+  // short-circuits on the push itself.
   m_caps = {};
   if (auto r = m_term.query_capabilities(); r) m_caps = *r;
   m_driver = m_term.select_driver(m_caps);

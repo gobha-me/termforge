@@ -41,6 +41,16 @@ struct Terminal::Impl {
   // #179: the fds above were discovered; set_io() replaces them and latches
   // this. enter_raw() branches on it — see the header's "statement of intent".
   bool injected{false};
+  // #181: the identity pair the probe corroborates colour depth from. Discovered
+  // from the process environment; set_env() replaces it and latches env_injected,
+  // after which the environment is consulted for NEITHER field — an empty string
+  // means "the client sent nothing", not "ask the daemon" (see set_env).
+  TerminalEnv env;
+  bool env_injected{false};
+  // #181: capabilities handed over instead of probed. query_capabilities()
+  // serves this and touches neither stream until clear_capabilities() gives the
+  // probe back its job.
+  std::optional<Capabilities> pushed_caps;
   // The F_GETFL word enter_raw() replaced on a stream with no termios, and its
   // validity witness. The termios pair above is the same idea for a tty; a
   // Terminal is only ever in one of the two modes, never both.
@@ -105,6 +115,60 @@ auto Terminal::io() const noexcept -> TerminalIo {
 }
 
 auto Terminal::io_injected() const noexcept -> bool { return m_impl->injected; }
+
+// ── whose terminal this session believes it is talking to (#181) ────────────
+
+auto Terminal::set_env(TerminalEnv env) -> std::expected<void, ErrorEvent> {
+  // Same guard shape as set_io: identity is fixed for the session once the loop
+  // starts. A probe running against one identity while the screen speaks another
+  // is exactly the daemon/client mix this exists to close. Refusal is total: the
+  // previous pair stays in force untouched.
+  if (m_raw) {
+    return std::unexpected{ErrorEvent{Severity::Error, "terminal",
+                                      "set_env: already in raw mode"}};
+  }
+  if (m_impl->in_screen) {
+    return std::unexpected{ErrorEvent{Severity::Error, "terminal",
+                                      "set_env: a screen is up"}};
+  }
+  m_impl->env = std::move(env);
+  m_impl->env_injected = true;
+  return {};
+}
+
+auto Terminal::env() const noexcept -> const TerminalEnv& { return m_impl->env; }
+
+auto Terminal::env_injected() const noexcept -> bool { return m_impl->env_injected; }
+
+// ── pushed capabilities (#181) ──────────────────────────────────────────────
+
+auto Terminal::set_capabilities(Capabilities caps) -> std::expected<void, ErrorEvent> {
+  // Driver selection happens in setup(), before the screen: a push landing
+  // after that would change nothing it claims to change. Same guards as
+  // set_io/set_env, same total refusal.
+  if (m_raw) {
+    return std::unexpected{ErrorEvent{Severity::Error, "terminal",
+                                      "set_capabilities: already in raw mode"}};
+  }
+  if (m_impl->in_screen) {
+    return std::unexpected{ErrorEvent{Severity::Error, "terminal",
+                                      "set_capabilities: a screen is up"}};
+  }
+  m_impl->pushed_caps = std::move(caps);
+  return {};
+}
+
+auto Terminal::pushed_capabilities() const noexcept -> std::optional<Capabilities> {
+  return m_impl->pushed_caps;
+}
+
+auto Terminal::has_pushed_capabilities() const noexcept -> bool {
+  return m_impl->pushed_caps.has_value();
+}
+
+auto Terminal::clear_capabilities() noexcept -> void {
+  m_impl->pushed_caps.reset();
+}
 
 auto Terminal::owns_termios() const noexcept -> bool {
   // Both halves: saved_valid alone outlives leave_raw() (the captured termios is
@@ -287,9 +351,11 @@ auto read_available(int fd, int timeout_ms) -> std::string {
   return out;
 }
 
-auto env_has(const char* name, const char* needle) -> bool {
-  const char* v = std::getenv(name);
-  return v != nullptr && std::string{v}.find(needle) != std::string::npos;
+// Needle containment on an already-resolved value (nullptr = variable absent).
+// The probe resolves each field to one source — the injected pair or the
+// process environment, never one of each — and checks the result here (#181).
+auto contains(const char* value, const char* needle) -> bool {
+  return value != nullptr && std::string{value}.find(needle) != std::string::npos;
 }
 
 // Escape emission to the terminal's output fd. No-op when `fd` is < 0 (neither
@@ -359,6 +425,13 @@ auto Terminal::emit_mouse_mode() const -> void {
 }
 
 auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
+  // The push path (#181): a caller that already knows the answer hands it over,
+  // and this function returns it having written nothing to the stream and read
+  // nothing from it — no probe bytes, no response window, no swallowed first
+  // keystrokes. Deliberately BEFORE the enter_raw() below: the probe needs raw
+  // mode to talk to the terminal, and a push means there is no talking to do.
+  if (m_impl->pushed_caps) return *m_impl->pushed_caps;
+
   Capabilities caps;
 
   if (!m_raw) {
@@ -397,11 +470,19 @@ auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
   // report. Drives the fallback ErrorEvent, never the bytes we push.
   if (detail::probe_kitty_keyboard(reply)) caps.kitty_keyboard = true;
 
-  // Truecolor via env corroboration.
-  if (env_has("COLORTERM", "truecolor") || env_has("COLORTERM", "24bit")) {
+  // Truecolor via env corroboration. The identity pair is this session's, not
+  // the daemon's (#181): when set_env() handed over a pair, both fields resolve
+  // from it (empty string = the client sent nothing); otherwise both from the
+  // process environment. The pair is never mixed — see set_env's statement of
+  // intent.
+  const char* term_id =
+      m_impl->env_injected ? m_impl->env.term.c_str() : std::getenv("TERM");
+  const char* colorterm_id =
+      m_impl->env_injected ? m_impl->env.colorterm.c_str() : std::getenv("COLORTERM");
+  if (contains(colorterm_id, "truecolor") || contains(colorterm_id, "24bit")) {
     caps.truecolor = true;
     caps.color_levels = 24;
-  } else if (env_has("TERM", "256color")) {
+  } else if (contains(term_id, "256color")) {
     caps.color_levels = 256;
   }
 
@@ -560,7 +641,10 @@ auto Terminal::leave_screen() -> void {
 auto Terminal::is_console_vt() const noexcept -> bool {
   // A console VT has no $TERM-based emulator and stdout is a tty whose name
   // looks like /dev/ttyN. Heuristic only; framebuffer is always opt-in.
-  const char* term = std::getenv("TERM");
+  // Reads the session's TERM when one was handed over, the daemon's otherwise
+  // (#181).
+  const char* term = m_impl->env_injected ? m_impl->env.term.c_str()
+                                          : std::getenv("TERM");
   if (term != nullptr && std::string{term} == "linux") return true;
   return false;
 }
