@@ -4,6 +4,63 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
+## Where we are (2026-08-05)
+
+**Latest work: #181 — the session's identity becomes pushable. Shipped as
+v0.7.4 (#144 Split A4). Split A is COMPLETE: A1 v0.7.0, A2 v0.7.1, A3 v0.7.3,
+A4 v0.7.4.**
+
+**How it got picked:** resume-point memory named the read-side cluster
+(#165/#145/#148) as next, but #181 — the last unshipped piece of Split A —
+carried a declared default on its only open question (the scoping comment:
+take the env pair and the caller-supplied Capabilities path TOGETHER, asked
+of anvil three times, unanswered). A settled-default ticket beats an
+open-ended cluster; #165/#148 both say they overlap #145, and #145 item 3's
+library half landed here. Not a 50/50 — no question asked.
+
+**What shipped.** `Terminal::set_env(TerminalEnv{term, colorterm})` +
+`env()`/`env_injected()` — the probe corroborates colour from the session's
+pair, not the daemon's getenv. `Terminal::set_capabilities(Capabilities)` +
+`pushed_capabilities()`/`has_pushed_capabilities()`/`clear_capabilities()` —
+`query_capabilities()` serves the push having written NOTHING to the stream
+and read NOTHING from it (no probe bytes, no response window, no swallowed
+first keystrokes, and not even enter_raw() on the push's behalf). Precedence
+both halves: **push → discovered**. App::setup() changed by one comment line
+— zero new App API.
+
+**Decisions worth keeping:**
+- **Empty string = "the client sent nothing", NOT "ask the daemon".** Once
+  the pair is injected the process env is consulted for NEITHER field. A
+  per-field fallback would smuggle daemon identity into a session that
+  claimed its own — tested as a regression case (daemon COLORTERM=truecolor
+  set, client pair empty → caps stay degraded); the case is the mutation
+  witness.
+- **The push skips enter_raw() too.** query_capabilities() returns the push
+  before its raw-mode check: the probe needs raw mode to talk to the
+  terminal, and a push means there is no talking to do. App::setup() enters
+  raw first for the loop's own sake, unaffected.
+- **Base-owned non-virtual state, fourth application** (set_output #178,
+  set_io #179, m_pushed_size #180, set_env/set_capabilities here). The rule
+  is now load-bearing convention, documented in AGENTS.md.
+
+**Tests:** test/45identity, 17 cases, mutation-verified (push short-circuit
+→ 3 red; per-field env fallback → the no-mixing case red; set_env raw-mode
+guard red). GOTCHA relearned: env-corroboration tests MUST setenv/unsetenv
+in pairs — the daemon's real COLORTERM=truecolor made one case fail locally
+(the probe correctly read it). Validated 47/47 on Debug, Release -Werror,
+g++-13, clang, ASan/UBSan; 8/8 CI green; cold review clean.
+
+**Next-pick landscape:** Split B of #144 waits only on the posture question
+(a "does not own the process tty" mode vs refcounting the restore state) —
+A4's issue comment recorded the data point: session facts are accumulating on
+Terminal (fds/env/caps) while App carries the pushed size. Then the cluster
+memory pointed at: #165 (q=2 silent reject, option 3 = init probe fits with
+#145), #145 (total budget — now smaller, item 3 landed), #148 (one-frame-
+one-write: per its own comment the work is MAKE it one write, pixel-region
+frames flush twice today). Then #150 fixed-rate frame loop; #131 horizontal
+scrollbar; kitty-depth #109-#117/#140-#143; big rocks #26 Composer / #92
+Cell::text (0.2.0 break).
+
 ## Where we are (2026-08-04, later)
 
 **Latest work: #180 — the terminal size becomes pushable. Shipped as v0.7.3
