@@ -559,15 +559,23 @@ Ids therefore come from two pools inside one byte. Regions allocate upward from
 
 **Each allocator steps over what the other holds, and the symmetry is
 load-bearing.** Not a convention: the region counter is **monotonic and never
-gives a collected id back**, so it climbs on region *churn* — every rect a
-widget stops drawing frees a slot without lowering the counter, and the
-replacement takes a fresh id. Over a long session it reaches the pinned range,
-so "the ranges cannot meet" is not a property the code has. (#187 made it far
-worse — one id per *frame*, so about four seconds — and is fixed; the churn path
-is #190.) A pin issued a live region's id is not a near-miss — the region's next
-transmit overwrites the application's pixels and its collection emits `a=d,d=I`
-on them. If regions have taken the whole range, `pin_image` refuses rather than
-issuing a colliding id.
+gives a collected id back**, so a rect the caller stops drawing costs an id
+permanently. For a region that *moves* that is **one id per frame** — a sprite
+stepping one cell per frame is a new key every frame — so it reaches 255 in about
+four seconds at 60fps, and "the ranges cannot meet" is not a property the code
+has. Measured: 300 frames of motion produce 300 distinct ids.
+
+That is **#190**, and it is worth being precise about what #187 did and did not
+fix. #187 was the *static* case — an unchanged region in a fixed rect was being
+deleted and re-uploaded every frame. Motion is a separate defect with the same
+four-second ceiling, and **the API answer for motion is `pin_image`**:
+`draw_pinned` allocates no image id at all, which is exactly why #109 exists.
+#190 is for applications that have not adopted it.
+
+A pin issued a live region's id is not a near-miss — the region's next transmit
+overwrites the application's pixels and its collection emits `a=d,d=I` on them.
+If regions have taken the whole range, `pin_image` refuses rather than issuing a
+colliding id.
 
 Free ids are **derived** from the live maps rather than tracked beside them, so
 a pin/unpin cycle cannot walk the budget off its end and there is no second

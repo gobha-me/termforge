@@ -107,13 +107,55 @@ was reinstating the deleted dead `m_frame` counter, which by construction has no
 observable effect — recorded as untestable rather than left looking covered.
 
 **Filed off it: #189** (the App driver-injection seam) and **#190** — the region
-id counter is monotonic and never gives a collected id back, so region *churn*
-still walks region ids into the pinned range, just per churn event instead of per
-frame. The header and `docs/pixel-regions.md` asserted the bound as an invariant;
-they now say what the code actually guarantees. #190 also carries the decision
-this cut deliberately did not make: deriving free ids from the live map makes two
-of #109's guards **unreachable**, and a rule defended by an unreachable hazard is
-one the next reader deletes.
+id counter is monotonic and never gives a collected id back.
+
+**#190's severity is the thing this session got wrong first, so record it
+correctly: #187 fixed the STATIC case only.** A region that *moves* is a new
+region key every frame, so it takes a fresh id every frame and the vacated slot
+is collected without returning its own — measured, after the fix, at **300
+distinct ids in 300 frames, maximum id 300.** That is the same four-second
+one-byte ceiling #187 had, still reachable by motion. The first framing of #190
+("per churn event, over a long session") was written from reading the code and is
+false for the case #109 exists to serve; a review agent caught it and a 50-line
+scratch program settled it. **Read a rate claim as a claim and measure it.** The
+API answer for motion is `pin_image` — `draw_pinned` allocates no image id at all
+— and #190 is for applications that have not adopted it. There is now a
+deliberately-failing-when-fixed characterisation case in `test/47frameshape`, so
+the cost is a number in the suite rather than a sentence in a doc.
+
+#190 also carries the decision this cut deliberately did not make: deriving free
+ids from the live map makes two of #109's guards **unreachable**, and a rule
+defended by an unreachable hazard is one the next reader deletes.
+
+**What review found that the mutation sweep could not, again.** 19/19 mutations
+killed, and then a reviewer produced findings a mutation cannot be derived from,
+the sharpest of which are about branches the fix makes *newly reachable*:
+
+- **The no-op proof covers the CLOCK, not the MAPS.** Both placeholder conflict
+  guards ask "was the other kind of image drawn to this exact rect this frame"
+  against the frame window — and pre-fix `App`'s drawless flush *emptied both
+  maps*, so under `App`'s order the lookup simply missed and that clause never
+  decided anything. Post-fix the previous frame's entry is present at draw time
+  and the clause is the only thing between a legal cross-frame handoff and a
+  refusal that leaves a hole in the UI. `>` vs `>=` there was an unkilled
+  mutation. Two new cases drive the handoff in both orders, plus one that keeps
+  the same-frame refusal honest so deleting the guards outright cannot pass.
+- **The generalisable form: a proof about state is not a proof about
+  reachability.** The safety argument was sound and still left two guards newly
+  live. When a change alters *what is in a container*, enumerate the predicates
+  that read that container, not only the ones that read the variables.
+- Also from review: nothing ran under `UnicodePlaceholders`, which is the mode
+  where the id ceiling is *fatal* rather than untidy; nothing asserted the
+  placement COUNT, so a mutant re-placing every frame passed everything; the
+  headline claim ("a steady frame costs zero bytes", `total_bytes()` included) was
+  unasserted; and one case's `ids == {1}` made the id-bound loop under it dead.
+  All fixed. The suite went from 7 cases to 16.
+
+**Helpers hoisted:** the four per-id counters and the id-set collector now live in
+`test/support/apc.hpp`. There were three copies under two names — `deletes_of`
+here, `data_deletes_of` there — and the drift had started *inside this commit*,
+which is the second time that file's "the second consumer hoists" rule has been
+earned.
 
 **Also corrected: `docs/map-widget.md`**, which cited the content-hash dedup *by
 file and line* to argue MapWidget needs no cache. The dedup is a property of the

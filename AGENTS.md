@@ -220,6 +220,23 @@ which is the dangerous one. A precondition asserted rather than assumed is what
 made the first survivable — if a case rests on a defect, `REQUIRE` the defect so
 its removal breaks the case instead of hollowing it.
 
+**A proof about state is not a proof about reachability** (#187). The safety
+argument for that fix was that the one state write it skipped was provably a
+self-assignment, so every reader of that variable saw identical values. Sound —
+and it missed that the change also altered *what was in two maps*, and that two
+guards read those maps. Both had a frame-window clause that had been dead under
+`App`'s order (the old code emptied the maps before the guards could see them)
+and was now the only thing preventing a false refusal. **When a change alters the
+contents of a container, enumerate the predicates that read that container**, not
+only the ones that read the variables you reasoned about.
+
+**A rate claim is a claim; measure it** (#190). "This counter climbs per churn
+event, so it matters over a long session" was derived correctly from the code and
+was off by three orders of magnitude, because for moving content a churn event
+*is* a frame. It reached the ceiling in four seconds, not eventually. Fifty lines
+of scratch program settled what a paragraph of reasoning got wrong, and the wrong
+number had already been published in an issue.
+
 ## How to verify before a PR
 
 ```bash

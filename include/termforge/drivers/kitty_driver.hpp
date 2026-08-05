@@ -16,13 +16,15 @@
 //
 // Ids come from two pools and the split is the id budget (#109). Regions
 // allocate upward from 1 and pinned images take the rest of the one-byte
-// range (kFirstPinnedImageId..255). Region ids stay inside their pool for as
-// long as the slots are reused; they do NOT stay there across region CHURN,
-// because the counter is monotonic and never gives a collected id back
-// (#190) — which is why both allocators step over what the other holds
-// rather than trusting the ranges to be disjoint. A pinned image is exempt
-// from both the LRU scan and the collection: its lifetime is the
-// application's, and only its PLACEMENTS are collected.
+// range (kFirstPinnedImageId..255). Region ids stay inside their pool only
+// while the slots are REUSED: the counter is monotonic and never gives a
+// collected id back, so a region that MOVES costs an id per frame and reaches
+// 255 in about four seconds — #190, and the reason both allocators step over
+// what the other holds rather than trusting the ranges to be disjoint. For
+// content that moves, pin it: draw_pinned allocates no image id at all, which
+// is the point of #109. A pinned image is exempt from both the LRU scan and
+// the collection: its lifetime is the application's, and only its PLACEMENTS
+// are collected.
 //
 // The collection needs a FRAME and a flush is only a WRITE, so a flush that
 // has drawn nothing collects nothing (#187). See gc_regions().
