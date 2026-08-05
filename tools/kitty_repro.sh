@@ -2,7 +2,7 @@
 # kitty_repro.sh — minimal standalone repros for the kitty graphics paths that
 # KittyDriver emits. Run inside a real kitty (>= 0.28) terminal:
 #
-#   ./tools/kitty_repro.sh          # all six stanzas, with a pause between each
+#   ./tools/kitty_repro.sh          # all seven stanzas, with a pause between each
 #   ./tools/kitty_repro.sh 6        # ONLY stanza 6
 #   ./tools/kitty_repro.sh 3 4      # a subset, in the order given
 #   ./tools/kitty_repro.sh --dump   # emit the wire bytes, touch no terminal
@@ -28,6 +28,9 @@
 #      ids < 256, to tell an id-encoding rejection from a placement one. (needs 1)
 #   6  #137 — c=/r= OMITTED so the terminal places at true size, against the
 #      same image stretched, side by side. Self-contained.
+#   7  #109 — a=d,d=i retires ONE placement of three and the image DATA
+#      survives, proven by placing a fourth with no retransmit. The assumption
+#      the whole resident-image feature rests on. Self-contained.
 #
 # All commands use q=0 so kitty REPORTS errors; every response the terminal
 # sends is captured and echoed in readable form. A response of "_Gi=42;OK"
@@ -42,9 +45,9 @@ stanzas=()
 for arg in "$@"; do
   case $arg in
     --dump) dump=1 ;;
-    [1-6]) stanzas+=("$arg") ;;
+    [1-7]) stanzas+=("$arg") ;;
     *)
-      echo "usage: $0 [--dump] [1-6]..." >&2
+      echo "usage: $0 [--dump] [1-7]..." >&2
       exit 2
       ;;
   esac
@@ -60,6 +63,7 @@ red_b64=$(printf '\xff\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x
 green_b64=$(printf '\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff' | base64)
 blue_b64=$(printf '\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\xff\xff' | base64)
 yellow_b64=$(printf '\xff\xff\x00\xff\xff\xff\x00\xff\xff\xff\x00\xff\xff\xff\x00\xff' | base64)
+magenta_b64=$(printf '\xff\x00\xff\xff\xff\x00\xff\xff\xff\x00\xff\xff\xff\x00\xff\xff' | base64)
 
 saved_stty=''
 if ((! dump)); then
@@ -272,14 +276,74 @@ stanza_6() {
   say "kitty needs c=/r=. Also report any response containing ';E' (an error)."
 }
 
+stanza_7() {
+  say ""
+  say "== Stanza 7: d=i retires ONE placement and the image DATA survives =="
+  # #109. This is the assumption the whole resident-image feature rests on, and
+  # it is one letter wide: a=d,d=I frees the image data and its placements,
+  # a=d,d=i retires the placements matching i=/p= and leaves the data. If this
+  # terminal treats the two the same, a pinned image silently disappears the
+  # first time one of its placements is collected — and q=2 in production means
+  # nobody hears about it.
+  #
+  # Self-contained: transmits its own id (45) so it can be run alone.
+  #
+  # THREE placements of ONE image, then the middle one deleted, then a FOURTH
+  # created from the surviving data with no retransmit. Deleting one of three
+  # rather than one of one is deliberate: with a single placement, "the data is
+  # gone" and "the placement is gone" look identical on screen, which is exactly
+  # the confusion this stanza exists to resolve.
+  send "transmit(mag)" \
+    "${ESC}_Ga=t,t=d,f=32,i=45,s=2,v=2,m=0,q=0;${magenta_b64}${ST}"
+
+  local r1 r2 r3 rd r4
+  printf '\n\n\n'
+  printf '%s[3A' "$ESC"
+  send_quiet "${ESC}_Ga=p,i=45,p=1,c=2,r=2,C=1,q=0${ST}"; r1=$reply_out
+  printf '%s[4C' "$ESC"
+  send_quiet "${ESC}_Ga=p,i=45,p=2,c=2,r=2,C=1,q=0${ST}"; r2=$reply_out
+  printf '%s[4C' "$ESC"
+  send_quiet "${ESC}_Ga=p,i=45,p=3,c=2,r=2,C=1,q=0${ST}"; r3=$reply_out
+  say ""
+  say "  Three magenta blocks should be on the row above. Deleting the MIDDLE"
+  say "  one (p=2) next — with d=i, the lowercase form."
+  pause "  Press Enter to delete placement p=2..."
+
+  send_quiet "${ESC}_Ga=d,d=i,i=45,p=2,q=0${ST}"; rd=$reply_out
+  say ""
+  say "  The middle block should be gone and the OUTER TWO still there."
+  say "  Now placing a FOURTH from the same id, with NO retransmit — if the"
+  say "  data survived, it renders; if d=i freed it, nothing appears."
+  pause "  Press Enter to place p=4 from the surviving data..."
+
+  printf '\n\n\n'
+  printf '%s[3A' "$ESC"
+  send_quiet "${ESC}_Ga=p,i=45,p=4,c=2,r=2,C=1,q=0${ST}"; r4=$reply_out
+  printf '%s[3B\r' "$ESC"
+
+  say "$(printf 'place p=1 response: %q' "$r1")"
+  say "$(printf 'place p=2 response: %q' "$r2")"
+  say "$(printf 'place p=3 response: %q' "$r3")"
+  say "$(printf 'delete  p=2 response: %q' "$rd")"
+  say "$(printf 'place p=4 response: %q' "$r4")"
+  say ""
+  say "Report three things separately, because they fail independently:"
+  say "  (a) did the MIDDLE block disappear and the outer two stay?"
+  say "  (b) did a FOURTH block render afterwards with no retransmit?"
+  say "  (c) any response containing ';E'."
+  say "A 'no' to (b) means d=i freed the data on this terminal, and #109's"
+  say "placement-only delete is unsafe here — that is a real answer, not a"
+  say "bug in this script."
+}
+
 if (( ${#stanzas[@]} )); then
   run_all=0
   for n in "${stanzas[@]}"; do "stanza_$n"; done
 else
-  for n in 1 2 3 4 5 6; do "stanza_$n"; done
+  for n in 1 2 3 4 5 6 7; do "stanza_$n"; done
   say ""
   say "Report: (a) stanza 1 red block, (b) green after stanza 2, (c) stanza 3"
   say "blue block, (d) YELLOW block after stanza 4, (e) stanza 5 shows a"
-  say "green 2x2 block, (f) stanza 6 as described above, (g) any response"
-  say "containing ';E' (an error)."
+  say "green 2x2 block, (f) stanza 6 as described above, (g) stanza 7's three"
+  say "questions, (h) any response containing ';E' (an error)."
 fi

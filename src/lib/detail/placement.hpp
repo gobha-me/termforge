@@ -60,17 +60,22 @@ namespace termforge::detail {
 // Call this BEFORE transmitting anything. Reversed, a refused call still pays
 // the upload -- 205,283 bytes for the plate #163 measured -- and skips only
 // the placement, which is the most expensive possible way to draw nothing.
+// `fn` names the CALLER in the message ("draw_image" / "draw_pinned"). A
+// shared guard that hard-codes one caller tells an application about a call it
+// never made, and sends it grepping its logs for a call site that does not
+// exist -- the same reason validate_encoded takes one.
 [[nodiscard]] inline auto validate_fit(PlacementFit fit, Rect cells,
                                        Extent pixels,
                                        const TerminalDriver& driver,
-                                       std::string_view source)
+                                       std::string_view source,
+                                       std::string_view fn)
     -> std::expected<void, ErrorEvent> {
   if (!driver.supports_placement_fit(fit)) {
     return std::unexpected{ErrorEvent{
         Severity::Warning, std::string{source},
-        std::format("draw_image: this tier cannot place with PlacementFit::{}"
+        std::format("{}: this tier cannot place with PlacementFit::{}"
                     " -- ask supports_placement_fit() before drawing",
-                    fit_name(fit))}};
+                    fn, fit_name(fit))}};
   }
   if (fit == PlacementFit::Exact) {
     // The destination's capacity in the tier's OWN pixel units -- device
@@ -98,10 +103,11 @@ namespace termforge::detail {
     if (pixels.w > room.w || pixels.h > room.h) {
       return std::unexpected{ErrorEvent{
           Severity::Warning, std::string{source},
-          std::format("draw_image: PlacementFit::Exact needs {}x{} pixels but "
+          std::format("{}: PlacementFit::Exact needs {}x{} pixels but "
                       "{}x{} cells hold only {}x{} -- size the rect with "
                       "image_cell_extent()",
-                      pixels.w, pixels.h, cells.w, cells.h, room.w, room.h)}};
+                      fn, pixels.w, pixels.h, cells.w, cells.h, room.w,
+                      room.h)}};
     }
   }
   return {};

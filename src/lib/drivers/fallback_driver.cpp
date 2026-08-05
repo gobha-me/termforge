@@ -91,7 +91,7 @@ auto FallbackDriver::draw_image(Rect cells, const Image& image,
   }
   if (auto ok = detail::validate_fit(fit, cells,
                                      Extent{image.width(), image.height()},
-                                     *this, "fallback");
+                                     *this, "fallback", "draw_image");
       !ok) {
     return ok;
   }
@@ -123,7 +123,8 @@ auto FallbackDriver::draw_image(Rect cells, const EncodedImage& image,
     return ok;
   }
   if (auto ok =
-          detail::validate_fit(fit, cells, image.pixels, *this, "fallback");
+          detail::validate_fit(fit, cells, image.pixels, *this, "fallback",
+                               "draw_image");
       !ok) {
     return ok;
   }

@@ -1,0 +1,1058 @@
+// TermForge — resident images (#109).
+//
+// The driver's own cache is keyed on the DESTINATION RECT and bounded at 16
+// slots, and gc_regions() drops anything not drawn in the frame just flushed.
+// For an application that uploads a sprite set once and then moves the sprites
+// around, both of those are silent re-uploads of bytes it already sent —
+// 205,283 bytes for the plate #163 measured. Pinning is the other lifetime:
+// transmit once, place anywhere, release when the application says so.
+//
+// The property under test is an ABSENCE — that a payload does not cross the
+// wire a second time — so these assertions parse the APC stream rather than
+// grep it. `out.find("i=1")` is satisfied by `i=16`, and a false green on an
+// absence assertion is exactly the failure the feature exists to prevent.
+//
+// Every image here gets DISTINCT pixels. The content-hash dedup would
+// otherwise suppress the second upload of identical bytes on its own, and a
+// suite that cannot tell dedup from residency is asserting on the wrong one.
+//
+// All offline. set_output redirects every driver away from stdout, so nothing
+// here needs a tty.
+//
+// ~KittyDriver's delete_all() writes a=d,d=A straight to stdout and is
+// deliberately unmetered and unsinked (#148, #144 row 7), so the one case
+// about it captures the file descriptor instead. See the comment there for
+// why no Catch2 macro may run inside that capture.
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <unistd.h>
+
+#include <cstdint>
+#include <cstdio>
+#include <string>
+#include <vector>
+
+#include "support/image.hpp"
+#include "support/legacy_driver.hpp"
+#include "termforge/drivers/kitty_driver.hpp"
+
+#include "support/apc.hpp"
+
+using termforge::EncodedImage;
+using termforge::Extent;
+using termforge::Image;
+using termforge::ImageFormat;
+using termforge::KittyDriver;
+using termforge::Pixel;
+using termforge::PinnedImage;
+using termforge::PlacementFit;
+using termforge::Rect;
+using termforge::Severity;
+using termforge::TerminalDriver;
+
+namespace {
+
+// Distinct art per image, so nothing here can pass on the content hash.
+auto art(int seed) -> Image {
+  const auto v = static_cast<std::uint8_t>(seed);
+  return tfsupport::checker(2, 2, Pixel{v, 0, 0, 255},
+                            Pixel{0, static_cast<std::uint8_t>(255 - v), 0,
+                                  255});
+}
+
+// Commands naming image `id`, filtered by their a= value and, for a delete,
+// by the CASE of d=. One helper rather than four near-copies -- and every
+// assertion below goes through it, so `i=1` can never be satisfied by `i=16`
+// the way a substring find would allow.
+//
+// `d` is "" for anything that is not a delete. d=I frees the image data, d=i
+// retires one placement and leaves the data: telling those two apart is the
+// whole of the lifetime split this suite exists to pin.
+auto cmds_of(std::string_view out, std::string_view a, std::string_view d,
+             std::uint32_t id) -> int {
+  int n = 0;
+  for (const auto& c : tfsupport::apcs(out)) {
+    if (tfsupport::key_value(c, "a") != a) continue;
+    if (!d.empty() && tfsupport::key_value(c, "d") != d) continue;
+    if (tfsupport::key_value(c, "i") == std::to_string(id)) ++n;
+  }
+  return n;
+}
+
+auto transmits_of(std::string_view out, std::uint32_t id) -> int {
+  return cmds_of(out, "t", "", id);
+}
+auto data_deletes_of(std::string_view out, std::uint32_t id) -> int {
+  return cmds_of(out, "d", "I", id);
+}
+auto placement_deletes_of(std::string_view out, std::uint32_t id) -> int {
+  return cmds_of(out, "d", "i", id);
+}
+auto placements_of(std::string_view out, std::uint32_t id) -> int {
+  return cmds_of(out, "p", "", id);
+}
+
+// Every cursor-positioning CSI in emission order, as (col, row) ONE-BASED --
+// the numbers actually on the wire. Placements are positioned by the cursor
+// under classic placement, so this is the only way to assert WHERE a pinned
+// image landed; c=/r= say how big it is and nothing about where.
+auto cursor_moves(std::string_view out) -> std::vector<std::pair<int, int>> {
+  std::vector<std::pair<int, int>> found;
+  for (std::size_t at = 0;
+       (at = out.find("\033[", at)) != std::string_view::npos;) {
+    const std::size_t end = out.find('H', at);
+    if (end == std::string_view::npos) break;
+    const auto body = out.substr(at + 2, end - at - 2);
+    const std::size_t semi = body.find(';');
+    if (semi != std::string_view::npos &&
+        body.find_first_not_of("0123456789;") == std::string_view::npos) {
+      found.emplace_back(std::stoi(std::string{body.substr(semi + 1)}),
+                         std::stoi(std::string{body.substr(0, semi)}));
+    }
+    at = end + 1;
+  }
+  return found;
+}
+
+}  // namespace
+
+// ── the acceptance test (#109) ──────────────────────────────────────────────
+
+TEST_CASE("pinned: a pinned image survives eviction pressure and moves",
+          "[pinned][kitty]") {
+  // The ticket's own acceptance test. Step 3's position change is the
+  // load-bearing part: slots are keyed on (x,y,w,h), so a same-position redraw
+  // would pass with pinning unimplemented.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto pinned = d.pin_image(art(1));
+  REQUIRE(pinned.has_value());
+  REQUIRE(d.draw_pinned(Rect{1, 4, 3, 2}, *pinned).has_value());
+
+  // Comfortably past the 16-slot cap (file-local in the driver, so the number
+  // is spelled here rather than imported), all in one frame so the LRU scan is
+  // what evicts.
+  for (int i = 0; i < 20; ++i) {
+    REQUIRE(d.draw_image(Rect{i, 4, 2, 2}, art(i + 40)).has_value());
+  }
+  d.flush();
+
+  // Same image, DIFFERENT rect -- and a different SHAPE, so a w/h swap at
+  // the place_classic call site cannot pass.
+  REQUIRE(d.draw_pinned(Rect{7, 2, 2, 3}, *pinned).has_value());
+  d.flush();
+
+  CHECK(transmits_of(out, pinned->id) == 1);
+  CHECK(data_deletes_of(out, pinned->id) == 0);
+
+  // WHERE it landed, and how big. Nothing else in the suite reads a coordinate
+  // off the wire, and place_classic takes four positional ints -- so without
+  // this a transposed dest.x/dest.y or dest.w/dest.h is invisible.
+  const auto ps = tfsupport::placements(out);
+  const auto moves = cursor_moves(out);
+  REQUIRE(ps.size() == moves.size());
+  REQUIRE(!ps.empty());
+  // The last placement is the pinned one at {7,2,2,3}: 1-based col 8, row 3.
+  CHECK(moves.back() == std::pair{8, 3});
+  CHECK(tfsupport::key_value(ps.back(), "c") == "2");
+  CHECK(tfsupport::key_value(ps.back(), "r") == "3");
+}
+
+TEST_CASE("pinned: eviction by per-frame collection does not re-upload either",
+          "[pinned][kitty]") {
+  // The same property against the OTHER eviction path. Flushing between draws
+  // reaches gc_regions(); the case above reaches the LRU scan. The existing
+  // suite shows the two are reached by different call patterns, so asserting
+  // one is not asserting the other.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto pinned = d.pin_image(art(2));
+  REQUIRE(pinned.has_value());
+  REQUIRE(d.draw_pinned(Rect{1, 4, 3, 2}, *pinned).has_value());
+  d.flush();
+
+  for (int i = 0; i < 20; ++i) {
+    REQUIRE(d.draw_image(Rect{i, 4, 2, 2}, art(i + 40)).has_value());
+    d.flush();
+  }
+
+  REQUIRE(d.draw_pinned(Rect{7, 2, 2, 3}, *pinned).has_value());
+  d.flush();
+
+  CHECK(transmits_of(out, pinned->id) == 1);
+  CHECK(data_deletes_of(out, pinned->id) == 0);
+}
+
+// ── the two lifetimes ───────────────────────────────────────────────────────
+
+TEST_CASE("pinned: the payload crosses the wire at pin time, not at draw time",
+          "[pinned][kitty]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto pinned = d.pin_image(art(3));
+  REQUIRE(pinned.has_value());
+  // pin_image queues; flush writes. Nothing has been placed.
+  d.flush();
+  CHECK(transmits_of(out, pinned->id) == 1);
+  CHECK(tfsupport::placements(out).empty());
+
+  out.clear();
+  REQUIRE(d.draw_pinned(Rect{1, 1, 2, 2}, *pinned).has_value());
+  d.flush();
+  CHECK(transmits_of(out, pinned->id) == 0);
+  CHECK(placements_of(out, pinned->id) == 1);
+}
+
+TEST_CASE("pinned: a moved placement is retired with d=i, and the image stays",
+          "[pinned][kitty]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto pinned = d.pin_image(art(4));
+  REQUIRE(pinned.has_value());
+  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *pinned).has_value());
+  d.flush();
+
+  out.clear();
+  REQUIRE(d.draw_pinned(Rect{5, 5, 2, 2}, *pinned).has_value());
+  d.flush();
+
+  // The rect it left is collected — as a PLACEMENT delete. If this were d=I
+  // the terminal would have dropped the data and the next draw would show
+  // nothing, which is the mutation this case exists to catch.
+  CHECK(placement_deletes_of(out, pinned->id) == 1);
+  CHECK(data_deletes_of(out, pinned->id) == 0);
+  CHECK(placements_of(out, pinned->id) == 1);
+  CHECK(transmits_of(out, pinned->id) == 0);
+}
+
+TEST_CASE("pinned: a frame that does not draw it collects only the placement",
+          "[pinned][kitty]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto pinned = d.pin_image(art(5));
+  REQUIRE(pinned.has_value());
+  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *pinned).has_value());
+  d.flush();
+
+  out.clear();
+  REQUIRE(d.draw_image(Rect{8, 8, 2, 2}, art(9)).has_value());  // pin not drawn
+  d.flush();
+  CHECK(placement_deletes_of(out, pinned->id) == 1);
+  CHECK(data_deletes_of(out, pinned->id) == 0);
+
+  // And it comes back without an upload, which is the point of all of it.
+  out.clear();
+  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *pinned).has_value());
+  d.flush();
+  CHECK(transmits_of(out, pinned->id) == 0);
+  CHECK(placements_of(out, pinned->id) == 1);
+}
+
+TEST_CASE("pinned: a rect that changes which image it shows retires the old "
+          "placement", "[pinned][kitty]") {
+  // Two live placements at one rect is the state the unpinned path already
+  // refuses to reach on a content change. Pinning has to reach the same end by
+  // a different route: the rect is the key, but the image behind it is now the
+  // application's choice and can change without the payload changing.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto a = d.pin_image(art(20));
+  const auto b = d.pin_image(art(21));
+  REQUIRE(a.has_value());
+  REQUIRE(b.has_value());
+  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *a).has_value());
+  d.flush();
+
+  out.clear();
+  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *b).has_value());
+  d.flush();
+
+  // A's placement is gone, A's data is not, and B is placed exactly once.
+  CHECK(placement_deletes_of(out, a->id) == 1);
+  CHECK(data_deletes_of(out, a->id) == 0);
+  CHECK(placements_of(out, b->id) == 1);
+  CHECK(placements_of(out, a->id) == 0);
+  CHECK(transmits_of(out, b->id) == 0);
+
+  // And A comes back with no upload, which is what "its data is not gone"
+  // means in the only terms the wire has.
+  out.clear();
+  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *a).has_value());
+  d.flush();
+  CHECK(transmits_of(out, a->id) == 0);
+  CHECK(placements_of(out, a->id) == 1);
+}
+
+TEST_CASE("pinned: one image placed at two rects uploads once",
+          "[pinned][kitty]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto pinned = d.pin_image(art(6));
+  REQUIRE(pinned.has_value());
+  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *pinned).has_value());
+  REQUIRE(d.draw_pinned(Rect{4, 0, 2, 2}, *pinned).has_value());
+  d.flush();
+
+  CHECK(transmits_of(out, pinned->id) == 1);
+  CHECK(placements_of(out, pinned->id) == 2);
+  // Two placements of one image need two placement ids, or the second
+  // supersedes the first terminal-side.
+  const auto ps = tfsupport::placements(out);
+  REQUIRE(ps.size() == 2);
+  CHECK(tfsupport::key_value(ps[0], "p") != tfsupport::key_value(ps[1], "p"));
+}
+
+TEST_CASE("pinned: unpin frees the data and kills the handle",
+          "[pinned][kitty][failure]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto pinned = d.pin_image(art(7));
+  REQUIRE(pinned.has_value());
+  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *pinned).has_value());
+  d.flush();
+
+  out.clear();
+  REQUIRE(d.unpin_image(*pinned).has_value());
+  d.flush();
+  // Here d=I IS correct: the application said it was done with the image.
+  CHECK(data_deletes_of(out, pinned->id) == 1);
+
+  out.clear();
+  const auto again = d.draw_pinned(Rect{0, 0, 2, 2}, *pinned);
+  REQUIRE_FALSE(again.has_value());
+  CHECK(again.error().severity == Severity::Warning);
+  CHECK(again.error().source == "kitty");
+  CHECK(again.error().message ==
+        "draw_pinned: handle is stale -- the image was already unpinned");
+  d.flush();
+  CHECK(out.empty());  // a refusal emits nothing at all
+
+  const auto twice = d.unpin_image(*pinned);
+  REQUIRE_FALSE(twice.has_value());
+  CHECK(twice.error().message ==
+        "unpin_image: handle is stale -- the image was already unpinned");
+}
+
+// ── the failure paths ───────────────────────────────────────────────────────
+
+TEST_CASE("pinned: an empty handle and a foreign handle refuse differently",
+          "[pinned][kitty][failure]") {
+  // Three handle failures, three messages. Collapsed into one they would all
+  // still be Warnings, and a suite checking only REQUIRE_FALSE would stay
+  // green through the collapse — while the application loses the one thing
+  // that tells it which mistake it made.
+  KittyDriver a;
+  KittyDriver b;
+  std::string out_b;
+  b.set_output(&out_b);
+
+  const auto empty = b.draw_pinned(Rect{0, 0, 2, 2}, PinnedImage{});
+  REQUIRE_FALSE(empty.has_value());
+  CHECK(empty.error().severity == Severity::Warning);
+  CHECK(empty.error().message ==
+        "draw_pinned: handle is empty -- it was never returned by pin_image");
+
+  const auto mine = a.pin_image(art(8));
+  REQUIRE(mine.has_value());
+  const auto foreign = b.draw_pinned(Rect{0, 0, 2, 2}, *mine);
+  REQUIRE_FALSE(foreign.has_value());
+  CHECK(foreign.error().severity == Severity::Warning);
+  CHECK(foreign.error().message ==
+        "draw_pinned: handle was issued by a different driver -- id spaces "
+        "are per-driver and one session's handle names another's image");
+  b.flush();
+  CHECK(out_b.empty());
+
+  // Two drivers alive at once never share an identity — the whole reason the
+  // handle carries one.
+  const auto theirs = b.pin_image(art(9));
+  REQUIRE(theirs.has_value());
+  CHECK(mine->owner != theirs->owner);
+}
+
+TEST_CASE("pinned: the budget is public, enforced, and returned on unpin",
+          "[pinned][kitty][failure]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  std::vector<PinnedImage> held;
+  for (std::size_t i = 0; i < KittyDriver::kMaxPinnedImages; ++i) {
+    auto p = d.pin_image(tfsupport::solid(1, 1, Pixel{1, 2, 3, 255}));
+    REQUIRE(p.has_value());
+    // Every id stays inside the one-byte range the placeholder path's
+    // 38;5;<id> encoding needs, and above the region pool.
+    CHECK(p->id >= KittyDriver::kFirstPinnedImageId);
+    CHECK(p->id <= 255);
+    held.push_back(*p);
+  }
+  CHECK(d.max_pinned_images() == KittyDriver::kMaxPinnedImages);
+
+  d.flush();
+  out.clear();
+  const auto over = d.pin_image(art(10));
+  REQUIRE_FALSE(over.has_value());
+  CHECK(over.error().severity == Severity::Warning);
+  CHECK(over.error().message.find("max_pinned_images") != std::string::npos);
+  d.flush();
+  CHECK(out.empty());  // a refused pin does not pay for an upload
+
+  // An id comes back, so a pin/unpin cycle does not walk the budget off its
+  // end. Without the free list this pin fails and m_next_pin_id has already
+  // run past the floor.
+  REQUIRE(d.unpin_image(held.front()).has_value());
+  const auto after = d.pin_image(art(11));
+  REQUIRE(after.has_value());
+  CHECK(after->id == held.front().id);
+}
+
+TEST_CASE("pinned: empty and malformed payloads refuse before any upload",
+          "[pinned][kitty][failure]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto e1 = d.pin_image(Image{});
+  REQUIRE_FALSE(e1.has_value());
+  CHECK(e1.error().message == "pin_image: empty image");
+
+  const auto e2 = d.pin_image(EncodedImage{});
+  REQUIRE_FALSE(e2.has_value());
+  CHECK(e2.error().message == "pin_image: empty image");
+
+  // Rgba32's length is derivable, so a caller's extent/buffer disagreement is
+  // visible — and is refused with pin_image in the message, not draw_image.
+  const std::vector<std::byte> short_buf(4);
+  const auto e3 = d.pin_image(
+      EncodedImage{ImageFormat::Rgba32, short_buf, Extent{4, 4}});
+  REQUIRE_FALSE(e3.has_value());
+  CHECK(e3.error().message.find("pin_image: Rgba32 payload") == 0);
+
+  d.flush();
+  CHECK(out.empty());
+}
+
+TEST_CASE("pinned: a pre-encoded plate pins on its own wire format",
+          "[pinned][kitty][encoded]") {
+  // The combination the consumer that filed #109 actually ships: baked art is
+  // pre-encoded (#163/#169), so pinning only decoded images would miss it.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const std::vector<std::byte> png(32, std::byte{0x89});
+  const auto p = d.pin_image(EncodedImage{ImageFormat::Png, png, Extent{4, 4}});
+  REQUIRE(p.has_value());
+  d.flush();
+
+  const auto ts = tfsupport::apcs(out);
+  REQUIRE(ts.size() == 1);
+  CHECK(tfsupport::key_value(ts[0], "f") == "100");
+  CHECK(tfsupport::key_value(ts[0], "i") == std::to_string(p->id));
+  // Shipped verbatim: the terminal reassembles exactly what was handed over.
+  CHECK(tfsupport::reassemble(out) == png);
+}
+
+TEST_CASE("pinned: Exact is enforced against the extent declared at pin time",
+          "[pinned][kitty][fit][failure]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto p = d.pin_image(tfsupport::checker(16, 32, Pixel{9, 0, 0, 255},
+                                                Pixel{0, 9, 0, 255}));
+  REQUIRE(p.has_value());
+  d.flush();
+  out.clear();
+
+  // 1x1 cells hold 8x16 device pixels at the nominal cell size — not enough.
+  const auto small = d.draw_pinned(Rect{0, 0, 1, 1}, *p, PlacementFit::Exact);
+  REQUIRE_FALSE(small.has_value());
+  CHECK(small.error().severity == Severity::Warning);
+  d.flush();
+  CHECK(out.empty());
+
+  // A rect that does fit places with c=/r= omitted, which is what Exact means
+  // on the wire.
+  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *p, PlacementFit::Exact).has_value());
+  d.flush();
+  const auto ps = tfsupport::placements(out);
+  REQUIRE(ps.size() == 1);
+  CHECK_FALSE(tfsupport::has_key(ps[0], "c"));
+  CHECK_FALSE(tfsupport::has_key(ps[0], "r"));
+}
+
+TEST_CASE("pinned: changing the fit at one rect re-places it",
+          "[pinned][kitty][fit]") {
+  // #137's central failure, transposed. The rect is the key and the payload
+  // has not changed, so without the fit comparison this draw emits NOTHING
+  // and the opt-out silently does not take effect — indistinguishable from
+  // the bug it exists to fix. c=/r= are baked into a classic placement, so
+  // re-placing without deleting would leave both live.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto p = d.pin_image(tfsupport::checker(16, 32, Pixel{3, 0, 0, 255},
+                                                Pixel{0, 3, 0, 255}));
+  REQUIRE(p.has_value());
+  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *p).has_value());  // Stretch
+  d.flush();
+
+  out.clear();
+  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *p, PlacementFit::Exact).has_value());
+  d.flush();
+
+  CHECK(placement_deletes_of(out, p->id) == 1);
+  CHECK(data_deletes_of(out, p->id) == 0);
+  CHECK(transmits_of(out, p->id) == 0);
+  const auto ps = tfsupport::placements(out);
+  REQUIRE(ps.size() == 1);
+  CHECK_FALSE(tfsupport::has_key(ps[0], "c"));
+  CHECK_FALSE(tfsupport::has_key(ps[0], "r"));
+}
+
+TEST_CASE("pinned: placeholders allow only one live placement per image",
+          "[pinned][kitty][failure]") {
+  // A placeholder cell names its image by SGR foreground and names no
+  // placement at all, so two live placements of one image id are ambiguous.
+  // Unpinned draws cannot reach this — two rects are two ids — so pinning is
+  // what owes the refusal.
+  KittyDriver d;
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  std::string out;
+  d.set_output(&out);
+
+  const auto p = d.pin_image(art(12));
+  REQUIRE(p.has_value());
+  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *p).has_value());
+  d.flush();
+  out.clear();
+
+  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *p).has_value());  // same rect: fine
+  const auto second = d.draw_pinned(Rect{6, 0, 2, 2}, *p);
+  REQUIRE_FALSE(second.has_value());
+  CHECK(second.error().severity == Severity::Warning);
+  CHECK(second.error().message.find("one live placement") != std::string::npos);
+}
+
+TEST_CASE("pinned: switching placement mode retires the placement, not the "
+          "image", "[pinned][kitty]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto p = d.pin_image(art(13));
+  REQUIRE(p.has_value());
+  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *p).has_value());
+  d.flush();
+
+  out.clear();
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *p).has_value());
+  d.flush();
+
+  // An unpinned region would re-upload here, because d=I discarded what it
+  // would have reused. A pinned one has nothing to re-upload.
+  CHECK(transmits_of(out, p->id) == 0);
+  CHECK(data_deletes_of(out, p->id) == 0);
+  CHECK(placement_deletes_of(out, p->id) == 1);
+  CHECK(placements_of(out, p->id) == 1);
+}
+
+TEST_CASE("pinned: a region never gets an id a pin is holding",
+          "[pinned][kitty]") {
+  // Region ids walk upward and — until #187 is fixed — they walk without
+  // bound, so "the two ranges cannot meet" is not a property this code has.
+  // Handing a region an id the terminal holds an application's image under
+  // would overwrite that image on the region's next transmit.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto p = d.pin_image(art(14));
+  REQUIRE(p.has_value());
+
+  // Drive the region allocator past the pinned id. Each frame's collection
+  // empties the map, so every draw allocates a fresh id (#187).
+  for (int i = 0; i < 300; ++i) {
+    d.flush();
+    REQUIRE(d.draw_image(Rect{0, 0, 2, 2}, art(i % 200)).has_value());
+    d.flush();
+  }
+
+  // No region ever transmitted under the pinned image's id.
+  CHECK(transmits_of(out, p->id) == 1);
+  CHECK(data_deletes_of(out, p->id) == 0);
+}
+
+TEST_CASE("pinned: the meter bills the upload once and the placements as edits",
+          "[pinned][kitty][bytes]") {
+  // A second, independent proof of no-retransmit that does not go through the
+  // APC parser at all (#139).
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto p = d.pin_image(art(15));
+  REQUIRE(p.has_value());
+  d.flush();
+  CHECK(d.last_frame_bytes().image_transmit > 0);
+
+  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *p).has_value());
+  d.flush();
+  CHECK(d.last_frame_bytes().image_transmit == 0);
+  CHECK(d.last_frame_bytes().image_edit > 0);
+
+  REQUIRE(d.draw_pinned(Rect{4, 4, 2, 2}, *p).has_value());
+  d.flush();
+  CHECK(d.last_frame_bytes().image_transmit == 0);
+}
+
+// ── the base class ──────────────────────────────────────────────────────────
+
+TEST_CASE("pinned: a driver that never heard of pinning refuses honestly",
+          "[pinned][drivers][failure]") {
+  // The case that makes "make one of these pure" a mutation that fails to
+  // COMPILE. LegacyDriver overrides only the pre-#163 pure virtuals and must
+  // keep doing so — teaching it about this interface destroys what it is for.
+  tfsupport::LegacyDriver legacy;
+  TerminalDriver& base = legacy;
+
+  CHECK(base.max_pinned_images() == 0);
+
+  const auto p1 = base.pin_image(Image{1, 1, {Pixel{1, 2, 3, 255}}});
+  REQUIRE_FALSE(p1.has_value());
+  CHECK(p1.error().severity == Severity::Warning);
+  CHECK(p1.error().source == "driver");
+  CHECK(p1.error().message ==
+        "pin_image: this tier cannot hold an image resident");
+
+  const std::vector<std::byte> bytes(4);
+  const auto p2 =
+      base.pin_image(EncodedImage{ImageFormat::Rgba32, bytes, Extent{1, 1}});
+  REQUIRE_FALSE(p2.has_value());
+  CHECK(p2.error().message ==
+        "pin_image: this tier cannot hold an image resident");
+
+  // The two-argument convenience is non-virtual and delegates, so it produces
+  // the THREE-argument message — which is what proves the delegation runs.
+  const auto d2 = base.draw_pinned(Rect{0, 0, 1, 1}, PinnedImage{1, 1});
+  REQUIRE_FALSE(d2.has_value());
+  CHECK(d2.error().message ==
+        "draw_pinned: this tier cannot hold an image resident");
+  const auto d3 =
+      base.draw_pinned(Rect{0, 0, 1, 1}, PinnedImage{1, 1},
+                       PlacementFit::Exact);
+  REQUIRE_FALSE(d3.has_value());
+  CHECK(d3.error().message ==
+        "draw_pinned: this tier cannot hold an image resident");
+
+  const auto u = base.unpin_image(PinnedImage{1, 1});
+  REQUIRE_FALSE(u.has_value());
+  CHECK(u.error().message ==
+        "unpin_image: this tier cannot hold an image resident");
+
+  CHECK_FALSE(legacy.drew_image());  // none of it reached the draw path
+}
+
+TEST_CASE("pinned: the Stretch convenience is reachable through KittyDriver",
+          "[pinned][kitty]") {
+  // Overriding the three-argument virtual would HIDE the base's non-virtual
+  // two-argument overload for calls made through KittyDriver's static type.
+  // `using TerminalDriver::draw_pinned;` is what keeps this compiling, and
+  // this case is what notices if it is removed.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto p = d.pin_image(art(16));
+  REQUIRE(p.has_value());
+  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *p).has_value());
+  d.flush();
+
+  const auto ps = tfsupport::placements(out);
+  REQUIRE(ps.size() == 1);
+  CHECK(tfsupport::has_key(ps[0], "c"));  // Stretch keeps c=/r=
+  CHECK(tfsupport::has_key(ps[0], "r"));
+}
+
+TEST_CASE("pinned: an empty handle is false and a real one is true",
+          "[pinned][types]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  CHECK_FALSE(static_cast<bool>(PinnedImage{}));
+  const auto p = d.pin_image(art(17));
+  REQUIRE(p.has_value());
+  CHECK(static_cast<bool>(*p));
+
+  // Equality must consider the OWNER, and the hazard is concrete rather than
+  // theoretical: pins allocate downward from the one-byte ceiling, so the
+  // first pin of every driver gets the same id. `return id == other.id;` is a
+  // plausible simplification that makes two sessions' handles compare equal --
+  // the exact confusion the owner field exists to prevent.
+  KittyDriver other;
+  std::string other_out;
+  other.set_output(&other_out);
+  const auto q = other.pin_image(art(18));
+  REQUIRE(q.has_value());
+  CHECK(p->id == q->id);
+  CHECK_FALSE(*p == *q);
+}
+
+TEST_CASE("pinned: a moving sprite is not refused under placeholders",
+          "[pinned][kitty]") {
+  // The guard above must mean "placed somewhere else THIS FRAME", not "placed
+  // somewhere else". A placement from the previous frame is still in the map —
+  // the collection retires it at the NEXT flush — so the loose reading refused
+  // every move, and a sprite stepping one cell per frame rendered on alternate
+  // frames and flickered. That is the motion case the whole ticket exists for,
+  // so a green suite that missed it would be worth nothing.
+  KittyDriver d;
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  std::string out;
+  d.set_output(&out);
+
+  const auto p = d.pin_image(art(30));
+  REQUIRE(p.has_value());
+  for (int frame = 0; frame < 5; ++frame) {
+    INFO("frame " << frame);
+    REQUIRE(d.draw_pinned(Rect{frame, 1, 3, 2}, *p).has_value());
+    d.flush();
+  }
+  CHECK(transmits_of(out, p->id) == 1);
+  CHECK(data_deletes_of(out, p->id) == 0);
+}
+
+TEST_CASE("pinned: an unpinned draw to the same rect refuses under "
+          "placeholders",
+          "[pinned][kitty][failure]") {
+  // Both orders, because widget draw order is not something an application
+  // controls: a hazard refused in one order only is refused by luck.
+  SECTION("pinned first, then unpinned") {
+    KittyDriver d;
+    d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+    std::string out;
+    d.set_output(&out);
+    const auto p = d.pin_image(art(31));
+    REQUIRE(p.has_value());
+    REQUIRE(d.draw_pinned(Rect{2, 1, 3, 2}, *p).has_value());
+    const auto r = d.draw_image(Rect{2, 1, 3, 2}, art(32));
+    REQUIRE_FALSE(r.has_value());
+    CHECK(r.error().severity == Severity::Warning);
+    CHECK(r.error().message.find("draw_image: a pinned image") == 0);
+  }
+  SECTION("unpinned first, then pinned") {
+    KittyDriver d;
+    d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+    std::string out;
+    d.set_output(&out);
+    const auto p = d.pin_image(art(33));
+    REQUIRE(p.has_value());
+    REQUIRE(d.draw_image(Rect{2, 1, 3, 2}, art(34)).has_value());
+    const auto r = d.draw_pinned(Rect{2, 1, 3, 2}, *p);
+    REQUIRE_FALSE(r.has_value());
+    CHECK(r.error().message.find("draw_pinned: an unpinned image") == 0);
+  }
+}
+
+TEST_CASE("pinned: a recycled id does not resurrect a stale handle",
+          "[pinned][kitty][failure]") {
+  // Terminal-side ids are recycled by design — the one-byte budget requires
+  // it — so the map key alone cannot tell "this handle's image" from "a later
+  // image that inherited its id". Without the serial, unpin_image(old) deletes
+  // the NEW image and draw_pinned(old) draws it.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto first = d.pin_image(art(35));
+  REQUIRE(first.has_value());
+  REQUIRE(d.unpin_image(*first).has_value());
+  const auto second = d.pin_image(art(36));
+  REQUIRE(second.has_value());
+  REQUIRE(first->id == second->id);   // the id really was recycled
+  CHECK(first->serial != second->serial);
+
+  d.flush();
+  out.clear();
+  const auto stale_draw = d.draw_pinned(Rect{1, 2, 3, 2}, *first);
+  REQUIRE_FALSE(stale_draw.has_value());
+  CHECK(stale_draw.error().message.find("stale") != std::string::npos);
+  const auto stale_unpin = d.unpin_image(*first);
+  REQUIRE_FALSE(stale_unpin.has_value());
+  d.flush();
+  CHECK(out.empty());  // the live image was not deleted on the stale handle's
+                       // behalf
+
+  // ...and the live handle still works.
+  REQUIRE(d.draw_pinned(Rect{1, 2, 3, 2}, *second).has_value());
+}
+
+TEST_CASE("pinned: a pin never takes an id a live region is holding",
+          "[pinned][kitty][failure]") {
+  // Region ids climb one per FRAME today (#187), so they reach the pinned
+  // range in about four seconds. A pin issued a live region's id is not a
+  // near-miss: the region's next transmit overwrites the application's pixels
+  // and its collection emits a=d,d=I on them, silently, because q=2 means the
+  // terminal's objection reaches nobody.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const Image img{1, 1, {Pixel{9, 9, 9, 255}}};
+
+  // Drive the region counter up to the top of the one-byte range, then draw
+  // WITHOUT flushing so a region is still holding that id when the pin lands.
+  for (int f = 0; f < 254; ++f) {
+    d.flush();
+    REQUIRE(d.draw_image(Rect{0, 0, 1, 1}, img).has_value());
+    d.flush();
+  }
+  d.flush();
+  REQUIRE(d.draw_image(Rect{0, 0, 1, 1}, img).has_value());
+  // Flush so the bytes reach the sink, but do NOT flush again -- this
+  // collection keeps the slot, so a region is still holding id 255 below.
+  d.flush();
+
+  // The precondition this case rests on, asserted rather than assumed: if
+  // #187 is fixed the counter stops climbing, this stops testing what it
+  // claims, and the assertion below would pass vacuously.
+  REQUIRE(transmits_of(out, 255) == 1);
+
+  const auto p = d.pin_image(art(37));
+  REQUIRE(p.has_value());
+  CHECK(p->id != 255);
+  CHECK(p->id >= KittyDriver::kFirstPinnedImageId);
+}
+
+TEST_CASE("pinned: an empty destination rect refuses",
+          "[pinned][kitty][failure]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const auto p = d.pin_image(art(38));
+  REQUIRE(p.has_value());
+  d.flush();
+  out.clear();
+
+  const auto r = d.draw_pinned(Rect{3, 4, 0, 2}, *p);
+  REQUIRE_FALSE(r.has_value());
+  CHECK(r.error().severity == Severity::Warning);
+  CHECK(r.error().message == "draw_pinned: empty destination rect");
+  d.flush();
+  CHECK(out.empty());
+}
+
+TEST_CASE("pinned: the clamp warning has its own latch",
+          "[pinned][kitty][failure]") {
+  // m_warned_clamp is one-shot. Shared between the two entry points, whichever
+  // clamped first would consume the only report the driver ever makes and the
+  // other would then degrade in silence — a degradation with no event.
+  KittyDriver d;
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  std::string out;
+  d.set_output(&out);
+
+  // Burn draw_image's latch first.
+  const auto unpinned = d.draw_image(Rect{0, 0, 300, 1}, art(39));
+  REQUIRE_FALSE(unpinned.has_value());
+  CHECK(unpinned.error().message.find("draw_image: destination clamped") == 0);
+
+  const auto p = d.pin_image(art(40));
+  REQUIRE(p.has_value());
+  const auto pinned = d.draw_pinned(Rect{0, 4, 300, 1}, *p);
+  REQUIRE_FALSE(pinned.has_value());
+  CHECK(pinned.error().message.find("draw_pinned: destination clamped") == 0);
+  d.flush();
+  // Both are clamped-but-drawn, exactly as the unpinned path has always been:
+  // the placement is emitted at 297 cells and the event says so.
+  CHECK(placements_of(out, p->id) == 1);
+}
+
+TEST_CASE("pinned: unpin refuses an empty and a foreign handle too",
+          "[pinned][kitty][failure]") {
+  // unpin_image is the entry point whose silent form DELETES a stranger's
+  // image, so its guards matter more than draw_pinned's, and they were the
+  // ones with no test.
+  KittyDriver a;
+  KittyDriver b;
+  std::string out_b;
+  b.set_output(&out_b);
+
+  const auto empty = b.unpin_image(PinnedImage{});
+  REQUIRE_FALSE(empty.has_value());
+  CHECK(empty.error().message ==
+        "unpin_image: handle is empty -- it was never returned by pin_image");
+
+  const auto mine = a.pin_image(art(41));
+  REQUIRE(mine.has_value());
+  const auto foreign = b.unpin_image(*mine);
+  REQUIRE_FALSE(foreign.has_value());
+  CHECK(foreign.error().message.find("different driver") != std::string::npos);
+  b.flush();
+  CHECK(out_b.empty());
+}
+
+TEST_CASE("pinned: switching back to classic retires the virtual placement",
+          "[pinned][kitty]") {
+  // The reverse of the mode-switch case above, and the direction the driver
+  // used to skip. A virtual placement nobody retired stays live under the same
+  // p= the next classic a=p reuses — and a pinned image has no forced
+  // retransmit to rescue it the way a region does.
+  KittyDriver d;
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  std::string out;
+  d.set_output(&out);
+
+  const auto p = d.pin_image(art(42));
+  REQUIRE(p.has_value());
+  REQUIRE(d.draw_pinned(Rect{1, 2, 3, 2}, *p).has_value());
+  d.flush();
+
+  out.clear();
+  d.set_placement_mode(KittyDriver::PlacementMode::Classic);
+  d.flush();  // set_placement_mode queues its deletes like everything else
+  CHECK(placement_deletes_of(out, p->id) == 1);
+  CHECK(data_deletes_of(out, p->id) == 0);
+
+  out.clear();
+  REQUIRE(d.draw_pinned(Rect{1, 2, 3, 2}, *p).has_value());
+  d.flush();
+  CHECK(transmits_of(out, p->id) == 0);
+  CHECK(placements_of(out, p->id) == 1);
+}
+
+TEST_CASE("pinned: an Exact refusal names draw_pinned, not draw_image",
+          "[pinned][kitty][fit][failure]") {
+  // validate_fit is shared with the draw_image paths and used to hard-code
+  // their name, so an application that called draw_pinned went looking through
+  // its logs for a draw_image call site that does not exist.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto p = d.pin_image(tfsupport::checker(16, 32, Pixel{4, 0, 0, 255},
+                                                Pixel{0, 4, 0, 255}));
+  REQUIRE(p.has_value());
+  const auto small = d.draw_pinned(Rect{0, 0, 1, 1}, *p, PlacementFit::Exact);
+  REQUIRE_FALSE(small.has_value());
+  CHECK(small.error().message.find("draw_pinned: PlacementFit::Exact") == 0);
+
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  const auto unsupported =
+      d.draw_pinned(Rect{0, 0, 4, 4}, *p, PlacementFit::Exact);
+  REQUIRE_FALSE(unsupported.has_value());
+  CHECK(unsupported.error().message.find("draw_pinned: this tier cannot") == 0);
+}
+
+// ── the destructor ──────────────────────────────────────────────────────────
+
+namespace {
+
+// What a driver writes to stdout while it is destroyed.
+//
+// delete_all() bypasses the sink deliberately (the sink is borrowed and a
+// destructor cannot assume the destination is alive), so the only way to see
+// it is to be the file descriptor. NO Catch2 MACRO MAY RUN while fd 1 is
+// redirected: ctest invokes these binaries with -s, and Catch2's own output
+// would land in the capture. Assertions happen after the restore, on the
+// returned string.
+auto stdout_of_pin_only_driver_dying(bool unpin_before_death) -> std::string {
+  std::fflush(stdout);
+  const int saved = ::dup(1);
+  FILE* sink = ::tmpfile();
+  if (saved < 0 || sink == nullptr) return "capture-failed";
+  ::dup2(::fileno(sink), 1);
+  {
+    KittyDriver d;
+    // The pin's own bytes go to the descriptor via flush(), so the capture
+    // holds them too; the assertion is about the d=A that only ~KittyDriver
+    // emits, which no earlier call can produce.
+    const auto h = d.pin_image(Image{1, 1, {Pixel{7, 7, 7, 255}}});
+    d.flush();
+    // The image is now resident terminal-side. Unpinning QUEUES its d=I --
+    // and if the driver dies before the next flush those bytes die with the
+    // buffer while the image very much does not.
+    if (unpin_before_death && h) (void)d.unpin_image(*h);
+  }
+  std::fflush(stdout);
+  ::dup2(saved, 1);
+  ::close(saved);
+
+  std::rewind(sink);
+  std::string got;
+  char buf[256];
+  while (std::size_t n = std::fread(buf, 1, sizeof buf, sink)) {
+    got.append(buf, n);
+  }
+  std::fclose(sink);
+  return got;
+}
+
+}  // namespace
+
+TEST_CASE("pinned: a driver that only ever pinned still cleans up after itself",
+          "[pinned][kitty][failure]") {
+  // Pinned ids come from their own counter, so the destructor's "nothing was
+  // uploaded" early-out cannot be answered by the region counter alone. Get
+  // this wrong and every pinned image outlives the process that sent it —
+  // silently, on a terminal the application no longer controls.
+  SECTION("pinned and never unpinned") {
+    // The region counter is still at its initial value, so an early-out that
+    // asks it alone emits nothing and leaves the image resident.
+    const std::string got = stdout_of_pin_only_driver_dying(false);
+    REQUIRE(got != "capture-failed");
+    CHECK(got.find("a=d,d=A") != std::string::npos);
+  }
+  SECTION("pinned, flushed, then unpinned without a further flush") {
+    // The other polarity of the same guard, and the likelier one: teardown
+    // after the last frame is exactly how an application writes shutdown. The
+    // unpin's own d=I never reached the terminal, and m_pinned is now empty,
+    // so any early-out reconstructed from the maps concludes there is nothing
+    // to clear. Only the transmit path knows better.
+    const std::string got = stdout_of_pin_only_driver_dying(true);
+    REQUIRE(got != "capture-failed");
+    CHECK(got.find("a=d,d=A") != std::string::npos);
+  }
+}
+
+// ── nothing moved for callers who do not pin ────────────────────────────────
+
+TEST_CASE("pinned: the unpinned path emits exactly what it always did",
+          "[pinned][kitty]") {
+  // If this needs an edit, the change moved bytes it promised not to. Mirrors
+  // test/01drivers' eviction case with no pins in play.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  Image img{1, 1, {Pixel{255, 0, 0, 255}}};
+  for (int i = 0; i < 17; ++i) {
+    REQUIRE(d.draw_image(Rect{i, 0, 1, 1}, img).has_value());
+    d.flush();
+  }
+  // Parsed, not grepped: `out.find("a=d,d=I,i=1")` is satisfied by i=10 and
+  // i=17, which is the false green this file's header condemns.
+  CHECK(data_deletes_of(out, 1) == 1);
+  for (std::uint32_t id = 256; id < 260; ++id) {
+    CHECK(transmits_of(out, id) == 0);
+  }
+}

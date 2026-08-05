@@ -4,6 +4,94 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
+## Where we are (2026-08-05, later)
+
+**Latest work: #109 — an image the application keeps, not one the driver
+caches. Branch `feat/109-pinned-images`, awaiting the real-kitty capture.**
+
+**How it got picked: the consumer said so, in a comment.** Split A of #144
+finished at v0.7.4 and Split B waits on the unanswered posture question, so
+termforge's own tracker offered no next step. gloam#7's most recent comment
+named it outright — *"#109 is the one I would ask for next if the compositor is
+what you want moving"* — and #109 also sits under gloam#5. The consumer
+trackers carry the priority signal and it is invisible from inside this repo;
+that is now three picks in a row made this way.
+
+**What shipped.** `pin_image(Image)` / `pin_image(EncodedImage)` →
+`PinnedImage` handle; `draw_pinned(Rect, PinnedImage, PlacementFit)` plus a
+non-virtual Stretch convenience; `unpin_image`; `max_pinned_images()` as the
+capability query *and* the budget (0 = this tier cannot pin). All non-pure
+virtuals with honest `Warning` defaults; `App` gained zero API.
+
+**The design in one line: image lifetime and placement lifetime are separate,
+and on the wire the difference is one letter.** `a=d,d=I` frees the data and
+its placements; `a=d,d=i` retires one placement and leaves the data. Pinned
+images live in their own map that neither the LRU scan nor the collection can
+reach; their *placements* are collected per frame exactly like a region's.
+`m_regions` and the existing eviction code are unchanged for unpinned draws.
+
+**Decisions worth keeping:**
+- **A shared guard must name its CALLER.** `validate_fit` hard-coded
+  "draw_image", so a `draw_pinned` refusal sent the application grepping for a
+  call site that does not exist. `validate_encoded` was split the same way
+  (`validate_payload` + an `fn` argument) so `pin_image` — which has a payload
+  and no destination rect — reuses the 64-bit length arithmetic instead of
+  copying it.
+- **"Placed somewhere else" is not "placed somewhere else THIS FRAME."** The
+  placeholder single-placement guard read the first, and the collection retires
+  a stale placement at the *next* flush — so it refused every move and a sprite
+  stepping one cell per frame rendered on alternate frames. The motion case is
+  the entire ticket. Frame windows use `m_frame_start_clock`, the same
+  predicate the collection uses.
+- **A recycled id is not an identity.** Terminal-side ids must be recycled (the
+  one-byte budget requires it), so the map key alone cannot tell a handle's
+  image from a later image that inherited its id — and the difference is
+  whether `unpin_image` deletes the caller's image or a stranger's. Handles
+  carry a monotonic `serial` that is never reused.
+- **A one-directional guard on a shared resource is guarded by luck.** The
+  region allocator stepped over pinned ids; the pin allocator did not step over
+  region ids, and under #187 the region counter reaches the pinned range in
+  about four seconds. Same shape twice more: the same-rect placeholder conflict
+  needed refusing from *both* draw paths, because widget draw order is not
+  something an application controls.
+- **Derive, do not track.** Free pin ids come from the live maps rather than a
+  counter plus a free list — two containers agreeing about a fact only one of
+  them owns is one forgotten line from aliasing two handles onto one image.
+- **Ask the emit path, not the bookkeeping.** `~KittyDriver`'s "did we upload
+  anything" early-out is a flag set inside `transmit()`. Both map-derived
+  spellings were wrong, and the second subtly: pin → flush → unpin → destruct
+  leaves the image resident while `m_pinned` is empty and the unpin's `d=I` is
+  still queued in a buffer about to be discarded.
+- **One latch per entry point.** A shared `m_warned_clamp` let whichever path
+  clamped first consume the only report the driver ever makes.
+
+**Found along the way and filed: [#187](https://github.com/gobha-me/termforge/issues/187).**
+`gc_regions()` runs at the top of `flush()`, and `App` flushes twice per frame
+with the first flush having drawn nothing — so **every unpinned pixel region is
+deleted and fully re-transmitted every frame**, and `m_next_image_id` grows
+without bound (measured: 4 frames → 4 transmits of one unchanged image, ids
+1→4). Placeholder mode breaks after ~255 frames. Higher severity than #109 for
+the unpinned path; not folded in, because the fix has to distinguish "nothing
+was drawn" from "this region disappeared".
+
+**Tests:** `test/46pinned`, 32 cases, **34/34 mutations killed** (one only via
+UB — removing an end-iterator check segfaults rather than failing, which is a
+weak kill and is recorded as such). Validated 48/48 on Debug, clang, Release
+`-Werror`, ASan/UBSan — test counts compared against `build/` so no side build
+can make a green claim falsely. Existing suites needed **no edits**, which is
+the evidence that nothing moved for callers who do not pin.
+
+**Owed before release: the real-kitty capture.** `tools/kitty_repro.sh` gained
+**stanza 7**, and it is the merge gate: three placements of one image, the
+middle one deleted with `d=i`, then a fourth placed from the surviving data
+with no retransmit. The whole feature rests on `d=i` leaving the data resident,
+and no human has watched a terminal do it.
+
+**Known limits, stated in `docs/pixel-regions.md`:** 239 resident images (the
+placeholder path's `38;5;<id>` encoding, not terminal memory — gloam's 246
+plates do not fit and gloam must be told); one live placement per pinned image
+under `UnicodePlaceholders`; no residency accounting (#112); no dedup.
+
 ## Where we are (2026-08-05)
 
 **Latest work: #181 — the session's identity becomes pushable. Shipped as

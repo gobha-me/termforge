@@ -201,6 +201,81 @@ constexpr std::size_t kMaxRegionSlots = 16;
 
 }  // namespace
 
+// The pinned range sits ABOVE the region range, and the two must not meet:
+// regions allocate upward from 1 and pins downward from the one-byte ceiling.
+//
+// These assert PROPERTIES, not the definition. `kMaxPinnedImages == 255 -
+// kFirstPinnedImageId + 1` would restate kMaxPinnedImages' own initialiser and
+// hold for every value it could ever have, including the unsigned wrap to 0
+// that a kFirstPinnedImageId above 255 produces -- which would then surface at
+// runtime as "all 0 resident slots are in use" refusing every pin.
+static_assert(KittyDriver::kFirstPinnedImageId > kMaxRegionSlots,
+              "pinned ids must start above the region pool");
+static_assert(KittyDriver::kMaxPinnedImages > 0, "the pin budget is empty");
+static_assert(KittyDriver::kFirstPinnedImageId +
+                      KittyDriver::kMaxPinnedImages - 1 ==
+                  255,
+              "the pin range must end at the one-byte ceiling the placeholder "
+              "path's 38;5;<id> encoding requires");
+
+KittyDriver::ImageTally::~ImageTally() {
+  const std::size_t all = drv.m_buf.size() - start;
+  drv.tally_image_transmit(transmitted);
+  drv.tally_image_edit(all - transmitted);
+}
+
+auto KittyDriver::emit_placement(std::uint32_t image_id,
+                                 std::uint32_t placement_id, bool& placed,
+                                 Rect dest, PlacementFit fit, bool replace)
+    -> void {
+  if (m_mode == PlacementMode::Classic) {
+    // kitty does NOT refresh an existing classic placement when the image
+    // data is replaced (verified empirically) -- recreate the placement on
+    // every content change. Delete + re-place land in the same flush, so
+    // the swap is atomic on screen. Virtual (placeholder) placements DO
+    // track the latest data, so the unicode path skips this.
+    //
+    // A fit change needs the same treatment for the same reason: c=/r= are
+    // baked into the existing placement and re-placing without deleting would
+    // leave both live.
+    if (replace && placed) {
+      delete_placement(image_id, placement_id);
+      placed = false;
+    }
+    if (!placed) {
+      place_classic(image_id, placement_id, dest.x, dest.y, dest.w, dest.h,
+                    fit);
+      placed = true;
+    }
+  } else {
+    // Placeholder cells are re-emitted every frame (the cell grid is the
+    // placement); the virtual placement itself is created once.
+    place_unicode(image_id, placement_id, placed, dest.x, dest.y, dest.w,
+                  dest.h);
+    placed = true;
+  }
+}
+
+auto KittyDriver::clamp_dest(Rect cells, bool& clamped) const noexcept -> Rect {
+  // Unicode placeholders index cells through a 297-entry diacritic table, so
+  // the *placement* cannot exceed that in either axis. Clamp the destination
+  // rect; the image still transmits at full resolution and the terminal
+  // squeezes it into what is left.
+  //
+  // Before #83 this cropped the IMAGE to 297x297 pixels, which was the same
+  // thing back when a pixel was a cell. It no longer is: the caller expresses
+  // nothing in pixels now, so discarding authored content would be a silent
+  // loss for a reason the caller cannot see. Classic placements have no such
+  // limit.
+  Rect dest = cells;
+  clamped = false;
+  if (m_mode == PlacementMode::UnicodePlaceholders) {
+    if (dest.w > kDiacriticCount) { dest.w = kDiacriticCount; clamped = true; }
+    if (dest.h > kDiacriticCount) { dest.h = kDiacriticCount; clamped = true; }
+  }
+  return dest;
+}
+
 auto KittyDriver::region_slot(std::uint64_t key) -> RegionSlot& {
   if (auto it = m_regions.find(key); it != m_regions.end()) return it->second;
 
@@ -222,6 +297,13 @@ auto KittyDriver::region_slot(std::uint64_t key) -> RegionSlot& {
     slot.placement_id = lru->second.placement_id;
     m_regions.erase(lru);
   } else {
+    // Step over anything a pin currently holds (#109). With recycling working
+    // as designed this counter never reaches the pinned range at all -- but
+    // #187 is a live path on which it grows one id per FRAME, so "the two
+    // ranges cannot meet" is not a property this code has, and handing a
+    // region an id the terminal is holding an application's image under would
+    // overwrite that image on the next transmit.
+    while (m_pinned.contains(m_next_image_id)) ++m_next_image_id;
     slot.image_id = m_next_image_id++;
     slot.placement_id = m_next_placement_id++;
   }
@@ -301,7 +383,7 @@ auto KittyDriver::draw_image(Rect cells, const Image& image, PlacementFit fit)
   // upload it then declines to place.
   if (auto ok = detail::validate_fit(fit, cells,
                                      Extent{image.width(), image.height()},
-                                     *this, "kitty");
+                                     *this, "kitty", "draw_image");
       !ok) {
     return ok;
   }
@@ -339,7 +421,8 @@ auto KittyDriver::draw_image(Rect cells, const EncodedImage& image,
   // and never after: a refusal must not have paid for the upload -- 205,283
   // bytes for the plate #163 measured, which is the most expensive possible
   // way to draw nothing.
-  if (auto ok = detail::validate_fit(fit, cells, image.pixels, *this, "kitty");
+  if (auto ok = detail::validate_fit(fit, cells, image.pixels, *this, "kitty",
+                                     "draw_image");
       !ok) {
     return ok;
   }
@@ -347,24 +430,271 @@ auto KittyDriver::draw_image(Rect cells, const EncodedImage& image,
                       image.pixels, fit);
 }
 
+// ── resident images (#109) ──────────────────────────────────────────────────
+
+auto KittyDriver::max_pinned_images() const noexcept -> std::size_t {
+  return kMaxPinnedImages;
+}
+
+auto KittyDriver::pin_image(const Image& image)
+    -> std::expected<PinnedImage, ErrorEvent> {
+  if (image.empty()) {
+    return std::unexpected{
+        ErrorEvent{Severity::Warning, "kitty", "pin_image: empty image"}};
+  }
+  return pin_payload(std::as_bytes(image.pixels()), kFormatRgba32,
+                     Extent{image.width(), image.height()});
+}
+
+auto KittyDriver::pin_image(const EncodedImage& image)
+    -> std::expected<PinnedImage, ErrorEvent> {
+  // The payload guards without the destination ones: a pin has no rect, and
+  // will not have one until it is drawn. Shared with draw_image's path so the
+  // Rgba32 length arithmetic -- whose whole point is that the obvious spelling
+  // overflows -- exists once.
+  if (auto ok = detail::validate_payload(image, *this, "kitty", "pin_image");
+      !ok) {
+    return std::unexpected{ok.error()};
+  }
+  return pin_payload(image.bytes, wire_format(image.format), image.pixels);
+}
+
+auto KittyDriver::pin_payload(std::span<const std::byte> payload,
+                              int format_code, Extent px)
+    -> std::expected<PinnedImage, ErrorEvent> {
+  if (m_pinned.size() >= kMaxPinnedImages) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        std::format("pin_image: all {} resident slots are in use -- unpin "
+                    "one, or ask max_pinned_images() before committing to an "
+                    "art set",
+                    kMaxPinnedImages)}};
+  }
+
+  // Downward from the one-byte ceiling, so the region pool's upward walk has
+  // the whole rest of the range before the two meet.
+  //
+  // Derived from the live maps rather than tracked alongside them. A counter
+  // plus a free list would be two containers agreeing about a fact only one of
+  // them owns -- and an id pushed to the free list on a path that forgot to
+  // erase the entry (or the reverse) hands one terminal-side image to two live
+  // handles, enforced by nothing but two adjacent lines staying adjacent. The
+  // scan costs at most kMaxPinnedImages probes on an operation an application
+  // performs at cold start, which is the cheapest invariant this file has.
+  //
+  // BOTH POOLS ARE CONSULTED, and the symmetry is load-bearing. region_slot
+  // steps over pinned ids; if this did not step over region ids the guard
+  // would be one-directional, and the id space is shared. Under #187 the
+  // region counter climbs one id per FRAME, so it reaches this range in about
+  // four seconds -- and a pin issued an id a live region owns is not a
+  // near-miss: the region's next transmit overwrites the application's pixels,
+  // and the region's collection emits a=d,d=I on them. Silently, because q=2
+  // means the terminal's objection reaches nobody.
+  const auto region_holds = [this](std::uint32_t candidate) {
+    for (const auto& [key, slot] : m_regions)
+      if (slot.image_id == candidate) return true;
+    return false;
+  };
+  std::uint32_t id = kFirstPinnedImageId + kMaxPinnedImages - 1;
+  while (id >= kFirstPinnedImageId &&
+         (m_pinned.contains(id) || region_holds(id))) {
+    --id;
+  }
+  if (id < kFirstPinnedImageId) {
+    // The cap above guarantees a free id in the PIN pool; regions squatting on
+    // the rest is the case it cannot guarantee, and refusing is the only
+    // honest answer -- issuing a colliding id would corrupt both.
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        "pin_image: no resident id is free -- unpinned regions currently hold "
+        "the rest of the one-byte id range (see #187)"}};
+  }
+
+  // #139: the payload is image_transmit and nothing else here emits. These
+  // bytes sit in m_buf until the next flush() -- pin_image does not write, it
+  // queues, exactly like every draw does.
+  const std::size_t before = m_buf.size();
+  transmit(payload, format_code, px, id);
+  tally_image_transmit(m_buf.size() - before);
+
+  const std::uint32_t serial = ++m_next_pin_serial;
+  m_pinned.emplace(id, PinnedEntry{px, serial, 0, 0});
+  return PinnedImage{id, instance_token(), serial};
+}
+
+auto KittyDriver::resolve_pin(PinnedImage image, std::string_view fn)
+    -> std::expected<PinnedEntry*, ErrorEvent> {
+  // Three distinct messages for three distinct mistakes. Collapsing them into
+  // one "invalid handle" would leave a suite that only checks REQUIRE_FALSE
+  // green when the guards collapse too -- and these three want different
+  // fixes from the application.
+  //
+  // `fn` names the caller, so a shared guard still reports the call the
+  // application actually made -- the same bargain validate_fit and
+  // validate_encoded already strike.
+  if (!image) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        std::format("{}: handle is empty -- it was never returned by "
+                    "pin_image",
+                    fn)}};
+  }
+  if (image.owner != instance_token()) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        std::format("{}: handle was issued by a different driver -- id spaces "
+                    "are per-driver and one session's handle names another's "
+                    "image",
+                    fn)}};
+  }
+  const auto it = m_pinned.find(image.id);
+  // The serial compare is the load-bearing half. Terminal-side ids are
+  // recycled, so `find` alone says "something lives at this id" -- which is
+  // true, and about a different image, the moment a later pin inherits it.
+  if (it == m_pinned.end() || it->second.serial != image.serial) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        std::format("{}: handle is stale -- the image was already unpinned",
+                    fn)}};
+  }
+  return &it->second;
+}
+
+auto KittyDriver::unpin_image(PinnedImage image)
+    -> std::expected<void, ErrorEvent> {
+  auto entry = resolve_pin(image, "unpin_image");
+  if (!entry) return std::unexpected{entry.error()};
+
+  const std::size_t before = m_buf.size();
+  // d=I frees the data AND every placement of it, so the placements need no
+  // separate escape -- only their bookkeeping has to go.
+  delete_image(image.id);
+  std::erase_if(m_pin_places, [&](const auto& kv) {
+    return kv.second.image_id == image.id;
+  });
+  m_pinned.erase(image.id);
+  tally_image_edit(m_buf.size() - before);
+  return {};
+}
+
+auto KittyDriver::draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
+    -> std::expected<void, ErrorEvent> {
+  auto entry = resolve_pin(image, "draw_pinned");
+  if (!entry) return std::unexpected{entry.error()};
+  if (cells.empty()) {
+    return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
+                                      "draw_pinned: empty destination rect"}};
+  }
+  // Against the extent declared at PIN time, from the driver's own copy --
+  // the handle carries no geometry a caller could get wrong.
+  if (auto ok = detail::validate_fit(fit, cells, (*entry)->px, *this, "kitty",
+                                     "draw_pinned");
+      !ok) {
+    return std::unexpected{ok.error()};
+  }
+
+  bool clamped = false;
+  const Rect dest = clamp_dest(cells, clamped);
+  const std::uint64_t key = region_key(dest.x, dest.y, dest.w, dest.h);
+
+  // Under placeholders a cell names its image by SGR foreground and names no
+  // placement at all, so two placements of ONE image id showing at once are
+  // ambiguous -- the terminal picks. Unpinned draws cannot hit this (two rects
+  // are two slots and therefore two ids); pinning is what collapses them onto
+  // one, so pinning is what owes the refusal. Classic placements carry p= on
+  // the wire and are unaffected.
+  //
+  // "AT ONCE" MEANS WITHIN ONE FRAME, and getting that wrong is worse than not
+  // having the guard. A placement drawn in the previous frame is still in
+  // m_pin_places -- gc_regions collects it at the NEXT flush, not this one --
+  // so a rule that merely asked "is it placed anywhere else" refused every
+  // move: a sprite stepping one cell per frame rendered on alternate frames
+  // and flickered, which is precisely the motion case this ticket exists for.
+  // The frame window is m_frame_start_clock, the same predicate the collection
+  // uses.
+  if (m_mode == PlacementMode::UnicodePlaceholders &&
+      (*entry)->last_place_clock > m_frame_start_clock &&
+      (*entry)->last_place_key != key) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        "draw_pinned: a pinned image can have only one live placement under "
+        "UnicodePlaceholders -- the placeholder cell encodes the image id and "
+        "not the placement id"}};
+  }
+  // The other half of the same ambiguity: an ordinary region occupying this
+  // exact rect this frame paints its own placeholder grid over these cells
+  // with a different id, and whichever ran second wins silently.
+  if (m_mode == PlacementMode::UnicodePlaceholders) {
+    if (const auto r = m_regions.find(key);
+        r != m_regions.end() && r->second.last_used > m_frame_start_clock) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "kitty",
+          "draw_pinned: an unpinned image was already drawn to this rect this "
+          "frame -- under UnicodePlaceholders the two cell grids overwrite "
+          "each other"}};
+    }
+  }
+
+  // #139: everything this emits is control traffic, so `transmitted` stays 0.
+  // No payload crosses the wire from here -- there is no transmit() call in
+  // this function, which is the structural form of what #109 asks for rather
+  // than a property a test has to keep watching.
+  ImageTally tally{*this, m_buf.size()};
+
+  auto& place = m_pin_places[key];
+  if (place.image_id != image.id) {
+    // This rect was showing a different pinned image. Retire that placement
+    // rather than leaving two live at one rect -- the same treatment a
+    // content change gets on the unpinned path, and for the same reason.
+    if (place.placed) delete_placement(place.image_id, place.placement_id);
+    place = PinPlacement{image.id, m_next_placement_id++, 0, false, fit};
+  }
+  const bool fit_changed = place.fit != fit;
+  place.fit = fit;
+  place.last_used = ++m_clock;
+  // A pinned image has no content to change, so a stale fit is the only reason
+  // to re-place it.
+  emit_placement(place.image_id, place.placement_id, place.placed, dest, fit,
+                 fit_changed);
+
+  (*entry)->last_place_key = key;
+  (*entry)->last_place_clock = m_clock;
+
+  if (clamped && !m_warned_clamp_pinned) {
+    // A latch of its OWN. Sharing draw_image's would mean whichever path
+    // clamped first consumed the only report the driver will ever make, and
+    // the other would then clamp in silence -- a degradation with no event,
+    // which is the one thing this file may not do.
+    m_warned_clamp_pinned = true;
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        "draw_pinned: destination clamped to the 297-cell placeholder limit"}};
+  }
+  return {};
+}
+
 auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
                                int format_code, Extent px, PlacementFit fit)
     -> std::expected<void, ErrorEvent> {
-  // Unicode placeholders index cells through a 297-entry diacritic table, so
-  // the *placement* cannot exceed that in either axis. Clamp the destination
-  // rect; the image still transmits at full resolution and the terminal
-  // squeezes it into what is left.
-  //
-  // Before #83 this cropped the IMAGE to 297x297 pixels, which was the same
-  // thing back when a pixel was a cell. It no longer is: the caller expresses
-  // nothing in pixels now, so discarding authored content would be a silent
-  // loss for a reason the caller cannot see. Classic placements have no such
-  // limit.
-  Rect dest = cells;
   bool clamped = false;
+  const Rect dest = clamp_dest(cells, clamped);
+
+  // The reciprocal of draw_pinned's guard, and it has to be here as well as
+  // there: widget draw order is not something an application controls, so
+  // which of the two orderings it gets is incidental, and a hazard refused in
+  // one order only is refused by luck. Under placeholders both paths paint a
+  // cell grid over the same cells naming different image ids, and whichever
+  // ran second wins with nothing said.
   if (m_mode == PlacementMode::UnicodePlaceholders) {
-    if (dest.w > kDiacriticCount) { dest.w = kDiacriticCount; clamped = true; }
-    if (dest.h > kDiacriticCount) { dest.h = kDiacriticCount; clamped = true; }
+    const std::uint64_t k = region_key(dest.x, dest.y, dest.w, dest.h);
+    if (const auto p = m_pin_places.find(k);
+        p != m_pin_places.end() && p->second.last_used > m_frame_start_clock) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "kitty",
+          "draw_image: a pinned image was already drawn to this rect this "
+          "frame -- under UnicodePlaceholders the two cell grids overwrite "
+          "each other"}};
+    }
   }
 
   // Each region keeps one stable image id; changed content is retransmitted
@@ -380,16 +710,7 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   // goes to image_transmit; everything else this emits — the replacement
   // delete, the placement, the placeholder cell grid — is image_edit. Both are
   // disjoint sub-ranges of m_buf, which only grows until flush() clears it.
-  struct Tally {
-    KittyDriver& drv;
-    const std::size_t start;
-    std::size_t transmitted{0};
-    ~Tally() {
-      const std::size_t all = drv.m_buf.size() - start;
-      drv.tally_image_transmit(transmitted);
-      drv.tally_image_edit(all - transmitted);
-    }
-  } tally{*this, m_buf.size()};
+  ImageTally tally{*this, m_buf.size()};
 
   auto& slot = region_slot(region_key(dest.x, dest.y, dest.w, dest.h));
   bool content_changed = false;
@@ -420,31 +741,8 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   const bool fit_changed = slot.fit != fit;
   slot.fit = fit;
 
-  if (m_mode == PlacementMode::Classic) {
-    // kitty does NOT refresh an existing classic placement when the image
-    // data is replaced (verified empirically) — recreate the placement on
-    // every content change. Delete + re-place land in the same flush, so
-    // the swap is atomic on screen. Virtual (placeholder) placements DO
-    // track the latest data, so the unicode path skips this.
-    //
-    // A fit change needs the same treatment for the same reason: c=/r= are
-    // baked into the existing placement and re-placing without deleting would
-    // leave both live.
-    if ((content_changed || fit_changed) && slot.placed) {
-      m_buf += std::format("\033_Ga=d,d=i,i={},p={},q=2\033\\",
-                           slot.image_id, slot.placement_id);
-      slot.placed = false;
-    }
-    if (!slot.placed) {
-      place_classic(slot, dest.x, dest.y, dest.w, dest.h, fit);
-      slot.placed = true;
-    }
-  } else {
-    // Placeholder cells are re-emitted every frame (the cell grid is the
-    // placement); the virtual placement itself is created once.
-    place_unicode(slot, dest.x, dest.y, dest.w, dest.h);
-    slot.placed = true;
-  }
+  emit_placement(slot.image_id, slot.placement_id, slot.placed, dest, fit,
+                 content_changed || fit_changed);
 
   if (clamped && !m_warned_clamp) {
     m_warned_clamp = true;
@@ -483,16 +781,32 @@ void KittyDriver::set_placement_mode(PlacementMode mode) {
   // the old classic placement stays on screen — see issue #7). Delete any
   // classic placements terminal-side and force every region to re-place
   // under the new mode on its next draw.
+  const std::size_t before = m_buf.size();
   if (m_mode == PlacementMode::Classic) {
-    const std::size_t before = m_buf.size();
     for (const auto& [key, slot] : m_regions)
       if (slot.placed) delete_image(slot.image_id);
-    tally_image_edit(m_buf.size() - before);  // #139
   }
+  // Pinned placements are retired in BOTH directions, and that asymmetry with
+  // the region loop above is deliberate rather than an oversight.
+  //
+  // A pinned image is the application's, so its placement is retired with d=i
+  // and its DATA is not freed (#109). The region loop's d=I and the retransmit
+  // below are two halves of one fact: an unpinned region must re-upload
+  // because d=I just discarded what it would have reused. A pinned image has
+  // nothing to re-upload -- which is exactly why leaving its stale placement
+  // live would be unrecoverable. Going placeholders -> classic, a virtual
+  // placement nobody retired stays live under the same p= the next classic
+  // a=p reuses, and a region at least gets a second chance from its forced
+  // retransmit where a pinned image gets none.
+  for (const auto& [key, place] : m_pin_places)
+    if (place.placed) delete_placement(place.image_id, place.placement_id);
+  tally_image_edit(m_buf.size() - before);  // #139
+
   for (auto& [key, slot] : m_regions) {
     slot.placed = false;
     slot.content_hash = 0;  // force retransmit under the new placement
   }
+  for (auto& [key, place] : m_pin_places) place.placed = false;
   m_mode = mode;
 }
 
@@ -509,6 +823,21 @@ auto KittyDriver::gc_regions() -> void {
       ++it;
     }
   }
+  // Placements of pinned images, on the same boundary and for the same reason
+  // -- a classic placement left behind floats above the text grid whether or
+  // not its data belongs to the application. What differs is the escape: d=i
+  // retires the placement and leaves the image resident (#109). Nothing here
+  // touches m_pinned, which is what makes "the collection cannot reach a
+  // pinned image" structural.
+  for (auto it = m_pin_places.begin(); it != m_pin_places.end();) {
+    if (it->second.last_used <= m_frame_start_clock) {
+      if (it->second.placed)
+        delete_placement(it->second.image_id, it->second.placement_id);
+      it = m_pin_places.erase(it);
+    } else {
+      ++it;
+    }
+  }
   // Regions drawn from here on get higher stamps; anything still at or below
   // this point at the next flush was not drawn this frame.
   m_frame_start_clock = m_clock;
@@ -518,6 +847,9 @@ auto KittyDriver::gc_regions() -> void {
 
 auto KittyDriver::transmit(std::span<const std::byte> payload, int format_code,
                            Extent px, std::uint32_t id) -> void {
+  // The one place image data is produced, and therefore the only honest answer
+  // to "does this terminal hold anything of ours" that ~KittyDriver can ask.
+  m_transmitted = true;
   // Base64 the payload, whatever it is. The span carries its own length, so
   // this cannot disagree with the buffer the way a length recomputed from
   // width()*height() could -- and for a pre-encoded payload there is no such
@@ -565,8 +897,9 @@ auto KittyDriver::transmit(std::span<const std::byte> payload, int format_code,
   }
 }
 
-auto KittyDriver::place_classic(const RegionSlot& slot, int x, int y, int cols,
-                                int rows, PlacementFit fit) -> void {
+auto KittyDriver::place_classic(std::uint32_t image_id,
+                                std::uint32_t placement_id, int x, int y,
+                                int cols, int rows, PlacementFit fit) -> void {
   // Position the cursor, then place. a=p displays a transmitted image at
   // the cursor; C=1 keeps the cursor where it is. c=/r= scale the image to
   // the destination cell rect — the terminal does the resampling, which is
@@ -586,22 +919,23 @@ auto KittyDriver::place_classic(const RegionSlot& slot, int x, int y, int cols,
       fit == PlacementFit::Exact ? std::string{}
                                  : std::format(",c={},r={}", cols, rows);
   m_buf += std::format("\033[{};{}H", y + 1, x + 1);
-  m_buf += std::format("\033_Ga=p,i={},p={}{},C=1,q=2\033\\", slot.image_id,
-                       slot.placement_id, scale);
+  m_buf += std::format("\033_Ga=p,i={},p={}{},C=1,q=2\033\\", image_id,
+                       placement_id, scale);
 }
 
-auto KittyDriver::place_unicode(const RegionSlot& slot, int x, int y,
-                                int cols, int rows) -> void {
+auto KittyDriver::place_unicode(std::uint32_t image_id,
+                                std::uint32_t placement_id, bool placed, int x,
+                                int y, int cols, int rows) -> void {
   // draw_image clamped the destination rect to the diacritic table's extent,
   // so cols/rows are already <= kDiacriticCount and the declared geometry
   // matches the emitted cell grid exactly.
 
   // Create the virtual placement once per slot.
-  if (!slot.placed) {
+  if (!placed) {
     // a=p (place), i=<image_id>, p=<placement_id>, U=1 (virtual),
     // c=<cols>, r=<rows>, q=2 (suppress response)
     m_buf += std::format("\033_Ga=p,i={},p={},U=1,c={},r={},q=2\033\\",
-                         slot.image_id, slot.placement_id, cols, rows);
+                         image_id, placement_id, cols, rows);
   }
 
   // Emit the placeholder cell grid. Each cell is:
@@ -614,7 +948,7 @@ auto KittyDriver::place_unicode(const RegionSlot& slot, int x, int y,
     m_buf += std::format("\033[{};{}H", y + ry + 1, x + 1);
 
     // Set SGR foreground to the image ID (24-bit).
-    emit_id_as_sgr(slot.image_id);
+    emit_id_as_sgr(image_id);
 
     for (int cx = 0; cx < cols; ++cx) {
       append_placeholder(m_buf, ry, cx);
@@ -665,8 +999,27 @@ auto KittyDriver::delete_image(std::uint32_t image_id) -> void {
   m_buf += std::format("\033_Ga=d,d=I,i={},q=2\033\\", image_id);
 }
 
+auto KittyDriver::delete_placement(std::uint32_t image_id,
+                                   std::uint32_t placement_id) -> void {
+  // a=d (delete), d=i (this image's placement p=, leaving the DATA resident).
+  // The lowercase letter is the whole of #109's lifetime split: a region owns
+  // its image and takes d=I above, a pinned placement does not own the image
+  // it shows and must not free it.
+  m_buf += std::format("\033_Ga=d,d=i,i={},p={},q=2\033\\", image_id,
+                       placement_id);
+}
+
 auto KittyDriver::delete_all() -> void {
-  if (m_next_image_id <= 1) return;  // nothing uploaded
+  // Nothing was ever uploaded, so there is nothing on the terminal to clear.
+  //
+  // Asked of the TRANSMIT PATH rather than reconstructed from the maps. Both
+  // obvious spellings are wrong: `m_next_image_id <= 1` misses a driver that
+  // only ever pinned, and adding `&& m_pinned.empty()` still misses pin ->
+  // flush -> unpin -> destruct, where the unpin's d=I is queued in m_buf and
+  // dies there unflushed while the image is very much still resident. One
+  // flag set where the bytes are actually produced cannot disagree with any of
+  // that (#109).
+  if (!m_transmitted) return;
   // Delete all images: a=d (delete), d=A (all).
   //
   // Written directly to stdout, NEVER through emit_frame — and #178 did not

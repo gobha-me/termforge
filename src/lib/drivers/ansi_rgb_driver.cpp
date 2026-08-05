@@ -104,7 +104,7 @@ auto AnsiRgbDriver::draw_image(Rect cells, const Image& image, PlacementFit fit)
   }
   if (auto ok = detail::validate_fit(fit, cells,
                                      Extent{image.width(), image.height()},
-                                     *this, "ansi_rgb");
+                                     *this, "ansi_rgb", "draw_image");
       !ok) {
     return ok;
   }
@@ -139,7 +139,8 @@ auto AnsiRgbDriver::draw_image(Rect cells, const EncodedImage& image,
     return ok;
   }
   if (auto ok =
-          detail::validate_fit(fit, cells, image.pixels, *this, "ansi_rgb");
+          detail::validate_fit(fit, cells, image.pixels, *this, "ansi_rgb",
+                               "draw_image");
       !ok) {
     return ok;
   }
