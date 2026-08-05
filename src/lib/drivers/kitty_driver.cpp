@@ -297,12 +297,14 @@ auto KittyDriver::region_slot(std::uint64_t key) -> RegionSlot& {
     slot.placement_id = lru->second.placement_id;
     m_regions.erase(lru);
   } else {
-    // Step over anything a pin currently holds (#109). With recycling working
-    // as designed this counter never reaches the pinned range at all -- but
-    // #187 is a live path on which it grows one id per FRAME, so "the two
-    // ranges cannot meet" is not a property this code has, and handing a
-    // region an id the terminal is holding an application's image under would
-    // overwrite that image on the next transmit.
+    // Step over anything a pin currently holds (#109). This counter is
+    // monotonic and never gives an id back, so it climbs on CHURN: every rect a
+    // widget stops drawing frees a slot without lowering the counter, and the
+    // replacement takes a fresh id. #187 made that one id per FRAME and is
+    // fixed; the churn path remains (#190). So "the two ranges cannot meet" is
+    // still not a property this code has, and handing a region an id the
+    // terminal is holding an application's image under would overwrite that
+    // image on the next transmit.
     while (m_pinned.contains(m_next_image_id)) ++m_next_image_id;
     slot.image_id = m_next_image_id++;
     slot.placement_id = m_next_placement_id++;
@@ -484,12 +486,12 @@ auto KittyDriver::pin_payload(std::span<const std::byte> payload,
   //
   // BOTH POOLS ARE CONSULTED, and the symmetry is load-bearing. region_slot
   // steps over pinned ids; if this did not step over region ids the guard
-  // would be one-directional, and the id space is shared. Under #187 the
-  // region counter climbs one id per FRAME, so it reaches this range in about
-  // four seconds -- and a pin issued an id a live region owns is not a
-  // near-miss: the region's next transmit overwrites the application's pixels,
-  // and the region's collection emits a=d,d=I on them. Silently, because q=2
-  // means the terminal's objection reaches nobody.
+  // would be one-directional, and the id space is shared. The region counter
+  // still climbs on churn and never gives an id back (#190), so it reaches this
+  // range over a long session -- and a pin issued an id a live region owns is
+  // not a near-miss: the region's next transmit overwrites the application's
+  // pixels, and the region's collection emits a=d,d=I on them. Silently,
+  // because q=2 means the terminal's objection reaches nobody.
   const auto region_holds = [this](std::uint32_t candidate) {
     for (const auto& [key, slot] : m_regions)
       if (slot.image_id == candidate) return true;
@@ -507,7 +509,7 @@ auto KittyDriver::pin_payload(std::span<const std::byte> payload,
     return std::unexpected{ErrorEvent{
         Severity::Warning, "kitty",
         "pin_image: no resident id is free -- unpinned regions currently hold "
-        "the rest of the one-byte id range (see #187)"}};
+        "the rest of the one-byte id range (see #190)"}};
   }
 
   // #139: the payload is image_transmit and nothing else here emits. These
@@ -754,13 +756,17 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
 }
 
 void KittyDriver::flush() {
-  // Per-frame region GC: any slot still tracked but not drawn this frame
+  // Region GC: any slot still tracked but not drawn since the last collection
   // has disappeared from the UI (a closed dialog, a removed widget). A
   // classic placement would otherwise float above the text grid
   // indefinitely — kitty draws classic placements at z=0, above text, so
   // the cell diff cannot paint over them. Delete it terminal-side and drop
   // the slot. This runs *before* emitting m_buf so the deletions land in
   // the same flush as the frame that removed the region.
+  //
+  // "Since the last collection" and not "this frame": a flush is a WRITE
+  // boundary and the driver is never told where a frame ends (#187). See
+  // gc_regions() for what it does about that.
   const std::size_t before_gc = m_buf.size();
   gc_regions();
   tally_image_edit(m_buf.size() - before_gc);  // #139: deletes are image traffic
@@ -770,7 +776,6 @@ void KittyDriver::flush() {
   // stay AFTER gc_regions() above, or the deletions land in the next frame.
   emit_frame(m_buf);
   m_buf.clear();
-  ++m_frame;  // advance the frame window used by gc_regions()
 }
 
 void KittyDriver::set_placement_mode(PlacementMode mode) {
@@ -811,10 +816,35 @@ void KittyDriver::set_placement_mode(PlacementMode mode) {
 }
 
 auto KittyDriver::gc_regions() -> void {
-  // last_used is stamped with the per-draw clock; m_frame counts flushes.
-  // A region drawn this frame has a last_used newer than the clock value at
-  // the previous flush's end; track that boundary so we can tell "drawn this
-  // frame" from "stale".
+  // A flush is a WRITE boundary; a collection needs a FRAME boundary, and
+  // nothing tells this driver where one is (#187). App flushes twice per frame
+  // and the first flush has drawn nothing, so a collection running there sees
+  // every slot still carrying the previous frame's stamp and cannot tell
+  // "nothing has been drawn yet" from "this region disappeared". It used to
+  // treat both as the second: every region deleted and fully re-transmitted
+  // every frame, and an id counter climbing one per frame until the
+  // placeholder path's one-byte encoding ran out.
+  //
+  // So a flush with no draw since the last collection collects nothing. m_clock
+  // advances only where a draw stamps a slot (draw_payload, draw_pinned) and
+  // m_frame_start_clock was assigned m_clock by whichever collection last ran,
+  // so `m_clock > m_frame_start_clock` is exactly "has anything been drawn
+  // since then" -- and on the branch that returns, the one write skipped below
+  // (m_frame_start_clock = m_clock) is provably assigning the variable to
+  // itself. That is what keeps this from moving the three other readers of the
+  // frame window: draw_pinned's two placeholder conflict guards and
+  // draw_payload's reciprocal all see byte-identical state.
+  //
+  // kDrawlessFlushGrace is what bounds the other side. Skipping forever would
+  // leak the last region's placement forever, because the frame that removes
+  // it is the frame App issues no second flush on.
+  const bool drew = m_clock > m_frame_start_clock;
+  if (!drew && ++m_drawless_flushes <= kDrawlessFlushGrace) return;
+  m_drawless_flushes = 0;
+
+  // last_used is stamped with the per-draw clock. A region drawn since the
+  // previous collection has a last_used above the boundary that collection
+  // recorded; anything at or below it is gone from the UI.
   for (auto it = m_regions.begin(); it != m_regions.end();) {
     if (it->second.last_used <= m_frame_start_clock) {
       delete_image(it->second.image_id);
@@ -839,7 +869,9 @@ auto KittyDriver::gc_regions() -> void {
     }
   }
   // Regions drawn from here on get higher stamps; anything still at or below
-  // this point at the next flush was not drawn this frame.
+  // this point at the next collection was not drawn in between. On the skipped
+  // branch above this is a self-assignment, which is the whole reason skipping
+  // is safe.
   m_frame_start_clock = m_clock;
 }
 

@@ -554,17 +554,20 @@ placement, nothing rendered), so an id that must render under placeholders fits
 the 256-colour form or does not render at all.
 
 Ids therefore come from two pools inside one byte. Regions allocate upward from
-1 and never exceed `kMaxRegionSlots` under their own steam; pins allocate
-downward from 255, giving `KittyDriver::kMaxPinnedImages == 239`.
+1; pins allocate downward from 255, giving
+`KittyDriver::kMaxPinnedImages == 239`.
 
 **Each allocator steps over what the other holds, and the symmetry is
-load-bearing.** Not a convention: #187 is a live path on which the region
-counter grows one id per *frame*, so it reaches the pinned range in about four
-seconds and "the ranges cannot meet" is not a property the code has. A pin
-issued a live region's id is not a near-miss — the region's next transmit
-overwrites the application's pixels and its collection emits `a=d,d=I` on them.
-If regions have taken the whole range, `pin_image` refuses rather than issuing
-a colliding id.
+load-bearing.** Not a convention: the region counter is **monotonic and never
+gives a collected id back**, so it climbs on region *churn* — every rect a
+widget stops drawing frees a slot without lowering the counter, and the
+replacement takes a fresh id. Over a long session it reaches the pinned range,
+so "the ranges cannot meet" is not a property the code has. (#187 made it far
+worse — one id per *frame*, so about four seconds — and is fixed; the churn path
+is #190.) A pin issued a live region's id is not a near-miss — the region's next
+transmit overwrites the application's pixels and its collection emits `a=d,d=I`
+on them. If regions have taken the whole range, `pin_image` refuses rather than
+issuing a colliding id.
 
 Free ids are **derived** from the live maps rather than tracked beside them, so
 a pin/unpin cycle cannot walk the budget off its end and there is no second
@@ -628,13 +631,39 @@ with the placement-only `a=d,d=i` so its data survives the rect it was shown
 in. Its id comes from the other end of the one-byte range. See *Resident
 images* above.
 
-Two caveats about the paragraph above, both real today. `App` flushes twice per
-frame and the first flush has drawn nothing, so the per-frame collection
-currently deletes and fully re-transmits every **unpinned** region every frame
-and the region id counter grows without bound — #187, and the reason a pinned
-image is the only thing that actually stays resident under `App` right now. And
-"unchanged content is not re-uploaded" is a property of the *slot*, so it is
-worth nothing once the slot has been collected.
+### A flush is a write boundary; the collection needs a frame
+
+The collection cannot simply run on every flush, and #187 is the bill for
+assuming it could. `App` flushes **twice** per frame — `Renderer::present` ends
+in `flush()`, and only then does `flush_pixel_regions` issue the frame's
+`draw_image` calls and flush again — so the first flush of every frame has drawn
+nothing. A collection running there sees every slot still carrying the previous
+frame's stamp and **cannot distinguish "nothing has been drawn yet" from "this
+region disappeared."** It chose the second: every region deleted and fully
+re-transmitted every frame (205,283 bytes for the plate above), and an id
+counter climbing one per frame until the placeholder encoding ran out. It
+reached the pinned placements too, retiring and recreating each one in
+*different writes* — a sprite that blinks off once per frame.
+
+So a flush with no draw since the last collection collects nothing.
+`m_clock` advances only where a draw stamps a slot, and the boundary is assigned
+`m_clock` by whichever collection last ran, so "has anything been drawn since
+then" is one comparison — and on the branch that skips, the single write it
+bypasses is assigning that variable to itself. That is what keeps the skip from
+moving the three other guards written against the same frame window.
+
+`kDrawlessFlushGrace` bounds the other side, because skipping forever would leak
+the last region's placement forever: the frame that removes the last region is
+the frame `App` issues no second flush on. At 1 it costs nothing on a steady
+frame and a removed region's placement lingers at most one frame — and only when
+it was the *last* one, since any other live region makes the second flush a real
+collection. A caller that flushed three times per frame with the first two
+drawless would lose the dedup again; the constant is that cadence assumption,
+not a general property.
+
+The remaining caveat is unchanged: **"unchanged content is not re-uploaded" is a
+property of the _slot_**, so it is worth nothing once the slot has been
+collected. Residency is what `pin_image` is for.
 
 ## Placement Modes
 

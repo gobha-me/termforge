@@ -579,10 +579,10 @@ TEST_CASE("pinned: switching placement mode retires the placement, not the "
 
 TEST_CASE("pinned: a region never gets an id a pin is holding",
           "[pinned][kitty]") {
-  // Region ids walk upward and — until #187 is fixed — they walk without
-  // bound, so "the two ranges cannot meet" is not a property this code has.
-  // Handing a region an id the terminal holds an application's image under
-  // would overwrite that image on the region's next transmit.
+  // Region ids walk upward and they still walk without bound, so "the two
+  // ranges cannot meet" is not a property this code has. Handing a region an id
+  // the terminal holds an application's image under would overwrite that image
+  // on the region's next transmit.
   KittyDriver d;
   std::string out;
   d.set_output(&out);
@@ -590,11 +590,17 @@ TEST_CASE("pinned: a region never gets an id a pin is holding",
   const auto p = d.pin_image(art(14));
   REQUIRE(p.has_value());
 
-  // Drive the region allocator past the pinned id. Each frame's collection
-  // empties the map, so every draw allocates a fresh id (#187).
+  // Drive the region allocator past the pinned id, via region CHURN: a new
+  // destination rect every frame, so the previous slot is legitimately
+  // collected and the next draw takes the fresh-id branch.
+  //
+  // This used to be `flush(); draw the SAME rect; flush();`, which climbed one
+  // id per frame because #187 emptied the map on the drawless flush. That is
+  // fixed, so a fixture built on it would pass vacuously — and the case would
+  // stop covering the `while (m_pinned.contains(...)) ++m_next_image_id` skip
+  // it exists for. Churn is the id-growth path that REMAINS (#190).
   for (int i = 0; i < 300; ++i) {
-    d.flush();
-    REQUIRE(d.draw_image(Rect{0, 0, 2, 2}, art(i % 200)).has_value());
+    REQUIRE(d.draw_image(Rect{i % 80, i / 80, 2, 2}, art(i % 200)).has_value());
     d.flush();
   }
 
@@ -810,8 +816,9 @@ TEST_CASE("pinned: a recycled id does not resurrect a stale handle",
 
 TEST_CASE("pinned: a pin never takes an id a live region is holding",
           "[pinned][kitty][failure]") {
-  // Region ids climb one per FRAME today (#187), so they reach the pinned
-  // range in about four seconds. A pin issued a live region's id is not a
+  // Region ids climb on CHURN -- every rect a widget stops drawing frees a slot
+  // and the replacement takes a fresh id -- so over a long session they still
+  // reach the pinned range (#190). A pin issued a live region's id is not a
   // near-miss: the region's next transmit overwrites the application's pixels
   // and its collection emits a=d,d=I on them, silently, because q=2 means the
   // terminal's objection reaches nobody.
@@ -820,22 +827,22 @@ TEST_CASE("pinned: a pin never takes an id a live region is holding",
   d.set_output(&out);
   const Image img{1, 1, {Pixel{9, 9, 9, 255}}};
 
-  // Drive the region counter up to the top of the one-byte range, then draw
-  // WITHOUT flushing so a region is still holding that id when the pin lands.
-  for (int f = 0; f < 254; ++f) {
-    d.flush();
-    REQUIRE(d.draw_image(Rect{0, 0, 1, 1}, img).has_value());
+  // Drive the region counter to the top of the one-byte range by moving the
+  // rect every frame. The 255th distinct rect takes id 255, and it is still
+  // holding it below: the collection that runs in the same flush drops the rect
+  // it LEFT, not the one just drawn.
+  //
+  // This used to be `flush(); draw the same rect; flush();`, which climbed one
+  // id per frame only because #187 emptied the map on the drawless flush --
+  // exactly the vacuity the REQUIRE below was put here to catch.
+  for (int f = 0; f < 255; ++f) {
+    REQUIRE(d.draw_image(Rect{f % 80, f / 80, 1, 1}, img).has_value());
     d.flush();
   }
-  d.flush();
-  REQUIRE(d.draw_image(Rect{0, 0, 1, 1}, img).has_value());
-  // Flush so the bytes reach the sink, but do NOT flush again -- this
-  // collection keeps the slot, so a region is still holding id 255 below.
-  d.flush();
 
-  // The precondition this case rests on, asserted rather than assumed: if
-  // #187 is fixed the counter stops climbing, this stops testing what it
-  // claims, and the assertion below would pass vacuously.
+  // The precondition this case rests on, asserted rather than assumed: without
+  // it a pin that happened to avoid 255 for some unrelated reason would look
+  // like evidence of the skip.
   REQUIRE(transmits_of(out, 255) == 1);
 
   const auto p = d.pin_image(art(37));
