@@ -29,6 +29,7 @@
 
 #include <expected>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "termforge/core/types.hpp"
@@ -44,6 +45,18 @@ namespace termforge {
 struct TerminalIo {
   int in{-1};
   int out{-1};
+};
+
+// The identity strings capability detection corroborates colour depth from --
+// $TERM and $COLORTERM. For a process that *is* its terminal's child those
+// live in the environment and the probe reads them there. For a session they
+// arrive from the peer (ssh's pty-req carries TERM), while the process
+// environment holds the daemon's identity -- never the client's. set_env()
+// hands the pair over instead (#181).
+struct TerminalEnv {
+  std::string term;       // "" = the client sent no TERM
+  std::string colorterm;  // "" = the client sent no COLORTERM
+  friend auto operator==(const TerminalEnv&, const TerminalEnv&) -> bool = default;
 };
 
 class Terminal {
@@ -93,6 +106,65 @@ class Terminal {
   // them. It is the discriminator enter_raw() branches on, not a diagnostic.
   [[nodiscard]] auto io_injected() const noexcept -> bool;
 
+  // ── whose terminal this session believes it is talking to (#181) ──
+  // Replace the $TERM/$COLORTERM pair that query_capabilities() corroborates
+  // colour depth from and is_console_vt() reads. This is what lets a session's
+  // identity come from the client (a pty-req value the application has in
+  // hand) instead of from the daemon's environment, which is never the
+  // client's.
+  //
+  // INJECTION IS A STATEMENT OF INTENT, the same rule as set_io: once the pair
+  // is handed over, the process environment is consulted for NEITHER field --
+  // an empty string means "the client did not send that variable", not "ask
+  // the daemon". Mixing the two sources per field would re-open exactly the
+  // gap this exists to close: one field of daemon identity smuggled into a
+  // session that claimed its own.
+  //
+  // Legal only before enter_raw() and only with no screen up; identity is
+  // fixed for the session once the loop starts. Refusal is TOTAL: the previous
+  // pair stays in force untouched.
+  auto set_env(TerminalEnv env) -> std::expected<void, ErrorEvent>;
+
+  // The pair set_env() last applied (all-empty before any call). What the
+  // probe actually corroborates from is this pair when env_injected() and the
+  // process environment otherwise -- the pair is never mixed.
+  [[nodiscard]] auto env() const noexcept -> const TerminalEnv&;
+
+  // True when set_env() supplied the pair rather than the probe reading the
+  // process environment.
+  [[nodiscard]] auto env_injected() const noexcept -> bool;
+
+  // ── pushed capabilities (#181) ──
+  // The probe costs a fixed startup window and consumes whatever arrives on
+  // the input stream while it waits for replies. A caller that already knows
+  // the answer -- a session manager with a cached tier per user, a user
+  // override that knows their terminal better than any probe does -- hands it
+  // over instead, and query_capabilities() returns the push having written
+  // nothing to the stream and read nothing from it. No stall, no swallowed
+  // first keystrokes.
+  //
+  // This is also the override that SURVIVES a re-probe (the library half of
+  // #145 item 3): every query_capabilities() serves the push until
+  // clear_capabilities() gives the next one back to probing.
+  //
+  // The struct is the caller's statement and is not verified against the
+  // terminal -- kitty_keyboard included, which is what App's degradation
+  // event reads. Legal only before enter_raw() and only with no screen up
+  // (call it before App::run()); refusal is total and leaves any previous
+  // push in force.
+  auto set_capabilities(Capabilities caps) -> std::expected<void, ErrorEvent>;
+
+  // The pushed capabilities, or std::nullopt when none is in force.
+  [[nodiscard]] auto pushed_capabilities() const noexcept
+      -> std::optional<Capabilities>;
+
+  // Whether the next query_capabilities() serves a push or probes.
+  [[nodiscard]] auto has_pushed_capabilities() const noexcept -> bool;
+
+  // Give the next query_capabilities() back to the probe. No-op when nothing
+  // is pushed.
+  auto clear_capabilities() noexcept -> void;
+
   // True when enter_raw() captured and replaced a real tty's termios — so
   // leave_raw() has a tcsetattr to undo and the fatal-signal backstop is armed
   // on this Terminal's behalf. Deliberately NOT the same question as raw(),
@@ -132,7 +204,10 @@ class Terminal {
 
   // Probe terminal capabilities (Kitty graphics -> Sixel -> truecolor) with a
   // short response timeout. Populates a Capabilities struct; detection
-  // failure degrades to the fallback driver rather than aborting.
+  // failure degrades to the fallback driver rather than aborting. When
+  // capabilities have been pushed (#181) the push is returned instead and
+  // nothing is written to or read from the stream -- not even raw mode is
+  // entered on the push's behalf.
   auto query_capabilities() -> std::expected<Capabilities, ErrorEvent>;
 
   // Construct the best driver for already-probed capabilities. Probe once

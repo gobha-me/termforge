@@ -152,6 +152,20 @@ file is the tactical version.
   **domain match, not a memory bound** — `winsize` holds unsigned shorts, so it
   refuses a window no ioctl could have reported; what an untrusted peer may
   claim is the embedding program's policy and stays there.
+  **Identity is a push too** (#181). `Terminal::set_env` hands over the session's
+  `TERM`/`COLORTERM` pair — a `pty-req` value the application has in hand and no
+  way to hand over before — and injection is a statement of intent exactly like
+  `set_io`'s: once the pair is handed over, the process environment is consulted
+  for **neither field**. An empty string means "the client sent nothing", not
+  "ask the daemon"; mixing the two sources per field would re-open the exact
+  daemon/client gap the push closes. `query_capabilities()` and `is_console_vt()`
+  are the only readers. Beside it, `set_capabilities` lets a caller that already
+  knows the answer — a cached tier, a user override — hand it over, and
+  `query_capabilities()` then serves the push having written **nothing** to the
+  stream and read **nothing** from it: no probe bytes, no response window, no
+  swallowed first keystrokes, and no `enter_raw()` on the push's behalf either.
+  That is the override that survives a re-probe (`#145` item 3): every call serves
+  the push until `clear_capabilities()` gives the probe back its job.
 
 ## Protocol priority (driver selection)
 
