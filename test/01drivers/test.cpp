@@ -30,35 +30,13 @@ using termforge::Severity;
 using tfsupport::checker;
 using tfsupport::solid;
 
-namespace {
-
 // Most of this file asserts with out.find(), which cannot tell `i=1` from
 // `i=16`. Where an assertion is about a COUNT or about the absence of an id,
-// that is a false green waiting to happen, so those go through the parser in
-// test/support/apc.hpp instead. Introduced here for the LRU case; the older
+// that is a false green waiting to happen, so those go through the shared
+// parser in test/support/apc.hpp instead. Used by the LRU case below; the older
 // substring checks are left alone rather than swept in an unrelated cut.
-auto deletes_of(std::string_view out, std::uint32_t id) -> int {
-  int n = 0;
-  for (const auto& c : tfsupport::apcs(out)) {
-    if (tfsupport::key_value(c, "a") != "d") continue;
-    if (tfsupport::key_value(c, "d") != "I") continue;
-    if (tfsupport::key_value(c, "i") == std::to_string(id)) ++n;
-  }
-  return n;
-}
-
-// Every distinct image id named anywhere in the stream. An id ceiling is a
-// property of the whole set, so it has to be collected rather than spot-checked.
-auto ids_named(std::string_view out) -> std::set<std::uint32_t> {
-  std::set<std::uint32_t> ids;
-  for (const auto& c : tfsupport::apcs(out)) {
-    const std::string i = tfsupport::key_value(c, "i");
-    if (!i.empty()) ids.insert(static_cast<std::uint32_t>(std::stoul(i)));
-  }
-  return ids;
-}
-
-}  // namespace
+using tfsupport::data_deletes_of;
+using tfsupport::ids_named;
 
 // The DriverImpl concept must hold for concrete drivers (compile-time check).
 static_assert(DriverImpl<AnsiRgbDriver>);
@@ -285,7 +263,7 @@ TEST_CASE("KittyDriver: stale regions are LRU-evicted terminal-side",
   }
   d.flush();
   // Region 1 was the least-recently-drawn, so it is the victim.
-  REQUIRE(deletes_of(out, 1) == 1);
+  REQUIRE(data_deletes_of(out, 1) == 1);
   // Evicted ids are recycled, so ids stay within the one-byte range the
   // placeholder path's 38;5;<id> foreground encoding requires. Asserted as a
   // bound over every id on the wire rather than by grepping for two arbitrary

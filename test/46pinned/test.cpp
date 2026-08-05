@@ -61,37 +61,17 @@ auto art(int seed) -> Image {
                                   255});
 }
 
-// Commands naming image `id`, filtered by their a= value and, for a delete,
-// by the CASE of d=. One helper rather than four near-copies -- and every
-// assertion below goes through it, so `i=1` can never be satisfied by `i=16`
-// the way a substring find would allow.
-//
-// `d` is "" for anything that is not a delete. d=I frees the image data, d=i
-// retires one placement and leaves the data: telling those two apart is the
-// whole of the lifetime split this suite exists to pin.
-auto cmds_of(std::string_view out, std::string_view a, std::string_view d,
-             std::uint32_t id) -> int {
-  int n = 0;
-  for (const auto& c : tfsupport::apcs(out)) {
-    if (tfsupport::key_value(c, "a") != a) continue;
-    if (!d.empty() && tfsupport::key_value(c, "d") != d) continue;
-    if (tfsupport::key_value(c, "i") == std::to_string(id)) ++n;
-  }
-  return n;
-}
-
-auto transmits_of(std::string_view out, std::uint32_t id) -> int {
-  return cmds_of(out, "t", "", id);
-}
-auto data_deletes_of(std::string_view out, std::uint32_t id) -> int {
-  return cmds_of(out, "d", "I", id);
-}
-auto placement_deletes_of(std::string_view out, std::uint32_t id) -> int {
-  return cmds_of(out, "d", "i", id);
-}
-auto placements_of(std::string_view out, std::uint32_t id) -> int {
-  return cmds_of(out, "p", "", id);
-}
+// The four per-id counters and the id-set collector live in support/apc.hpp
+// since #187 -- test/47frameshape needed the same four and test/01drivers two of
+// them, and three copies of one predicate under two names had already started to
+// drift. The convention they share is documented at the new definition: `a`/`d`
+// are matched as exact key values so `i=1` cannot be satisfied by `i=16`, and
+// d=I (data) is a different counter from d=i (one placement) because telling
+// those apart is the whole of this suite's subject.
+using tfsupport::data_deletes_of;
+using tfsupport::placement_deletes_of;
+using tfsupport::placements_of;
+using tfsupport::transmits_of;
 
 // Every cursor-positioning CSI in emission order, as (col, row) ONE-BASED --
 // the numbers actually on the wire. Placements are positioned by the cursor

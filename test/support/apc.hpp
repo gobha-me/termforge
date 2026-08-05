@@ -16,6 +16,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -169,6 +170,65 @@ inline auto count_of(std::string_view hay, std::string_view needle) -> int {
     ++n;
   }
   return n;
+}
+
+// ── counting commands per image id ──────────────────────────────────────────
+//
+// Hoisted from test/46pinned (#109) when test/47frameshape (#187) needed the
+// same four counters and test/01drivers wanted two of them. Three copies of one
+// predicate under two different names is what the hoist rule in this file's
+// header exists to stop, and the drift had already started: 01drivers spelled
+// the d=I counter `deletes_of` while 46pinned spelled it `data_deletes_of`.
+//
+// They share a convention that must not be reimplemented per suite: `a` and `d`
+// are matched as EXACT key values, so `i=1` can never be satisfied by `i=16`,
+// and an empty `d` means "this is not a delete, do not filter on d".
+//
+// d=I frees the image data and its placements; d=i retires ONE placement and
+// leaves the data resident. Telling those apart is the whole of #109's lifetime
+// split, so they get separate counters rather than one with a flag.
+inline auto cmds_of(std::string_view out, std::string_view a, std::string_view d,
+                    std::uint32_t id) -> int {
+  int n = 0;
+  for (const Apc& c : apcs(out)) {
+    if (key_value(c, "a") != a) continue;
+    if (!d.empty() && key_value(c, "d") != d) continue;
+    if (key_value(c, "i") == std::to_string(id)) ++n;
+  }
+  return n;
+}
+inline auto transmits_of(std::string_view out, std::uint32_t id) -> int {
+  return cmds_of(out, "t", "", id);
+}
+inline auto data_deletes_of(std::string_view out, std::uint32_t id) -> int {
+  return cmds_of(out, "d", "I", id);
+}
+inline auto placement_deletes_of(std::string_view out, std::uint32_t id) -> int {
+  return cmds_of(out, "d", "i", id);
+}
+inline auto placements_of(std::string_view out, std::uint32_t id) -> int {
+  return cmds_of(out, "p", "", id);
+}
+
+// Every transmission OPENER, whatever its id. Continuation chunks carry m= and
+// no a=, so nothing is counted twice.
+inline auto total_transmits(std::string_view out) -> int {
+  int n = 0;
+  for (const Apc& c : apcs(out))
+    if (key_value(c, "a") == "t") ++n;
+  return n;
+}
+
+// Every distinct image id named anywhere in the stream. An id ceiling is a
+// property of the whole SET, not of any one command, so it has to be collected
+// rather than spot-checked for two arbitrary large values.
+inline auto ids_named(std::string_view out) -> std::set<std::uint32_t> {
+  std::set<std::uint32_t> ids;
+  for (const Apc& c : apcs(out)) {
+    const std::string i = key_value(c, "i");
+    if (!i.empty()) ids.insert(static_cast<std::uint32_t>(std::stoul(i)));
+  }
+  return ids;
 }
 
 }  // namespace tfsupport

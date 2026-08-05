@@ -298,12 +298,16 @@ auto KittyDriver::region_slot(std::uint64_t key) -> RegionSlot& {
     m_regions.erase(lru);
   } else {
     // Step over anything a pin currently holds (#109). This counter is
-    // monotonic and never gives an id back, so it climbs on CHURN: every rect a
-    // widget stops drawing frees a slot without lowering the counter, and the
-    // replacement takes a fresh id. #187 made that one id per FRAME and is
-    // fixed; the churn path remains (#190). So "the two ranges cannot meet" is
-    // still not a property this code has, and handing a region an id the
-    // terminal is holding an application's image under would overwrite that
+    // monotonic and never gives an id back: a collected slot frees its map
+    // entry without lowering it, so a rect the caller stops drawing costs an id
+    // permanently. For a MOVING region that is one id per frame -- a sprite
+    // stepping one cell per frame is a new key every frame -- so it reaches 255
+    // in about four seconds at 60fps just as #187 did, measured (300 frames of
+    // motion produce 300 distinct ids). #187 fixed the STATIC case only; the
+    // motion case is #190, and #109's pin_image is the API answer for motion
+    // because draw_pinned allocates no image id at all. So "the two ranges
+    // cannot meet" is not a property this code has, and handing a region an id
+    // the terminal is holding an application's image under would overwrite that
     // image on the next transmit.
     while (m_pinned.contains(m_next_image_id)) ++m_next_image_id;
     slot.image_id = m_next_image_id++;
@@ -487,11 +491,11 @@ auto KittyDriver::pin_payload(std::span<const std::byte> payload,
   // BOTH POOLS ARE CONSULTED, and the symmetry is load-bearing. region_slot
   // steps over pinned ids; if this did not step over region ids the guard
   // would be one-directional, and the id space is shared. The region counter
-  // still climbs on churn and never gives an id back (#190), so it reaches this
-  // range over a long session -- and a pin issued an id a live region owns is
-  // not a near-miss: the region's next transmit overwrites the application's
-  // pixels, and the region's collection emits a=d,d=I on them. Silently,
-  // because q=2 means the terminal's objection reaches nobody.
+  // never gives a collected id back (#190), so a moving unpinned region still
+  // reaches this range in about four seconds -- and a pin issued an id a live
+  // region owns is not a near-miss: the region's next transmit overwrites the
+  // application's pixels, and the region's collection emits a=d,d=I on them.
+  // Silently, because q=2 means the terminal's objection reaches nobody.
   const auto region_holds = [this](std::uint32_t candidate) {
     for (const auto& [key, slot] : m_regions)
       if (slot.image_id == candidate) return true;
