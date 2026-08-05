@@ -7,7 +7,11 @@ which holds standing conventions, not state).
 ## Where we are (2026-08-05, later)
 
 **Latest work: #109 — an image the application keeps, not one the driver
-caches. Branch `feat/109-pinned-images`, awaiting the real-kitty capture.**
+caches. Shipped as v0.8.0 (PR #188, 8/8 CI green, rebase-merged).** A minor
+bump rather than a patch: a new public type (`PinnedImage`), four new virtuals
+on `TerminalDriver`, and a new capability/budget query — the largest API
+addition since #178, and the first thing since then that downstream has to be
+told about rather than merely inherit.
 
 **How it got picked: the consumer said so, in a comment.** Split A of #144
 finished at v0.7.4 and Split B waits on the unanswered posture question, so
@@ -74,6 +78,15 @@ without bound (measured: 4 frames → 4 transmits of one unchanged image, ids
 the unpinned path; not folded in, because the fix has to distinguish "nothing
 was drawn" from "this region disappeared".
 
+**And it reaches the pinned path too, which was found only while preparing this
+merge.** `gc_regions()` collects `m_pin_places` on the same boundary, so the
+drawless flush retires every pinned placement with `d=i` and erases the entry,
+and the second flush re-creates it under a fresh placement id. **Delete and
+re-place land in different writes**, so a pinned sprite blinks off once per
+frame — the artifact the placeholder guard above exists to remove, reintroduced
+through the collector. Inherited from the shape rather than created here, and it
+makes #187 the next cut rather than a queued one.
+
 **Tests:** `test/46pinned`, 32 cases, **34/34 mutations killed** (one only via
 UB — removing an end-iterator check segfaults rather than failing, which is a
 weak kill and is recorded as such). Validated 48/48 on Debug, clang, Release
@@ -81,11 +94,16 @@ weak kill and is recorded as such). Validated 48/48 on Debug, clang, Release
 can make a green claim falsely. Existing suites needed **no edits**, which is
 the evidence that nothing moved for callers who do not pin.
 
-**Owed before release: the real-kitty capture.** `tools/kitty_repro.sh` gained
-**stanza 7**, and it is the merge gate: three placements of one image, the
-middle one deleted with `d=i`, then a fourth placed from the surviving data
-with no retransmit. The whole feature rests on `d=i` leaving the data resident,
-and no human has watched a terminal do it.
+**The real-kitty capture passed, first run.** `tools/kitty_repro.sh` gained
+**stanza 7** — three placements of one image, the middle one deleted with `d=i`,
+then a fourth placed from the surviving data with no retransmit — and kitty
+answered `;OK` to all five commands with no `;E`: the middle block vanished, the
+outer two stayed, and **the fourth rendered**. That last one is the whole gate,
+because it is the only observation that can distinguish `d=i` from `d=I`, and
+the existing `d=i` path could never have made it: there the delete is always
+followed by a re-place in the same flush having just retransmitted the payload,
+so "the data survived" never had to be true. Second release running where the
+instrument was not the fault (see #169's note); the run is quoted on PR #188.
 
 **Known limits, stated in `docs/pixel-regions.md`:** 239 resident images (the
 placeholder path's `38;5;<id>` encoding, not terminal memory — gloam's 246
