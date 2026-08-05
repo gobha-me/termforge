@@ -557,29 +557,37 @@ Ids therefore come from two pools inside one byte. Regions allocate upward from
 1; pins allocate downward from 255, giving
 `KittyDriver::kMaxPinnedImages == 239`.
 
-**Each allocator steps over what the other holds, and the symmetry is
-load-bearing.** Not a convention: the region counter is **monotonic and never
-gives a collected id back**, so a rect the caller stops drawing costs an id
-permanently. For a region that *moves* that is **one id per frame** — a sprite
-stepping one cell per frame is a new key every frame — so it reaches 255 in about
-four seconds at 60fps, and "the ranges cannot meet" is not a property the code
-has. Measured: 300 frames of motion produce 300 distinct ids.
+**The pools are disjoint by construction, and neither allocator reads the
+other's map** (#190). Both *derive* a free id from their own live map rather
+than tracking one beside it: `region_slot` takes the smallest id in
+`[1, kMaxRegionSlots]` that no live region holds, `pin_payload` the largest in
+`[kFirstPinnedImageId, 255]` that no resident image holds. A `static_assert`
+orders the two ranges. So a region id cannot reach the pin range — not because
+each side checks, but because there is no value in the pin range a region can
+name.
 
-That is **#190**, and it is worth being precise about what #187 did and did not
-fix. #187 was the *static* case — an unchanged region in a fixed rect was being
-deleted and re-uploaded every frame. Motion is a separate defect with the same
-four-second ceiling, and **the API answer for motion is `pin_image`**:
-`draw_pinned` allocates no image id at all, which is exactly why #109 exists.
-#190 is for applications that have not adopted it.
+That is what a counter could not give. **The region side used to be monotonic
+and never gave a collected id back**, so a rect the caller stopped drawing cost
+an id permanently — and because a region's identity is its destination *rect*, a
+sprite stepping one cell per frame was a new key every frame. **One id per
+frame**, reaching 255 in about four seconds at 60fps. Measured rather than
+estimated: **300 frames of motion produced 300 distinct ids, maximum 300**, and
+past 255 `emit_id_as_sgr`'s 24-bit form put a `UnicodePlaceholders` session into
+rendering nothing at all, silently, under `q=2`. `test/49regionids` is that
+measurement as an acceptance test.
 
-A pin issued a live region's id is not a near-miss — the region's next transmit
-overwrites the application's pixels and its collection emits `a=d,d=I` on them.
-If regions have taken the whole range, `pin_image` refuses rather than issuing a
-colliding id.
+**#190 bounded the ids; it did not touch the bytes**, and the distinction is
+worth keeping straight against #187. #187 was the *static* case — an unchanged
+region in a fixed rect being deleted and re-uploaded every frame. Motion is
+still a full upload per frame after #190, because a new rect is a new key with
+no content hash to compare against. **The byte answer for motion is
+`pin_image`**: `draw_pinned` allocates no image id at all, which is exactly why
+#109 exists.
 
-Free ids are **derived** from the live maps rather than tracked beside them, so
-a pin/unpin cycle cannot walk the budget off its end and there is no second
-container to disagree with the first.
+`pin_image` refuses when all 239 **resident slots** are in use, and only then —
+unpinned regions cannot contribute to that. Deriving from the live map also
+means a pin/unpin cycle cannot walk the budget off its end, and there is no
+second container to disagree with the first.
 
 ### A handle is not an id
 
@@ -630,8 +638,10 @@ retransmitted under the same ID (the terminal replaces the stored data;
 in classic mode the placement is then recreated, since kitty does not
 refresh an existing classic placement on retransmit), and regions that
 stop being drawn are LRU-evicted (`a=d,d=I`) so animation never
-accumulates images terminal-side. Evicted IDs are recycled, keeping IDs
-one byte — required by the placeholder path's `38;5;<id>` encoding.
+accumulates images terminal-side. A region that goes away gives its ID back
+either way — the eviction reuses it on the spot, the per-frame collection
+returns it to the pool — so IDs stay one byte, required by the placeholder
+path's `38;5;<id>` encoding.
 
 A **pinned** image (#109) is exempt from both halves of that: neither the LRU
 scan nor the per-frame collection can reach it, and its placements are retired
@@ -740,7 +750,7 @@ option (a) — which has to be decided with #148.
 Two smaller residues, both characterised as numbers in `test/47frameshape`:
 
 - A frame that draws **no** region spends the grace, so a single intermittent
-  frame (a widget returning `nullptr`) costs a delete, a fresh id and a full
+  frame (a widget returning `nullptr`) costs a delete and a full
   re-upload. **#191 did not make this cheaper**; it moved the delete onto a true
   frame boundary — the collection now runs at the end of the frame that drew
   nothing rather than inside the next one. The only lever is
@@ -751,7 +761,9 @@ Two smaller residues, both characterised as numbers in `test/47frameshape`:
   #191 itself falsified — before it, a blank frame issued one write and 2 would
   have worked. Raising it to 3 triples the linger bound. `pin_image` is the
   answer for content an app keeps.
-- A region that **moves** takes a new id every frame (#190).
+- A region that **moves** is re-uploaded every frame. Since #190 it does so
+  under a *recycled* id, so the cost is bytes and not budget — but it is still
+  the full payload, and `pin_image` is what removes that half.
 
 ### A graphics frame is two writes, and the meter reads the second
 

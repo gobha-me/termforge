@@ -234,6 +234,22 @@ and was now the only thing preventing a false refusal. **When a change alters th
 contents of a container, enumerate the predicates that read that container**, not
 only the ones that read the variables you reasoned about.
 
+**When an invariant becomes structural, its guards go with it** (#190). Bounding
+region ids to their own pool made two #109 guards unreachable — the region
+allocator's step-over-pinned-ids loop and `pin_image`'s scan of the region map.
+Both were deleted and the `static_assert` ordering the two ranges is what
+replaced them, because a guard that cannot fire is a fault in the *code*, and
+one that advertises a hazard the code no longer has is worse than absent: the
+next reader goes looking for the bug it implies. **Test the invariant, never the
+dead guard.** Two exceptions, and both were taken in the same cut. A branch that
+**totalizes a function over its parameter's own type** is not this shape —
+`emit_id_as_sgr`'s 24-bit form is unreachable for every id the driver allocates
+and stays, because `std::uint32_t` is wider than the invariant and the
+alternative is emitting a malformed `38;5;300`. And a guard whose deletion would
+let control **fall through into the corruption it names** is not this shape
+either: `pin_image`'s refusal was kept and *merged* with the size check above it,
+which turned out to be the same predicate over the same map computed twice.
+
 **A rate claim is a claim; measure it** (#190). "This counter climbs per churn
 event, so it matters over a long session" was derived correctly from the code and
 was off by three orders of magnitude, because for moving content a churn event
