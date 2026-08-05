@@ -372,20 +372,28 @@ class KittyDriver final : public TerminalDriver {
   // flushes a caller may make within one frame before drawing, how many frames
   // a removed region's placement may linger, and the cadence being assumed.
   //
-  // App's cadence is exactly one drawless flush per frame -- Renderer::present
-  // flushes before flush_pixel_regions draws -- so 1 costs nothing on a steady
-  // frame. Since #191 that is a GUARANTEE rather than an observation: App
-  // flushes at the end of every graphics frame whether or not the frame drew,
-  // so the count is 1 on a frame with images and 2 on one without, and the
-  // second write is always the frame's own boundary. A caller that flushed
-  // three times per frame with the first two drawless would lose the dedup
-  // again; that is a real limit of this constant and not a general property.
+  // App draws in the second of its two writes, so its first is drawless and 1
+  // costs nothing on a steady frame. Since #191 that is a GUARANTEE rather than
+  // an observation -- App flushes at the end of every graphics frame whether or
+  // not the frame drew -- but note what the guarantee actually says: the count
+  // is **1 on a frame with images and 2 on one without**, because a blank frame
+  // has TWO drawless writes and not one. A caller that flushed three times per
+  // frame with the first two drawless would lose the dedup again; that is a
+  // real limit of this constant and not a general property.
   //
-  // It is therefore a clean single-constant lever now, which it was not before:
-  // raising it to 2 would let a region survive a frame nobody drew it in --
-  // #191's second shape, which still costs a full re-upload -- at the price of
-  // doubling how long a removed region's placement lingers on screen. Both
-  // sides of that trade are pinned in test/47frameshape, deliberately.
+  // WHICH MAKES THE OBVIOUS LEVER THE WRONG NUMBER, and #191 is what moved it.
+  // Carrying a region across a frame nobody drew it in needs the grace to
+  // absorb that blank frame's two writes AND the next frame's leading one, so
+  // the first value that buys anything is **3**; at 2 the collection merely
+  // slides one write later and the region is still deleted, still re-uploaded,
+  // still given a fresh id. Measured at 1/2/3/4, not derived. Pre-#191 a blank
+  // frame issued one write and 2 would have worked -- so this is inherited
+  // arithmetic that the cadence change falsified, and it is written down here
+  // because the next reader will reach for 2 exactly as the last one did.
+  //
+  // Only the LINGER side of the trade has an assertion (test/47frameshape, the
+  // case that raises and lowers this constant). Nothing pins what raising it
+  // would buy, because the answer at 2 is "nothing".
   static constexpr std::uint32_t kDrawlessFlushGrace = 1;
   std::uint32_t m_drawless_flushes{0};
   // Region key (packed x,y,w,h) -> slot. Bounded: LRU-evicted past

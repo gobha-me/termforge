@@ -214,7 +214,7 @@ price the seam, because it is usually one parameter.** `test_wire_headless`
 hardcoded a `FallbackDriver`, so no test could run `App`'s loop over the pixel
 path; `test/44size` had already declined to add the injection point as "a new
 test seam for one assertion", and #187 was the second customer and cost three
-orders of magnitude more. #189 was one overload and a delegating line.
+orders of magnitude more. #189 was two overloads and two delegating bodies.
 `test/48apppixels` is what replay looks like once it is observation.
 
 **Grep for tests that DEPEND on the bug before fixing it.** Two `test/46pinned`

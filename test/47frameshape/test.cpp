@@ -414,8 +414,11 @@ TEST_CASE("frame shape: the LAST region to disappear is collected at the next "
   // removed the region rather than in the next one. That improvement is
   // asserted where it is visible, at the App layer, in test/48apppixels.
   //
-  // This is the only case that pins kDrawlessFlushGrace itself: at 0 the first
-  // CHECK fails, at 2 the third does.
+  // This case pins the LINGER side of kDrawlessFlushGrace: at 0 the first CHECK
+  // fails, at 2 the third does. It is no longer the only case sensitive to the
+  // constant -- the missed-frame case below moves at 3 -- but it is still the
+  // one that bounds how long a removed region's placement may survive, which is
+  // the side any increase would pay against.
   KittyDriver d;
   std::string out;
   d.set_output(&out);
@@ -636,10 +639,16 @@ TEST_CASE("frame shape: a region that misses ONE frame is re-uploaded, and "
   // a true frame boundary and the cost is identical, which is the honest
   // statement and the reason this case was rewritten rather than deleted.
   //
-  // The only lever that would make it cheaper is kDrawlessFlushGrace at 2, and
-  // that trades directly against the linger bound two cases above -- a removed
-  // region's placement would survive two frames instead of one. Deliberately
-  // not taken. `pin_image` is the API answer for content an app keeps.
+  // The only lever is kDrawlessFlushGrace, and the obvious value for it is the
+  // WRONG one -- which is worth stating here because the replay below is what
+  // makes it wrong. A blank frame now spends TWO drawless writes, so the grace
+  // has to absorb both of them plus the next frame's leading one: measured at
+  // 1/2/3/4, the first value that carries the region across is **3**, and at 2
+  // the delete merely slides one write later. Every assertion below holds
+  // unchanged at 2, which is exactly why the number cannot be eyeballed.
+  // Raising it to 3 would triple the linger bound two cases above.
+  // Deliberately not taken. `pin_image` is the API answer for content an app
+  // keeps.
   KittyDriver d;
   std::string out;
   d.set_output(&out);

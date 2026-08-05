@@ -155,11 +155,13 @@ completed items.
   #187 fixed the collection running on a flush that drew nothing, which had
   been re-uploading every *unpinned* region every frame and blinking every
   pinned placement — a flush is a write boundary, not a frame boundary.
-  #191 gave `App` the draw hook that makes that guard exact: an application's
-  own images go in `App::on_pixels`, never `on_render`, so every image draw of
-  a frame lands in one write. Drawing from `on_render` instead costs 143x the
-  bytes and walks the id counter past the one-byte ceiling in four seconds —
-  measured, and `examples/pinned` switches between the two live.
+  #191 gave `App` the draw hook that makes that guard exact for App: an
+  application's own images go in `App::on_pixels`, never `on_render`, so every
+  image draw of a frame lands in one write. Drawing from `on_render` instead
+  still costs 144x the bytes and walks the id counter past the one-byte ceiling
+  in four seconds — measured, and `examples/pinned` switches between the two
+  live. The driver itself is undefended against any caller that straddles two
+  writes; that is #191 option (a), open, and tied to #148.
 
 ---
 

@@ -41,6 +41,7 @@
 #include <format>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <variant>
 
@@ -102,7 +103,9 @@ class Plate final : public Widget {
 
 class PinnedDemo final : public App {
  public:
-  PinnedDemo() { set_frame_ms(16); }
+  explicit PinnedDemo(bool start_wrong) : m_wrong_window(start_wrong) {
+    set_frame_ms(16);
+  }
 
   // The upload happens once, here, after capability negotiation and before the
   // first frame — which is exactly what on_start is for (#97). A refusal is not
@@ -200,13 +203,21 @@ class PinnedDemo final : public App {
   std::string m_why{"driver refused"};
   std::optional<ErrorEvent> m_last_error;
   double m_t{0.0};
-  bool m_wrong_window{false};
+  bool m_wrong_window;
 
   static constexpr Rgb kFg{0xE0, 0xE0, 0xF0};
   static constexpr Rgb kBg{0x10, 0x10, 0x18};
 };
 
-auto main() -> int {
-  PinnedDemo app;
+// `--on-render` starts in the broken window instead of toggling into it. It is
+// here so a measurement of either arm is one command rather than a keystroke
+// sent at the right moment -- the numbers in docs/pixel-regions.md come from
+// running this twice.
+auto main(int argc, char** argv) -> int {
+  bool wrong = false;
+  for (int i = 1; i < argc; ++i) {
+    if (std::string_view{argv[i]} == "--on-render") wrong = true;
+  }
+  PinnedDemo app{wrong};
   return app.run();
 }
