@@ -307,6 +307,13 @@ auto App::wait_frame(std::chrono::steady_clock::time_point frame_start) -> void 
 }
 
 auto App::test_wire_headless(int cols, int rows, std::string* sink) -> void {
+  // The default tier, and the ONLY place it is named (#189). Every other
+  // headless path either goes through here or is handed a driver.
+  test_wire_headless(cols, rows, sink, std::make_unique<FallbackDriver>());
+}
+
+auto App::test_wire_headless(int cols, int rows, std::string* sink,
+                             std::unique_ptr<TerminalDriver> driver) -> void {
   // Everything setup() does *except* the parts that need a tty: no enter_raw,
   // no capability probe, no alt-screen, no SIGWINCH handler. The frame body
   // itself is the real one, so cadence and input handling are the shipped
@@ -316,16 +323,26 @@ auto App::test_wire_headless(int cols, int rows, std::string* sink) -> void {
   // #178. It used to have to construct a concrete FallbackDriver, redirect it,
   // and upcast afterwards, because set_output existed only on the concrete
   // drivers; that ordering is why headless tests were pinned to the fallback
-  // tier and could never exercise KittyDriver offline. The tier here is now a
-  // free choice, and only the default is still FallbackDriver.
-  m_driver = std::make_unique<FallbackDriver>();
+  // tier and could never exercise KittyDriver offline. #178 made the tier a
+  // free choice; this parameter is what finally offers it (#189).
+  //
+  // No null fallback. A caller that meant "the default" has the three-argument
+  // overload, so a null here is a bug and reading it as FallbackDriver would
+  // silently hide it -- and the tier is exactly what such a test is asserting
+  // about.
+  m_driver = std::move(driver);
   m_driver->set_output(sink);
   m_screen = std::make_unique<Screen>(cols, rows);
   m_renderer = std::make_unique<Renderer>(*m_driver);
 }
 
 auto App::test_run_frames(int frames, int cols, int rows, std::string* sink) -> void {
-  test_wire_headless(cols, rows, sink);
+  test_run_frames(frames, cols, rows, sink, std::make_unique<FallbackDriver>());
+}
+
+auto App::test_run_frames(int frames, int cols, int rows, std::string* sink,
+                          std::unique_ptr<TerminalDriver> driver) -> void {
+  test_wire_headless(cols, rows, sink, std::move(driver));
   m_running = true;
   for (int i = 0; i < frames && m_running; ++i) frame_step();
 }

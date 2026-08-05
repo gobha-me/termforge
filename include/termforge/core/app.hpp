@@ -416,6 +416,26 @@ class App {
   // !running() afterwards rather than counting render calls.
   auto test_run_frames(int frames, int cols, int rows, std::string* sink) -> void;
 
+  // The same, over a driver the caller chose (#189). The overload above is this
+  // one with a FallbackDriver, so there is one loop and one wiring path.
+  //
+  // It exists because the tier decides which half of frame_step() runs at all:
+  // FallbackDriver::capabilities().kitty_graphics is false and
+  // collect_pixel_regions() returns on it, so with the default driver **no test
+  // can run App's frame loop over the pixel path**. That is how #187 hid — the
+  // driver suites all draw before they flush, and the one caller that does not
+  // was unreachable from a test. Pass a KittyDriver here and the frame shape is
+  // OBSERVED rather than replayed; test/48apppixels is that suite.
+  //
+  // The driver is built fresh per call either way, so a probe that calls this
+  // twice hands the second call a driver whose counters start at zero while the
+  // sink keeps accumulating. With an injected driver that constraint becomes
+  // the CALLER's, which is an improvement: build the driver yourself if you
+  // need it to outlive one call, and see test/37bytes' MeterProbe for the shape
+  // of the mistake. A null driver is a programming error, not a fallback.
+  auto test_run_frames(int frames, int cols, int rows, std::string* sink,
+                       std::unique_ptr<TerminalDriver> driver) -> void;
+
   // Drive the real *loop* with no tty — run_loop(), byte for byte what run()
   // calls, teardown and all. test_run_frames covers one frame body; this one
   // covers the thing wrapped around it, which is where the teardown guarantee
@@ -732,9 +752,14 @@ class App {
   // here having done only some of them. Must never throw: ~App is noexcept.
   auto teardown() -> void;
   auto pump_input() -> void;
-  // The headless Screen/Renderer/FallbackDriver wiring shared by the two test
-  // hooks. Not a test hook itself — neither of them should own it.
+  // The headless Screen/Renderer/driver wiring shared by the test hooks. Not a
+  // test hook itself — none of them should own it.
+  //
+  // The three-argument form is the four-argument one with a FallbackDriver, so
+  // the default tier is spelled in exactly one place (#189).
   auto test_wire_headless(int cols, int rows, std::string* sink) -> void;
+  auto test_wire_headless(int cols, int rows, std::string* sink,
+                          std::unique_ptr<TerminalDriver> driver) -> void;
   // The loop itself: frame_step() until quit(), then teardown. Split out of
   // run() because run() cannot be called from a test — setup() needs a tty —
   // so anything that lives in run() ships untested. Returns run()'s exit code.

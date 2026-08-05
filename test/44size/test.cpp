@@ -20,11 +20,15 @@
 //    that passes the number it is trying to prove cannot tell a working push
 //    from the harness handing it the answer. Hence the deliberately absurd 7x7
 //    and 100x5 below.
-// 3. **test_run_frames also swaps in a FallbackDriver**, whose
+// 3. **test_run_frames' three-argument form swaps in a FallbackDriver**, whose
 //    preferred_pixel_extent ignores cell geometry entirely. So the pixel case
 //    asserts on the setup() path, where the probe-selected driver survives.
-//    Injecting a driver into the headless harness would fix that and is
-//    deliberately not done here — it is a new test seam for one assertion.
+//    The injection seam this header once declined ("a new test seam for one
+//    assertion") now exists — #189 found a second and far more expensive
+//    customer in #187 — but it does NOT help here: a driver handed in by a test
+//    has never been told the session's cell geometry, which is what these cases
+//    are about, and the pushed pair reaches the driver through setup(). So the
+//    rule stands, for a better reason than "the seam is missing".
 
 #include <catch2/catch_test_macros.hpp>
 
