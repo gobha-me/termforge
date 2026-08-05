@@ -4,6 +4,127 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
+## Where we are (2026-08-05, later still)
+
+**Latest work: #187 — a flush is a write boundary, and the collection needs a
+frame.** Shipped as v0.8.1.
+
+**How it got picked: the previous cut named it.** #109's own release note ended
+"Next: #187", and preparing that merge is what turned up the third consequence
+below. No tracker archaeology required — check the last cut's notes before
+re-deriving a pick, which is now the second time that shortcut has paid.
+
+**The bug.** `gc_regions()` ran at the top of `flush()`, which is right only if
+one flush is one frame. `App` flushes **twice** per frame and the first flush has
+drawn nothing — `Renderer::present` ends in `flush()`, and only then does
+`flush_pixel_regions` issue the frame's `draw_image` calls. So the collection ran
+before any draw for that frame existed, saw every slot still carrying the
+previous frame's stamp, and **could not tell "nothing has been drawn yet" from
+"this region disappeared."** It chose the second.
+
+**Measured, through a real `App` under a pty that answers as kitty** — 4 seconds
+of `examples/dashboard`:
+
+| | `d=I` data deletes | image ids allocated |
+| --- | --- | --- |
+| before | 123 | **1…124** |
+| after | 0 | **{1}** |
+
+At that rate the placeholder path's one-byte ceiling arrives in about eight
+seconds, after which `emit_id_as_sgr` falls to the 24-bit form that kitty
+*accepts and ignores* — a session that renders nothing, silently, under `q=2`.
+
+**Byte totals barely moved (33.7 MB → 33.4 MB) and that is not a disappointment
+— it is the shape of the win.** The dashboard's waveform content changes every
+frame, so a transmit per frame is legitimately required; what the fix removes is
+the *redundant* upload of content that did **not** change. It is the worst case
+for showing byte savings and the best case for showing the id leak. gloam's
+static plates and MapWidget's viewport are the other end: there it is the whole
+205,283 bytes per frame.
+
+**Third consequence, found only while merging #109 and worse than the byte
+cost.** The collection reaches `m_pin_places` on the same boundary, so the
+drawless flush retired every pinned placement with `d=i` and the second flush
+re-created it — **delete and re-place in different writes**, i.e. a sprite that
+blinks off once per frame. That is the artifact #109's placeholder guard exists
+to remove, arriving by a different route.
+
+**The fix is three lines and the argument for it is a no-op proof.** A flush with
+no draw since the last collection collects nothing. `m_clock` advances only where
+a draw stamps a slot and `m_frame_start_clock` was assigned `m_clock` by
+whichever collection last ran, so `m_clock > m_frame_start_clock` is exactly "has
+anything been drawn since" — and on the branch that returns, **the single write
+skipped is assigning that variable to itself.** That is what keeps the skip from
+moving the three other readers of the frame window (`draw_pinned`'s two
+placeholder conflict guards, `draw_payload`'s reciprocal), and why no existing
+case that flushes after drawing changed at all. A reviewer checks the fix by
+checking that proof, not by reading the collection.
+
+`kDrawlessFlushGrace` bounds the other side: skipping forever would leak the last
+region's placement forever, because the frame that removes the last region is the
+frame `App` issues no second flush on. At 1 it costs nothing on a steady frame,
+and a removed region lingers at most one frame — **and only when it was the last
+one**, since any other live region makes the second flush a real collection.
+
+**Designs rejected, with reasons worth keeping:**
+- **An explicit `end_frame()` virtual** is the honest name for the missing
+  concept, and still wrong here: new public API, an `App` change, and a *third*
+  write per frame. The write contract is #148's. A driver correct under **any**
+  flush cadence is the better layering and leaves #148 free to make `App` flush
+  once without re-opening this.
+- **`d=i` on the first miss, `d=I` on the second** — retire the placement early,
+  defer only the data free. It would put the delete and the re-place in different
+  writes, which is the flicker above. `emit_placement`'s existing comment ("Delete
+  + re-place land in the same flush, so the swap is atomic on screen") is the rule.
+- **A per-slot grace flag** has the same leak bound but keeps a generation of
+  stale slots in `m_regions` *at draw time*, spending the 16-slot budget; applied
+  to `m_pin_places` it breaks the moved-placement cases. The collection-level skip
+  touches neither, which is why it is smaller AND safer.
+
+**The test-shape lesson, and it is the sharpest one yet.** ~90 driver-level
+assertions across `01drivers`, `37bytes`, `39fit` and `46pinned` could not see
+any of this, **not for want of assertions but because every one of them draws
+before it flushes.** The suite asserted on the driver's own call order rather than
+on its only production caller's. `test/47frameshape` is a new suite whose entire
+subject is the caller's frame shape — all 7 cases fail without the fix — and a
+case that draws before it flushes belongs in another directory.
+
+It **replays** `App`'s order rather than observing it, because no test can
+observe it: `App::test_wire_headless` hardcodes a `FallbackDriver` whose
+`kitty_graphics` is false, so `collect_pixel_regions` returns early, and
+`frame_step()` is private. **#189** asks for that seam. The pty measurement above
+is what stood in for it, and it is a one-off rather than a gate.
+
+**Two `test/46pinned` cases had used this bug as a fixture.** One failed loudly
+and by its own design — its precondition said, in as many words, "if #187 is
+fixed the counter stops climbing, this stops testing what it claims". The other
+went **vacuous silently**, which is the more dangerous of the two and the reason
+to grep for tests that *depend* on a defect before fixing it. Both now drive the
+id counter through region **churn** instead.
+
+**Mutations: 19 enumerated from the changed lines, 19 killed.** The one survivor
+was reinstating the deleted dead `m_frame` counter, which by construction has no
+observable effect — recorded as untestable rather than left looking covered.
+
+**Filed off it: #189** (the App driver-injection seam) and **#190** — the region
+id counter is monotonic and never gives a collected id back, so region *churn*
+still walks region ids into the pinned range, just per churn event instead of per
+frame. The header and `docs/pixel-regions.md` asserted the bound as an invariant;
+they now say what the code actually guarantees. #190 also carries the decision
+this cut deliberately did not make: deriving free ids from the live map makes two
+of #109's guards **unreachable**, and a rule defended by an unreachable hazard is
+one the next reader deletes.
+
+**Also corrected: `docs/map-widget.md`**, which cited the content-hash dedup *by
+file and line* to argue MapWidget needs no cache. The dedup is a property of the
+*slot*, so that sentence was false for its entire life — an unchanged map cost a
+hash **and** a full transmit every frame. Said so in the doc rather than quietly
+making it true.
+
+**No real-kitty capture, and the reason is checkable in review:** nothing new
+reaches the wire. The change only *removes* escapes from a flush that drew
+nothing, and every escape still emitted is byte-identical and in the same order.
+
 ## Where we are (2026-08-05, later)
 
 **Latest work: #109 — an image the application keeps, not one the driver
