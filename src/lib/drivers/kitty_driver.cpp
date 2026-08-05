@@ -835,13 +835,28 @@ auto KittyDriver::gc_regions() -> void {
   // so `m_clock > m_frame_start_clock` is exactly "has anything been drawn
   // since then" -- and on the branch that returns, the one write skipped below
   // (m_frame_start_clock = m_clock) is provably assigning the variable to
-  // itself. That is what keeps this from moving the three other readers of the
-  // frame window: draw_pinned's two placeholder conflict guards and
-  // draw_payload's reciprocal all see byte-identical state.
+  // itself. So the three other readers of the frame WINDOW -- draw_pinned's two
+  // placeholder conflict guards and draw_payload's reciprocal -- see identical
+  // clock values. Note what that does NOT say: the two MAPS genuinely differ,
+  // which is the entire point, and those guards read them. A retained entry is
+  // by definition one whose last_used is at or below the boundary, so both
+  // predicates are false for it either way -- but the branch is newly REACHABLE
+  // and `>` vs `>=` there is now load-bearing. test/47frameshape drives both
+  // cross-frame handoffs for that reason.
   //
   // kDrawlessFlushGrace is what bounds the other side. Skipping forever would
   // leak the last region's placement forever, because the frame that removes
   // it is the frame App issues no second flush on.
+  //
+  // WHAT THIS DOES NOT FIX, because a heuristic cannot: if the caller draws
+  // images in BOTH of App's windows -- some before Renderer::present's flush,
+  // some in flush_pixel_regions -- then every flush has drawn something, the
+  // guard never fires, and each collection destroys what the other window drew.
+  // Measured at 10 transmits and 9 d=I for 10 frames of one unchanged image,
+  // identical to the behaviour before this guard existed. That is the shape a
+  // subclass calling driver().draw_pinned() from on_render produces, i.e. #109's
+  // only App call site, and it needs a real frame boundary rather than a better
+  // guess: #191.
   const bool drew = m_clock > m_frame_start_clock;
   if (!drew && ++m_drawless_flushes <= kDrawlessFlushGrace) return;
   m_drawless_flushes = 0;

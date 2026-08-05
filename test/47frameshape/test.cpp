@@ -545,6 +545,108 @@ TEST_CASE("frame shape: THREE flushes per frame with two drawless loses the "
   CHECK(total_transmits(out) > 1);
 }
 
+TEST_CASE("frame shape: draws in BOTH of App's windows defeat the guard (#191)",
+          "[frameshape][kitty][pinned]") {
+  // The limit that matters most, and the one a heuristic cannot reach.
+  //
+  // `App` has no draw hook between `Renderer::present`'s flush and
+  // `flush_pixel_regions`, so a subclass that draws through the protected
+  // `driver()` accessor -- which is #109's ONLY App call site for a pinned image
+  // -- draws in window 1 while App's own pixel regions draw in window 2. Then
+  // BOTH flushes have drawn something, `drew` is true at both, the grace never
+  // fires, and each collection destroys whatever the other window drew.
+  //
+  // Not a regression: these numbers are byte-for-byte what the driver produced
+  // before the guard existed (verified by disabling it). The guard simply does
+  // not reach this shape, and no cadence heuristic can -- it needs a real frame
+  // boundary, which is #191.
+  //
+  // Written as a characterisation case so the cost is a number here rather than
+  // a caveat in a doc, and so #191 is told by the suite which line to change.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto pinned = d.pin_image(art(23));
+  REQUIRE(pinned.has_value());
+  d.flush();
+
+  out.clear();
+  const Image wave = art(24);
+  for (int frame = 0; frame < 10; ++frame) {
+    REQUIRE(d.draw_pinned(Rect{1, 1, 3, 2}, *pinned).has_value());  // window 1
+    d.flush();                                                      // present()
+    REQUIRE(d.draw_image(Rect{0, 10, 8, 4}, wave).has_value());     // window 2
+    d.flush();                                            // flush_pixel_regions
+  }
+
+  // One unchanged image, ten uploads and nine data deletes: #187 in full.
+  CHECK(total_transmits(out) == 10);
+  CHECK(ids_named(out).size() == 11);  // ten region ids plus the pin's
+  int deleted = 0;
+  for (const std::uint32_t id : ids_named(out))
+    deleted += data_deletes_of(out, id);
+  CHECK(deleted == 9);  // every region but the last is destroyed and rebuilt
+  // And the sprite is retired and re-placed once per frame, in DIFFERENT
+  // writes, which is the visible half: it blinks off every frame.
+  CHECK(placement_deletes_of(out, pinned->id) == 10);
+  CHECK(placements_of(out, pinned->id) == 10);
+
+  // The same work with every draw in ONE window is the contrast, and it is the
+  // whole argument for #191 rather than a paragraph about it.
+  KittyDriver e;
+  std::string one;
+  e.set_output(&one);
+  const auto p2 = e.pin_image(art(23));
+  REQUIRE(p2.has_value());
+  e.flush();
+  one.clear();
+  for (int frame = 0; frame < 10; ++frame) {
+    e.flush();
+    REQUIRE(e.draw_pinned(Rect{1, 1, 3, 2}, *p2).has_value());
+    REQUIRE(e.draw_image(Rect{0, 10, 8, 4}, wave).has_value());
+    e.flush();
+  }
+  CHECK(total_transmits(one) == 1);
+  CHECK(placement_deletes_of(one, p2->id) == 0);
+  CHECK(placements_of(one, p2->id) == 1);
+}
+
+TEST_CASE("frame shape: a region that misses ONE frame is re-uploaded (#191)",
+          "[frameshape][kitty]") {
+  // The other half of #191, and the reason kDrawlessFlushGrace at 1 has no
+  // slack: one drawless flush per frame is exactly the steady-state
+  // consumption, so a frame that draws NO region -- `draw_pixels` returning
+  // nullptr, which WaveformWidget does whenever its sample buffer is empty --
+  // spends the grace, and the next frame's first flush collects before its
+  // draws. The region comes back under a new id with a full re-upload, and the
+  // delete is in one write while the re-place is in the next.
+  //
+  // Also not a regression: pre-fix the delete simply landed a frame earlier.
+  // Characterisation, like the case above.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const Image img = art(25);
+
+  d.flush();
+  REQUIRE(d.draw_image(Rect{0, 0, 4, 2}, img).has_value());
+  d.flush();  // frame N: drawn, id 1
+
+  out.clear();
+  d.flush();  // frame N+1: draw_pixels returned nullptr, so ONE flush
+  CHECK(data_deletes_of(out, 1) == 0);  // deferred, not avoided
+
+  out.clear();
+  d.flush();  // frame N+2 window 1: the grace is spent, so this collects
+  CHECK(data_deletes_of(out, 1) == 1);
+  REQUIRE(d.draw_image(Rect{0, 0, 4, 2}, img).has_value());
+  d.flush();
+  // A fresh id and a full re-upload for pixels the terminal had a moment ago.
+  CHECK(total_transmits(out) == 1);
+  CHECK(ids_named(out) == std::set<std::uint32_t>{1, 2});
+}
+
 TEST_CASE("frame shape: a MOVING region still walks one id per frame (#190)",
           "[frameshape][kitty]") {
   // #187 fixed the STATIC case. Motion is a different defect and this case
