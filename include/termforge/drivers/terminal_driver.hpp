@@ -456,6 +456,16 @@ class TerminalDriver {
   //
   // Reading costs nothing: the counters are maintained at the single write
   // boundary the drivers already funnel through, whether or not anyone asks.
+  //
+  // "THE MOST RECENT FLUSH" IS NOT "THE MOST RECENT FRAME", and under App on a
+  // graphics tier that difference is load-bearing: since #191 every such frame
+  // is exactly two writes -- the cell diff, then the frame's images -- so this
+  // reports the second one. On a frame carrying an image that is the image
+  // traffic; on a frame carrying none it reads zero, with the cell diff already
+  // counted in the write before it. Non-graphics tiers are one write per frame
+  // and unaffected. For a per-frame budget on the graphics tier, difference
+  // total_bytes() instead -- until #148 gives a frame a one-write contract,
+  // that is the only spelling that means what it says.
   [[nodiscard]] auto last_frame_bytes() const noexcept -> FrameBytes {
     return m_last_frame_bytes;
   }

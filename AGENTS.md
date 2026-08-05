@@ -208,10 +208,14 @@ boundary**, and more generally, before trusting a suite, check whether any case
 makes the calls in the order production makes them. `test/47frameshape` is the
 model — one suite whose entire subject is the caller's cadence, where a case
 that draws before it flushes belongs somewhere else. When the harness cannot
-reach the production path at all (`test_wire_headless` hardcodes a
-`FallbackDriver`, so no test can run `App`'s loop over the pixel path — #189),
-say so **in the suite header** and treat the replayed order as the limitation it
-is rather than as coverage.
+reach the production path at all, say so **in the suite header**, treat the
+replayed order as the limitation it is rather than as coverage — **and then
+price the seam, because it is usually one parameter.** `test_wire_headless`
+hardcoded a `FallbackDriver`, so no test could run `App`'s loop over the pixel
+path; `test/44size` had already declined to add the injection point as "a new
+test seam for one assertion", and #187 was the second customer and cost three
+orders of magnitude more. #189 was one overload and a delegating line.
+`test/48apppixels` is what replay looks like once it is observation.
 
 **Grep for tests that DEPEND on the bug before fixing it.** Two `test/46pinned`
 cases drove an id counter using #187's per-frame allocation as a fixture. One

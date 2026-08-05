@@ -4,7 +4,136 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-05, later still)
+## Where we are (2026-08-05, latest)
+
+**Latest work: #191 + #189 — a draw hook in App's second window, and the seam
+that proves it.** Ships as v0.9.0.
+
+**How it got picked: the previous cut named it, again.** v0.8.1's release note
+called #191 "the big one" and said in as many words that **#109 has no correct
+App call site**. Third cut running where reading the last release note beat
+tracker archaeology. gloam#7 independently confirms it — its row 4 asked for
+#109 as "the one I would ask for next", and #109 shipped in v0.8.0 unusable
+from `App`. That is the #137 → #169 pattern verbatim: **a shipped feature is
+not a closed blocker until it is checked against the consumer's code path.**
+
+**The bug.** `App` issues image draws in two windows separated by a write —
+`on_render` runs before `Renderer::present`, and present ends in `flush()`;
+only then does `flush_pixel_regions` issue the frame's `draw_image` calls and
+flush again. A subclass had a draw hook in the FIRST one only, so
+`driver().draw_pinned(...)` from `on_render` straddled both. Then neither flush
+is drawless, #187's guard never fires, and each collection destroys what the
+other window drew.
+
+**Measured through a real `App` over a pty answering as kitty** — same binary,
+same four seconds of `examples/pinned`, only the window differing:
+
+| drawn from | bytes | `a=t` | `d=I` | ids |
+| --- | --- | --- | --- | --- |
+| `on_pixels` (correct) | 88,569 | 2 | 0 | 3 |
+| `on_render` (straddle) | 12,653,726 | 256 | 256 | 258 |
+
+**143x, and the id counter is past 255 in four seconds** — after which
+`emit_id_as_sgr` falls to the 24-bit form kitty accepts and ignores, so a
+`UnicodePlaceholders` session renders nothing at all, silently, under `q=2`.
+Twelve seconds on the correct path stays at `a=t 2 / d=I 0 / ids 3`.
+
+**The fix is `App::on_pixels(TerminalDriver&)`**, called from
+`flush_pixel_regions` after App's own regions, plus a trailing flush that is
+conditional on the TIER rather than on there being regions. Both halves matter:
+a frame whose only image draws came from `on_pixels` has no regions and still
+has bytes to write, and making every graphics frame exactly two writes is what
+turns #187's guard from a heuristic into an exact answer for `App`.
+
+### What the design review caught that the implementation would not have
+
+**The gate belongs on the CALL as well as the write.** Every driver implements
+`draw_image`, so an `on_pixels` body is legal on a fallback tier — and with the
+hook ungated but the flush gated, those bytes sit in the driver's buffer until
+the NEXT frame, where `present()` appends that frame's cell diff *after* them.
+The image arrives one frame late and **underneath** the text it exists to
+cover, inverting the one compositing rule the feature rests on. One predicate,
+computed once, for both. This is the sharpest thing the review produced and it
+was not derivable from any mutation of the code as written.
+
+**The overlay answer flipped during review, and the argument is the keeper.**
+The plan said call `on_pixels` under a modal and let the app decide (the
+cell-blanking reason `render_pixel_regions` gives does not apply to a direct
+driver draw). Wrong: images are emitted after the cell diff and would paint
+through the dialog, and an app drawing through *both* paths would keep half its
+images and lose the other half. **A split-brain frame is worse than either
+uniform answer.** Suppressed, matching `render_pixel_regions` — same answer,
+different reason, and the doc says so rather than implying one reason covers
+both. It buys a real improvement too: a placement you stop drawing is retired
+on that frame's own boundary, so a sprite goes away *with* the dialog.
+
+### What this does NOT fix, measured rather than hedged
+
+- **A region that misses one frame still costs a delete, a spent id and a full
+  re-upload.** #191 moved *where*, not *how much*: the collection now runs at
+  the end of the frame that drew nothing instead of inside the next one, which
+  is correct rather than cheaper. The only lever is `kDrawlessFlushGrace`, and
+  raising it to 2 trades directly against the linger bound; both sides are
+  pinned in `test/47frameshape`. `pin_image` is the API answer.
+- **The driver still cannot defend itself against a non-`App` caller** that
+  straddles two writes. That needs a real frame boundary on `TerminalDriver`
+  (#191 option (a)) and has to be decided with #148. The straddle case stays in
+  `test/47frameshape` as the standing argument for keeping it open.
+- **#190** (the monotonic region id counter) is untouched and still carries the
+  decision about two now-unreachable #109 guards.
+- **z-order below App's own regions is not expressible** — `on_pixels` draws
+  land above, and asking for below is #114.
+
+### The cost that ships deliberately
+
+On a graphics tier `last_frame_bytes()` now always reports the **second** write,
+so a frame with no image draws reads zero. Already true of any frame carrying
+an image; now uniform. `total_bytes()` did not move and is what a per-frame
+budget should difference until #148. Documented on `last_frame_bytes()` itself,
+because obscura's "2 KB idle" assertion reads exactly this on a still frame.
+
+### #189, and why it shipped in the same cut
+
+`App::test_wire_headless` hardcoded a `FallbackDriver`, so **no test could run
+App's frame loop over the pixel path at all** — which is how #187 hid and why
+#191 was found by review rather than CI. One overload
+(`test_run_frames(..., std::unique_ptr<TerminalDriver>)`) and a delegating line.
+Without it #191's proof would have been another replay, which is the exact
+shape that produced #187.
+
+`test/48apppixels` is the new suite: thirteen cases, all through a real
+`frame_step()` over a real `KittyDriver`. **The negative control is the
+load-bearing half** — the same app with the one `draw_pinned` moved to
+`on_render` still produces #191's numbers, so the acceptance test cannot pass
+by `on_pixels` never being called. That failure mode is not hypothetical; a
+`test/46pinned` case went vacuous and stayed green on exactly it at #187.
+
+`test/44size` had declined this seam as "a new test seam for one assertion".
+The rule stands there, for a better reason (an injected driver has never been
+told the session's cell geometry), but **the decline cost three orders of
+magnitude.** Written into AGENTS.md as: price the seam, it is usually one
+parameter.
+
+**Mutations: 7 enumerated from the changed lines, 7 killed.** Run in a detached
+`git worktree`, never in the shared checkout. Two worth recording:
+- **Reverting the flush gate to `!m_pixel_regions.empty()` survives the
+  six-frame arm** of the sprite-only case and dies only on the one-frame arm —
+  because later frames' `present()` flushes eventually emit the backlog. The
+  defect is a frame of LAG, so only a single-frame assertion can see it. A
+  multi-frame test would have reported a kill it had not earned.
+- **Making the hook's tier gate a no-op** first killed via `REQUIRE(pinned)`
+  firing *inside* `frame_step`, which aborts the case before its own assertion
+  speaks. Changed to a counter: no Catch2 macro should execute inside a frame
+  loop, for the same reason none may execute while fd 1 is redirected (#178).
+
+**`examples/pinned` is new, and #109 shipping without one is part of why this
+happened.** It pins a sprite, moves it, draws it from `on_pixels`, and `W`
+switches the draw into `on_render` live. It also draws an ordinary pixel region
+— that second image is the point, not decoration: **the regions draw in window
+2, so it takes BOTH to produce the straddle.** A sprite alone in window 1
+reproduces nothing, which is worth knowing before writing the next repro.
+
+## Previous head (2026-08-05, later still)
 
 **Latest work: #187 — a flush is a write boundary, and the collection needs a
 frame.** Shipped as v0.8.1.
