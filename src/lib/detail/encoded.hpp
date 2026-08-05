@@ -69,6 +69,50 @@ namespace termforge::detail {
   return "?";
 }
 
+// The guards that are about the PAYLOAD rather than about where it is going:
+// emptiness, the tier's decoder, and the one length an extent can be checked
+// against. Split out for #109, where pin_image has a payload and no
+// destination rect at all -- reuse rather than a second copy of the 64-bit
+// length arithmetic, whose whole point is that the obvious spelling is wrong.
+//
+// `fn` names the caller in the message ("draw_image" / "pin_image") so a
+// diagnostic points at the call the application actually made.
+[[nodiscard]] inline auto validate_payload(const EncodedImage& image,
+                                           const TerminalDriver& driver,
+                                           std::string_view source,
+                                           std::string_view fn)
+    -> std::expected<void, ErrorEvent> {
+  if (image.empty()) {
+    return std::unexpected{ErrorEvent{Severity::Warning, std::string{source},
+                                      std::format("{}: empty image", fn)}};
+  }
+  if (!driver.supports_image_format(image.format)) {
+    // Never a guess, and never a silent success that draws nothing: a tier
+    // with no decoder for this payload emits nothing and says why.
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, std::string{source},
+        std::format("{}: this tier cannot decode ImageFormat::{} -- "
+                    "ask supports_image_format() before drawing",
+                    fn, format_name(image.format))}};
+  }
+  if (image.format == ImageFormat::Rgba32) {
+    // In 64 bits deliberately. `w * h * 4` in int overflows for extents a
+    // public API can be handed, and a wrapped product can COLLIDE with the
+    // real span length -- turning the one check that catches a caller's
+    // mistake into one that waves it through.
+    const auto need = static_cast<std::uint64_t>(image.pixels.w) *
+                      static_cast<std::uint64_t>(image.pixels.h) * 4U;
+    if (image.bytes.size() != need) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, std::string{source},
+          std::format("{}: Rgba32 payload is {} bytes, but {}x{} needs {}", fn,
+                      image.bytes.size(), image.pixels.w, image.pixels.h,
+                      need)}};
+    }
+  }
+  return {};
+}
+
 // The guards every tier applies before it looks at an EncodedImage. `source`
 // is the driver's name, so the ErrorEvent points at the tier that refused.
 //
@@ -93,31 +137,7 @@ namespace termforge::detail {
     return std::unexpected{ErrorEvent{Severity::Warning, std::string{source},
                                       "draw_image: empty destination rect"}};
   }
-  if (!driver.supports_image_format(image.format)) {
-    // Never a guess, and never a silent success that draws nothing: a tier
-    // with no decoder for this payload emits nothing and says why.
-    return std::unexpected{ErrorEvent{
-        Severity::Warning, std::string{source},
-        std::format("draw_image: this tier cannot decode ImageFormat::{} -- "
-                    "ask supports_image_format() before drawing",
-                    format_name(image.format))}};
-  }
-  if (image.format == ImageFormat::Rgba32) {
-    // In 64 bits deliberately. `w * h * 4` in int overflows for extents a
-    // public API can be handed, and a wrapped product can COLLIDE with the
-    // real span length -- turning the one check that catches a caller's
-    // mistake into one that waves it through.
-    const auto need = static_cast<std::uint64_t>(image.pixels.w) *
-                      static_cast<std::uint64_t>(image.pixels.h) * 4U;
-    if (image.bytes.size() != need) {
-      return std::unexpected{ErrorEvent{
-          Severity::Warning, std::string{source},
-          std::format(
-              "draw_image: Rgba32 payload is {} bytes, but {}x{} needs {}",
-              image.bytes.size(), image.pixels.w, image.pixels.h, need)}};
-    }
-  }
-  return {};
+  return validate_payload(image, driver, source, "draw_image");
 }
 
 }  // namespace termforge::detail

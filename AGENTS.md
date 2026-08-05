@@ -112,6 +112,20 @@ file is the tactical version.
   virtual pure" is then a mutation that fails to *compile*. Do not give the new
   overload a default argument either — it would be ambiguous against the
   existing one at every call site, and defaults on virtuals bind statically.
+  **#109 is where the state-vs-behaviour rule above answered *behaviour*, so do
+  not re-argue it in the wrong direction.** Pinning emits protocol and holds
+  terminal-side memory, which only a tier with an out-of-band channel can do at
+  all — per-tier variance *is* the content of the feature, which is exactly the
+  case this rule exists for. Base-owned data was right for `set_output` and
+  `set_io` because there was nothing to vary. What is base-owned here is the
+  handle *type* and the non-virtual Stretch convenience, nothing more.
+- **An image's lifetime and a placement's lifetime are separate** (#109), and on
+  the kitty wire the difference is one letter. `a=d,d=I` frees the image data
+  *and* its placements; `a=d,d=i` retires one placement and leaves the data
+  resident. A region owns its image and takes the first; a pinned placement does
+  not own the image it shows and must take the second. Reaching for `d=I` on a
+  structure that does not own its image deletes a stranger's data — and does it
+  silently, because `q=2` means the terminal's objection reaches nobody.
 - **Raw mode is RAII** — `Terminal` restores termios on destruction. Never
   leave the terminal in raw mode on any exit path, **including one an exception
   takes**: a destructor is not a guarantee (an exception escaping `main`

@@ -12,6 +12,7 @@
 // in tests via static_assert) — a concept cannot parameterize unique_ptr and
 // is not a dispatch mechanism.
 
+#include <atomic>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -261,6 +262,109 @@ class TerminalDriver {
     return f == ImageFormat::Rgba32;
   }
 
+  // ── resident images (#109) ───────────────────────────────────────────────
+  //
+  // A driver caches what it draws, keyed on the destination rect and bounded.
+  // That is right for a dashboard and wrong for a sprite set: move a sprite one
+  // cell and it is a new cache entry, a new upload, and an eviction of
+  // something else -- none of which the application can see. These four give an
+  // application the other lifetime: transmit once, place anywhere, release when
+  // it says so.
+  //
+  // NONE OF THEM IS PURE. Third-party drivers are an explicit extensibility
+  // goal and a new pure virtual breaks every one of them on upgrade
+  // (AGENTS.md), so each default below is the honest answer for a tier with no
+  // resident-image channel -- a Warning, never a silent no-op.
+  //
+  // The capability query and the budget are ONE function. A tier that cannot
+  // pin answers 0, which is also the correct budget, so there is no
+  // supports_pinning() that could disagree with what pin_image actually does.
+  // Ask before committing to an art set: the alternative signal is a Warning
+  // returned after the decision was already made, which is not one.
+  [[nodiscard]] virtual auto max_pinned_images() const noexcept -> std::size_t {
+    return 0;
+  }
+
+  // Transmit `image` and hold it resident. The returned handle is the
+  // application's until unpin_image; it is exempt from the driver's own cache,
+  // its eviction and its per-frame collection.
+  //
+  // Refuses with a Warning when the tier cannot pin at all, when the image is
+  // empty, or when the budget is full -- max_pinned_images() is the number, so
+  // a caller can size its art set rather than discover the ceiling one
+  // rejection at a time.
+  virtual auto pin_image(const Image& /*image*/)
+      -> std::expected<PinnedImage, ErrorEvent> {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "pin_image: this tier cannot hold an image resident"}};
+  }
+
+  // As above for a pre-encoded payload (#163), shipped verbatim like every
+  // other encoded path. A separate overload rather than a conversion because a
+  // pre-rendered plate IS the case this exists for: baked art is by definition
+  // pre-encoded, and pinning only decoded images would miss it.
+  //
+  // The bytes are BORROWED for the duration of the call only, as everywhere
+  // else EncodedImage appears -- and that is a better fit here than at a draw,
+  // because this transmits inside the call and retains nothing but the extent.
+  //
+  // Two overloads means `pin_image({})` is AMBIGUOUS, exactly as
+  // `draw_image(rect, {})` has been since #163: `{}` list-initializes Image
+  // and EncodedImage equally well. It is a hard error naming both candidates,
+  // never a silent miscall -- there is no implicit conversion in either
+  // direction -- so spell the type (`Image{}` / `EncodedImage{}`).
+  virtual auto pin_image(const EncodedImage& /*image*/)
+      -> std::expected<PinnedImage, ErrorEvent> {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "pin_image: this tier cannot hold an image resident"}};
+  }
+
+  // Release a pinned image: the terminal frees the data and every placement of
+  // it disappears. The handle is dead afterwards and every entry point refuses
+  // it.
+  //
+  // Returns an event rather than void so that unpinning a stale or foreign
+  // handle is a Warning rather than a silent no-op -- the same reasoning as
+  // every draw_image guard, and the failure it catches (a handle from another
+  // session's driver) is one whose silent form deletes a stranger's image.
+  virtual auto unpin_image(PinnedImage /*image*/)
+      -> std::expected<void, ErrorEvent> {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "unpin_image: this tier cannot hold an image resident"}};
+  }
+
+  // Place a pinned image into `cells`. No payload crosses the wire: that is the
+  // entire point, and the property the #109 test asserts.
+  //
+  // NOT an overload of draw_image, deliberately. `draw_image(rect, {})` is
+  // already ambiguous between Image and EncodedImage (see the EncodedImage
+  // overload above); a third aggregate in the set would make the diagnostic
+  // worse and buy nothing, since a handle is not an image and the two are never
+  // interchangeable at a call site. Distinct name, no name-hiding interaction,
+  // no default argument.
+  //
+  // Placements are NOT resident. This one lives until the frame in which it is
+  // not drawn, exactly like an ordinary draw_image -- the image survives, the
+  // placement does not. An application redraws each frame as it always did.
+  virtual auto draw_pinned(Rect /*cells*/, PinnedImage /*image*/,
+                           PlacementFit /*fit*/)
+      -> std::expected<void, ErrorEvent> {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "draw_pinned: this tier cannot hold an image resident"}};
+  }
+
+  // Stretch, spelled once. NON-VIRTUAL and delegating: one fewer virtual for an
+  // out-of-tree driver to think about, and no default argument on a virtual
+  // (which would bind statically -- see the draw_image overload above).
+  auto draw_pinned(Rect cells, PinnedImage image)
+      -> std::expected<void, ErrorEvent> {
+    return draw_pinned(cells, image, PlacementFit::Stretch);
+  }
+
   // The pixel resolution a widget should rasterize at to fill `cells` on THIS
   // tier -- cells are the logical unit, this is the device pixel ratio. Auto
   // scaling alone cannot fix blur or aspect for a widget that *generates* its
@@ -431,6 +535,24 @@ class TerminalDriver {
   [[nodiscard]] auto take_output_error() noexcept -> std::optional<ErrorEvent>;
 
  protected:
+  // This driver's identity within the process, for stamping into the handles
+  // it hands out (#109). Distinct for every driver alive at once.
+  //
+  // BASE-OWNED NON-VIRTUAL STATE, per the settled rule: there is exactly one
+  // correct implementation and nothing for a subclass to vary. It is also the
+  // half of pinning that is state rather than behaviour — the emitting is
+  // per-tier and virtual above, the identity is not. A tier that reinvented
+  // this would be reinventing a counter, and one that forgot it would ship a
+  // handle comparing equal across sessions, which is the failure
+  // PinnedImage::owner exists to prevent and which nothing else would catch.
+  //
+  // A monotonic counter and not a registry: it is written once and never read
+  // back by the process, so no shared state outlives the increment and the
+  // process-lifetime hazard a registry carries (#144 row 7) does not arise.
+  [[nodiscard]] auto instance_token() const noexcept -> std::uint32_t {
+    return m_instance;
+  }
+
   // Attribute `n` bytes of the pending frame to an image bucket. A driver
   // calls these as it appends. `cells` is deliberately not tallied here — see
   // tally_frame.
@@ -492,6 +614,20 @@ class TerminalDriver {
   ByteSink* m_sink{nullptr};
   StringSink m_string_sink{};
   std::optional<ErrorEvent> m_output_error{};
+
+  // See instance_token(). Wraps after 2^32 drivers in one process: a
+  // session-per-connection server would have to accept four billion
+  // connections without restarting, and the consequence there is one stale
+  // handle comparing equal -- worth knowing, not worth a wider counter.
+  std::uint32_t m_instance{next_instance()};
+
+  // Function-local static rather than a namespace-scope one, so there is no
+  // static-initialisation-order question for a driver constructed from another
+  // translation unit's static.
+  static auto next_instance() noexcept -> std::uint32_t {
+    static std::atomic<std::uint32_t> counter{0};
+    return counter.fetch_add(1, std::memory_order_relaxed) + 1;
+  }
 };
 
 // Compile-time conformance check for concrete drivers. Not a dispatch tool.

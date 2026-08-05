@@ -500,8 +500,110 @@ see what a real terminal actually says.
 
 Residency. Slots are keyed on the destination *rect*, capped at 16, ids are
 recycled to stay one byte, and `gc_regions()` deletes anything not drawn this
-frame. A resident art set uploaded once at cold start is #109's job. This
-lowers the per-plate byte cost and nothing else.
+frame. A resident art set uploaded once at cold start is `pin_image`'s job
+(#109, below). This lowers the per-plate byte cost and nothing else.
+
+## Resident images (#109)
+
+A driver's cache is keyed on where an image was *drawn*. That is right for a
+dashboard, where a handful of images sit in fixed places, and actively wrong
+for a sprite set: move a sprite one cell and it is a new slot, a new upload,
+and an eviction of something else. Nothing in the API said so, and the cost is
+the whole payload — 205,283 bytes for the plate above.
+
+Pinning is the other lifetime. The application transmits once, places wherever
+it likes, and releases when it says so.
+
+```cpp
+auto pin_image(const Image&) -> std::expected<PinnedImage, ErrorEvent>;
+auto pin_image(const EncodedImage&) -> std::expected<PinnedImage, ErrorEvent>;
+auto draw_pinned(Rect cells, PinnedImage, PlacementFit) -> std::expected<...>;
+auto draw_pinned(Rect cells, PinnedImage) -> std::expected<...>;  // Stretch
+auto unpin_image(PinnedImage) -> std::expected<void, ErrorEvent>;
+[[nodiscard]] auto max_pinned_images() const noexcept -> std::size_t;
+```
+
+`max_pinned_images()` is the capability query *and* the budget: a tier that
+cannot pin answers 0, so there is no `supports_pinning()` that could disagree
+with what `pin_image` actually does. Ask before committing to an art set.
+
+### The image's lifetime and the placement's lifetime are separate
+
+This is the whole design, and it is one letter on the wire. A region owns its
+image, so when it goes stale `gc_regions()` emits `a=d,d=I` and the terminal
+frees the data. A pinned *placement* does not own the image it shows, so when
+it goes stale the collection emits `a=d,d=i` — the placement is retired and
+the data stays resident.
+
+Placements are therefore **not** resident. An application redraws each frame
+exactly as it always did; what it stops paying for is the upload. Nothing about
+the frame loop changes.
+
+That split is also why `set_placement_mode` no longer means "re-upload
+everything". An unpinned region has to retransmit after a mode switch because
+`d=I` discarded what it would have reused; a pinned one has nothing to
+retransmit because nothing was discarded.
+
+### The budget is 239 images, and the reason is the placeholder encoding
+
+Not terminal memory — the terminal's real capacity is unknowable under `q=2`
+with no response reader, and reporting it is #112's job. The ceiling is
+`emit_id_as_sgr`: a Unicode placeholder cell names its image by SGR foreground,
+and the 24-bit `38;2` form was observed to be *ignored* by kitty (accepted
+placement, nothing rendered), so an id that must render under placeholders fits
+the 256-colour form or does not render at all.
+
+Ids therefore come from two pools inside one byte. Regions allocate upward from
+1 and never exceed `kMaxRegionSlots` under their own steam; pins allocate
+downward from 255, giving `KittyDriver::kMaxPinnedImages == 239`.
+
+**Each allocator steps over what the other holds, and the symmetry is
+load-bearing.** Not a convention: #187 is a live path on which the region
+counter grows one id per *frame*, so it reaches the pinned range in about four
+seconds and "the ranges cannot meet" is not a property the code has. A pin
+issued a live region's id is not a near-miss — the region's next transmit
+overwrites the application's pixels and its collection emits `a=d,d=I` on them.
+If regions have taken the whole range, `pin_image` refuses rather than issuing
+a colliding id.
+
+Free ids are **derived** from the live maps rather than tracked beside them, so
+a pin/unpin cycle cannot walk the budget off its end and there is no second
+container to disagree with the first.
+
+### A handle is not an id
+
+`PinnedImage` carries the terminal-side `id`, the issuing driver (`owner`), and
+a monotonic `serial`. All three are load-bearing:
+
+- **`owner`** — a server runs one driver per session and the id spaces overlap
+  exactly, so without it session A's handle names session B's image, and
+  `unpin_image` deletes a stranger's data.
+- **`serial`** — terminal-side ids are *recycled* after an unpin, because the
+  one-byte budget requires it. The id alone therefore says "something lives
+  here", which stays true the moment a later pin inherits it. The serial is
+  never reused, so a stale handle stays refused across a recycle.
+
+### What this does not deliver
+
+**More than 239 resident images**, even under classic placement where `i=` is an
+ordinary protocol key and the one-byte ceiling does not apply. The cap is
+uniform because `set_placement_mode` can be called at any point, and a budget
+that silently shrinks under the caller is worse than one that never moved. A
+caller-owned id range is #110.
+
+**Two live placements of one pinned image under `UnicodePlaceholders`.** A
+placeholder cell encodes the image id and no placement id, so two of them are
+ambiguous and the terminal picks. Unpinned draws cannot reach this — two rects
+are two ids — so pinning is what owes the refusal, and it refuses with a
+`Warning` rather than rendering something arbitrary. Classic placements carry
+`p=` on the wire and are unaffected.
+
+**Residency accounting.** How many bytes the terminal is holding, and how close
+to its limit, is #112.
+
+**Deduplication.** Two `pin_image` calls on identical pixels are two handles,
+two ids and two uploads. Collapsing them would make `unpin_image` a refcount
+question this API does not ask.
 
 ## Interaction with Diff Rendering
 
@@ -519,6 +621,20 @@ refresh an existing classic placement on retransmit), and regions that
 stop being drawn are LRU-evicted (`a=d,d=I`) so animation never
 accumulates images terminal-side. Evicted IDs are recycled, keeping IDs
 one byte — required by the placeholder path's `38;5;<id>` encoding.
+
+A **pinned** image (#109) is exempt from both halves of that: neither the LRU
+scan nor the per-frame collection can reach it, and its placements are retired
+with the placement-only `a=d,d=i` so its data survives the rect it was shown
+in. Its id comes from the other end of the one-byte range. See *Resident
+images* above.
+
+Two caveats about the paragraph above, both real today. `App` flushes twice per
+frame and the first flush has drawn nothing, so the per-frame collection
+currently deletes and fully re-transmits every **unpinned** region every frame
+and the region id counter grows without bound — #187, and the reason a pinned
+image is the only thing that actually stays resident under `App` right now. And
+"unchanged content is not re-uploaded" is a property of the *slot*, so it is
+worth nothing once the slot has been collected.
 
 ## Placement Modes
 

@@ -374,6 +374,42 @@ enum class PlacementFit {
   Exact,
 };
 
+// ── resident images (#109) ───────────────────────────────────────────────
+// A handle to an image the terminal is holding for the application, rather
+// than one the driver caches on its behalf.
+//
+// The distinction is the whole ticket. A driver's cache is keyed on the
+// DESTINATION RECT and bounded, so an application that uploads a sprite set
+// once and then moves the sprites around re-transmits payloads it already
+// sent -- silently, and at a cost (205,283 bytes for the plate #163 measured)
+// that no API told it about. A pinned image is exempt from that cache
+// entirely: it lives until unpin_image, wherever it is drawn and however many
+// other images exist.
+//
+// OPAQUE. `id` is the terminal-side image id and `owner` says which driver
+// issued it; neither is a number to compute with. Compare handles, do not
+// construct them -- a default-constructed one is the empty handle, which every
+// entry point refuses.
+struct PinnedImage {
+  std::uint32_t id{0};
+  // Which driver instance issued this handle. A server runs one driver per
+  // session (#144), and without this a handle from session A used against
+  // session B's driver would place -- or DELETE -- an image belonging to a
+  // stranger, since the id spaces are per-driver and overlap exactly.
+  std::uint32_t owner{0};
+  // Which pin, within that driver. `id` is a terminal-side resource and is
+  // RECYCLED after an unpin, so it identifies a slot rather than an image; the
+  // serial is monotonic and never reused, which is what keeps an unpinned
+  // handle refused after its id has been handed to something else. Without it
+  // `unpin_image(old_handle)` deletes whatever now holds that id.
+  std::uint32_t serial{0};
+
+  [[nodiscard]] constexpr explicit operator bool() const noexcept {
+    return id != 0;
+  }
+  constexpr auto operator==(const PinnedImage&) const -> bool = default;
+};
+
 // ── capabilities ─────────────────────────────────────────────────────────
 // Result of probing the *terminal* (never the display server). Drives driver
 // selection.

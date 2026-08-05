@@ -13,6 +13,13 @@
 // are recycled so ids stay one byte — required by the placeholder path's
 // 38;5;<id> foreground encoding.
 //
+// Ids come from two pools and the split is the id budget (#109). Regions
+// occupy 1..kMaxRegionSlots and never grow past it, because eviction
+// recycles rather than allocating; pinned images take the rest of the
+// one-byte range (kFirstPinnedImageId..255). A pinned image is exempt from
+// both the LRU scan and the per-frame collection — its lifetime is the
+// application's, and only its PLACEMENTS are collected.
+//
 // Two placement modes:
 //  * Classic (default): cursor-positioned placement (a=p, C=1). The
 //    simpler half of the protocol, implemented by every kitty-graphics
@@ -32,10 +39,12 @@
 #include "termforge/drivers/terminal_driver.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace termforge {
 
@@ -72,6 +81,39 @@ class KittyDriver final : public TerminalDriver {
   // overridden here so nothing is actually hidden today; the declaration keeps
   // that true if one of them is ever removed.
   using TerminalDriver::draw_image;
+
+  // ── resident images (#109) ─────────────────────────────────────────────
+  // The flagship tier is the only one that can hold an image the terminal
+  // keeps: a pinned payload is transmitted once under an id outside the
+  // region pool, and neither the LRU cap nor gc_regions can see it.
+  [[nodiscard]] auto max_pinned_images() const noexcept
+      -> std::size_t override;
+  auto pin_image(const Image& image)
+      -> std::expected<PinnedImage, ErrorEvent> override;
+  auto pin_image(const EncodedImage& image)
+      -> std::expected<PinnedImage, ErrorEvent> override;
+  auto unpin_image(PinnedImage image)
+      -> std::expected<void, ErrorEvent> override;
+  auto draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
+      -> std::expected<void, ErrorEvent> override;
+  // The base's Stretch convenience overload is non-virtual, so overriding the
+  // three-argument one above would HIDE it for every call made through
+  // KittyDriver's static type. Same trap as draw_image, same fix.
+  using TerminalDriver::draw_pinned;
+
+  // How many images this tier can hold resident, and why the number is what it
+  // is. Handed to the caller rather than kept as a private refusal threshold
+  // (#180): a policy the application must live inside is one it should be able
+  // to name.
+  //
+  // The ceiling is the PLACEHOLDER PATH'S ID ENCODING, not terminal memory.
+  // emit_id_as_sgr writes the image id as an SGR foreground, and the 24-bit
+  // (38;2) form was observed to be ignored by kitty -- accepted placement,
+  // nothing rendered -- so a rendered id must fit the 256-colour form. Region
+  // ids occupy 1..kMaxRegionSlots by construction (the eviction path recycles
+  // rather than allocating), which leaves everything above them for pins.
+  static constexpr std::uint32_t kFirstPinnedImageId = 17;
+  static constexpr std::size_t kMaxPinnedImages = 255 - kFirstPinnedImageId + 1;
   // The flagship tier is the only one with an opaque-payload channel.
   [[nodiscard]] auto supports_image_format(ImageFormat f) const noexcept
       -> bool override;
@@ -139,6 +181,72 @@ class KittyDriver final : public TerminalDriver {
     PlacementFit fit{PlacementFit::Stretch};
   };
 
+  // One image the application asked the terminal to keep (#109). Deliberately
+  // NOT a RegionSlot: a region's identity is its destination rect and its
+  // lifetime is one frame, and a pinned image has neither property. Keeping
+  // them in separate maps is what makes "the LRU cannot reach a pinned image"
+  // structural rather than a condition someone can delete.
+  struct PinnedEntry {
+    Extent px{};  // the declared extent -- what Exact is enforced against
+    // Monotonic per driver and NEVER reused, unlike the map key. Terminal-side
+    // image ids are recycled by design (the one-byte budget requires it), so
+    // the key alone cannot tell "this handle's image" from "a later image that
+    // inherited its id" -- and the difference is whether unpin_image deletes
+    // the caller's image or a stranger's. The serial is what makes a stale
+    // handle stay stale across a recycle.
+    std::uint32_t serial{0};
+    // Where this image was last placed, and when. Answers the placeholder
+    // path's "is it already placed somewhere else *this frame*" in O(1)
+    // instead of a scan over every placement on every draw. Stale values are
+    // harmless because the clock is what gates them.
+    std::uint64_t last_place_key{0};
+    std::uint64_t last_place_clock{0};
+  };
+
+  // One placement of a pinned image. The image outlives this; the placement is
+  // collected per frame exactly like a region, because a classic placement
+  // left behind floats above the text grid whether or not its data is
+  // resident.
+  struct PinPlacement {
+    std::uint32_t image_id{0};
+    std::uint32_t placement_id{0};
+    std::uint64_t last_used{0};  // same per-draw clock as RegionSlot
+    bool placed{false};
+    PlacementFit fit{PlacementFit::Stretch};
+  };
+
+  // RAII byte attribution for a draw path (#139). Everything appended to
+  // m_buf during its lifetime is image traffic, split into the payload that
+  // was uploaded and everything else. ONE struct rather than one per call
+  // site: the two buckets are a subtraction apart, so two copies of the
+  // arithmetic are two chances for a path to bill an upload as an edit.
+  struct ImageTally {
+    KittyDriver& drv;
+    const std::size_t start;
+    std::size_t transmitted{0};
+    ~ImageTally();
+  };
+
+  // The placement half both draw paths share: the classic delete-and-replace
+  // dance kitty needs because it will not refresh a live classic placement,
+  // and the placeholder grid that is re-emitted every frame because the grid
+  // IS the placement. `placed` is read and written. `replace` says the
+  // existing placement is stale -- changed content or a changed fit for a
+  // region, a changed fit for a pinned image, which has no content to change.
+  auto emit_placement(std::uint32_t image_id, std::uint32_t placement_id,
+                      bool& placed, Rect dest, PlacementFit fit, bool replace)
+      -> void;
+
+  // Everything both pin_image overloads share once the payload is in hand.
+  auto pin_payload(std::span<const std::byte> payload, int format_code,
+                   Extent px) -> std::expected<PinnedImage, ErrorEvent>;
+
+  // The pinned entry `image` names, or a Warning saying which way it is
+  // invalid. Both cases are real: a handle from another driver (a server runs
+  // one per session) and a handle whose image was already unpinned.
+  auto resolve_pin(PinnedImage image, std::string_view fn)
+      -> std::expected<PinnedEntry*, ErrorEvent>;
+
   // Transmit an opaque payload under `id` via chunked APC sequences.
   // `format_code` is the kitty f= value (32 = raw RGBA, 100 = PNG); `px` is
   // the declared pixel extent, emitted as s=/v=. Retransmit with an existing
@@ -159,13 +267,31 @@ class KittyDriver final : public TerminalDriver {
   // Classic placement: position the cursor and place (a=p, C=1), scaled to
   // cols x rows cells under Stretch, or at the transmitted resolution under
   // Exact (which omits c=/r= entirely).
-  auto place_classic(const RegionSlot& slot, int x, int y, int cols, int rows,
-                     PlacementFit fit) -> void;
+  //
+  // Takes the two ids rather than a RegionSlot (#109): a pinned placement
+  // places identically and is not a RegionSlot, and passing the ids is what
+  // lets both callers share one implementation instead of two that drift.
+  auto place_classic(std::uint32_t image_id, std::uint32_t placement_id, int x,
+                     int y, int cols, int rows, PlacementFit fit) -> void;
 
   // Create a virtual placement and emit Unicode placeholder cells.
   // The image becomes part of the text grid (tmux-safe).
-  auto place_unicode(const RegionSlot& slot, int x, int y, int cols,
-                     int rows) -> void;
+  // `placed` says whether the virtual placement already exists; the cell grid
+  // is re-emitted either way, because the grid IS the placement.
+  auto place_unicode(std::uint32_t image_id, std::uint32_t placement_id,
+                     bool placed, int x, int y, int cols, int rows) -> void;
+
+  // Delete one PLACEMENT, leaving the image data resident (a=d,d=i). The
+  // distinction is #109's: delete_image below frees the data too, which is
+  // right for a region that owns its image and catastrophic for a pinned one
+  // that does not.
+  auto delete_placement(std::uint32_t image_id, std::uint32_t placement_id)
+      -> void;
+
+  // The placeholder-mode clamp both draw paths apply to a destination rect.
+  // Returns the clamped rect; sets `clamped` when it changed anything.
+  [[nodiscard]] auto clamp_dest(Rect cells, bool& clamped) const noexcept
+      -> Rect;
 
   // Fetch (or create, evicting LRU past the cap) the slot for a region.
   auto region_slot(std::uint64_t key) -> RegionSlot&;
@@ -176,14 +302,23 @@ class KittyDriver final : public TerminalDriver {
   // Per-frame GC (called from flush): delete terminal-side and drop every
   // region not drawn during the frame just rendered, so a disappeared
   // region's classic placement can't linger above the text grid.
+  //
+  // Collects pinned PLACEMENTS on the same boundary and by the same argument,
+  // but with the placement-only delete: the image is the application's and
+  // outlives any rect it was shown in.
   auto gc_regions() -> void;
 
   // Delete all transmitted images from terminal memory.
   auto delete_all() -> void;
 
   // Encode an image ID as an SGR foreground color sequence.
-  // IDs ≤ 0xFFFFFF fit in 24-bit RGB; higher IDs need the 4th byte
-  // encoded via an additional diacritic (not yet supported).
+  //
+  // THE BUDGET IS ONE BYTE, not the 24 bits the shape suggests. The
+  // implementation keeps a 38;2 branch for ids above 255, but that form was
+  // observed to be IGNORED by kitty -- accepted placement, nothing rendered --
+  // so it is a fallback in spelling only and not capacity. Ids that must
+  // render under placeholders stay <= 255, which is what both id pools are
+  // arranged around (see the file comment).
   auto emit_id_as_sgr(std::uint32_t id) -> void;
 
   // Append a Unicode placeholder cell (U+10EEEE + diacritics) to m_buf.
@@ -217,7 +352,28 @@ class KittyDriver final : public TerminalDriver {
   // Region key (packed x,y,w,h) -> slot. Bounded: LRU-evicted past
   // kMaxRegionSlots, freeing the terminal-side image data too.
   std::unordered_map<std::uint64_t, RegionSlot> m_regions;
+  // Resident images (#109), keyed on the terminal-side image id. Nothing in
+  // gc_regions or region_slot can reach this map -- that is the feature.
+  std::unordered_map<std::uint32_t, PinnedEntry> m_pinned;
+  // Placements of pinned images, keyed like a region on the destination rect.
+  // Uncapped on purpose: they are collected every frame, so the live count is
+  // whatever the last frame drew, and an LRU here would reintroduce the silent
+  // eviction the ticket exists to remove.
+  std::unordered_map<std::uint64_t, PinPlacement> m_pin_places;
+  // Monotonic and never reused, unlike the terminal-side ids. This is what a
+  // handle carries so that an unpinned handle stays refused after its id has
+  // been recycled -- see PinnedEntry::serial.
+  std::uint32_t m_next_pin_serial{0};
+  // Whether anything was ever uploaded, asked at the transmit path itself.
+  // ~KittyDriver needs the answer and neither map can give it: an unpin queues
+  // its delete into m_buf, so an unflushed one leaves the image resident with
+  // m_pinned already empty.
+  bool m_transmitted{false};
+  // One latch PER ENTRY POINT. A shared one would let whichever path clamped
+  // first consume the only report the driver ever makes, and the other would
+  // then degrade in silence.
   bool m_warned_clamp{false};
+  bool m_warned_clamp_pinned{false};
   Extent m_cell_px{kNominalCellPixels};
 };
 
