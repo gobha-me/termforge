@@ -6,9 +6,9 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-06, latest)
 
-**Current branch: `fix/193-restore-signal-dispositions` — normal Terminal
-teardown gives the embedding process its complete signal policy back.** The
-branch is validated and ready for review/PR; v0.9.2 remains the latest release.
+**Latest release: v0.9.3 — normal Terminal teardown gives the embedding process
+its complete signal policy back.** #193 merged through PR #204 as `d653e67`;
+the release tag points at that reviewed squash commit.
 
 The fatal backstop used to install nine handlers with `std::signal` and replace
 all nine with `SIG_DFL` at destruction. A host's existing `SIGTERM`, `SIGHUP`
@@ -26,11 +26,11 @@ restore the terminal, reset the delivered signal to default, and re-raise.
 
 **Verification:** the focused signal/fd suites passed 25 consecutive runs;
 GCC, Clang, Release `-Werror -Wshadow`, and ASan+UBSan matrices each pass 52/52;
-`tools/consume/run.sh` passes `subdir`, `install`, and `vendored`; and
-`git diff --check` is clean. No terminal-protocol bytes changed, so the real
-emulator gate does not apply to this cut.
+`tools/consume/run.sh` passes `subdir`, `install`, and `vendored`; the diff is
+clean; and PR #204's eight CI jobs passed. No terminal-protocol bytes changed,
+so the real emulator gate does not apply to this cut.
 
-## Latest release: v0.9.2 (#148)
+## Previous release: v0.9.2 (#148)
 
 **One App frame is one sink write on every tier, with the whole frame visible
 to `last_frame_bytes()`.** #148 merged through PR #203 as `b2e7629`; the release
