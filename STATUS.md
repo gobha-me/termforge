@@ -4,10 +4,157 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-05, latest)
+## Where we are (2026-08-06, latest)
+
+**Latest work: #190 — the region id counter is gone, and so are the two guards
+that were standing in for the invariant it could not hold.** Ships as v0.9.1.
+
+**How it got picked: the previous cut named it, for the fifth time running.**
+v0.9.0's release note ends `**Next: #190**` and says in as many words that it
+"carries the decision this cut did not make". It is also an open blocker on
+epic #198 (game-grade kitty framebuffer at 320×180 / 30 FPS), whose leaf #196
+wants one stable image id held across 1,800 frames while UI regions churn
+around it — which is a bet on a range the code did not actually guarantee.
+
+**The bug.** A region's identity is its destination **rect**, so a sprite
+stepping one cell per frame is a new key every frame. `gc_regions()` erased the
+vacated slot without lowering `m_next_image_id`, so the map dropped below
+`kMaxRegionSlots` and the next draw took the fresh-id branch. One id per frame,
+forever. #187 fixed the *static* case; motion was never covered by it.
+
+**Measured through a real `App` over a pty answering as kitty** — same harness,
+same 300 frames of a moving **unpinned** region, only the driver differing:
+
+| | image ids | max id | transmits | `38;2` (ignored form) |
+| --- | --- | --- | --- | --- |
+| before | **300** | **300** | 300 | **180** |
+| after | **2** | **2** | 300 | **0** |
+
+The last column is the failure a user reports. Past id 255 `emit_id_as_sgr`
+falls to the 24-bit form kitty *accepts and ignores*, so a `UnicodePlaceholders`
+session renders nothing, silently, under `q=2`. 45 frames past the ceiling × 4
+rows = 180, and 1020 + 180 = 1200 = the post-fix `38;5` count, so the arithmetic
+closes rather than merely pointing the right way. **About 4.3 seconds at 60fps.**
+
+**The transmits column is the point of the cut, not a disappointment.** #190
+bounds **ids, not bytes** — a new rect is a new key with no content hash to
+compare against, so motion still costs one full upload per frame, and total
+bytes moved 3,739,951 → 3,738,477 (the shorter id strings). `pin_image` (#109)
+is the byte answer and #196 is the rest of it. The code, the header and the docs
+all say so rather than letting the fix imply more than it did.
+
+**The fix is a derivation**: the smallest id in `[1, kMaxRegionSlots]` that no
+live region holds. The bound is the algorithm rather than a guard on it — the
+branch runs only when fewer than `kMaxRegionSlots` slots are live and every live
+slot holds an id from that range, so by pigeonhole the walk terminates inside
+the pool. Declined a bitmask + `countr_one`: it needs a range filter that is
+dead code when the invariant holds and UB when it does not, where the scan's
+worst failure is a duplicate id *inside* the region pool, unable to reach either
+the pin range or the ceiling.
+
+### The decision v0.9.0 deferred, and the two exceptions that make it a rule
+
+Two #109 guards became unreachable and were **deleted** — `region_slot`'s
+step-over-pinned-ids loop and `pin_payload`'s scan of `m_regions`. The
+`static_assert` ordering the two ranges is what replaced them. A guard that
+cannot fire is a fault in the code; one advertising a hazard the code no longer
+has is worse than absent, because the next reader goes looking for the bug it
+implies.
+
+Two were **kept**, and the exceptions are the reusable half:
+
+- **`pin_image`'s refusal.** Deleting it would let an exhausted scan fall
+  through with `id == 16` and pin under a *region's* id — the exact corruption
+  it names. But it and the `m_pinned.size()` cap above it were **the same
+  predicate over one map computed twice**, which is this file's own objection to
+  counter-plus-free-list one level up. Merged: the walk running off the bottom
+  of the pool *is* the pool being full, carrying the cap's message verbatim.
+  `test/46pinned`'s budget case passes unchanged and now kills two mutations it
+  could not reach before.
+- **`emit_id_as_sgr`'s 24-bit branch.** It **totalizes a function over its
+  parameter's own type**, and `std::uint32_t` is wider than the invariant.
+  Deleting it makes `emit_id_as_sgr(300)` emit a malformed `38;5;300`;
+  ignored-but-well-formed is the better of the two failures.
+
+Written into AGENTS.md as a rule *with* both exceptions, because without them it
+reads as a license to delete error paths.
+
+### What review and the instruments caught
+
+**Eight assertions moved, in four suites — the ticket named three.** The other
+five all read the id *set* across frames, which was reading the counter. Every
+replacement is a set equality or a sum, never a `size()` bound: a bound over a
+set already known exactly survives a driver that went back to a counter for the
+first two frames. Each value was **derived before it was run**; none was pasted
+off a failure.
+
+**The alternation is why several are `{1,2}` and not `{1}`.** The collection
+runs at the *end* of the frame that stopped drawing a rect, which is after that
+frame's draw, so the vacated slot is still live when the next rect allocates and
+a moving region ping-pongs between two ids. Where the region is fully collected
+before the redraw — a blank frame, or a straddle that destroys it every frame —
+the map is empty and the id comes straight back.
+
+**Mutations: 14 enumerated from the changed lines, 11 killed, 3 declared
+survivors that survived for the declared reason** (the scan's `kMaxRegionSlots`
+bound, which is the pigeonhole made syntactic; and reinstating either deleted
+guard, which is unobservable *because* the change made it so). Run in a detached
+worktree, restored by `cp`. Two worth recording:
+
+- **A gross reordering is already caught, incidentally, and that scoped a claim
+  down.** Moving `gc_regions` after `emit_frame` fails six suites — `01drivers`
+  and `37bytes` among them — because the deletes land in the next frame's byte
+  tally, not because anything there says a word about a recycled id. The order
+  case's header claim ("nothing in the tree could see it") was **measured and
+  rewritten** to what it actually adds: the property *stated*, so a change that
+  preserves the counts and the byte accounting while moving the delete relative
+  to the transmit fails there and says why.
+- **`test/49regionids`'s order case caught its own author.** Id 2's history is
+  `"tDtD"`, not `"tDt"` — frame 4 draws id 1 and its collection retires frame
+  3's rect on the way past. The code was right and the derivation was not.
+
+### #199 — found by the instrument, and the reason it could be found at all
+
+The pty capture counted placeholder cells by encoding U+10EEEE **in Python**,
+and reported zero while the SGR id encodings were plainly present. The driver's
+`kPlaceholder` is `"\xF4\x8F\xBB\xAE"`, which decodes to **U+10FEEE**, not the
+U+10EEEE every comment claims. One bit, in the second byte.
+
+**`tools/kitty_repro.sh` carries the same wrong constant under the same wrong
+label** — which is why no manual terminal check ever caught it, and the third
+distinct time the capture gate has itself been the fault. Filed as #199, not
+fixed here: it is a rendering bug rather than an allocation one, and the part
+that cannot be settled without a real kitty is whether the recorded finding that
+`38;2` is "accepted and ignored" was a **misdiagnosis of this bug** — "nothing
+rendered" is the symptom of both, and the whole one-byte id budget (#109's range
+split, #190's ceiling) rests on that observation.
+
+**The lesson is about instruments, not about the constant.** The existing suites
+count placeholder cells by searching for the driver's own constant, which is the
+both-sides-of-one-function identity `test/support/apc.hpp` already objects to
+for base64. The new instrument found this precisely because **it did not share a
+constant with the code**.
+
+#200 is the other half of #190's shape, filed rather than folded in: the
+**placement** id counter is still monotonic. No one-byte ceiling (`p=` is never
+SGR-encoded), but it is `uint32_t` and wraps to `p=0` — which kitty reads as
+"unspecified" — in about 52 days at 16 churning regions and 60fps. The likely
+fix removes the counter entirely: `p=` is scoped per image id and a region owns
+its image id exclusively, so a region placement can always be `p=1`.
+
+### What this does NOT fix
+
+- **The upload.** Stated three times above because it is the thing a reader will
+  otherwise take away wrongly. Motion is still one full transmit per frame.
+- **The straddle** (#191 option (a) / #148) is untouched, and so are **#114**
+  (z-order) and **#108**.
+- **#199's rendering question**, which needs a human at a real kitty and may
+  reach further back than this cut.
+
+## Previous head (2026-08-05, v0.9.0)
 
 **Latest work: #191 + #189 — a draw hook in App's second window, and the seam
-that proves it.** Ships as v0.9.0.
+that proves it.** Shipped as v0.9.0.
 
 **How it got picked: the previous cut named it, again.** v0.8.1's release note
 called #191 "the big one" and said in as many words that **#109 has no correct
@@ -145,7 +292,7 @@ switches the draw into `on_render` live. It also draws an ordinary pixel region
 2, so it takes BOTH to produce the straddle.** A sprite alone in window 1
 reproduces nothing, which is worth knowing before writing the next repro.
 
-## Previous head (2026-08-05, later still)
+## Previous head (2026-08-05, v0.8.1)
 
 **Latest work: #187 — a flush is a write boundary, and the collection needs a
 frame.** Shipped as v0.8.1.
