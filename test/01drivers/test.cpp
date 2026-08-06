@@ -167,7 +167,8 @@ TEST_CASE("KittyDriver: draw_image emits APC transmit + virtual placement + plac
   REQUIRE(out.find("a=p") != std::string::npos);          // place
   REQUIRE(out.find("U=1") != std::string::npos);          // virtual placement
   // Should contain the Unicode placeholder character (U+10EEEE).
-  REQUIRE(out.find("\xF4\x8F\xBB\xAE") != std::string::npos);
+  REQUIRE(out.find("\xF4\x8E\xBB\xAE") != std::string::npos);
+  REQUIRE(out.find("\xF4\x8F\xBB\xAE") == std::string::npos);
 }
 
 TEST_CASE("KittyDriver: unchanged region does not re-upload", "[drivers][kitty]") {
@@ -186,7 +187,7 @@ TEST_CASE("KittyDriver: unchanged region does not re-upload", "[drivers][kitty]"
   // only the placeholder cells are re-emitted.
   REQUIRE(out.find("a=t") == std::string::npos);
   REQUIRE(out.find("a=p") == std::string::npos);
-  REQUIRE(out.find("\xF4\x8F\xBB\xAE") != std::string::npos);
+  REQUIRE(out.find("\xF4\x8E\xBB\xAE") != std::string::npos);
 }
 
 TEST_CASE("KittyDriver: classic placement is the default", "[drivers][kitty]") {
@@ -211,7 +212,7 @@ TEST_CASE("KittyDriver: classic placement is the default", "[drivers][kitty]") {
   REQUIRE(out.find("r=2") != std::string::npos);
   // No virtual placement, no placeholder cells.
   REQUIRE(out.find("U=1") == std::string::npos);
-  REQUIRE(out.find("\xF4\x8F\xBB\xAE") == std::string::npos);
+  REQUIRE(out.find("\xF4\x8E\xBB\xAE") == std::string::npos);
 
   out.clear();
   REQUIRE(d.draw_image(Rect{3, 4, 2, 2}, img).has_value());
@@ -264,11 +265,10 @@ TEST_CASE("KittyDriver: stale regions are LRU-evicted terminal-side",
   d.flush();
   // Region 1 was the least-recently-drawn, so it is the victim.
   REQUIRE(data_deletes_of(out, 1) == 1);
-  // Evicted ids are recycled, so ids stay within the one-byte range the
-  // placeholder path's 38;5;<id> foreground encoding requires. Asserted as a
-  // bound over every id on the wire rather than by grepping for two arbitrary
-  // large ones: `out.find("i=256")` is a spot check that 17 regions could never
-  // have reached anyway.
+  // Evicted ids are recycled, so ids stay within the configured region pool.
+  // Asserted as a bound over every id on the wire rather than by grepping for
+  // two arbitrary large ones: `out.find("i=256")` is a spot check that 17
+  // regions could never have reached anyway.
   // 17 distinct regions, but only 16 ids: the 17th recycles the evicted one.
   // kFirstPinnedImageId is the public spelling of "one past the region pool",
   // and a region id at or above it is one that would collide with a pin (#109).
@@ -301,8 +301,8 @@ TEST_CASE("KittyDriver: oversized destination is clamped to the placeholder limi
   REQUIRE(out.find("s=10") != std::string::npos);
   REQUIRE(out.find("v=10") != std::string::npos);
   int ph_count = 0;
-  for (std::size_t p = out.find("\xF4\x8F\xBB\xAE"); p != std::string::npos;
-       p = out.find("\xF4\x8F\xBB\xAE", p + 4))
+  for (std::size_t p = out.find("\xF4\x8E\xBB\xAE"); p != std::string::npos;
+       p = out.find("\xF4\x8E\xBB\xAE", p + 4))
     ++ph_count;
   REQUIRE(ph_count == 297);
   // The warning fires once, not every frame.
@@ -325,8 +325,8 @@ TEST_CASE("KittyDriver: an image wider than 297px into a small rect is legal",
   REQUIRE(out.find("c=4") != std::string::npos);
   REQUIRE(out.find("r=2") != std::string::npos);
   int ph_count = 0;
-  for (std::size_t p = out.find("\xF4\x8F\xBB\xAE"); p != std::string::npos;
-       p = out.find("\xF4\x8F\xBB\xAE", p + 4))
+  for (std::size_t p = out.find("\xF4\x8E\xBB\xAE"); p != std::string::npos;
+       p = out.find("\xF4\x8E\xBB\xAE", p + 4))
     ++ph_count;
   REQUIRE(ph_count == 8);
 }
@@ -376,10 +376,10 @@ TEST_CASE("KittyDriver: placeholder grid for 2x2 image", "[drivers][kitty]") {
   REQUIRE(d.draw_image(Rect{0, 0, 2, 2}, img).has_value());
   d.flush();
 
-  // Count placeholder characters (U+10EEEE = F4 8F BB AE).
+  // Count placeholder characters (U+10EEEE = F4 8E BB AE).
   int ph_count = 0;
   std::size_t pos = 0;
-  while ((pos = out.find("\xF4\x8F\xBB\xAE", pos)) != std::string::npos) {
+  while ((pos = out.find("\xF4\x8E\xBB\xAE", pos)) != std::string::npos) {
     ++ph_count;
     pos += 4;
   }
@@ -389,8 +389,8 @@ TEST_CASE("KittyDriver: placeholder grid for 2x2 image", "[drivers][kitty]") {
   REQUIRE(out.find("c=2") != std::string::npos);
   REQUIRE(out.find("r=2") != std::string::npos);
 
-  // Placeholder cells carry the image id as a 256-color foreground —
-  // kitty ignores the 24-bit form (observed: accepted, never rendered).
+  // Allocated ids currently use the compact 256-color foreground. The 24-bit
+  // form is valid too (#199), but this id does not need it.
   REQUIRE(out.find("\033[38;5;1m") != std::string::npos);
   REQUIRE(out.find("38;2;0;0;1") == std::string::npos);
 
@@ -434,7 +434,7 @@ TEST_CASE("KittyDriver: extended diacritic range for wide images", "[drivers][ki
   // Count placeholder characters — should be 200.
   int ph_count = 0;
   std::size_t pos = 0;
-  while ((pos = out.find("\xF4\x8F\xBB\xAE", pos)) != std::string::npos) {
+  while ((pos = out.find("\xF4\x8E\xBB\xAE", pos)) != std::string::npos) {
     ++ph_count;
     pos += 4;
   }
@@ -525,7 +525,7 @@ TEST_CASE("KittyDriver: set_placement_mode resets placement state (#7)",
   d.draw_image(Rect{0, 0, 2, 2}, img);   // now must emit a virtual placement + cells
   d.flush();
   REQUIRE(out.find("U=1") != std::string::npos);        // virtual placement created
-  REQUIRE(out.find("\xF4\x8F\xBB\xAE") != std::string::npos);  // placeholder cells
+  REQUIRE(out.find("\xF4\x8E\xBB\xAE") != std::string::npos);  // placeholder cells
 }
 
 // ── #83: the destination is a cell rect ─────────────────────────────────────

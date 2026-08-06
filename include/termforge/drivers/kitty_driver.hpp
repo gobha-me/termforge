@@ -13,11 +13,10 @@
 // slot cap is reached, and by the collection in flush() when a region stops
 // being drawn. Both paths give the id back — the eviction reuses it on the
 // spot, the collection returns it to the pool for the next rect that needs
-// one — so ids stay one byte, required by the placeholder path's 38;5;<id>
-// foreground encoding.
+// one — so ids stay inside the driver's current compatibility budget.
 //
 // Ids come from two pools and the split is the id budget (#109). Regions
-// allocate upward from 1 and pinned images take the rest of the one-byte
+// allocate upward from 1 and pinned images take the rest of the configured
 // range (kFirstPinnedImageId..255). THE POOLS ARE DISJOINT BY CONSTRUCTION
 // (#190): each allocator DERIVES a free id from its own live map — region_slot
 // walks up from 1 and stops at kMaxRegionSlots, pin_payload walks down from
@@ -124,13 +123,14 @@ class KittyDriver final : public TerminalDriver {
   // (#180): a policy the application must live inside is one it should be able
   // to name.
   //
-  // The ceiling is the PLACEHOLDER PATH'S ID ENCODING, not terminal memory.
-  // emit_id_as_sgr writes the image id as an SGR foreground, and the 24-bit
-  // (38;2) form was observed to be ignored by kitty -- accepted placement,
-  // nothing rendered -- so a rendered id must fit the 256-colour form. Region
-  // ids occupy 1..kMaxRegionSlots by construction (region_slot derives every
-  // one of them from that range and the eviction path reuses rather than
-  // allocating -- #190), which leaves everything above them for pins.
+  // This is a compatibility budget, not measured terminal memory. #199 proved
+  // that the placeholder path's 24-bit SGR form works, including for id 300;
+  // the old 255 protocol ceiling was a misdiagnosis of the wrong codepoint.
+  // Keep the shipped finite budget until capacity gets its own contract (#205,
+  // with accounting in #112), rather than silently turning an explicit public
+  // limit into an arbitrary larger one. Region ids occupy 1..kMaxRegionSlots
+  // by construction (#190), leaving everything above them in this budget for
+  // pins.
   static constexpr std::uint32_t kFirstPinnedImageId = 17;
   static constexpr std::size_t kMaxPinnedImages = 255 - kFirstPinnedImageId + 1;
   // The flagship tier is the only one with an opaque-payload channel.
@@ -214,7 +214,7 @@ class KittyDriver final : public TerminalDriver {
   struct PinnedEntry {
     Extent px{};  // the declared extent -- what Exact is enforced against
     // Monotonic per driver and NEVER reused, unlike the map key. Terminal-side
-    // image ids are recycled by design (the one-byte budget requires it), so
+    // image ids are recycled inside the finite public budget, so
     // the key alone cannot tell "this handle's image" from "a later image that
     // inherited its id" -- and the difference is whether unpin_image deletes
     // the caller's image or a stranger's. The serial is what makes a stale
@@ -344,12 +344,11 @@ class KittyDriver final : public TerminalDriver {
 
   // Encode an image ID as an SGR foreground color sequence.
   //
-  // THE BUDGET IS ONE BYTE, not the 24 bits the shape suggests. The
-  // implementation keeps a 38;2 branch for ids above 255, but that form was
-  // observed to be IGNORED by kitty -- accepted placement, nothing rendered --
-  // so it is a fallback in spelling only and not capacity. Ids that must
-  // render under placeholders stay <= 255, which is what both id pools are
-  // arranged around (see the file comment).
+  // Ids <= 255 use the compact 38;5 form; larger ids use the protocol's 38;2
+  // form. #199 verified both on real kitty with U+10EEEE, including id 300.
+  // The driver's allocators currently stay <= 255 as a separate compatibility
+  // budget (see kMaxPinnedImages), so the larger branch totalizes this helper
+  // for its full uint32_t parameter rather than expanding allocator capacity.
   auto emit_id_as_sgr(std::uint32_t id) -> void;
 
   // Append a Unicode placeholder cell (U+10EEEE + diacritics) to m_buf.
@@ -368,9 +367,9 @@ class KittyDriver final : public TerminalDriver {
   PlacementMode m_mode{PlacementMode::Classic};
   // There is deliberately no m_next_image_id beside this. Image ids are
   // DERIVED from the live maps by both allocators (#190) -- region_slot walks
-  // up from 1, pin_payload walks down from 255 -- because a counter is a
-  // second container agreeing about a fact only one of them owns, and the one
-  // that used to be here disagreed by three orders of magnitude.
+  // up from 1, pin_payload walks down from the configured ceiling -- because a
+  // counter is a second container agreeing about a fact only one of them owns,
+  // and the one that used to be here disagreed by three orders of magnitude.
   //
   // Placement ids are still a counter, and the asymmetry is deliberate rather
   // than an oversight: p= is never SGR-encoded, so it has no one-byte ceiling

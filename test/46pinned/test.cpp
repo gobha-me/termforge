@@ -380,8 +380,8 @@ TEST_CASE("pinned: the budget is public, enforced, and returned on unpin",
   for (std::size_t i = 0; i < KittyDriver::kMaxPinnedImages; ++i) {
     auto p = d.pin_image(tfsupport::solid(1, 1, Pixel{1, 2, 3, 255}));
     REQUIRE(p.has_value());
-    // Every id stays inside the one-byte range the placeholder path's
-    // 38;5;<id> encoding needs, and above the region pool.
+    // Every id stays inside the configured public budget and above the region
+    // pool. #199 proved that placeholder encoding itself is not the ceiling.
     CHECK(p->id >= KittyDriver::kFirstPinnedImageId);
     CHECK(p->id <= 255);
     held.push_back(*p);
@@ -712,7 +712,7 @@ TEST_CASE("pinned: an empty handle is false and a real one is true",
   CHECK(static_cast<bool>(*p));
 
   // Equality must consider the OWNER, and the hazard is concrete rather than
-  // theoretical: pins allocate downward from the one-byte ceiling, so the
+  // theoretical: pins allocate downward from the configured ceiling, so the
   // first pin of every driver gets the same id. `return id == other.id;` is a
   // plausible simplification that makes two sessions' handles compare equal --
   // the exact confusion the owner field exists to prevent.
@@ -783,8 +783,8 @@ TEST_CASE("pinned: an unpinned draw to the same rect refuses under "
 
 TEST_CASE("pinned: a recycled id does not resurrect a stale handle",
           "[pinned][kitty][failure]") {
-  // Terminal-side ids are recycled by design — the one-byte budget requires
-  // it — so the map key alone cannot tell "this handle's image" from "a later
+  // Terminal-side ids are recycled inside the finite public budget, so the map
+  // key alone cannot tell "this handle's image" from "a later
   // image that inherited its id". Without the serial, unpin_image(old) deletes
   // the NEW image and draw_pinned(old) draws it.
   KittyDriver d;
@@ -819,7 +819,7 @@ TEST_CASE("pinned: a recycled id does not resurrect a stale handle",
 // range" -- was DELETED at #190 rather than kept, and the reasoning is worth
 // more than the case was.
 //
-// It drove 255 distinct rects to push a region id to the top of the one-byte
+// It drove 255 distinct rects to push a region id to the top of the configured
 // range, then asserted a pin issued afterwards avoided it. It was the tree's
 // only witness that pin_payload consulted m_regions. #190 removed that consult,
 // because region ids can no longer leave [1, kMaxRegionSlots] -- so the case

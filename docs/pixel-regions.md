@@ -499,8 +499,9 @@ see what a real terminal actually says.
 ### What this does not deliver
 
 Residency. Slots are keyed on the destination *rect*, capped at 16, ids are
-recycled to stay one byte, and `gc_regions()` deletes anything not drawn this
-frame. A resident art set uploaded once at cold start is `pin_image`'s job
+recycled inside that bounded pool, and `gc_regions()` deletes anything not
+drawn this frame. A resident art set uploaded once at cold start is
+`pin_image`'s job
 (#109, below). This lowers the per-plate byte cost and nothing else.
 
 ## Resident images (#109)
@@ -544,16 +545,19 @@ everything". An unpinned region has to retransmit after a mode switch because
 `d=I` discarded what it would have reused; a pinned one has nothing to
 retransmit because nothing was discarded.
 
-### The budget is 239 images, and the reason is the placeholder encoding
+### The budget is 239 images, as a compatibility policy
 
 Not terminal memory — the terminal's real capacity is unknowable under `q=2`
-with no response reader, and reporting it is #112's job. The ceiling is
-`emit_id_as_sgr`: a Unicode placeholder cell names its image by SGR foreground,
-and the 24-bit `38;2` form was observed to be *ignored* by kitty (accepted
-placement, nothing rendered), so an id that must render under placeholders fits
-the 256-colour form or does not render at all.
+with no response reader, and reporting it is #112's job. The original ceiling
+was attributed to `emit_id_as_sgr`: the 24-bit `38;2` form appeared to be
+ignored. #199 isolated the variables on real kitty and disproved that finding.
+With the correct U+10EEEE placeholder, both `38;5` and `38;2` render, including
+an image id of 300. The previous runs used U+10FEEE, so their blank output said
+nothing about the colour encoding.
 
-Ids therefore come from two pools inside one byte. Regions allocate upward from
+The shipped finite budget remains until capacity and accounting get a
+deliberate contract rather than an arbitrary larger constant (#205, #112). Ids
+currently come from two pools inside `[1, 255]`: regions allocate upward from
 1; pins allocate downward from 255, giving
 `KittyDriver::kMaxPinnedImages == 239`.
 
@@ -570,11 +574,10 @@ That is what a counter could not give. **The region side used to be monotonic
 and never gave a collected id back**, so a rect the caller stopped drawing cost
 an id permanently — and because a region's identity is its destination *rect*, a
 sprite stepping one cell per frame was a new key every frame. **One id per
-frame**, reaching 255 in about four seconds at 60fps. Measured rather than
-estimated: **300 frames of motion produced 300 distinct ids, maximum 300**, and
-past 255 `emit_id_as_sgr`'s 24-bit form put a `UnicodePlaceholders` session into
-rendering nothing at all, silently, under `q=2`. `test/49regionids` is that
-measurement as an acceptance test.
+frame**, crossing the two advertised pools in about four seconds at 60fps.
+Measured rather than estimated: **300 frames of motion produced 300 distinct
+ids, maximum 300**. `test/49regionids` keeps the allocator bounded to its own
+region pool; #199 corrected the separate claim that ids above 255 do not render.
 
 **#190 bounded the ids; it did not touch the bytes**, and the distinction is
 worth keeping straight against #187. #187 was the *static* case — an unchanged
@@ -597,18 +600,17 @@ a monotonic `serial`. All three are load-bearing:
 - **`owner`** — a server runs one driver per session and the id spaces overlap
   exactly, so without it session A's handle names session B's image, and
   `unpin_image` deletes a stranger's data.
-- **`serial`** — terminal-side ids are *recycled* after an unpin, because the
-  one-byte budget requires it. The id alone therefore says "something lives
+- **`serial`** — terminal-side ids are *recycled* after an unpin inside the
+  finite public budget. The id alone therefore says "something lives
   here", which stays true the moment a later pin inherits it. The serial is
   never reused, so a stale handle stays refused across a recycle.
 
 ### What this does not deliver
 
-**More than 239 resident images**, even under classic placement where `i=` is an
-ordinary protocol key and the one-byte ceiling does not apply. The cap is
-uniform because `set_placement_mode` can be called at any point, and a budget
-that silently shrinks under the caller is worse than one that never moved. A
-caller-owned id range is #110.
+**More than 239 resident images.** #199 established that placeholder encoding
+does not impose that ceiling either, but it did not invent a terminal-memory
+capacity or change an existing public limit. The capacity decision is #205,
+residency accounting is #112, and a caller-owned id range is #110.
 
 **Two live placements of one pinned image under `UnicodePlaceholders`.** A
 placeholder cell encodes the image id and no placement id, so two of them are
@@ -640,13 +642,12 @@ refresh an existing classic placement on retransmit), and regions that
 stop being drawn are LRU-evicted (`a=d,d=I`) so animation never
 accumulates images terminal-side. A region that goes away gives its ID back
 either way — the eviction reuses it on the spot, the per-frame collection
-returns it to the pool — so IDs stay one byte, required by the placeholder
-path's `38;5;<id>` encoding.
+returns it to the pool — so IDs stay inside the current bounded region pool.
 
 A **pinned** image (#109) is exempt from both halves of that: neither the LRU
 scan nor the per-frame collection can reach it, and its placements are retired
 with the placement-only `a=d,d=i` so its data survives the rect it was shown
-in. Its id comes from the other end of the one-byte range. See *Resident
+in. Its id comes from the other end of the configured range. See *Resident
 images* above.
 
 ### One frame, one write, one collection boundary (#148)

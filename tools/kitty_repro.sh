@@ -2,8 +2,8 @@
 # kitty_repro.sh — minimal standalone repros for the kitty graphics paths that
 # KittyDriver emits. Run inside a real kitty (>= 0.28) terminal:
 #
-#   ./tools/kitty_repro.sh          # all seven stanzas, with a pause between each
-#   ./tools/kitty_repro.sh 6        # ONLY stanza 6
+#   ./tools/kitty_repro.sh          # all eight stanzas, with a pause between each
+#   ./tools/kitty_repro.sh 8        # ONLY stanza 8
 #   ./tools/kitty_repro.sh 3 4      # a subset, in the order given
 #   ./tools/kitty_repro.sh --dump   # emit the wire bytes, touch no terminal
 #
@@ -31,6 +31,9 @@
 #   7  #109 — a=d,d=i retires ONE placement of three and the image DATA
 #      survives, proven by placing a fourth with no retransmit. The assumption
 #      the whole resident-image feature rests on. Self-contained.
+#   8  #199 — compare U+10FEEE with the spec's U+10EEEE under BOTH 38;5 and
+#      38;2 id encoding, including an id above 255. Self-contained; run before
+#      changing KittyDriver.
 #
 # All commands use q=0 so kitty REPORTS errors; every response the terminal
 # sends is captured and echoed in readable form. A response of "_Gi=42;OK"
@@ -45,9 +48,9 @@ stanzas=()
 for arg in "$@"; do
   case $arg in
     --dump) dump=1 ;;
-    [1-7]) stanzas+=("$arg") ;;
+    [1-8]) stanzas+=("$arg") ;;
     *)
-      echo "usage: $0 [--dump] [1-7]..." >&2
+      echo "usage: $0 [--dump] [1-8]..." >&2
       exit 2
       ;;
   esac
@@ -55,7 +58,8 @@ done
 
 ESC=$'\033'
 ST="${ESC}\\"          # string terminator
-PH=$'\xf4\x8f\xbb\xae' # U+10EEEE placeholder
+PH_LEGACY=$'\xf4\x8f\xbb\xae' # U+10FEEE: pre-#199 KittyDriver bytes
+PH_SPEC=$'\xf4\x8e\xbb\xae'   # U+10EEEE: kitty protocol placeholder
 D0=$'\xcc\x85'         # diacritic index 0: U+0305
 D1=$'\xcc\x8d'         # diacritic index 1: U+030D
 
@@ -158,11 +162,34 @@ pause() { (( run_all && ! dump )) && read -r -p "$1"; return 0; }
 # encodes the id. Stanzas 1 and 5 differ ONLY in that argument, so they share
 # this rather than each spelling the diacritics out.
 placeholder_grid() {
-  printf '%s%s' "$ESC" "$1"
-  printf '%s%s%s%s%s%s' "$PH" "$D0" "$D0" "$PH" "$D0" "$D1"   # row 0: cols 0,1
+  local sgr=$1 placeholder=${2:-$PH_SPEC}
+  printf '%s%s' "$ESC" "$sgr"
+  printf '%s%s%s%s%s%s' "$placeholder" "$D0" "$D0" "$placeholder" "$D0" "$D1"   # row 0: cols 0,1
   printf '\n'
-  printf '%s%s%s%s%s%s' "$PH" "$D1" "$D0" "$PH" "$D1" "$D1"   # row 1: cols 0,1
+  printf '%s%s%s%s%s%s' "$placeholder" "$D1" "$D0" "$placeholder" "$D1" "$D1"   # row 1: cols 0,1
   printf '%s[0m\n' "$ESC"
+}
+
+# Two copies of the same image side by side. Only the placeholder codepoint
+# differs, so a visible left/right difference answers #199 without sharing a
+# constant with the driver or asking the observer to compare across time.
+placeholder_pair() {
+  local sgr=$1 row placeholder
+  for row in 0 1; do
+    for placeholder in "$PH_LEGACY" "$PH_SPEC"; do
+      printf '%s%s' "$ESC" "$sgr"
+      if ((row == 0)); then
+        printf '%s%s%s%s%s%s' "$placeholder" "$D0" "$D0" \
+          "$placeholder" "$D0" "$D1"
+      else
+        printf '%s%s%s%s%s%s' "$placeholder" "$D1" "$D0" \
+          "$placeholder" "$D1" "$D1"
+      fi
+      printf '%s[0m' "$ESC"
+      [[ $placeholder == "$PH_LEGACY" ]] && printf '    '
+    done
+    printf '\n'
+  done
 }
 
 stanza_1() {
@@ -336,14 +363,43 @@ stanza_7() {
   say "bug in this script."
 }
 
+stanza_8() {
+  say ""
+  say "== Stanza 8: #199 placeholder codepoint x id-encoding matrix =="
+  say "Each left/right pair names the SAME red image and virtual placement."
+  say "Columns differ only by codepoint; pairs differ by SGR encoding/id:"
+  say "                 LEFT U+10FEEE      RIGHT U+10EEEE (spec)"
+  say "  TOP row pair:  38;5;42             38;5;42"
+  say "  BOTTOM pair:   38;2;0;0;42         38;2;0;0;42"
+  say "  FINAL pair:    38;2;0;1;44 (id 300, above the old one-byte budget)"
+  send "transmit(red)" \
+    "${ESC}_Ga=t,t=d,f=32,i=42,s=2,v=2,m=0,q=0;${red_b64}${ST}"
+  send "place(U=1)   " "${ESC}_Ga=p,i=42,p=1,U=1,c=2,r=2,q=0${ST}"
+  send "transmit(300)" \
+    "${ESC}_Ga=t,t=d,f=32,i=300,s=2,v=2,m=0,q=0;${red_b64}${ST}"
+  send "place(300)   " "${ESC}_Ga=p,i=300,p=1,U=1,c=2,r=2,q=0${ST}"
+  say ""
+  say "  38;5 pair (left legacy, right spec):"
+  placeholder_pair '[38;5;42m'
+  say "  38;2 pair (left legacy, right spec):"
+  placeholder_pair '[38;2;0;0;42m'
+  say "  38;2 id=300 pair (left legacy, right spec):"
+  placeholder_pair '[38;2;0;1;44m'
+  say ""
+  say "Report which of the six labelled blocks renders a RED 2x2 block."
+  say "Also report any response containing ';E'. A blank block is an answer:"
+  say "do not infer it from another block or from an OK response."
+}
+
 if (( ${#stanzas[@]} )); then
   run_all=0
   for n in "${stanzas[@]}"; do "stanza_$n"; done
 else
-  for n in 1 2 3 4 5 6 7; do "stanza_$n"; done
+  for n in 1 2 3 4 5 6 7 8; do "stanza_$n"; done
   say ""
   say "Report: (a) stanza 1 red block, (b) green after stanza 2, (c) stanza 3"
   say "blue block, (d) YELLOW block after stanza 4, (e) stanza 5 shows a"
   say "green 2x2 block, (f) stanza 6 as described above, (g) stanza 7's three"
-  say "questions, (h) any response containing ';E' (an error)."
+  say "questions, (h) stanza 8's six labelled blocks, (i) any response"
+  say "containing ';E' (an error)."
 fi

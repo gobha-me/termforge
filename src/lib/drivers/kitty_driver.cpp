@@ -16,8 +16,8 @@ namespace termforge {
 
 // ── Unicode placeholder constants ────────────────────────────────────────────
 
-// U+10EEEE as UTF-8: F4 8F BB AE (4-byte sequence).
-static constexpr char kPlaceholder[] = "\xF4\x8F\xBB\xAE";
+// U+10EEEE as UTF-8: F4 8E BB AE (4-byte sequence).
+static constexpr char kPlaceholder[] = "\xF4\x8E\xBB\xAE";
 
 // Combining diacritical marks used for row/column indexing.
 // The kitty graphics spec indexes into a fixed, curated table of 297
@@ -205,7 +205,7 @@ constexpr std::size_t kMaxRegionSlots = 16;
 }  // namespace
 
 // The pinned range sits ABOVE the region range, and the two must not meet:
-// regions allocate upward from 1 and pins downward from the one-byte ceiling.
+// regions allocate upward from 1 and pins downward from the configured ceiling.
 //
 // These assert PROPERTIES, not the definition. `kMaxPinnedImages == 255 -
 // kFirstPinnedImageId + 1` would restate kMaxPinnedImages' own initialiser and
@@ -235,8 +235,8 @@ static_assert(KittyDriver::kMaxPinnedImages > 0, "the pin budget is empty");
 static_assert(KittyDriver::kFirstPinnedImageId +
                       KittyDriver::kMaxPinnedImages - 1 ==
                   255,
-              "the pin range must end at the one-byte ceiling the placeholder "
-              "path's 38;5;<id> encoding requires");
+              "the pin range must end at the configured compatibility "
+              "ceiling");
 
 KittyDriver::ImageTally::~ImageTally() {
   const std::size_t all = drv.m_buf.size() - start;
@@ -324,10 +324,11 @@ auto KittyDriver::region_slot(std::uint64_t key) -> RegionSlot& {
     // region's identity is its destination RECT, so a region that MOVES is a
     // new key every frame and the vacated slot was collected without returning
     // what it held. One id per frame -- measured, 300 frames of motion produced
-    // 300 distinct ids with a maximum of 300 -- so the one-byte ceiling arrived
-    // in about four seconds at 60fps, after which emit_id_as_sgr falls to the
-    // 38;2 form kitty accepts and IGNORES: a UnicodePlaceholders session that
-    // renders nothing at all, silently, under q=2 (#190).
+    // 300 distinct ids with a maximum of 300, crossing both advertised pools in
+    // about four seconds at 60fps (#190). #199 later established that the
+    // reported rendering failure above 255 was the wrong placeholder codepoint,
+    // not the 38;2 spelling; the unbounded allocator was still structurally
+    // wrong, but the old visual-severity claim was not.
     //
     // THE BOUND IS THE ALGORITHM, not a guard on it. The walk stops at
     // kMaxRegionSlots and by pigeonhole that id is free when it arrives: this
@@ -350,7 +351,7 @@ auto KittyDriver::region_slot(std::uint64_t key) -> RegionSlot& {
     // dead code the moment the invariant above holds -- or undefined behaviour
     // the moment it does not. This scan's failure mode under the same breakage
     // is a duplicate id inside the region pool: bad, bounded, and unable to
-    // reach either the pin range or the one-byte ceiling.
+    // reach either the pin range or the configured ceiling.
     // `k`/`s` rather than `key`/`slot`: this lambda moved here from
     // pin_payload, where neither name was taken. Here both are -- `key` is this
     // function's parameter and `slot` is the RegionSlot being filled in above --
@@ -524,8 +525,8 @@ auto KittyDriver::pin_image(const EncodedImage& image)
 auto KittyDriver::pin_payload(std::span<const std::byte> payload,
                               int format_code, Extent px)
     -> std::expected<PinnedImage, ErrorEvent> {
-  // Downward from the one-byte ceiling, leaving the region pool the bottom of
-  // the range. The two walks run towards each other and stop at their own
+  // Downward from the configured ceiling, leaving the region pool the bottom
+  // of the range. The two walks run towards each other and stop at their own
   // bounds -- this one at kFirstPinnedImageId, region_slot's at
   // kMaxRegionSlots. Those bounds are ADJACENT, not separated: 16 and 17, with
   // no slack between them. The static_assert below the constants orders them,
@@ -879,8 +880,8 @@ auto KittyDriver::gc_regions() -> void {
   // flush: App flushed twice per frame, the first flush had drawn nothing,
   // and a collection running there saw every slot still carrying the previous
   // frame's stamp and read "not drawn yet" as "disappeared" -- every region
-  // deleted and fully re-transmitted every frame, an id counter climbing one
-  // per frame until the placeholder path's one-byte encoding ran out. #187's
+  // deleted and fully re-transmitted every frame, with the old id counter
+  // climbing one per frame. #187's
   // answer was inference: a flush with no draw since the last collection
   // collects nothing, because that flush must be the frame's first and its
   // "nothing drawn" is the frame-start marker, not a disappearance.
@@ -1077,11 +1078,10 @@ auto KittyDriver::place_unicode(std::uint32_t image_id,
 
 auto KittyDriver::emit_id_as_sgr(std::uint32_t id) -> void {
   // Encode the image ID as the placeholder cells' SGR foreground. Use
-  // 256-color mode (38;5;<id>) for one-byte ids — kitty resolves this
-  // form reliably, while the 24-bit (38;2) form was observed to be
-  // ignored (accepted placement, nothing rendered). Ids stay <= 255 by
-  // construction since #190: region ids are derived from
-  // [1, kMaxRegionSlots] and pinned ids from [kFirstPinnedImageId, 255].
+  // the compact 256-color form for ids <= 255 and the protocol's 24-bit form
+  // above it. #199 verified both spellings on real kitty with the correct
+  // U+10EEEE placeholder, including id 300; the earlier "38;2 is ignored"
+  // observation was made with U+10FEEE and diagnosed the wrong variable.
   //
   // So the else branch is unreachable for every id this driver allocates --
   // and it stays, which is the opposite call from the two #109 guards #190
@@ -1091,8 +1091,8 @@ auto KittyDriver::emit_id_as_sgr(std::uint32_t id) -> void {
   // TOTALIZES A FUNCTION over its parameter's type, and std::uint32_t is wider
   // than the invariant: delete it and emit_id_as_sgr(300) writes
   // "\033[38;5;300m", a malformed SGR parameter a terminal may clamp, ignore,
-  // or leave bleeding into the text after it. Ignored-but-well-formed is the
-  // better of the two failures.
+  // or leave bleeding into the text after it. The 38;2 branch is the
+  // well-formed totalization of the function's uint32_t input.
   if (id <= 0xFF) {
     m_buf += std::format("\033[38;5;{}m", id);
   } else {
