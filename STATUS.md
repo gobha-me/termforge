@@ -6,9 +6,9 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-06, latest)
 
-**Current branch: `feat/148-one-write` — one App frame is one sink write on
-every tier, with the whole frame visible to `last_frame_bytes()`.** The branch
-is ready for review/PR; v0.9.1 remains the latest release until it merges.
+**Latest release: v0.9.2 — one App frame is one sink write on every tier, with
+the whole frame visible to `last_frame_bytes()`.** #148 merged through PR #203
+as `b2e7629`; the release tag points at that reviewed merge commit.
 
 `Renderer::present()` now queues only the cell diff. App queues its pixel
 regions and `on_pixels()` after that diff, then `Renderer::flush()` performs the
@@ -41,10 +41,13 @@ one more teardown fault during review: pending image bytes were counted but
 dropped when shutdown emitted only `d=A`.
 
 **Verification:** GCC and Clang builds are clean; both sequential CTest matrices
-pass 52/52; `tools/consume/run.sh` passes `subdir`, `install`, and `vendored`.
-The new terminal-protocol half still needs the standing human check on real
-emulators before release: verify the 2026 DECRPM bytes and atomic presentation
-on the supported terminal matrix.
+pass 52/52; `tools/consume/run.sh` passes `subdir`, `install`, and `vendored`;
+PR #203's eight CI jobs passed. The available real-terminal checks covered all
+three conservative probe outcomes: kitty replied `CSI ? 2026;2 $ y` and showed
+only `FINAL` during the visual test; an `xterm-256color` session replied with
+state 4 (permanently reset), so synchronization stayed off; and an `xterm`
+session gave no reply, so synchronization stayed off. The remainder of the
+standing emulator matrix was unavailable for this cut.
 
 ## Previous release: v0.9.1 (#190)
 
