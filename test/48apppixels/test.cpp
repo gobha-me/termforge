@@ -10,9 +10,11 @@
 //
 // #189 added the seam — `test_run_frames(frames, cols, rows, sink, driver)` —
 // and this suite is what it is for. Every case here drives a REAL `App`
-// subclass through its REAL `frame_step()` over a REAL `KittyDriver`, and reads
-// the wire. Nothing is replayed. If a case here can be written against a
-// hand-made driver instead, it belongs in 47frameshape.
+// subclass through its REAL `frame_step()` over a REAL selected driver, and
+// reads the wire. Kitty covers the out-of-band placement path; since #108 ANSI
+// covers the in-band truecolour raster path. Nothing is replayed. If a case
+// here can be written against a hand-made driver instead, it belongs in
+// 47frameshape.
 //
 // #148 changes that production cadence: Renderer::present queues the cell diff,
 // App queues pixel regions and on_pixels after it, and one flush carries the
@@ -44,6 +46,7 @@
 #include "termforge/core/screen.hpp"
 #include "termforge/core/types.hpp"
 #include "termforge/core/byte_sink.hpp"
+#include "termforge/drivers/ansi_rgb_driver.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
 #include "termforge/drivers/kitty_driver.hpp"
 #include "termforge/widgets/widget.hpp"
@@ -65,10 +68,22 @@ struct PlateWidget final : Widget {
   Image cache = tfsupport::checker(4, 4, Pixel{200, 30, 30, 255},
                                    Pixel{30, 30, 200, 255});
   bool present{true};  // false models draw_pixels returning nullptr
+  int pixel_calls{0};
+  Extent last_extent{};
 
-  auto draw(Screen&) -> void override {}
+  auto draw(Screen& screen) -> void override {
+    // The Baseline presentation, and a SENTINEL rather than decoration: ANSI
+    // and Kitty must blank it before their image pass, while Fallback must keep
+    // it because that tier deliberately never calls draw_pixels (#108). QZJV
+    // uses letters absent from ANSI's control stream, so its absence is a real
+    // cell-blanking assertion rather than a raw-stream adjacency guess.
+    screen.write_text(region.x, region.y, "QZJV", Rgb{220, 220, 220},
+                      Rgb{10, 10, 10});
+  }
   auto pixel_regions() -> std::vector<Rect> override { return {region}; }
-  auto draw_pixels(Rect, Extent) -> const Image* override {
+  auto draw_pixels(Rect, Extent pixels) -> const Image* override {
+    ++pixel_calls;
+    last_extent = pixels;
     return present ? &cache : nullptr;
   }
 };
@@ -81,11 +96,15 @@ class PixelApp : public App {
 
   auto on_render(Screen& s) -> void override {
     s.write_text(0, 4, "app", Rgb{0xE0, 0xE0, 0xF0}, Rgb{0x10, 0x10, 0x18});
+    plate.draw(s);
     render_pixel_regions(plate);
   }
 
   auto run(int frames) -> void {
     test_run_frames(frames, 20, 8, &m_sink, std::make_unique<KittyDriver>());
+  }
+  auto run_ansi(int frames) -> void {
+    test_run_frames(frames, 20, 8, &m_sink, std::make_unique<AnsiRgbDriver>());
   }
   // The three-argument overload, unchanged: what every landed suite calls.
   auto run_default(int frames) -> void {
@@ -187,6 +206,24 @@ class SpriteApp final : public PixelApp {
   PlateWidget m_dialog;  // a modal that draws nothing but occupies the stack
 };
 
+// The #108 counterpart to SpriteApp. Pinning is intentionally Kitty-only, so
+// this app uses the raw Image overload every tier already implements and asks
+// the question #108 owns: does App expose the AFTER-DIFF hook on ANSI too?
+class AnsiHookApp final : public PixelApp {
+ public:
+  int pixel_calls{0};
+  int refusals{0};
+
+  auto on_pixels(TerminalDriver& d) -> void override {
+    ++pixel_calls;
+    if (!d.draw_image(Rect{6, 0, 2, 1}, m_image).has_value()) ++refusals;
+  }
+
+ private:
+  Image m_image = tfsupport::checker(2, 2, Pixel{20, 220, 90, 255},
+                                     Pixel{220, 90, 20, 255});
+};
+
 // Counts WRITES, which is the thing "a frame is two writes" is a claim about.
 // A sink rather than a driver override: KittyDriver is final, and byte_sink.hpp
 // states that emit_frame calls the sink exactly once per flush -- including for
@@ -259,22 +296,51 @@ TEST_CASE("app pixels: the harness can put a graphics driver in App's loop",
   app.run(1);
 
   REQUIRE(app.caps().kitty_graphics);
+  CHECK(app.plate.pixel_calls == 1);
+  CHECK(app.plate.last_extent == Extent{32, 32});
   CHECK(total_transmits(app.wire()) == 1);
   CHECK(ids_named(app.wire()) == std::set<std::uint32_t>{1});
 }
 
-TEST_CASE("app pixels: the DEFAULT tier is unchanged, and reaches no pixel",
+TEST_CASE("app pixels: ANSI receives the raster and blanks its cell fallback",
+          "[apppixels][ansi][issue108]") {
+  // The gate #108 opens. AnsiRgbDriver is deliberately NOT kitty, so an APC
+  // count cannot prove this arm; the widget call, the driver-requested extent,
+  // and the half-block bytes close the path from App to the real driver.
+  PixelApp app;
+  app.run_ansi(1);
+
+  REQUIRE_FALSE(app.caps().kitty_graphics);
+  REQUIRE(app.caps().truecolor);
+  CHECK(app.plate.pixel_calls == 1);
+  CHECK(app.plate.last_extent == Extent{4, 4});
+  CHECK(app.wire().find('Q') == std::string::npos);
+  CHECK(app.wire().find('Z') == std::string::npos);
+  CHECK(app.wire().find('J') == std::string::npos);
+  CHECK(app.wire().find('V') == std::string::npos);
+  CHECK(app.wire().find("\xE2\x96\x80") != std::string::npos);
+  CHECK(app.wire().find("38;2;200;30;30") != std::string::npos);
+  CHECK(app.wire().find("48;2;30;30;200") != std::string::npos);
+}
+
+TEST_CASE("app pixels: the DEFAULT tier keeps cells and reaches no pixel",
           "[apppixels]") {
-  // The other arm of #189, and the reason the seam is an addition rather than a
-  // change: the three-argument overload still builds a FallbackDriver, whose
-  // kitty_graphics is false, so collect_pixel_regions returns and the same app
-  // that emits an image above emits none here. This is the state every landed
-  // suite is still in, asserted rather than assumed -- and it is what makes the
-  // case above a statement about the DRIVER and not about the widget.
+  // The Baseline control for #108. FallbackDriver CAN turn Image pixels into a
+  // luminance ramp for a direct caller; App deliberately does not ask it to,
+  // because the widget's authored cells carry information a ramp cannot infer.
+  // Adding `|| true` or treating every draw_image implementation as enhanced
+  // makes both the call count and the visible QZJV sentinel fail.
   PixelApp app;
   app.run_default(4);
 
   REQUIRE_FALSE(app.caps().kitty_graphics);
+  REQUIRE_FALSE(app.caps().truecolor);
+  CHECK(app.plate.pixel_calls == 0);
+  CHECK(app.wire().find("\033[1;1HQ") != std::string::npos);
+  CHECK(app.wire().find("\033[1;2HZ") != std::string::npos);
+  CHECK(app.wire().find("\033[1;3HJ") != std::string::npos);
+  CHECK(app.wire().find("\033[1;4HV") != std::string::npos);
+  CHECK(app.wire().find("\xE2\x96\x80") == std::string::npos);
   CHECK(total_transmits(app.wire()) == 0);
   CHECK(ids_named(app.wire()).empty());
   CHECK(app.wire().find("\033_G") == std::string::npos);
@@ -478,17 +544,39 @@ TEST_CASE("app pixels: a graphics frame is exactly ONE write, always (#148)",
   }
 }
 
-TEST_CASE("app pixels: on_pixels stays inside the pixel-region capability scope",
-          "[apppixels]") {
-  // The hook and render_pixel_regions share the kitty_graphics gate. A
-  // FallbackDriver can render an image as ASCII, but widening both App paths to
-  // that tier is #108; #148 changes the write cadence, not this capability
-  // scope.
+TEST_CASE("app pixels: on_pixels runs in ANSI's after-diff image window",
+          "[apppixels][ansi][issue108]") {
+  // The second half of #108: application-owned images and widget regions share
+  // one capability scope. The direct draw uses colors absent from PlateWidget,
+  // so finding them proves on_pixels reached AnsiRgbDriver rather than merely
+  // proving the widget region above rendered.
+  AnsiHookApp app;
+  app.run_ansi(1);
+
+  REQUIRE_FALSE(app.caps().kitty_graphics);
+  REQUIRE(app.caps().truecolor);
+  CHECK(app.pixel_calls == 1);
+  CHECK(app.refusals == 0);
+  CHECK(app.wire().find("38;2;20;220;90") != std::string::npos);
+  CHECK(app.wire().find("48;2;220;90;20") != std::string::npos);
+}
+
+TEST_CASE("app pixels: on_pixels stays outside the Baseline capability scope",
+          "[apppixels][issue108]") {
+  // The unchanged control. FallbackDriver can render an image as ASCII for a
+  // direct caller, but App preserves the authored cell path and never opens
+  // either enhanced image hook on that tier.
   SpriteApp app{Window::OnPixels};
   app.run_default(5);
 
   REQUIRE_FALSE(app.caps().kitty_graphics);
+  REQUIRE_FALSE(app.caps().truecolor);
   CHECK(app.pixel_calls == 0);
+  CHECK(app.plate.pixel_calls == 0);
+  CHECK(app.wire().find("\033[1;1HQ") != std::string::npos);
+  CHECK(app.wire().find("\033[1;2HZ") != std::string::npos);
+  CHECK(app.wire().find("\033[1;3HJ") != std::string::npos);
+  CHECK(app.wire().find("\033[1;4HV") != std::string::npos);
   CHECK(app.wire().find("\033_G") == std::string::npos);
 }
 

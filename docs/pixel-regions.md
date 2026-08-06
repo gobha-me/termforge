@@ -42,8 +42,8 @@ is one large image — not per-cell images.
 
 The widget renders into `Screen` as usual (cells — always implemented,
 this is the fallback). It **additionally** declares pixel regions —
-rectangles where it can provide native pixel data if the driver supports
-it.
+rectangles where it can provide enhanced image data if the active tier is
+Kitty native graphics or ANSI truecolour raster.
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -52,7 +52,7 @@ it.
 │  1. widget->draw(screen)      ─ cells       │
 │  2. renderer->present(screen) ─ diff + emit │
 │  3. for each pixel region:                  │
-│       if driver supports images:            │
+│       if enhanced image tier:               │
 │         ext = driver->preferred_pixel_      │
 │                 extent(region)              │
 │         img = widget->draw_pixels(region,   │
@@ -61,9 +61,12 @@ it.
 └─────────────────────────────────────────────┘
 ```
 
-The cell pass (steps 1-2) always runs. The pixel pass (step 3) runs after
-and overlays native graphics on top. On terminals without graphics
-support, step 3 is skipped entirely — the cell fallback is already there.
+The cell pass (steps 1-2) always runs. The pixel pass (step 3) runs after and
+overlays the enhanced image on top: native pixels under Kitty, truecolour
+half-block raster under ANSI. Baseline skips step 3 entirely and keeps the
+widget's authored cells. FallbackDriver can render an Image as an ASCII
+luminance ramp for a direct caller, but App does not treat that as a widget
+fallback — a ramp cannot infer the information the widget put in `draw()`.
 
 ### Widget Interface
 
@@ -77,8 +80,8 @@ class Widget {
   virtual auto pixel_regions() -> std::vector<Rect> { return {}; }
 
   // Provide pixel data for a region, rasterized at `pixels` — the
-  // resolution the active driver asked for. Called only if the driver
-  // supports images AND the region was declared. Return nullptr to fall
+  // resolution the active enhanced-image driver asked for. Called on Kitty
+  // and ANSI truecolour when the region was declared. Return nullptr to fall
   // back to cells for this frame.
   virtual auto draw_pixels(Rect region, Extent pixels) -> const Image* {
     return nullptr;
@@ -116,9 +119,10 @@ called every frame.
    frame, not per-widget.
 5. **Third-party widgets opt in.** Override `pixel_regions()` and
    `draw_pixels()` — no driver or framework changes needed.
-6. **Degradation is implicit.** No graphics driver? Cells still work.
-   The app can query `driver->capabilities()` if it wants to surface
-   the active tier.
+6. **Degradation is implicit.** No enhanced image tier? Cells still work.
+   The app can query `driver->capabilities()` if it wants to surface the active
+   tier. App deliberately leaves FallbackDriver on those cells even though a
+   direct image caller may choose its luminance ramp.
 
 ### The Honest Tradeoff
 
@@ -697,11 +701,14 @@ promise; naming layers remains #114. It does settle the same-rect
 `UnicodePlaceholders` collision: the App region stamps the rect first, so the
 `draw_pinned` call is refused and returns that refusal to the application.
 
-`on_pixels` is suppressed while an overlay is up and on tiers without
-`kitty_graphics`, matching the region path. On an overlay frame this keeps
-application images from painting through the dialog; the top overlay may still
-provide its own pixel regions. When a placement is suppressed, the same frame's
-collection retires it.
+`on_pixels` is suppressed while an overlay is up and on the Baseline tier,
+matching the region path. It runs on Kitty and ANSI truecolour; that says only
+that the after-diff image window exists, not that every operation does — pinned
+images remain Kitty-only and their refusal still comes back through
+`std::expected`. On an overlay frame suppression keeps application images from
+painting through the dialog; the top overlay may still provide its own pixel
+regions. When a Kitty placement is suppressed, the same frame's collection
+retires it.
 
 ### Remaining region costs
 
@@ -777,16 +784,12 @@ auto WaveformWidget::draw_pixels(Rect region, Extent pixels)
 }
 ```
 
-In kitty: crisp pixel line chart. In every other terminal: half-block
-bars. Same widget, same code, no branching.
+In Kitty: a crisp pixel line chart. In ANSI truecolour: the raster is sampled
+into half-blocks at `{w, 2h}`. At Baseline: the widget's authored cell bars.
+Same widget, same code, no driver branching.
 
 ## Future Work
 
-- **Widen the capability gate** — `App::collect_pixel_regions` still
-  selects widget pixel regions only when `kitty_graphics` is set, so the
-  half-block and ASCII tiers' `preferred_pixel_extent` is exercised only
-  by direct `draw_image` callers. Widening it also changes which widgets
-  get their cells blanked, so it is its own behaviour change.
 - **Letterbox / centring** — still deliberately deferred. A border policy,
   out of scope here as it is on `Image`. `PlacementFit::Exact` (#137)
   landed the *no-scaling* half and anchors top-left; it is not a fit mode

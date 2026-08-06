@@ -78,7 +78,12 @@ file is the tactical version.
   it via `preferred_pixel_extent`, and asks `image_cell_extent` rather than
   re-deriving a footprint from capability flags — a new tier implements one
   function and gets the rest right for free. `draw_pixels` returns a borrowed
-  `const Image*` the *widget* owns, one buffer per declared region.
+  `const Image*` the *widget* owns, one buffer per declared region. **App's
+  enhanced image pass is Kitty + ANSI truecolour, not every driver with a
+  `draw_image` implementation** (#108): FallbackDriver's luminance ramp exists
+  for direct callers, while a widget's authored `draw()` cells remain its
+  information-complete Baseline. Both region collection and `on_pixels` use the
+  same gate; do not widen one without the other.
 - **A pre-encoded payload is shipped verbatim** (#163). `EncodedImage` carries
   opaque bytes the *terminal* decodes; the library never encodes, decodes,
   inspects or resamples them — that is the application's asset pipeline's job,
