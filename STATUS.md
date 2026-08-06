@@ -6,7 +6,50 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-06, latest)
 
-**Latest release: v0.9.3 — normal Terminal teardown gives the embedding process
+**Latest release: v0.9.4 — the Kitty driver now emits the Unicode placeholder
+the protocol specifies.** #199 merged through PR #207 as `0032b1f`; the release
+tag points at that reviewed squash commit.
+
+`kPlaceholder` was U+10FEEE (`F4 8F BB AE`), one bit above Kitty's specified
+U+10EEEE (`F4 8E BB AE`). The old cell was accepted as ordinary text rather
+than resolved as an image placeholder, so every Unicode-placeholder placement
+silently drew no image under `q=2`. The constant is corrected, the driver test
+pins the exact positive bytes independently, and a negative assertion rejects
+the old codepoint so an internally consistent typo cannot pass again.
+
+The real-terminal repro now compares both codepoints rather than deriving its
+expected bytes from the driver. On Kitty 0.32.2 in this session:
+
+| placeholder | `38;5` id 42 | `38;2` id 42 | `38;2` id 300 |
+| --- | --- | --- | --- |
+| U+10FEEE | no image | no image | no image |
+| U+10EEEE | image rendered | image rendered | image rendered |
+
+All six transmit/place commands returned `OK`. That answers #199's second
+question too: Kitty's 24-bit foreground encoding works beyond id 255; the old
+"accepted but ignored" result was the wrong placeholder being ignored. The
+header, implementation, tests and pixel-region documentation no longer call
+255 a protocol ceiling. The shipped 239-pin budget was deliberately **not**
+expanded in a bug-fix cut; it is now documented as a conservative public policy
+and its capacity redesign is #205.
+
+**Verification:** GCC 14, Clang 20 and ASan+UBSan each pass 52/52; the focused
+driver/fit/pinned/frame-shape/region-id suites pass 8/8;
+`tools/consume/run.sh` passes `subdir`, `install`, and `vendored`; the real
+Kitty gate above passed; and PR #207's eight CI jobs passed. A fresh configure
+with the opt-in Clang toolchain exposed a pre-existing CMake/Catch2 failure
+before source compilation; the already-configured Clang matrix and CI are
+green, and the independently scoped build defect is #206.
+
+**Next: #201.** #199 was its explicit empirical gate. Correct placeholders now
+make #190's recycled ids visibly reanimate orphaned placeholder cells when an
+unpinned region moves. The acceptance has to observe the cell grid, preserve
+same-frame replacement text, and then pass the real-Kitty gate; an APC-only
+wire test cannot see the ghost.
+
+## Previous release: v0.9.3 (#193)
+
+**v0.9.3 made normal Terminal teardown give the embedding process
 its complete signal policy back.** #193 merged through PR #204 as `d653e67`;
 the release tag points at that reviewed squash commit.
 
