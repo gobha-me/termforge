@@ -46,7 +46,13 @@ auto Renderer::present(const Screen& screen) -> void {
       m_prev[static_cast<std::size_t>(y) * cols + x] = screen.at(x, y);
   m_prev_cols = cols;
   m_prev_rows = rows;
+}
 
+auto Renderer::flush() -> void {
+  // The frame's single write (#148). Forwarded, not re-located: the frame
+  // boundary is a property of the whole App frame -- cell diff AND pixel
+  // regions -- so it lives on the Renderer the App drives, not inside
+  // present() where it fired before the frame's images were drawn.
   m_driver.flush();
 }
 

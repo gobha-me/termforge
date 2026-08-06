@@ -639,18 +639,20 @@ TEST_CASE("App: a session with no window falls back to 80x24", "[fds][app]") {
 TEST_CASE("App: setup probes an injected pty with no dup2 anywhere",
           "[fds][app][regression]") {
   // What test/31keyboard needs a dup2 of the process's fd 0 and fd 1 to do.
-  // The reply says "kitty keyboard protocol, and DA1" -- so the probe result is
-  // observable, which means the whole of setup() ran over the injected pair.
+  // The reply says "synchronized output, kitty keyboard protocol, and DA1" --
+  // so the probe result is observable, which means the whole of setup() ran
+  // over the injected pair.
   PtyPair pty;
   REQUIRE(pty.ok());
   SessionApp app;
   REQUIRE(app.inject(TerminalIo{pty.slave(), pty.slave()}));
   REQUIRE(app.pre_raw());
-  pty.feed_master("\033[?27u\033[?62;22c");
+  pty.feed_master("\033[?2026;2$y\033[?27u\033[?62;22c");
   const bool up = app.test_setup().has_value();
   app.test_pump({});
   app.test_teardown();
   REQUIRE(up);
+  REQUIRE(app.capabilities().sync_updates);
   REQUIRE(app.capabilities().kitty_keyboard);
   REQUIRE(app.errors.empty());
 }

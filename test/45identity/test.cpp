@@ -140,11 +140,12 @@ class EnvGuard {
   std::vector<std::pair<std::string, std::optional<std::string>>> m_saved;
 };
 
-// The probe's three queries, as literals the cases can hunt for in what the
+// The probe's four queries, as literals the cases can hunt for in what the
 // library wrote. If these drift from terminal.cpp's probe, the "no probe
 // bytes" case below stops being able to tell -- and the push's whole point is
 // that none of them is ever written.
 constexpr std::string_view kKittyQuery = "\033_Gi=31";
+constexpr std::string_view kSyncQuery = "\033[?2026$p";
 constexpr std::string_view kKeyboardQuery = "\033[?u";
 constexpr std::string_view kDa1Query = "\033[c";
 
@@ -323,6 +324,7 @@ TEST_CASE("set_capabilities: the push is what the Terminal reports", "[identity]
   caps.kitty_graphics = true;
   caps.truecolor = true;
   caps.kitty_keyboard = true;
+  caps.sync_updates = true;
   REQUIRE(t.set_capabilities(caps).has_value());
   REQUIRE(t.has_pushed_capabilities());
   const auto got = t.pushed_capabilities();
@@ -330,6 +332,7 @@ TEST_CASE("set_capabilities: the push is what the Terminal reports", "[identity]
   REQUIRE(got->kitty_graphics);
   REQUIRE(got->truecolor);
   REQUIRE(got->kitty_keyboard);
+  REQUIRE(got->sync_updates);
 }
 
 TEST_CASE("set_capabilities: refused after enter_raw and while a screen is up",
@@ -401,6 +404,7 @@ TEST_CASE("push: the probe's bytes are written when no push is in force",
   REQUIRE(t.set_io(TerminalIo{sp.app(), sp.app()}).has_value());
   (void)t.query_capabilities();
   const std::string wrote = sp.drain_peer();
+  REQUIRE(wrote.find(kSyncQuery) != std::string::npos);
   REQUIRE(wrote.find(kKittyQuery) != std::string::npos);
   REQUIRE(wrote.find(kKeyboardQuery) != std::string::npos);
   REQUIRE(wrote.find(kDa1Query) != std::string::npos);

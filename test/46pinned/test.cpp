@@ -962,73 +962,39 @@ TEST_CASE("pinned: an Exact refusal names draw_pinned, not draw_image",
   CHECK(unsupported.error().message.find("draw_pinned: this tier cannot") == 0);
 }
 
-// ── the destructor ──────────────────────────────────────────────────────────
+// ── explicit shutdown ───────────────────────────────────────────────────────
 
 namespace {
 
-// What a driver writes to stdout while it is destroyed.
-//
-// delete_all() bypasses the sink deliberately (the sink is borrowed and a
-// destructor cannot assume the destination is alive), so the only way to see
-// it is to be the file descriptor. NO Catch2 MACRO MAY RUN while fd 1 is
-// redirected: ctest invokes these binaries with -s, and Catch2's own output
-// would land in the capture. Assertions happen after the restore, on the
-// returned string.
-auto stdout_of_pin_only_driver_dying(bool unpin_before_death) -> std::string {
-  std::fflush(stdout);
-  const int saved = ::dup(1);
-  FILE* sink = ::tmpfile();
-  if (saved < 0 || sink == nullptr) return "capture-failed";
-  ::dup2(::fileno(sink), 1);
-  {
-    KittyDriver d;
-    // The pin's own bytes go to the descriptor via flush(), so the capture
-    // holds them too; the assertion is about the d=A that only ~KittyDriver
-    // emits, which no earlier call can produce.
-    const auto h = d.pin_image(Image{1, 1, {Pixel{7, 7, 7, 255}}});
-    d.flush();
-    // The image is now resident terminal-side. Unpinning QUEUES its d=I --
-    // and if the driver dies before the next flush those bytes die with the
-    // buffer while the image very much does not.
-    if (unpin_before_death && h) (void)d.unpin_image(*h);
-  }
-  std::fflush(stdout);
-  ::dup2(saved, 1);
-  ::close(saved);
-
-  std::rewind(sink);
-  std::string got;
-  char buf[256];
-  while (std::size_t n = std::fread(buf, 1, sizeof buf, sink)) {
-    got.append(buf, n);
-  }
-  std::fclose(sink);
-  return got;
+// A pin-only driver has no region map entry. This helper proves shutdown's
+// decision is driven by the transmit path, including after unpin empties the
+// pinned map while its queued delete has not yet been flushed.
+auto shutdown_wire_of_pin_only_driver(bool unpin_before_shutdown) -> std::string {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const auto h = d.pin_image(Image{1, 1, {Pixel{7, 7, 7, 255}}});
+  d.flush();
+  if (unpin_before_shutdown && h) (void)d.unpin_image(*h);
+  d.shutdown();
+  return out;
 }
 
 }  // namespace
 
-TEST_CASE("pinned: a driver that only ever pinned still cleans up after itself",
+TEST_CASE("pinned: shutdown cleans up a driver that only ever pinned",
           "[pinned][kitty][failure]") {
-  // Pinned ids come from their own counter, so the destructor's "nothing was
-  // uploaded" early-out cannot be answered by the region counter alone. Get
+  // Pinned ids come from their own counter, so shutdown's "nothing was
+  // uploaded" early-out cannot be answered by the region map alone. Get
   // this wrong and every pinned image outlives the process that sent it —
   // silently, on a terminal the application no longer controls.
   SECTION("pinned and never unpinned") {
-    // The region counter is still at its initial value, so an early-out that
-    // asks it alone emits nothing and leaves the image resident.
-    const std::string got = stdout_of_pin_only_driver_dying(false);
-    REQUIRE(got != "capture-failed");
+    const std::string got = shutdown_wire_of_pin_only_driver(false);
     CHECK(got.find("a=d,d=A") != std::string::npos);
   }
   SECTION("pinned, flushed, then unpinned without a further flush") {
-    // The other polarity of the same guard, and the likelier one: teardown
-    // after the last frame is exactly how an application writes shutdown. The
-    // unpin's own d=I never reached the terminal, and m_pinned is now empty,
-    // so any early-out reconstructed from the maps concludes there is nothing
-    // to clear. Only the transmit path knows better.
-    const std::string got = stdout_of_pin_only_driver_dying(true);
-    REQUIRE(got != "capture-failed");
+    const std::string got = shutdown_wire_of_pin_only_driver(true);
+    CHECK(got.find("a=d,d=I") != std::string::npos);
     CHECK(got.find("a=d,d=A") != std::string::npos);
   }
 }

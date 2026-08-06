@@ -34,8 +34,9 @@
 // exempt from both the LRU scan and the collection: its lifetime is the
 // application's, and only its PLACEMENTS are collected.
 //
-// The collection needs a FRAME and a flush is only a WRITE, so a flush that
-// has drawn nothing collects nothing (#187). See gc_regions().
+// Collection runs at the frame boundary. Since #148 App accumulates cells and
+// images, then flushes once, so every flush it issues is exactly that boundary;
+// direct callers keep the same contract by issuing every draw before one flush.
 //
 // Two placement modes:
 //  * Classic (default): cursor-positioned placement (a=p, C=1). The
@@ -179,6 +180,12 @@ class KittyDriver final : public TerminalDriver {
   static constexpr Extent kNominalCellPixels{8, 16};
 
  private:
+  // #148: at end of session, free every image the terminal holds -- through
+  // the sink, not stdout. TerminalDriver::shutdown() calls this while the
+  // borrowed sink is known alive, then detaches it. The destructor-side
+  // delete_all() is deliberately silent.
+  auto on_shutdown() -> void override;
+
   // Pack an Rgb into a single int for fast inequality checks (-1 = unset).
   static constexpr auto rgb_id(Rgb c) -> int {
     return (static_cast<int>(c.r) << 16) | (static_cast<int>(c.g) << 8) | c.b;
@@ -323,17 +330,16 @@ class KittyDriver final : public TerminalDriver {
   // drawn since the previous collection, so a disappeared region's classic
   // placement can't linger above the text grid.
   //
-  // "Since the previous collection" and not "this frame", because a flush is a
-  // write boundary and nothing tells this driver where a frame ends (#187). A
-  // flush that has seen no draw collects nothing -- see the implementation for
-  // why that is safe and what kDrawlessFlushGrace bounds.
+  // Under App, flush is the frame boundary (#148): the whole frame is drawn
+  // first and one flush collects anything not stamped since the previous one.
+  // A direct caller that flushes mid-frame is outside that contract.
   //
   // Collects pinned PLACEMENTS on the same boundary and by the same argument,
   // but with the placement-only delete: the image is the application's and
   // outlives any rect it was shown in.
   auto gc_regions() -> void;
 
-  // Delete all transmitted images from terminal memory.
+  // Destructor-side no-op documenting that cleanup belongs to shutdown().
   auto delete_all() -> void;
 
   // Encode an image ID as an SGR foreground color sequence.
@@ -383,8 +389,7 @@ class KittyDriver final : public TerminalDriver {
   // drawn within one flush get distinct timestamps and a 17th region evicts the
   // genuinely-oldest draw rather than a same-frame sibling (which would
   // place+delete it atomically in one buffer and never show it). gc_regions()
-  // also reads "did anything get drawn" off it, which only works because
-  // nothing else touches it.
+  // provides the ordering that makes least-recently-drawn eviction exact.
   std::uint64_t m_clock{0};
   // Value of m_clock at the last collection that ran. A region whose last_used
   // is at or below this was not drawn since, so gc_regions() deletes it
@@ -392,40 +397,6 @@ class KittyDriver final : public TerminalDriver {
   // placeholder conflict guards and draw_payload's reciprocal are written
   // against, so anything that changes WHEN this advances moves all four.
   std::uint64_t m_frame_start_clock{0};
-  // Consecutive collections that had no draw to look at, and the number
-  // tolerated before one is treated as a frame boundary anyway (#187).
-  //
-  // The constant means three things at once, which is why it is named: how many
-  // flushes a caller may make within one frame before drawing, how many frames
-  // a removed region's placement may linger, and the cadence being assumed.
-  //
-  // App draws in the second of its two writes, so its first is drawless and 1
-  // costs nothing on a steady frame. Since #191 that is a GUARANTEE rather than
-  // an observation -- App flushes at the end of every graphics frame whether or
-  // not the frame drew -- but note what the guarantee actually says: the count
-  // is **1 on a frame with images and 2 on one without**, because a blank frame
-  // has TWO drawless writes and not one. A caller that flushed three times per
-  // frame with the first two drawless would lose the dedup again; that is a
-  // real limit of this constant and not a general property.
-  //
-  // WHICH MAKES THE OBVIOUS LEVER THE WRONG NUMBER, and #191 is what moved it.
-  // Carrying a region across a frame nobody drew it in needs the grace to
-  // absorb that blank frame's two writes AND the next frame's leading one, so
-  // the first value that buys anything is **3**; at 2 the collection merely
-  // slides one write later and the region is still deleted and still fully
-  // re-uploaded. (It is no longer given a FRESH id -- #190 made it come back
-  // under the id it gave up, which changes what the grace would buy but not
-  // whether 2 buys it. test/48apppixels asserts the single id for exactly this
-  // blank-frame path.) Measured at 1/2/3/4, not derived. Pre-#191 a blank
-  // frame issued one write and 2 would have worked -- so this is inherited
-  // arithmetic that the cadence change falsified, and it is written down here
-  // because the next reader will reach for 2 exactly as the last one did.
-  //
-  // Only the LINGER side of the trade has an assertion (test/47frameshape, the
-  // case that raises and lowers this constant). Nothing pins what raising it
-  // would buy, because the answer at 2 is "nothing".
-  static constexpr std::uint32_t kDrawlessFlushGrace = 1;
-  std::uint32_t m_drawless_flushes{0};
   // Region key (packed x,y,w,h) -> slot. Bounded: LRU-evicted past
   // kMaxRegionSlots, freeing the terminal-side image data too.
   std::unordered_map<std::uint64_t, RegionSlot> m_regions;
@@ -442,7 +413,7 @@ class KittyDriver final : public TerminalDriver {
   // been recycled -- see PinnedEntry::serial.
   std::uint32_t m_next_pin_serial{0};
   // Whether anything was ever uploaded, asked at the transmit path itself.
-  // ~KittyDriver needs the answer and neither map can give it: an unpin queues
+  // on_shutdown needs the answer and neither map can give it: an unpin queues
   // its delete into m_buf, so an unflushed one leaves the image resident with
   // m_pinned already empty.
   bool m_transmitted{false};

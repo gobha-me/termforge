@@ -423,6 +423,15 @@ struct Capabilities {
   // property, not a driver one: the drivers' self-described capabilities()
   // leave it false, and it does not affect driver selection.
   bool kitty_keyboard{false};
+  // The terminal supports synchronized output (DEC private mode 2026,
+  // `CSI ? 2026 h` / `l`): bytes written between the begin and end sequences
+  // are buffered and presented atomically, removing partial-frame tearing on
+  // a slow link. Gated on because an unrecognized private mode is not a
+  // synchronization guarantee -- #148 wraps the frame only when this is set,
+  // and leaves the bytes byte-identical to before when it is not. *Terminal*
+  // property: it describes the wire, so like kitty_graphics it is probed by
+  // Terminal and read by the drivers, and it does not affect driver selection.
+  bool sync_updates{false};
 };
 
 // ── events ───────────────────────────────────────────────────────────────

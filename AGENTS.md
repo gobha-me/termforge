@@ -61,8 +61,9 @@ file is the tactical version.
   A sink refusal is latched, not returned (`flush()` is pure and `-> void`,
   and giving it a return type would break every out-of-tree driver), and `App`
   drains it into an `ErrorEvent` each frame. **The sink is borrowed, never
-  owned**, which is why `~KittyDriver`'s `delete_all()` still bypasses to
-  stdout — see #148 and #144 row 7. **State, not behaviour, means base-owned
+  owned**, which is why end-of-session cleanup goes through explicit
+  `TerminalDriver::shutdown()` while the sink is known alive; destructors do
+  not emit — see #148 and #144 row 7. **State, not behaviour, means base-owned
   non-virtual data** — that has now been the right answer twice, here and for
   `Terminal::set_io` below, so treat it as settled rather than re-arguing it the
   third time. It sidesteps the pure/non-pure question instead of answering it.
@@ -202,9 +203,10 @@ tests.
 exhaustive about *what* a unit does and blind to *when* its only real caller
 does it. `gc_regions()` had ~90 assertions across four suites and none of them
 saw that it deleted and re-uploaded every image every frame — because every one
-of them drew before it flushed, and `App` flushes twice per frame with the first
-flush having drawn nothing. So: **a flush is a write boundary, not a frame
-boundary**, and more generally, before trusting a suite, check whether any case
+of them drew before it flushed, and before #148 `App` flushed twice per frame
+with the first flush having drawn nothing. So: **a flush is a write boundary,
+not inherently a frame boundary**, and more generally, before trusting a suite,
+check whether any case
 makes the calls in the order production makes them. `test/47frameshape` is the
 model — one suite whose entire subject is the caller's cadence, where a case
 that draws before it flushes belongs somewhere else. When the harness cannot

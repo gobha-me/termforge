@@ -98,6 +98,18 @@ auto App::teardown() -> void {
   g_active.compare_exchange_strong(expected, nullptr, std::memory_order_relaxed);
 }
 
+auto App::shutdown_driver() -> void {
+  // #148: the end-of-session driver handoff, run ONLY from a live loop
+  // (run_loop, and the test seam test_run_frames) while the driver's output
+  // sink is provably alive -- never from ~App. shutdown() routes what the
+  // driver owes the terminal (kitty freeing its resident images) through the
+  // session's sink, then detaches that borrowed sink. Deliberately
+  // separate from teardown(): teardown() also runs from ~App, where a derived
+  // class's sink may already be destroyed and writing through it would be a
+  // use-after-free. shutdown() self-guards on repeat.
+  if (m_driver) m_driver->shutdown();
+}
+
 auto App::run() -> int {
   // setup() is guarded too, not just the loop: it enters raw mode first and
   // *then* allocates — the capability probe builds strings, and the Screen is
@@ -143,10 +155,11 @@ auto App::run_loop() -> int {
   // entry in the fatal-signal backstop — the crash handler doing the work the
   // documented path claimed to.
   //
-  // The frame is abandoned mid-flight: a throw from on_render skips present(),
-  // restore_backdrop() and flush_pixel_regions(), so the Screen can be left
-  // dimmed under an overlay. Harmless because the loop is over — but it is the
-  // first thing to fix if catching-and-resuming ever becomes a feature.
+  // The frame is abandoned mid-flight: a throw from on_render skips
+  // present(), restore_backdrop(), flush_pixel_regions() and the frame's
+  // single flush(), so the Screen can be left dimmed under an overlay.
+  // Harmless because the loop is over — but it is the first thing to fix if
+  // catching-and-resuming ever becomes a feature.
   // #97: the terminal is fully up here and no frame has run -- the one point
   // that satisfies on_start()'s contract. A throw is a startup failure: the
   // loop never begins, m_app_started stays false so no on_stop() is owed,
@@ -157,10 +170,12 @@ auto App::run_loop() -> int {
     while (m_running) frame_step();
   } catch (...) {
     stop_app();
+    shutdown_driver();  // #148: sink still alive here; teardown's ~App path is not
     teardown();
     throw;
   }
   stop_app();
+  shutdown_driver();  // #148: route driver teardown through the live sink
   teardown();
   return 0;
 }
@@ -193,14 +208,25 @@ auto App::frame_step() -> void {
   render_overlays(*m_screen);
   m_renderer->present(*m_screen);
   restore_backdrop(*m_screen);  // the overlay pass leaves no trace behind
+  // #148: the frame's images queue AFTER its cell diff but in the SAME flush.
+  // The order inside the buffer is the one the terminal composites: the cell
+  // diff paints text and blanks first, and the image's placeholder/id grid is
+  // appended last so it is not overwritten by that diff -- collect_pixel_regions
+  // blanked the region's cells so present() emits spaces for them, and those
+  // spaces must precede, not follow, the image cells. queueing images last is
+  // also what makes "remove-then-write" single-buffer rather than a torn pair:
+  // a deletion/re-placement is emitted before the placeholder grid references it.
+  // flush_pixel_regions drives kitty's per-frame collection, so on the graphics
+  // tier it runs on EVERY frame (an image-free frame keeps the cadence exact).
   flush_pixel_regions();
+  m_renderer->flush();  // #148: ONE write carries the whole frame
   // #178: a sink that refused this frame's bytes surfaces as an ErrorEvent
   // rather than a silently dropped frame. flush() is `-> void` and pure, so
-  // the driver latches the refusal and this is where it is read -- after BOTH
-  // flushes above, so a frame carrying pixel regions is drained once and not
-  // twice. Queued through the same channel setup() uses for degradations, so
-  // it drains on the next frame's pump and dispatch_event routes it past the
-  // overlay stack.
+  // the driver latches the refusal and this is where it is read -- after the
+  // frame's SINGLE write above, so a frame carrying pixel regions is drained
+  // exactly once rather than once per write it used to split into. Queued
+  // through the same channel setup() uses for degradations, so it drains on
+  // the next frame's pump and dispatch_event routes it past the overlay stack.
   if (auto e = m_driver->take_output_error()) m_input.push_error(std::move(*e));
   wait_frame(frame_start);
 }
@@ -345,6 +371,12 @@ auto App::test_run_frames(int frames, int cols, int rows, std::string* sink,
   test_wire_headless(cols, rows, sink, std::move(driver));
   m_running = true;
   for (int i = 0; i < frames && m_running; ++i) frame_step();
+  // #148: this seam drives frame_step directly, without run_loop -- so the
+  // driver's end-of-session handoff runs here too, while the caller's sink
+  // string is still in scope. It emits kitty's d=A and then detaches; bytes
+  // already accepted by the sink remain available to the test. A suite that
+  // parses the stream accounts for that trailing cleanup write.
+  shutdown_driver();
 }
 
 auto App::test_run_guarded(int cols, int rows, std::string* sink) -> int {
@@ -632,11 +664,18 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
 }
 
 auto App::flush_pixel_regions() -> void {
-  // App's SECOND window, and since #191 the only correct place in the frame for
-  // an image draw. One predicate decides the whole window -- the same one
-  // collect_pixel_regions opens with -- because the hook and the write it
-  // depends on cannot be gated differently: bytes drawn with no flush behind
-  // them surface in the next frame, under that frame's cell diff.
+  // The frame's image window, and the only correct place in the frame for an
+  // image draw. Despite the name it does NOT flush -- since #148 the frame's
+  // single flush is Renderer::flush() after this returns, and this window's
+  // draws queue AFTER the cell diff in the driver's buffer. (The name is now
+  // historical: it used to perform the frame's second flush.) The after-diff
+  // order is the compositing one: collect_pixel_regions blanked the region's
+  // cells, present() emitted the diff and blanks, and this placeholder/id
+  // grid lands last so that diff cannot overwrite it -- one write, images on
+  // top, no torn pair.
+  //
+  // Keep the application hook on the same capability gate as the region path.
+  // Widening both to the cell-rendered image tiers is #108.
   const bool graphics = m_driver && m_driver->capabilities().kitty_graphics;
 
   // Ungated: m_pixel_regions can only be non-empty if collect_pixel_regions
@@ -655,22 +694,14 @@ auto App::flush_pixel_regions() -> void {
   // through both paths must not keep half its images and lose the other half.
   if (graphics && m_overlays.empty()) on_pixels(*m_driver);
 
-  // Unconditional on the tier, where it used to be conditional on there being
-  // regions to write. Two reasons, and the second is the one #191 turns on:
-  //
-  //  * a frame whose only image draws came from on_pixels has an empty
-  //    m_pixel_regions and still has bytes to write;
-  //  * every graphics frame now costs exactly two writes, the first of which
-  //    has drawn nothing. That is what kDrawlessFlushGrace was calibrated
-  //    against, and making it a property of App rather than of what the frame
-  //    happened to contain is what turns the driver's guard from a heuristic
-  //    into an exact answer.
-  //
-  // The cost is that on a graphics tier last_frame_bytes() now always reports
-  // this second write -- already true of any frame carrying an image, and now
-  // true of one carrying none, where it reads zero. total_bytes() is the number
-  // that did not move. Non-graphics tiers are untouched at one write per frame.
-  if (graphics) m_driver->flush();
+  // No flush here. On the graphics tier this window runs on EVERY frame --
+  // even one with no regions and an empty on_pixels -- because the draws
+  // above are also what drive kitty's per-frame collection cadence: making
+  // this window a property of every frame rather than of what it happened to
+  // contain keeps the collection exact. Running it costs nothing on such a
+  // frame (zero draw calls); the write itself is
+  // frame_step's Renderer::flush(). Non-graphics tiers have no image window
+  // at all and are untouched at one write per frame.
 }
 
 auto App::set_size(Size size) -> std::expected<void, ErrorEvent> {

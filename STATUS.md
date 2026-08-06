@@ -6,8 +6,50 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-06, latest)
 
-**Latest work: #190 — the region id counter is gone, and so are the two guards
-that were standing in for the invariant it could not hold.** Ships as v0.9.1.
+**Current branch: `feat/148-one-write` — one App frame is one sink write on
+every tier, with the whole frame visible to `last_frame_bytes()`.** The branch
+is ready for review/PR; v0.9.1 remains the latest release until it merges.
+
+`Renderer::present()` now queues only the cell diff. App queues its pixel
+regions and `on_pixels()` after that diff, then `Renderer::flush()` performs the
+frame's single write. Kitty collection consequently runs on every flush again:
+the #187 drawless-write inference and grace counter are gone, because App's
+flush is structurally the frame boundary. `test/47frameshape` replays that
+one-flush cadence, while `test/48apppixels` observes the real loop with a
+counting sink, including a frame that transmits an image.
+
+**Session cleanup no longer bypasses the sink.** Non-virtual
+`TerminalDriver::shutdown()` runs a protected per-tier hook, emits cleanup
+through `emit_frame`, then detaches the borrowed sink. Kitty's destructor is
+silent; explicit shutdown sends `d=A` to the session's destination and preserves
+any command queued after the final frame (notably an `on_stop()` unpin) in the
+same metered cleanup write.
+
+**Synchronized output is capability-gated.** The probe sends DECRQM
+`CSI ? 2026 $ p`, accepts settable DECRPM states 1/2, and carries the result
+through `Terminal::select_driver` into base-owned driver state. `emit_frame`
+wraps the complete frame in `CSI ? 2026 h/l` inside the same sink call; an
+unset capability is byte-identical to v0.9.1. A pushed `Capabilities` value
+takes the same path.
+
+The resumed WIP had the right broad shape but not a runnable probe or complete
+contract: it searched for printable `\\033`, sent `$y` instead of `$p`, waited a
+full timeout on terminals that ignored the query, never propagated the result
+to the selected driver, retained the destructor stdout fallback, and left the
+GC/test cadence half on #187. The completion pass corrected those, then found
+one more teardown fault during review: pending image bytes were counted but
+dropped when shutdown emitted only `d=A`.
+
+**Verification:** GCC and Clang builds are clean; both sequential CTest matrices
+pass 52/52; `tools/consume/run.sh` passes `subdir`, `install`, and `vendored`.
+The new terminal-protocol half still needs the standing human check on real
+emulators before release: verify the 2026 DECRPM bytes and atomic presentation
+on the supported terminal matrix.
+
+## Previous release: v0.9.1 (#190)
+
+**The region id counter is gone, and so are the two guards that were standing
+in for the invariant it could not hold.** Ships as v0.9.1.
 
 **How it got picked: the previous cut named it, for the fifth time running.**
 v0.9.0's release note ends `**Next: #190**` and says in as many words that it

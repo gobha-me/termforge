@@ -112,7 +112,6 @@ TEST_CASE("region ids: 300 frames of motion stay inside one byte (#190)",
   d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
 
   for (int i = 0; i < 300; ++i) {
-    d.flush();
     REQUIRE(d.draw_image(Rect{i % 80, i / 80, 2, 2}, art(i % 200)).has_value());
     d.flush();
   }
@@ -285,7 +284,6 @@ TEST_CASE("region ids: a recycled id is DELETED before it is transmitted again",
   // Motion, alternating between two rects so id 1 is taken, given back, and
   // taken again rather than merely taken once.
   for (int frame = 0; frame < 5; ++frame) {
-    d.flush();
     REQUIRE(d.draw_image(Rect{frame, 1, 2, 2}, art(frame)).has_value());
     d.flush();
   }

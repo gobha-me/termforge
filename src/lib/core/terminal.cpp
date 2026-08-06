@@ -440,18 +440,21 @@ auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
 
   const int in_fd = m_impl->tty_fd;
 
-  // 1. Kitty graphics query, keyboard-flags query, then DA1. Write all three,
-  //    then read. i=31 is an arbitrary image id for the probe; a=q asks for
-  //    support. Order matters twice: the graphics query stays first so its
-  //    reply precedes DA1 (probe_kitty_ok's ordering guard), and DA1 stays
+  // 1. Synchronized-output, Kitty graphics, keyboard-flags, then DA1. Write
+  //    all four, then read. i=31 is an arbitrary image id for the probe; a=q
+  //    asks for support. Order matters twice: the graphics query stays ahead
+  //    of DA1 so its reply precedes the terminator (probe_kitty_ok's ordering
+  //    guard), and DA1 stays
   //    last so it remains the read terminator — which is what makes the extra
   //    keyboard query cost zero latency. A terminal that lacks the keyboard
   //    protocol ignores CSI ? u and says nothing; a terminal that answers
   //    *after* DA1 is missed by the early exit, which we accept rather than
   //    stall every non-supporting terminal for the full 150ms.
+  const char* sync_query = "\033[?2026$p";
   const char* kitty_query = "\033_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\033\\";
   const char* keyboard_query = "\033[?u";
   const char* da1 = "\033[c";
+  emit(m_impl->out_fd, sync_query);
   emit(m_impl->out_fd, kitty_query);
   emit(m_impl->out_fd, keyboard_query);
   emit(m_impl->out_fd, da1);
@@ -469,6 +472,10 @@ auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
   // Kitty keyboard protocol (#60): the terminal answered CSI ? u with a flags
   // report. Drives the fallback ErrorEvent, never the bytes we push.
   if (detail::probe_kitty_keyboard(reply)) caps.kitty_keyboard = true;
+
+  // Synchronized output (#148): a DECRPM reporting driven or undriven means
+  // the wire honors `\033[?2026h` / `l` around a frame.
+  if (detail::probe_sync_updates(reply)) caps.sync_updates = true;
 
   // Truecolor via env corroboration. The identity pair is this session's, not
   // the daemon's (#181): when set_env() handed over a pair, both fields resolve
@@ -654,7 +661,9 @@ auto Terminal::select_driver(const Capabilities& caps)
   // Pure caps -> driver mapping, defined in the driver-selection TU to avoid
   // pulling every driver header into this one. The caller probes once (see
   // App::setup) and passes the result in — no second probe here.
-  return select_driver_for(caps);
+  auto driver = select_driver_for(caps);
+  driver->set_sync_updates(caps.sync_updates);
+  return driver;
 }
 
 }  // namespace termforge

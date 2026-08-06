@@ -219,20 +219,25 @@ class App {
 
   // Draw images the cell grid does not own — a resident image from pin_image()
   // placed with draw_pinned(), or a raw draw_image() the widget tree has no
-  // Widget for. **This is the only correct place in App to do it** (#191).
+  // Widget for. **This is the right place in App to do it** (#191), and since
+  // #148 the frame it lands in is a single write.
   //
-  // A frame has two writes and the boundary between them is not where it looks.
-  // on_render runs BEFORE Renderer::present, and present ends in flush() -- so
-  // an image drawn from on_render is written, and then App issues this frame's
-  // pixel regions and writes AGAIN. The driver is told where a WRITE ends and
-  // never where a FRAME does, and its collection has to guess: #187's guard
-  // works by noticing that App's first flush drew nothing. Draw in on_render
-  // and that stops being true, the guard never fires, and each of the two
-  // collections deletes what the other window drew -- measured at ten full
-  // re-uploads and a sprite retired and re-placed in different writes (it
-  // blinks off) for ten frames of one unchanged image. Draw here and every
-  // image escape of the frame lands in one write, which is what makes the
-  // guard exact rather than approximate.
+  // Before #148 a frame had two writes and an image's window mattered
+  // enormously: on_render ran before Renderer::present's flush, so an image
+  // drawn there was written, then App wrote its pixel regions AGAIN in a
+  // second flush, and the kitty driver's collection (which inferred frame
+  // boundaries from a flush that drew nothing) thrashed the two windows'
+  // images against each other -- measured at ten re-uploads and a blinking
+  // sprite for ten frames of one unchanged image. on_pixels existed so an
+  // application's own draws could join the second window instead of fighting
+  // it.
+  //
+  // #148 made the frame one write, but ordering inside that write still
+  // matters. A direct draw from on_render queues BEFORE the cell diff; this
+  // hook queues AFTER the diff and after App's own pixel regions, so the diff
+  // cannot overwrite a Unicode-placeholder grid. The driver then collects
+  // once and the whole buffer goes out in one flush. This is also the one
+  // place a same-rect collision has a definite, documented outcome (below).
   //
   // Called after App has issued its own pixel regions. That is an EMISSION
   // order, not a compositing promise: two placements at the same z are ordered
@@ -247,15 +252,10 @@ class App {
   // TWO THINGS SUPPRESS THIS CALL ENTIRELY, and both are properties of the
   // frame rather than of what you draw:
   //
-  //   * a driver without kitty_graphics. Not a policy -- the flush that would
-  //     carry these bytes is gated the same way, so calling it on a tier that
-  //     will not flush would leave the bytes in the driver's buffer until the
-  //     NEXT frame, where present() appends its cell diff after them and the
-  //     image comes out a frame late AND underneath the text it was meant to
-  //     cover. One gate for the call and the write, or neither is correct.
-  //     Widening it is #108, alongside the same gate on the region path.
+  //   * a driver without kitty_graphics. This matches the existing pixel-region
+  //     path's scope; widening both paths to cell-rendered image tiers is #108.
   //   * an overlay on the stack, matching render_pixel_regions. They share the
-  //     first of that guard's two reasons -- images are emitted after the cell
+  //     first of that guard's two reasons -- images are emitted with the cell
   //     diff and would paint through the dialog -- and not its second, since
   //     there are no Screen cells to blank here. What settles it is that an app
   //     drawing through both paths must not keep half its images under a dialog
@@ -265,13 +265,15 @@ class App {
   //     retired on the frame's own boundary, so the sprite goes away with the
   //     frame the dialog opened on rather than one frame later.
   //
-  // Do not write to screen() from here: present() has already diffed it, so a
-  // cell written now is either lost or smuggled into the next frame's diff.
-  // (restore_backdrop() runs in between but cannot be the mechanism -- it is a
-  // no-op whenever this hook is reached, since it only has work to do under a
-  // Fill/Dim overlay and an overlay suppresses the hook.) Do not call flush() either -- App
-  // flushes immediately after, and a third flush per frame walks back into the
-  // limit kDrawlessFlushGrace documents.
+  // Do not write to screen() from here: by the time this hook runs App has
+  // already diffed the Screen for THIS frame, so a cell written now is lost
+  // from this write and smuggled into the next frame's diff.
+  // (restore_backdrop() cannot rescue one -- it is a no-op
+  // whenever this hook is reached, since it only has work under a Fill/Dim
+  // overlay and an overlay suppresses the hook.) Do not call flush() either:
+  // the frame's single write is frame_step's Renderer::flush() after this
+  // hook returns, and an extra flush splits the frame back into multiple
+  // writes and turns the driver's exact frame boundary back into a guess.
   //
   // An exception leaves here the way one from on_render does -- out through
   // frame_step, run_loop's catch, on_stop() and teardown(), and on to the
@@ -700,12 +702,14 @@ class App {
 
   // Render a widget's pixel regions through the active driver (if it
   // supports images). Call after widget.draw(screen) in on_render.
-  // The actual image emission is deferred until after the cell diff
-  // (renderer->present) so images overlay the text grid.
+  // The cells are collected now and the images are issued in the frame's
+  // image window (flush_pixel_regions), which since #148 queues after the cell
+  // diff in the one flush that carries the whole frame -- so the image and the
+  // text it covers go out together, the image on top.
   // No-op when the driver has no image capability — the cell fallback
   // from draw() is already in the Screen.
   //
-  // Also a no-op while an overlay is up: images flush AFTER the cell diff,
+  // Also a no-op while an overlay is up: images queue after the cell diff,
   // so an image collected during on_render would paint straight through the
   // dialog. The widget's own cell fallback is already in the Screen and gets
   // dimmed/filled with everything else — the documented degradation. (The
@@ -820,6 +824,16 @@ class App {
   // setup() step that established it, because the setup-failure path reaches
   // here having done only some of them. Must never throw: ~App is noexcept.
   auto teardown() -> void;
+
+  // The end-of-session driver handoff (#148): route what the driver owes the
+  // terminal through the session's output sink, and latch so the driver's
+  // destructor stays silent. Called from a live loop (run_loop,
+  // test_run_frames) while the sink is provably alive -- NOT from teardown(),
+  // which also runs from ~App where a derived class's sink may already be
+  // destroyed. It detaches the borrowed sink after emitting; bytes already
+  // accepted by that sink remain observable.
+  // Safe to call once per run; TerminalDriver::shutdown() self-guards.
+  auto shutdown_driver() -> void;
   auto pump_input() -> void;
   // The headless Screen/Renderer/driver wiring shared by the test hooks. Not a
   // test hook itself — none of them should own it.
@@ -868,15 +882,16 @@ class App {
   std::unique_ptr<Renderer> m_renderer;
   Input m_input;
 
-  // Pixel regions collected during on_render, flushed after present.
+  // Pixel regions collected during on_render, issued in the frame's image
+  // window (flush_pixel_regions), after the cell diff in one flush.
   //
   // The image is BORROWED, never owned (#84): the widget holds the storage and
   // guarantees it until its next draw_pixels() call. Both ends of that window
-  // are inside one frame_step -- collect runs in on_render, flush runs after
-  // present -- and clearing this vector at the top of the next frame happens
-  // before any widget code runs. Owning it instead would copy the whole
-  // buffer out of a widget's cache every frame, which is the entire point of
-  // the change.
+  // are inside one frame_step -- collect runs in on_render, the issue runs in
+  // flush_pixel_regions after present() -- and clearing this vector at the
+  // top of the next frame happens before any widget code runs. Owning it
+  // instead would copy the whole buffer out of a widget's cache every frame,
+  // which is the entire point of the change.
   struct PixelRegion {
     Rect rect;
     const Image* image{nullptr};

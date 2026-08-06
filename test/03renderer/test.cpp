@@ -20,6 +20,7 @@ TEST_CASE("Renderer: first present emits cells, second present emits only diffs"
   Screen s{5, 1};
   s.write_text(0, 0, "hello", Rgb{}, Rgb{});
   r.present(s);
+  r.flush();
   const std::string first = out;
   REQUIRE(first.find('h') != std::string::npos);
   REQUIRE(first.find('o') != std::string::npos);
@@ -28,6 +29,7 @@ TEST_CASE("Renderer: first present emits cells, second present emits only diffs"
   out.clear();
   s.write_text(4, 0, "p", Rgb{}, Rgb{});  // "hellp"
   r.present(s);
+  r.flush();
   REQUIRE(out.find('p') != std::string::npos);
   REQUIRE(out.find('h') == std::string::npos);  // unchanged cells not re-emitted
 }
@@ -40,8 +42,10 @@ TEST_CASE("Renderer: no-change present emits nothing", "[renderer]") {
   Screen s{4, 1};
   s.write_text(0, 0, "test", Rgb{}, Rgb{});
   r.present(s);
+  r.flush();
   out.clear();
-  r.present(s);  // identical frame
+  r.present(s);
+  r.flush();  // identical frame
   REQUIRE(out.empty());
 }
 
@@ -53,9 +57,11 @@ TEST_CASE("Renderer: invalidate forces a full repaint", "[renderer]") {
   Screen s{3, 1};
   s.write_text(0, 0, "abc", Rgb{}, Rgb{});
   r.present(s);
+  r.flush();
   out.clear();
   r.invalidate();
-  r.present(s);  // same content, but invalidated -> full repaint
+  r.present(s);
+  r.flush();  // same content, but invalidated -> full repaint
   REQUIRE(out.find('a') != std::string::npos);
   REQUIRE(out.find('c') != std::string::npos);
 }
@@ -68,9 +74,11 @@ TEST_CASE("Renderer: resize triggers a full repaint (dimension change)", "[rende
   Screen s{2, 1};
   s.write_text(0, 0, "xy", Rgb{}, Rgb{});
   r.present(s);
+  r.flush();
   s.resize(3, 1);
   out.clear();
-  r.present(s);  // dimension changed -> treat as full frame, not a crash
+  r.present(s);
+  r.flush();  // dimension changed -> treat as full frame, not a crash
   REQUIRE(out.find('x') != std::string::npos);
 }
 
@@ -82,6 +90,7 @@ TEST_CASE("Renderer: colored text emits SGR fg/bg through AnsiRgbDriver", "[rend
   Screen s{10, 1};
   s.write_text(0, 0, "Red", Rgb{0xFF, 0x00, 0x00}, Rgb{0x00, 0x00, 0x00});
   r.present(s);
+  r.flush();
   REQUIRE(out.find("38;2;255;0;0") != std::string::npos);   // fg red
   REQUIRE(out.find("48;2;0;0;0") != std::string::npos);     // bg black
   // The renderer emits cell-by-cell, so "Red" arrives as R, e, d separately.
@@ -99,6 +108,7 @@ TEST_CASE("Renderer: same-color run coalesces SGR sequences", "[renderer][color]
   const Rgb green{0x00, 0xFF, 0x00}, black{0x00, 0x00, 0x00};
   s.write_text(0, 0, "aaaaa", green, black);
   r.present(s);
+  r.flush();
   // All five cells share the same fg+bg: SGR should appear exactly once.
   REQUIRE(out.find("38;2;0;255;0") == out.rfind("38;2;0;255;0"));
   REQUIRE(out.find("48;2;0;0;0") == out.rfind("48;2;0;0;0"));
@@ -114,6 +124,7 @@ TEST_CASE("Renderer: color change between cells emits new SGR", "[renderer][colo
   // Overwrite cell 1 with a different color.
   s.write_text(1, 0, "B", Rgb{0x00, 0x00, 0xFF}, Rgb{0x00, 0x00, 0x00});
   r.present(s);
+  r.flush();
   REQUIRE(out.find("38;2;255;0;0") != std::string::npos);  // red fg for A
   REQUIRE(out.find("38;2;0;0;255") != std::string::npos);  // blue fg for B
 }
@@ -132,6 +143,7 @@ TEST_CASE("Renderer: wide glyph round-trips without over-painting its continuati
   const std::string shi = "\xE4\xB8\x96";  // 世 (width 2) at cols 0-1
   s.write_text(0, 0, shi, Rgb{}, Rgb{});
   r.present(s);
+  r.flush();
   REQUIRE(out.find(shi) != std::string::npos);          // glyph emitted
   REQUIRE(out.find('\0') == std::string::npos);          // no NUL leaked out
 
@@ -139,6 +151,7 @@ TEST_CASE("Renderer: wide glyph round-trips without over-painting its continuati
   // diff against the cached frame cleanly (no per-frame flicker).
   out.clear();
   r.present(s);
+  r.flush();
   REQUIRE(out.empty());
 }
 
@@ -151,6 +164,7 @@ TEST_CASE("Renderer: blank cells emit space with background color", "[renderer][
   // Leave cell (1,0) blank by clearing with a custom fill.
   s.clear(Cell{.text = " ", .fg = Rgb{0xE0, 0xE0, 0xF0}, .bg = Rgb{0x0A, 0x0A, 0x14}});
   r.present(s);
+  r.flush();
   // The blank cells should be emitted as spaces with the fill's bg color.
   REQUIRE(out.find("48;2;10;10;20") != std::string::npos);  // bg 0x0A,0x0A,0x14
 }
