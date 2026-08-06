@@ -135,12 +135,14 @@ class PtyPair {
 // having to name the library's own handler.
 volatile std::sig_atomic_t g_sentinel_hits = 0;
 void sentinel_handler(int) { g_sentinel_hits = 1; }
+void newer_handler(int) { g_sentinel_hits = 2; }
 
-// Read a signal's current disposition without disturbing it.
-auto disposition(int sig) -> void (*)(int) {
-  auto* prev = std::signal(sig, SIG_DFL);
-  std::signal(sig, prev);
-  return prev;
+// Read a signal's complete current disposition without disturbing it. The
+// mask and flags matter for #193 just as much as the handler pointer does.
+auto action_of(int sig) -> struct sigaction {
+  struct sigaction current {};
+  if (::sigaction(sig, nullptr, &current) != 0) current.sa_handler = SIG_ERR;
+  return current;
 }
 
 // SIGTERM rather than SIGSEGV, deliberately. The requirement being pinned is
@@ -152,23 +154,33 @@ constexpr int kWitnessSignal = SIGTERM;
 
 class SignalWitness {
  public:
-  SignalWitness() : m_prev(std::signal(kWitnessSignal, sentinel_handler)) {}
-  ~SignalWitness() { std::signal(kWitnessSignal, m_prev); }
+  SignalWitness() {
+    m_ours.sa_handler = sentinel_handler;
+    ::sigemptyset(&m_ours.sa_mask);
+    ::sigaddset(&m_ours.sa_mask, SIGUSR1);
+    m_ours.sa_flags = SA_RESTART;
+    m_ok = ::sigaction(kWitnessSignal, &m_ours, &m_prev) == 0;
+  }
+  ~SignalWitness() {
+    if (m_ok) (void)::sigaction(kWitnessSignal, &m_prev, nullptr);
+  }
   SignalWitness(const SignalWitness&) = delete;
   auto operator=(const SignalWitness&) -> SignalWitness& = delete;
+  [[nodiscard]] auto ok() const -> bool { return m_ok; }
   [[nodiscard]] static auto still_ours() -> bool {
-    return disposition(kWitnessSignal) == sentinel_handler;
+    return action_of(kWitnessSignal).sa_handler == sentinel_handler;
   }
-  // What uninstall_fatal_handlers() leaves behind. Note it is SIG_DFL and not
-  // whatever was there before -- which is its own reason a session Terminal
-  // must not call it, and is why "still ours" and "back to default" are two
-  // different questions here.
-  [[nodiscard]] static auto is_default() -> bool {
-    return disposition(kWitnessSignal) == SIG_DFL;
+  [[nodiscard]] auto intact() const -> bool {
+    const struct sigaction current = action_of(kWitnessSignal);
+    return current.sa_handler == sentinel_handler &&
+           (current.sa_flags & SA_RESTART) != 0 &&
+           ::sigismember(&current.sa_mask, SIGUSR1) == 1;
   }
 
  private:
-  void (*m_prev)(int);
+  struct sigaction m_prev {};
+  struct sigaction m_ours {};
+  bool m_ok{false};
 };
 
 }  // namespace
@@ -433,6 +445,7 @@ TEST_CASE("emit: a full output buffer stalls the escape, never truncates it",
 TEST_CASE("enter_raw over a socket arms nothing and installs no handler",
           "[fds][signals][regression]") {
   SignalWitness witness;
+  REQUIRE(witness.ok());
   auto& rs = termforge::detail::restore_state();
   const auto armed_before = rs.armed;
   SocketPair sp;
@@ -458,6 +471,7 @@ TEST_CASE("enter_raw over an injected pty arms exactly as it always did",
   // The positive control. Without it the case above passes just as well if the
   // arming code were deleted outright.
   SignalWitness witness;
+  REQUIRE(witness.ok());
   auto& rs = termforge::detail::restore_state();
   PtyPair pty;
   REQUIRE(pty.ok());
@@ -470,11 +484,86 @@ TEST_CASE("enter_raw over an injected pty arms exactly as it always did",
     REQUIRE_FALSE(SignalWitness::still_ours());  // handlers went in
   }
   REQUIRE(rs.armed == 0);
-  // And came back out. Asserted separately from rs.armed above, because
-  // leave_raw() clears that flag on its own -- a Terminal that forgot it had
-  // installed the handlers would still show armed == 0 here while leaving nine
-  // dispositions pointing at a destroyed object's rescue path.
-  REQUIRE(SignalWitness::is_default());
+  // And the complete prior action came back. Asserted separately from rs.armed
+  // above, because leave_raw() clears that flag on its own -- a Terminal that
+  // forgot its handler lease would still show armed == 0 here. Before #193 the
+  // handler became SIG_DFL and both the mask and flags were lost.
+  REQUIRE(witness.intact());
+}
+
+TEST_CASE("fatal handlers: nested leases restore only after the final release",
+          "[fds][signals][regression]") {
+  SignalWitness witness;
+  REQUIRE(witness.ok());
+
+  const bool first = termforge::detail::install_fatal_handlers();
+  const bool second = termforge::detail::install_fatal_handlers();
+  bool stayed_installed = false;
+  bool restored = false;
+  if (first && second) {
+    termforge::detail::uninstall_fatal_handlers();
+    stayed_installed =
+        action_of(kWitnessSignal).sa_handler ==
+        termforge::detail::on_fatal_signal;
+    termforge::detail::uninstall_fatal_handlers();
+    restored = witness.intact();
+  } else {
+    if (second) termforge::detail::uninstall_fatal_handlers();
+    if (first) termforge::detail::uninstall_fatal_handlers();
+  }
+
+  CHECK(first);
+  CHECK(second);
+  CHECK(stayed_installed);
+  CHECK(restored);
+}
+
+TEST_CASE("fatal handlers: re-entering raw mode reuses this Terminal's lease",
+          "[fds][signals][regression]") {
+  // leave_raw() disarms termios but intentionally keeps the handlers for an
+  // alt-screen crash before destruction. A later enter_raw() must re-arm the
+  // restore payload without acquiring a second process-wide lease; otherwise
+  // one destructor release leaves one lease and all nine handlers behind.
+  SignalWitness witness;
+  REQUIRE(witness.ok());
+  PtyPair pty;
+  REQUIRE(pty.ok());
+  {
+    Terminal t;
+    REQUIRE(t.set_io(TerminalIo{pty.slave(), pty.slave()}).has_value());
+    REQUIRE(t.enter_raw().has_value());
+    t.leave_raw();
+    REQUIRE(t.enter_raw().has_value());
+    REQUIRE_FALSE(SignalWitness::still_ours());
+  }
+  REQUIRE(witness.intact());
+}
+
+TEST_CASE("fatal handlers: teardown does not overwrite a newer signal owner",
+          "[fds][signals][regression]") {
+  SignalWitness witness;
+  REQUIRE(witness.ok());
+  PtyPair pty;
+  REQUIRE(pty.ok());
+  {
+    Terminal t;
+    REQUIRE(t.set_io(TerminalIo{pty.slave(), pty.slave()}).has_value());
+    REQUIRE(t.enter_raw().has_value());
+    REQUIRE_FALSE(SignalWitness::still_ours());
+
+    struct sigaction newer {};
+    newer.sa_handler = newer_handler;
+    ::sigemptyset(&newer.sa_mask);
+    newer.sa_flags = SA_RESTART;
+    REQUIRE(::sigaction(kWitnessSignal, &newer, nullptr) == 0);
+  }
+
+  // The embedding component wrote this after TermForge armed. It is the newer
+  // owner, so final lease release restores the other eight signals and leaves
+  // this one alone. SignalWitness restores the test process's original action.
+  const struct sigaction current = action_of(kWitnessSignal);
+  REQUIRE(current.sa_handler == newer_handler);
+  REQUIRE((current.sa_flags & SA_RESTART) != 0);
 }
 
 TEST_CASE("enter_screen over an injected pty arms the screen half, and lets go",

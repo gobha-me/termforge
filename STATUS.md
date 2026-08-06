@@ -6,9 +6,36 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-06, latest)
 
-**Latest release: v0.9.2 — one App frame is one sink write on every tier, with
-the whole frame visible to `last_frame_bytes()`.** #148 merged through PR #203
-as `b2e7629`; the release tag points at that reviewed merge commit.
+**Current branch: `fix/193-restore-signal-dispositions` — normal Terminal
+teardown gives the embedding process its complete signal policy back.** The
+branch is validated and ready for review/PR; v0.9.2 remains the latest release.
+
+The fatal backstop used to install nine handlers with `std::signal` and replace
+all nine with `SIG_DFL` at destruction. A host's existing `SIGTERM`, `SIGHUP`
+or crash-reporting handler therefore vanished after an otherwise normal
+create/use/destroy cycle. `test/42fds` explicitly asserted that defect, so it
+was found and replaced rather than left as a green dependency on the bug.
+
+The first handler lease now captures each complete prior `sigaction` — handler,
+mask and flags — and the final lease restores it. Nested leases cannot restore
+early. Final release also checks ownership signal by signal: if another
+component installed a newer action while TermForge was active, that component
+wins rather than being overwritten. Installation is total; a partial failure
+rolls back every action already replaced. Fatal delivery itself is unchanged:
+restore the terminal, reset the delivered signal to default, and re-raise.
+
+**Verification:** the focused signal/fd suites passed 25 consecutive runs;
+GCC, Clang, Release `-Werror -Wshadow`, and ASan+UBSan matrices each pass 52/52;
+`tools/consume/run.sh` passes `subdir`, `install`, and `vendored`; and
+`git diff --check` is clean. No terminal-protocol bytes changed, so the real
+emulator gate does not apply to this cut.
+
+## Latest release: v0.9.2 (#148)
+
+**One App frame is one sink write on every tier, with the whole frame visible
+to `last_frame_bytes()`.** #148 merged through PR #203 as `b2e7629`; the release
+tag points at that reviewed merge commit. The missing GitHub release entry was
+repaired before this branch was cut, using that existing tag without retagging.
 
 `Renderer::present()` now queues only the cell diff. App queues its pixel
 regions and `on_pixels()` after that diff, then `Renderer::flush()` performs the
@@ -993,9 +1020,11 @@ a patch release, and it is checkable in review rather than asserted.
 **What this does and does not do for #144 row 2.** It makes an *unarmed* session
 harmless — a daemon whose sessions are all non-tty never reaches
 `install_fatal_handlers()` at all, which is real and is what anvil needs. It does
-**not** make a *second armed* session correct, and the handler design (nine
-signals, `SIG_DFL` re-raise rather than chaining, one shared slot) is untouched.
-Row 2 stays open.
+**not** make a *second armed* session correct. At this release the handler
+design (nine signals, `SIG_DFL` re-raise rather than chaining, one shared slot)
+was untouched. #193 later made normal disposition ownership leased and
+restorable, but deliberately left the one shared terminal-restore slot and the
+fatal re-raise policy unchanged. Row 2 stays open.
 
 **Rode along, and it qualifies by code path rather than by size:**
 `App::current_size()`'s `ioctl(STDOUT_FILENO, TIOCGWINSZ)` — literally "an fd

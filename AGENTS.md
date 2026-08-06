@@ -153,7 +153,10 @@ file is the tactical version.
   the nine signal handlers go in only with the first. A session that arms for no
   reason turns its own `SIGSEGV` into the whole server's, and leaves an fd
   *number* behind for the once-per-process `atexit` hook to write into long after
-  that fd has been recycled. On the discovered path both predicates are
+  that fd has been recycled. The handlers are borrowed process state too: the
+  first lease captures each complete prior `sigaction`, the last restores it
+  only while TermForge still owns that signal, and a newer handler is never
+  overwritten during teardown (#193). On the discovered path both predicates are
   tautologies (`out_fd` was chosen *by* `isatty`), which is exactly why nothing
   an existing program does changes by one byte.
   **The size is pushed too** (#180). `App::set_size` takes the dimensions the
