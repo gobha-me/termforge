@@ -4,15 +4,15 @@
 // `test/47frameshape` is about what the CALLER'S CADENCE costs; `test/46pinned`
 // is about RESIDENCY; `test/01drivers` is about the protocol a draw emits. The
 // id an allocation lands on is a fourth thing, and it was left implicit in all
-// three -- which is how a monotonic counter reached the one-byte ceiling in
-// about four seconds without a single case noticing.
+// three -- which is how a monotonic counter crossed both advertised id pools
+// in about four seconds without a single case noticing.
 //
 // The defect. A region's identity is its destination RECT, so a sprite stepping
 // one cell per frame is a new key every frame. The vacated slot was collected
 // without returning its id and the counter never went down: 300 frames of
-// motion produced 300 distinct ids with a maximum of 300. Past 255
-// `emit_id_as_sgr` falls to the 24-bit 38;2 form kitty ACCEPTS AND IGNORES, so
-// a UnicodePlaceholders session renders nothing at all, silently, under q=2.
+// motion produced 300 distinct ids with a maximum of 300. #199 later proved
+// that the associated rendering failure was U+10FEEE, not the 24-bit 38;2
+// form; the allocator still violated both public pools and had no bound.
 //
 // The fix is a derivation: the smallest id in [1, kMaxRegionSlots] no live
 // region holds, taken from the map itself rather than from a counter beside it.
@@ -96,16 +96,15 @@ auto history_of(std::string_view out, std::string_view id) -> std::string {
 
 // ── the acceptance test named in #190 ───────────────────────────────────────
 
-TEST_CASE("region ids: 300 frames of motion stay inside one byte (#190)",
+TEST_CASE("region ids: 300 frames of motion stay inside the region pool (#190)",
           "[regionids][kitty]") {
   // The issue's acceptance test, and the numbers in it are the ones that were
   // measured on main before the fix: 300 distinct ids, maximum 300.
   //
-  // Under UnicodePlaceholders deliberately. Classic placements carry the image
-  // id as an APC parameter and would survive an id of 300 perfectly well, so
-  // there the counter was untidy; the placeholder path encodes the id as an SGR
-  // FOREGROUND and past 255 that encoding stops working. This is the mode where
-  // the defect was fatal, so it is the mode the acceptance test runs in.
+  // Under UnicodePlaceholders deliberately because this is the path that
+  // exposed the old counter and owns emit_id_as_sgr. #199 corrected the old
+  // claim that 38;2 stops working above 255; the acceptance property here is
+  // the region allocator staying in its declared pool in every placement mode.
   KittyDriver d;
   std::string out;
   d.set_output(&out);
@@ -130,11 +129,9 @@ TEST_CASE("region ids: 300 frames of motion stay inside one byte (#190)",
   // The cost it does fix. Two ids for 300 frames -- not one, because the
   // vacated slot is still live when the next rect allocates.
   CHECK(ids_named(out) == std::set<std::uint32_t>{1, 2});
-  // And the failure a user would actually report, asserted as the bytes rather
-  // than as the id: an SGR foreground in the 24-bit form means at least one
-  // placeholder grid named an id kitty will accept and then ignore, which is a
-  // session that renders nothing and says nothing. Pre-fix this appeared from
-  // frame 256 on.
+  // The wire spelling closes the pool bound independently of the parsed ids:
+  // region ids never need the larger 38;2 form. That form is valid (#199), so
+  // this is an allocator assertion rather than a rendering-failure proxy.
   CHECK(out.find("\033[38;2;") == std::string::npos);
 }
 

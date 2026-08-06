@@ -533,7 +533,7 @@ TEST_CASE("Exact is refused under Unicode placeholders, and says so") {
   // painted for a placement that was never created is worse than no draw.
   CHECK(out.empty());
   CHECK(count_of(out, "U=1") == 0);
-  CHECK(count_of(out, "\xF4\x8F\xBB\xAE") == 0);
+  CHECK(count_of(out, "\xF4\x8E\xBB\xAE") == 0);
 
   // Stretch in the same mode still works, so the refusal is about the fit and
   // not about the mode being broken.
