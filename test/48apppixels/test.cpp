@@ -1,8 +1,8 @@
 // TermForge — App's frame loop OVER THE PIXEL PATH (#189, #191).
 //
-// `test/47frameshape` asserts on the caller's call order by REPLAYING it:
-// `flush(); draw...(); flush();` written out by hand, because
-// `App::test_wire_headless` hardcoded a `FallbackDriver` whose
+// `test/47frameshape` asserts on the caller's call order by REPLAYING one
+// complete frame as `draw...(); flush();`, because `App::test_wire_headless`
+// once hardcoded a `FallbackDriver` whose
 // `capabilities().kitty_graphics` is false, so `App::collect_pixel_regions`
 // returned before the pixel path and `frame_step()` is private. A replay is one
 // transcription away from being wrong: nothing failed if `App`'s real cadence
@@ -14,12 +14,10 @@
 // the wire. Nothing is replayed. If a case here can be written against a
 // hand-made driver instead, it belongs in 47frameshape.
 //
-// The subject is #191: `App` draws images in two windows separated by
-// `Renderer::present`'s flush, and until `on_pixels` existed the only draw hook
-// a subclass had was in the first one — which is where a `driver().draw_pinned`
-// call from `on_render` lands, i.e. #109's only `App` call site. Both flushes
-// then have drawn something, #187's guard never fires, and each collection
-// destroys what the other window drew.
+// #148 changes that production cadence: Renderer::present queues the cell diff,
+// App queues pixel regions and on_pixels after it, and one flush carries the
+// complete frame. This suite observes that real order, including the separate
+// explicit shutdown write, through the App seam #189 added.
 //
 // The three loop seams (now_steady/wait_readable/read_available) are duplicated
 // per suite by the convention stated at test/24tick/test.cpp:28-31: each test
@@ -98,7 +96,7 @@ class PixelApp : public App {
   // driver() is protected -- the same access path a consumer has, and the same
   // one test/37bytes' MeterProbe re-exports for the same reason.
   [[nodiscard]] auto caps() -> Capabilities { return driver().capabilities(); }
-  [[nodiscard]] auto meter() -> FrameBytes { return driver().last_frame_bytes(); }
+  [[nodiscard]] auto meter() -> FrameBytes { return m_frame_meter; }
   [[nodiscard]] auto cumulative() -> FrameBytes { return driver().total_bytes(); }
 
  protected:
@@ -109,12 +107,16 @@ class PixelApp : public App {
     return m_now;
   }
   auto wait_readable(int timeout_ms) -> bool override {
+    // frame_step calls this after the frame's single flush. Capture before
+    // test_run_frames performs the separate end-of-session shutdown write.
+    m_frame_meter = driver().last_frame_bytes();
     m_now += std::chrono::milliseconds(timeout_ms);
     return false;
   }
   auto read_available(char*, int) -> int override { return 0; }
 
   std::string m_sink;
+  FrameBytes m_frame_meter{};
 
  private:
   std::chrono::steady_clock::time_point m_now{};
@@ -204,18 +206,20 @@ class WriteCounter final : public ByteSink {
   }
 };
 
-// Cells only, and a sink that counts the frame's writes. The redirect happens
+// A sink that counts the frame's writes. The redirect happens
 // in the first on_render because that is the earliest App hook after the
 // harness has wired a driver and before anything has been flushed.
 class CountedApp final : public App {
  public:
-  explicit CountedApp(bool graphics) : m_graphics(graphics) {}
+  explicit CountedApp(bool graphics, bool image_frame = false)
+      : m_graphics(graphics), m_image_frame(image_frame) {}
   WriteCounter sink;
 
   auto on_render(Screen& s) -> void override {
     driver().set_output(&sink);
     s.write_text(0, 0, "cells only", Rgb{0xE0, 0xE0, 0xF0},
                  Rgb{0x10, 0x10, 0x18});
+    if (m_image_frame) render_pixel_regions(m_plate);
   }
   auto go(int frames) -> void {
     if (m_graphics) {
@@ -238,6 +242,8 @@ class CountedApp final : public App {
 
  private:
   bool m_graphics;
+  bool m_image_frame;
+  PlateWidget m_plate;
   std::chrono::steady_clock::time_point m_now{};
 };
 
@@ -293,39 +299,42 @@ TEST_CASE("app pixels: an unchanged region transmits ONCE across many frames",
   CHECK(ids_named(app.wire()) == std::set<std::uint32_t>{1});
 }
 
-TEST_CASE("app pixels: App's frame is TWO writes, and the first drew nothing",
+TEST_CASE("app pixels: App's frame is ONE write carrying the whole frame (#148)",
           "[apppixels][kitty]") {
-  // The cadence kDrawlessFlushGrace is calibrated against, asserted at the
-  // layer that produces it. test/47frameshape:522 pins what a THIRD flush would
-  // cost; this pins that there is no third, and that the first is the drawless
-  // one -- which is the whole reason the grace is 1 and not 2.
+  // Before #148 a frame was two writes -- the cell diff, then the images --
+  // and collection had to infer frame boundaries. Since #148 the frame is ONE
+  // write: images queue
+  // after the cell diff in the driver's buffer and Renderer::flush() emits
+  // them together, so the collection's frame boundary is exact by construction.
   //
-  // Read off the meter rather than counted by hand: emit_frame closes a frame
-  // and tally_frame resets the pending image buckets, so last_frame_bytes()
-  // after a frame_step reports the SECOND write. Image traffic all lands in
-  // that second write, so a frame carrying a new plate has zero cell bytes in
-  // its last frame and a nonzero image_transmit.
+  // Read off the meter rather than counted by hand: emit_frame is the write
+  // AND meter boundary, so last_frame_bytes() after a frame_step now reports
+  // the WHOLE frame -- image traffic AND the cell diff together -- where it
+  // used to report only the second (image) write. A frame carrying a new
+  // plate has a nonzero image_transmit AND nonzero cells in its one frame.
   PixelApp app;
   app.run(1);
 
   const FrameBytes last = app.meter();
   CHECK(last.image_transmit > 0);
-  CHECK(last.cells == 0);  // the cell diff went out in write A
+  CHECK(last.cells > 0);  // the cell diff is in the SAME single write now
+  // One frame, one write: the whole frame's cost is the last frame, and the
+  // cumulative total equals everything on the wire (which also carries the
+  // trailing d=A the shutdown emits through the same sink).
   CHECK(app.cumulative().total() == app.wire().size());
 }
 
-// ── #191: the two windows ───────────────────────────────────────────────────
+// ── #191: the application image window ─────────────────────────────────────
 
 TEST_CASE("app pixels: a sprite drawn from on_pixels is placed ONCE (#191)",
           "[apppixels][kitty][pinned]") {
   // The acceptance test for #191, and the first proof that #109 has a correct
   // App call site at all.
   //
-  // One resident image and one pixel region, both drawn every frame, both in
-  // App's second window. Every image escape of the frame is in one write, so
-  // #187's guard sees the first flush drew nothing and the second flush is a
-  // real frame boundary: the plate uploads once, the placement is created once
-  // and never retired, and two ids exist for all time.
+  // One resident image and one pixel region, both drawn every frame after the
+  // cell diff. The frame has one write and therefore one exact collection
+  // boundary: the plate uploads once, the placement is created once and never
+  // retired, and two ids exist for all time.
   SpriteApp app{Window::OnPixels};
   app.run(10);
 
@@ -369,42 +378,39 @@ TEST_CASE("app pixels: an app whose ONLY images come from on_pixels is written",
   CHECK(placements_of(one.wire(), one.pin_id()) == 1);
 }
 
-TEST_CASE("app pixels: the same sprite drawn from on_render still blinks (#191)",
+TEST_CASE("app pixels: the same sprite drawn from on_render no longer blinks (#148)",
           "[apppixels][kitty][pinned]") {
-  // The negative control, and it is not optional: without it the case above
-  // passes vacuously if on_pixels is never called at all.
+  // The pre-#148 negative control, now OBSOLETE by construction -- and pinning
+  // that is the point. Before #148 a frame was two writes split by present()'s
+  // flush: draw_pinned from on_render landed in the first, App's regions in the
+  // second, BOTH flushes had drawn something, #187's guard never fired, and
+  // each collection destroyed what the other window drew -- ten uploads and
+  // nine deletes for ten frames of one unchanged plate, the sprite blinking
+  // off. #191's on_pixels let an app dodge that.
   //
-  // The ONLY difference is which window the draw_pinned happens in. From
-  // on_render it lands before Renderer::present's flush, so BOTH flushes have
-  // drawn something, #187's guard never fires, and each collection destroys
-  // what the other window drew. These are the numbers #191 was filed with,
-  // measured here through a real App instead of a replay -- ten full uploads of
-  // one unchanged plate, nine of them deleted again, and a placement retired
-  // and re-created once per frame IN DIFFERENT WRITES, which is the sprite
-  // blinking off every frame.
-  //
-  // Nothing fixes this shape and nothing can: when every flush has drawn
-  // something there is nothing left to infer. That is why the answer was a
-  // hook and not a better heuristic.
+  // #148 merged the frame into ONE image window and ONE write, so the split
+  // that made on_render's draw fight the regions' cannot occur: every draw of
+  // the frame goes out in the same flush and the collection reads the frame
+  // boundary exactly. Drawing from on_render now behaves like on_pixels: the
+  // plate uploads once, its placement is created once and never retired. Kept
+  // (not deleted) so the change is asserted -- a regression that reintroduces
+  // the split frame turns these numbers back to the #191 ones (transmits 11,
+  // deleted 9, placement_deletes 10, placements 10).
   SpriteApp app{Window::OnRender};
   app.run(10);
 
   REQUIRE(app.pixel_calls == 10);  // called, and deliberately does nothing
-  // Ten uploads of one unchanged plate, plus the pin's own one at pin time.
-  CHECK(total_transmits(app.wire()) == 11);
+  // ONE upload of the plate plus the pin's at pin time -- not eleven.
+  CHECK(total_transmits(app.wire()) == 2);
   CHECK(transmits_of(app.wire(), app.pin_id()) == 1);
-  // ONE region id, recycled ten times, plus the pin's (#190). Each collection
-  // empties the map before the next frame's draw allocates, so the smallest
-  // free id is 1 again every time. The byte cost above is what this case is
-  // about and it did not move; before #190 this read eleven distinct ids and
-  // the id budget was part of the damage.
+  CHECK(transmits_of(app.wire(), 1) == 1);  // the plate, once
   CHECK(ids_named(app.wire()) == std::set<std::uint32_t>{1, app.pin_id()});
   int deleted = 0;
   for (const std::uint32_t id : ids_named(app.wire()))
     deleted += data_deletes_of(app.wire(), id);
-  CHECK(deleted == 9);
-  CHECK(placement_deletes_of(app.wire(), app.pin_id()) == 10);
-  CHECK(placements_of(app.wire(), app.pin_id()) == 10);
+  CHECK(deleted == 0);                                     // no per-frame d=I (was 9)
+  CHECK(placement_deletes_of(app.wire(), app.pin_id()) == 0);  // (was 10)
+  CHECK(placements_of(app.wire(), app.pin_id()) == 1);         // (was 10)
 }
 
 TEST_CASE("app pixels: on_pixels draws AFTER App's own regions",
@@ -433,43 +439,51 @@ TEST_CASE("app pixels: on_pixels draws AFTER App's own regions",
   CHECK(region_at < sprite_at);
 }
 
-TEST_CASE("app pixels: a graphics frame is exactly TWO writes, always",
+TEST_CASE("app pixels: a graphics frame is exactly ONE write, always (#148)",
           "[apppixels][kitty]") {
-  // The cadence itself, counted rather than assumed. It used to depend on what
-  // the frame happened to contain -- flush_pixel_regions returned without
-  // flushing when there were no regions -- and kDrawlessFlushGrace was
-  // calibrated against a cadence that was therefore only usually right.
+  // The cadence itself, counted rather than assumed. Before #148 a graphics
+  // frame was TWO writes (the cell diff, then the images). Since #148 the frame
+  // is ONE write on every tier -- images queue after the cell diff in the
+  // driver buffer -- so the count is the
+  // same whether or not the frame drew anything, making collection exact.
   //
-  // Both arms below run frames with NO image at all, which is exactly the shape
-  // that used to cost one write. Two writes now, and the second is the drawless
-  // one that ends the frame.
-  SECTION("a graphics tier writes twice") {
+  // Both arms below run frames with NO image at all -- precisely the shape
+  // that used to expose the conditional second flush.
+  SECTION("a graphics tier writes once per frame") {
     CountedApp app{true};
     app.go(6);
-    CHECK(app.sink.writes == 12);
+    // Six frames, one write each. No image was transmitted, so shutdown owes
+    // no d=A and emits no seventh write.
+    CHECK(app.sink.writes == 6);  // was 12
   }
 
-  SECTION("a non-graphics tier still writes once") {
-    // The other half of the gate, and the reason the flush is on the tier and
-    // not on the frame: nothing on a fallback tier can draw an image in window
-    // two, so a second write there would buy nothing and would close an empty
-    // frame on the #139 meter. test/37bytes' MeterProbe is the case that
-    // notices if this changes.
+  SECTION("a non-graphics tier also writes once") {
+    // The other half: a fallback tier has no image window, so nothing can draw
+    // a second write there on either tier model -- and now no tier writes
+    // twice, so the two arms agree at the frame level. The graphics arm's
+    // teardown d=A has no counterpart here, so this arm stays at 6.
+    // test/37bytes' MeterProbe is the case that notices if this changes.
     CountedApp app{false};
     app.go(6);
     CHECK(app.sink.writes == 6);
   }
+
+  SECTION("an image-transmit frame is one write, plus explicit shutdown") {
+    CountedApp app{true, true};
+    app.go(1);
+    REQUIRE(app.sink.segments.size() == 2);
+    CHECK(app.sink.segments[0].find("a=t") != std::string::npos);
+    CHECK(app.sink.segments[0].find("a=d,d=A") == std::string::npos);
+    CHECK(app.sink.segments[1].find("a=d,d=A") != std::string::npos);
+  }
 }
 
-TEST_CASE("app pixels: on_pixels is not called on a tier that will not flush it",
+TEST_CASE("app pixels: on_pixels stays inside the pixel-region capability scope",
           "[apppixels]") {
-  // The gate the design review caught, and the reason it is on the CALL and not
-  // only on the write. A FallbackDriver draws images as an ASCII ramp, so an
-  // on_pixels body is perfectly legal there -- and its bytes would sit in the
-  // driver's buffer until the NEXT frame, where Renderer::present appends that
-  // frame's cell diff after them. The image would arrive one frame late and
-  // UNDERNEATH the text it exists to cover, which inverts the one compositing
-  // rule the whole feature rests on. One gate for the call and the write.
+  // The hook and render_pixel_regions share the kitty_graphics gate. A
+  // FallbackDriver can render an image as ASCII, but widening both App paths to
+  // that tier is #108; #148 changes the write cadence, not this capability
+  // scope.
   SpriteApp app{Window::OnPixels};
   app.run_default(5);
 
@@ -488,7 +502,7 @@ TEST_CASE("app pixels: an overlay suppresses on_pixels, and retires the sprite",
   // pixels on screen.
   //
   // The retirement is the part worth having as a number: the frame that opens
-  // the dialog draws no image at all, so its SECOND flush is the frame's own
+  // the dialog draws no image at all, so its single flush is the frame's own
   // boundary and the placement is retired there -- with the dialog, not one
   // frame behind it.
   SpriteApp app{Window::OnPixels};
@@ -498,27 +512,23 @@ TEST_CASE("app pixels: an overlay suppresses on_pixels, and retires the sprite",
   CHECK(app.pixel_calls == 3);  // three frames' worth, then suppressed
   CHECK(placements_of(app.wire(), app.pin_id()) == 1);
   // Retired in the frame the dialog opened on, not one behind it: that frame
-  // draws no image, so its SECOND flush is the frame's own boundary and the
-  // collection runs there.
+  // draws no image, so its (single, since #148) flush is the frame's own
+  // boundary and the collection runs there.
   CHECK(placement_deletes_of(app.wire(), app.pin_id()) == 1);
 }
 
-TEST_CASE("app pixels: a frame that draws no region collects on ITS OWN "
-          "boundary (#191)", "[apppixels][kitty]") {
-  // The "#191 moved WHERE, not HOW MUCH" claim, asserted at the App layer
-  // rather than replayed. A widget whose draw_pixels returns nullptr for one
-  // frame -- WaveformWidget does this whenever its sample buffer is empty --
-  // makes both of that frame's writes drawless, so the grace is spent by the
-  // frame's own second write and the collection runs THERE.
-  //
-  // Before the flush became cadence, that frame issued one write and the
-  // collection landed inside the NEXT frame, before its draws. Same delete,
-  // same re-upload, different boundary. The cost is unchanged and that is the
-  // honest statement: the region is fully re-uploaded either way, which is why
-  // pin_image and not this is the answer for content an app keeps.
-  // Per-WRITE, not per-run: the cost is identical either way, so a total is
-  // exactly the assertion that cannot tell the two apart. Only the segment the
-  // delete lands in distinguishes them, which is why this case needs a sink.
+TEST_CASE("a frame that draws no region collects on ITS OWN boundary (#148)",
+          "[apppixels][kitty]") {
+  // A widget whose draw_pixels returns nullptr for one frame -- WaveformWidget
+  // does this whenever its sample buffer is empty -- makes that frame drawless.
+  // Before #148 a frame was two writes, and a drawless frame's collection could
+  // land on the NEXT frame's boundary instead of its own. Since #148 the frame
+  // is ONE write, so the drawless frame collects on its own flush: the removed
+  // region's delete goes out in that same frame's single write, not the next
+  // one's. The cost is unchanged and stated: a full re-upload, which is why
+  // pin_image and not this is the answer for content an app keeps. Per-WRITE,
+  // not per-run: only the segment the delete lands in distinguishes the
+  // boundary, which is why this case needs a sink.
   class Blinker final : public PixelApp {
    public:
     WriteCounter sink;
@@ -539,11 +549,15 @@ TEST_CASE("app pixels: a frame that draws no region collects on ITS OWN "
   app.gap_frame = 2;
   app.go(5);
 
-  // Two writes per frame, so frame N owns segments 2N and 2N+1.
-  REQUIRE(app.sink.writes == 10);
+  // One write per frame (#148), so frame N owns segment N; the 6th is the
+  // teardown d=A, which is byte-identical to a frame's collection but is not
+  // one -- segments 1..4 are gap-adjacent, and 5 is where it lands.
+  REQUIRE(app.sink.writes == 6);
   const auto& seg = app.sink.segments;
-  CHECK(data_deletes_of(seg[5], 1) == 1);  // the gap frame's OWN second write
-  CHECK(data_deletes_of(seg[6], 1) == 0);  // and not the next frame's first
+  CHECK(data_deletes_of(seg[2], 1) == 1);  // the gap frame's OWN single write
+  CHECK(data_deletes_of(seg[3], 1) == 0);  // and not the next frame's
+  // The trailing d=A is shutdown cleanup, not a per-id region deletion.
+  CHECK(seg[5].find("a=d,d=A") != std::string::npos);
   // The cost, unchanged and stated: a full re-upload. The id is no longer part
   // of it (#190) -- the gap frame's collection emptied the map, so the region
   // comes back under the id it just gave up, and this whole run names exactly
@@ -553,22 +567,30 @@ TEST_CASE("app pixels: a frame that draws no region collects on ITS OWN "
   CHECK(total_transmits(app.sink.bytes) == 2);
 }
 
-TEST_CASE("app pixels: the meter reads the second write, zero when it is empty",
+TEST_CASE("app pixels: the meter reads the whole frame, not a partial write",
           "[apppixels][kitty]") {
-  // A documented consequence rather than a defect, pinned so nobody
-  // rediscovers it inside a bandwidth budget. emit_frame is the write boundary
-  // AND the meter boundary, so a uniform two-write frame means
-  // last_frame_bytes() always reports the second one. On a frame with no image
-  // that is zero, while the cells went out in the first write and are still in
-  // total_bytes(). For a per-frame budget on the graphics tier, difference
-  // total_bytes() -- until #148 gives the frame a one-write contract.
-  // One run, two frames: the first uploads the plate, the second changes
-  // nothing at all -- so its second write is empty. (Two runs would not do:
-  // test_run_frames builds a fresh driver each call, which re-uploads.)
+  // The property #148 was after, asserted at the App layer. Before #148 a
+  // frame was two writes and last_frame_bytes() reported only the SECOND --
+  // zero on a frame that changed nothing, because emit_frame is the write AND
+  // meter boundary and the cell diff went out in the first write. A bandwidth
+  // budget reading the meter on the graphics tier saw partial frames and had
+  // to difference total_bytes() instead.
+  //
+  // Since #148 the frame is ONE write, so last_frame_bytes() reports the
+  // whole frame -- cells and images together -- and a per-frame budget reads
+  // it directly. The unambiguous claim below: over a run, the cumulative
+  // meter equals everything on the wire, so no frame's cost is hidden in a
+  // write the meter didn't count. (One run only: a second test_run_frames
+  // would build a fresh driver and reset the cumulative counter.)
   PixelApp app;
   app.run(2);
 
-  const FrameBytes last = app.meter();
-  CHECK(last.total() == 0);
+  // Frame 0 uploads the plate; frame 1 changes nothing. Both are whole single
+  // writes. cumulative is the full run's cost, and it equals the wire's size
+  // (the frames plus the trailing d=A the shutdown emits through the sink).
   CHECK(app.cumulative().total() > 0);
+  CHECK(app.cumulative().total() == app.wire().size());
+  // The second frame is unchanged, so its whole single write is empty. This is
+  // a meaningful zero, captured before the separate shutdown write.
+  CHECK(app.meter().total() == 0);
 }

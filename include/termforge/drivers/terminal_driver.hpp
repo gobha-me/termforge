@@ -443,6 +443,24 @@ class TerminalDriver {
     return image_cell_extent(Extent{image.width(), image.height()});
   }
 
+  // The frame's write boundary (#148). THE CONTRACT every driver must keep:
+  // a frame's bytes accumulate (in the driver's buffer) across all of that
+  // frame's draw calls, and flush() hands them over in ONE emit_frame -- one
+  // write, one tally_frame. A driver must never flush mid-frame or emit a
+  // frame across multiple writes: over a network link a frame assembled from
+  // many small writes interacts badly with Nagle and SSH packet framing, and
+  // ANVIL budgets bytes per frame assuming "one frame is one write" holds.
+  //
+  // App discharges this by drawing the whole frame first (the cell diff, then
+  // its image window) and calling flush() exactly once, at the end of
+  // frame_step().
+  // A driver is called with the frame already fully drawn; its job is only to
+  // write it. A future driver that flushes per-row or per-region fails the
+  // one-write assertion in test/50onewrite rather than shipping.
+  //
+  // The sink-rejection path stays `-> void` (see take_output_error): giving
+  // flush() a return type would break every out-of-tree driver at compile
+  // time, which the rule against that forbids.
   virtual auto flush() -> void = 0;
   [[nodiscard]] virtual auto capabilities() const noexcept -> Capabilities = 0;
 
@@ -457,15 +475,16 @@ class TerminalDriver {
   // Reading costs nothing: the counters are maintained at the single write
   // boundary the drivers already funnel through, whether or not anyone asks.
   //
-  // "THE MOST RECENT FLUSH" IS NOT "THE MOST RECENT FRAME", and under App on a
-  // graphics tier that difference is load-bearing: since #191 every such frame
-  // is exactly two writes -- the cell diff, then the frame's images -- so this
-  // reports the second one. On a frame carrying an image that is the image
-  // traffic; on a frame carrying none it reads zero, with the cell diff already
-  // counted in the write before it. Non-graphics tiers are one write per frame
-  // and unaffected. For a per-frame budget on the graphics tier, difference
-  // total_bytes() instead -- until #148 gives a frame a one-write contract,
-  // that is the only spelling that means what it says.
+  // Under App the most recent flush IS the most recent frame: since #148 App
+  // draws the whole frame (cell diff and then images) and flushes once at
+  // the end of frame_step(), so on every tier -- graphics included -- this
+  // reports one complete frame, cell diff and pixel regions together. A
+  // per-frame budget reads this directly. Before #148 a graphics frame was
+  // two writes (the cell diff, then the images) and this reported only the
+  // image half -- reading zero on a frame that carried no image -- so such a
+  // budget had to difference total_bytes(); that workaround is no longer
+  // needed. Direct use that flushes a driver mid-frame reintroduces the split
+  // and is outside the App contract -- difference total_bytes() there.
   [[nodiscard]] auto last_frame_bytes() const noexcept -> FrameBytes {
     return m_last_frame_bytes;
   }
@@ -523,6 +542,34 @@ class TerminalDriver {
   auto clear_output() noexcept -> void;
   [[nodiscard]] auto has_output() const noexcept -> bool;
 
+  // The session is ending: run the driver's terminal-side cleanup through
+  // the current output, then detach the borrowed sink before destruction
+  // (#148).
+  //
+  // WHY THIS EXISTS: a driver can owe the terminal teardown bytes that are
+  // neither a frame nor safe to emit from ~. KittyDriver holds images the
+  // terminal must be told to free; its destructor used to write d=A straight
+  // to stdout, bypassing the sink, because a non-owning sink pointer cannot
+  // be trusted once destructors start running (the session's ByteSink may
+  // already be gone). For a server that was a session teardown writing into
+  // the process's stdout instead of the user's terminal -- #148's named
+  // bypass. shutdown() is the alternative spelling: an explicit handoff,
+  // called while the sink is still alive, that routes the cleanup through
+  // emit_frame like any other bytes and then severs the destructor's reason
+  // to write anything at all.
+  //
+  // The base is its home, per the settled rule (base-owned non-virtual state
+  // like set_output): the "what to do at end of session" is per-tier and
+  // virtual below, but the guard/detach bookkeeping is one implementation no
+  // subclass should vary. Non-virtual; the per-tier hook is on_shutdown().
+  //
+  // A second call is a no-op. With a sink, cleanup is routed there; without
+  // one, emit_frame uses the driver's ordinary stdout route. After the hook,
+  // shutdown latches completion and detaches the borrowed sink. Destruction
+  // never attempts terminal I/O: callers that need cleanup must make this
+  // explicit handoff while the destination is known alive.
+  auto shutdown() -> void;
+
   // The last sink refusal, taken and cleared.
   //
   // Latched rather than returned because flush() is `-> void` and pure: giving
@@ -544,7 +591,33 @@ class TerminalDriver {
   // session down, not to ignore it and collect sixty a second.
   [[nodiscard]] auto take_output_error() noexcept -> std::optional<ErrorEvent>;
 
+  // Whether this frame is wrapped in synchronized-output before it is
+  // written (#148). A terminal that honors DEC private mode 2026 buffers
+  // everything between `CSI ? 2026 h` and `CSI ? 2026 l` and presents it
+  // atomically, which over a network link is the difference between a torn
+  // partial frame and none. Gated because an unrecognized private mode is not
+  // a synchronization guarantee -- the wrap is never emitted blind.
+  //
+  // BASE-OWNED NON-VIRTUAL STATE, per the settled rule (set_output):
+  // the decision is *the negotiated wire's*, not the rendering tier's, so
+  // there is one correct implementation and nothing for a subclass to vary.
+  // The WRAP ITSELF lives in
+  // emit_frame(), the single write boundary every driver funnels through,
+  // which is what makes it unconditional for any driver that writes
+  // through the base. set_sync_updates() is how the application declares
+  // it; the driver does not read Capabilities (its selection role has
+  // narrowed -- see select_driver.cpp), and for the application the
+  // terminal pushing it via #181 is the probe's answer to the same
+  // question.
+  auto set_sync_updates(bool enabled) noexcept -> void { m_sync_updates = enabled; }
+  [[nodiscard]] auto sync_updates() const noexcept -> bool { return m_sync_updates; }
+
  protected:
+  // The per-tier terminal cleanup run by shutdown(). Default: none -- most
+  // tiers owe the terminal nothing at end of session. Bytes emitted here go
+  // through emit_frame, so they are metered and sink-routed like a frame.
+  virtual auto on_shutdown() -> void {}
+
   // This driver's identity within the process, for stamping into the handles
   // it hands out (#109). Distinct for every driver alive at once.
   //
@@ -614,6 +687,11 @@ class TerminalDriver {
   auto emit_frame(std::string_view bytes) -> void;
 
  private:
+  // Set by set_sync_updates (#148); read by emit_frame(), which wraps the
+  // frame in 2026 begin/end when it is set and leaves the bytes
+  // byte-identical when it is not.
+  bool m_sync_updates{false};
+
   FrameBytes m_pending{};  // this frame, so far
   FrameBytes m_last_frame_bytes{};
   FrameBytes m_total_bytes{};
@@ -624,6 +702,9 @@ class TerminalDriver {
   ByteSink* m_sink{nullptr};
   StringSink m_string_sink{};
   std::optional<ErrorEvent> m_output_error{};
+  // Latched by shutdown() after per-tier cleanup, immediately before the
+  // borrowed output sink is detached.
+  bool m_shutdown{false};
 
   // See instance_token(). Wraps after 2^32 drivers in one process: a
   // session-per-connection server would have to accept four billion

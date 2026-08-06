@@ -43,12 +43,32 @@ namespace termforge::detail {
   return std::string_view::npos;
 }
 
-// A complete DA1 primary device-attributes report is present in `reply`. This
-// is the probe's read terminator: once it arrives, the terminal has answered
-// everything we asked (DA1 is written last), so the reader can stop waiting
-// instead of burning the full timeout.
+// A complete DA1 primary device-attributes report is present in `reply`.
+// DA1 remains the read terminator after adding optional queries: terminals
+// process the query stream in order, and one that does not implement a query
+// ignores it. Waiting for an answer to an ignored DECRQM would add the full
+// probe timeout to every unsupported terminal. As with the keyboard query, a
+// reply arriving after DA1 is conservatively missed instead of taxing all
+// other sessions.
 [[nodiscard]] inline auto probe_da1_complete(std::string_view reply) -> bool {
   return find_da1(reply) != std::string_view::npos;
+}
+
+// The terminal answers synchronized-output as supported: DECRQM
+// ESC [ ? 2026 $ p earns a DECRPM of the form ESC [ ? 2026 ; 1 $ y (set) or
+// ESC [ ? 2026 ; 2 $ y (reset) -- 0 means "not supported", and 3/4 are the
+// permanently-set/reset states. Either 1 or 2 means the wire
+// carries the mode and a frame can be wrapped in it. The query is
+// conservative in a way kitty_keyboard's is not: a terminal that ignores
+// the whole thing says nothing, and the reply is marked "no".
+[[nodiscard]] inline auto probe_sync_updates(std::string_view reply) -> bool {
+  constexpr std::string_view kPrefix = "\033[?2026;";
+  const auto rp = reply.find(kPrefix);
+  if (rp == std::string_view::npos) return false;
+  const auto value = rp + kPrefix.size();
+  if (value + 2 >= reply.size()) return false;
+  return (reply[value] == '1' || reply[value] == '2') &&
+         reply[value + 1] == '$' && reply[value + 2] == 'y';
 }
 
 // The kitty keyboard protocol is supported: the terminal answered our flags

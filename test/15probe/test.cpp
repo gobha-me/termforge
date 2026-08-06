@@ -55,6 +55,20 @@ TEST_CASE("probe_da1_complete: false until the DA1 terminator arrives",
   REQUIRE(detail::probe_da1_complete("\033_Gi=31;OK\033\\\033[?62c"));
 }
 
+TEST_CASE("probe_sync_updates: only a settable 2026 DECRPM is support",
+          "[probe][sync]") {
+  REQUIRE(detail::probe_sync_updates("\033[?2026;1$y"));
+  REQUIRE(detail::probe_sync_updates("\033[?2026;2$y"));
+  REQUIRE(detail::probe_sync_updates(
+      "\033[?2026;2$y\033[?62;4;22c"));
+  REQUIRE_FALSE(detail::probe_sync_updates(""));
+  REQUIRE_FALSE(detail::probe_sync_updates("\033[?2026;0$y"));
+  REQUIRE_FALSE(detail::probe_sync_updates("\033[?2026;3$y"));
+  REQUIRE_FALSE(detail::probe_sync_updates("\033[?2026;4$y"));
+  REQUIRE_FALSE(detail::probe_sync_updates("\033[?2026;1"));
+  REQUIRE_FALSE(detail::probe_sync_updates("\033[?2026;12$y"));
+}
+
 // ── #60: the keyboard-flags reply shares DA1's "\033[?" prefix ──────────────
 
 TEST_CASE("find_da1: a CSI ? report with another final byte is not DA1",

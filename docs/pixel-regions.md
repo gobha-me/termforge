@@ -649,46 +649,38 @@ with the placement-only `a=d,d=i` so its data survives the rect it was shown
 in. Its id comes from the other end of the one-byte range. See *Resident
 images* above.
 
-### A flush is a write boundary; the collection needs a frame
+### One frame, one write, one collection boundary (#148)
 
-The collection cannot simply run on every flush, and #187 is the bill for
-assuming it could. `App` flushes **twice** per frame — `Renderer::present` ends
-in `flush()`, and only then does `flush_pixel_regions` issue the frame's
-`draw_image` calls and flush again — so the first flush of every frame has drawn
-nothing. A collection running there sees every slot still carrying the previous
-frame's stamp and **cannot distinguish "nothing has been drawn yet" from "this
-region disappeared."** It chose the second: every region deleted and fully
-re-transmitted every frame (205,283 bytes for the plate above), and an id
-counter climbing one per frame until the placeholder encoding ran out. It
-reached the pinned placements too, retiring and recreating each one in
-*different writes* — a sprite that blinks off once per frame.
+Before #148, `Renderer::present()` flushed the cell diff and
+`flush_pixel_regions()` flushed images separately. Kitty's collection therefore
+had to guess which write ended a frame; the first write had drawn no images, so
+an eager collection deleted every live region before the second could redraw it.
+#187 added a drawless-write guard and a one-frame grace counter, but those were
+heuristics around a call shape the driver could not observe.
 
-So a flush with no draw since the last collection collects nothing.
-`m_clock` advances only where a draw stamps a slot, and the boundary is assigned
-`m_clock` by whichever collection last ran, so "has anything been drawn since
-then" is one comparison — and on the branch that skips, the single write it
-bypasses is assigning that variable to itself. That is what keeps the skip from
-moving the three other guards written against the same frame window.
+`Renderer::present()` now only queues the cell diff. App then queues its pixel
+regions and `on_pixels()` draws, and `Renderer::flush()` performs the frame's
+single write. That makes the boundary structural:
 
-`kDrawlessFlushGrace` bounds the other side, because skipping forever would leak
-the last region's placement forever: the frame that removes the last region is
-the frame `App` issues no second flush on. At 1 it costs nothing on a steady
-frame and a removed region's placement lingers at most one frame — and only when
-it was the *last* one, since any other live region makes the second flush a real
-collection.
+1. `on_render()` and overlays build the Screen.
+2. `present()` queues the cell diff and the blank cells under image regions.
+3. `flush_pixel_regions()` queues App's regions, then calls `on_pixels()`.
+4. `flush()` collects stale kitty regions and emits the complete frame once.
+
+Collection now runs on every Kitty flush. A region or pinned placement not drawn
+in that frame is retired at that frame's boundary; there is no drawless-write
+guard and no grace counter. Direct driver users have the same contract: issue
+all draws for a frame, then call `flush()` once. A mid-frame flush deliberately
+creates another boundary and may retire state not redrawn before it.
 
 ### Where an application's own image draws go: `App::on_pixels` (#191)
 
-**Draw resident images from `on_pixels(TerminalDriver&)`, never from
-`on_render`.** `on_render` runs *before* `Renderer::present`, and present ends in
-a flush; `on_pixels` runs after it, alongside App's own pixel regions, and
-everything it draws shares the frame's second and last write. It is issued
-*after* App's regions, which is an emission order rather than a compositing
-promise — two placements at the same z are ordered by the terminal and
-termforge does not specify that tie-break; naming a layer is #114. What the
-order does decide is who loses a same-rect collision under
-`UnicodePlaceholders`: App's region stamps the rect first, so the
-`draw_pinned` is the one refused, and the refusal comes back to you.
+Draw resident images from `on_pixels(TerminalDriver&)`, not directly from
+`on_render`. One write does not erase ordering inside the driver buffer:
+a direct image draw in `on_render` is queued **before** the Renderer emits its
+cell diff, so later text or blank cells can overwrite Unicode placeholders.
+`on_pixels` runs **after** that diff and after App's own pixel regions, leaving
+the image grid on top while still sharing the frame's one write.
 
 ```cpp
 auto on_start() -> void override {
@@ -699,104 +691,42 @@ auto on_pixels(TerminalDriver& d) -> void override {
 }
 ```
 
-The guard below works when every image draw for a frame happens in **one** of
-App's two windows. It does nothing when draws **straddle** both: neither flush is
-drawless, the guard never fires, and each collection destroys what the other
-window drew. Before #191 that was not an edge case, it was the *only* `App` call
-site a resident image had — `driver().draw_pinned(...)` from `on_render` is
-window 1 by construction — so `#109` shipped with no correct `App` call site at
-all. Measured through a real `App` over a pty answering as kitty, the same
-binary and the same four seconds, only the window differing:
+The order after App's regions is an emission order, not a general z-layer
+promise; naming layers remains #114. It does settle the same-rect
+`UnicodePlaceholders` collision: the App region stamps the rect first, so the
+`draw_pinned` call is refused and returns that refusal to the application.
 
-| drawn from | bytes | `a=t` | `d=I` | image ids |
-| --- | --- | --- | --- | --- |
-| `on_pixels` | 88,744 | 2 | 0 | 2 |
-| `on_render` | 12,781,041 | 259 | 257 | 259 |
+`on_pixels` is suppressed while an overlay is up and on tiers without
+`kitty_graphics`, matching the region path. On an overlay frame this keeps
+application images from painting through the dialog; the top overlay may still
+provide its own pixel regions. When a placement is suppressed, the same frame's
+collection retires it.
 
-144x the bytes, and the id counter is past the one-byte ceiling in about four
-seconds — after which `emit_id_as_sgr` falls to the 24-bit form kitty accepts and
-ignores, so a `UnicodePlaceholders` session renders nothing at all, silently.
-`examples/pinned` is that measurement (`--on-render` for the second row), and
-`W` switches the window live. `d=I` is `a=t − 2` by construction: the pin's
-upload is never collected, and neither is the last frame's plate. Counting
-*image* ids and not every id on the wire matters — the capability probe puts an
-`a=q` on the stream under an id of its own, which is not an image and inflated
-an earlier version of this table.
+### Remaining region costs
 
-Two consequences of the hook worth knowing before you use it:
+- A frame that draws no region retires it immediately. Drawing it again later
+  retransmits it; pin content that the application intends to keep resident.
+- A moving ordinary region still uploads under a recycled id because region
+  identity is the destination rectangle. Pinning removes that payload churn.
+- Under `UnicodePlaceholders`, moving a region can leave its old placeholder
+  cells on screen (#201). The driver writes those cells directly, outside
+  `Screen`, so the Renderer does not know that the old rectangle needs spaces.
+  Classic placement is unaffected.
 
-- **It does not run while an overlay is up**, matching `render_pixel_regions`.
-  The reason differs — there are no Screen cells to blank here — but the answer
-  has to be the same, or an app drawing through both paths keeps half its images
-  above a dialog and loses the other half. Only the topmost thing puts pixels on
-  screen. A placement you stop drawing is retired on that frame's own boundary,
-  so the sprite goes away *with* the dialog rather than a frame behind it.
-- **It does not run on a tier without `kitty_graphics`.** The flush that would
-  carry the bytes is gated the same way, and an ungated hook would leave them in
-  the driver's buffer until the next frame — where `present()` appends that
-  frame's cell diff *after* them, so the image would arrive late and underneath
-  the text it exists to cover. Widening both gates together is #108.
+### A graphics frame is one write, and the meter reads the whole frame
 
-### What the guard does not cover, and why a better guess would not help
+Graphics and non-graphics App frames now both call the sink exactly once.
+`emit_frame` remains the write and meter boundary (#178), so
+`last_frame_bytes()` reports the complete frame: cell diff and image traffic
+together. `total_bytes()` remains cumulative.
 
-The hook offers a correct call site; it does not take the broken one away. An
-`App` subclass that draws from `on_render` still produces the straddle exactly
-as the second row above shows, so the population is **any caller that draws in
-both windows — `App` subclasses included** — and the driver cannot defend itself
-against them: when every flush has drawn something there is nothing left to
-infer from. That needs a real frame boundary on `TerminalDriver` — #191's
-option (a) — which has to be decided with #148.
+When `Capabilities::sync_updates` is true, `emit_frame` places DEC synchronized
+output begin/end markers around that complete byte sequence without adding a
+second sink write. When false, the output is byte-identical to the unwrapped
+frame.
 
-Two smaller residues, both characterised as numbers in `test/47frameshape`:
-
-- A frame that draws **no** region spends the grace, so a single intermittent
-  frame (a widget returning `nullptr`) costs a delete and a full
-  re-upload. **#191 did not make this cheaper**; it moved the delete onto a true
-  frame boundary — the collection now runs at the end of the frame that drew
-  nothing rather than inside the next one. The only lever is
-  `kDrawlessFlushGrace`, and **the obvious value for it is the wrong one**: a
-  blank frame now spends *two* drawless writes, so the first value that carries
-  a region across one is **3**, not 2. At 2 the delete simply slides one write
-  later. Measured at 1/2/3/4 rather than derived, because this is arithmetic
-  #191 itself falsified — before it, a blank frame issued one write and 2 would
-  have worked. Raising it to 3 triples the linger bound. `pin_image` is the
-  answer for content an app keeps.
-- A region that **moves** is re-uploaded every frame. Since #190 it does so
-  under a *recycled* id, so the cost is bytes and not budget — but it is still
-  the full payload, and `pin_image` is what removes that half.
-- **Under `UnicodePlaceholders`, a moving region leaves its old placeholder
-  cells on screen (#201).** The cell grid *is* the placement there, and nothing
-  clears it: the driver writes those cells straight to its buffer so they never
-  enter `Screen`, and `App` blanks only the cells *under* a live region — once
-  the region moves away the renderer sees blank-was-blank and emits nothing.
-  Pre-#190 the orphaned cells named an id that was never reissued, so they
-  rendered nothing; **#190's recycling makes them name a live image**, and a
-  moving sprite trails slices of its current frame behind it. Classic placement
-  is unaffected. The fix is App- or Renderer-side rather than three lines in the
-  driver, because the collection runs *after* the frame's cell diff and spaces
-  emitted there would erase text drawn at that rect in the same frame — and it
-  is gated on #199, since a wrong placeholder character means neither behaviour
-  renders at all.
-
-### A graphics frame is two writes, and the meter reads the second
-
-Since #191 an `App` on a graphics tier flushes **exactly twice per frame**,
-unconditionally: once at the end of `Renderer::present` and once at the end of
-`flush_pixel_regions`. That uniformity is what makes `kDrawlessFlushGrace`
-exact rather than approximate — the first write of every frame has drawn
-nothing, always, rather than usually. Non-graphics tiers are unchanged at one
-write per frame.
-
-`emit_frame` is the write boundary *and* the meter boundary (#178), so
-`last_frame_bytes()` on a graphics tier reports that **second** write. On a
-frame carrying an image that is the image traffic; on a frame carrying none it
-reads zero, with the cell diff already counted in the first write.
-`total_bytes()` is unchanged — difference it for a per-frame budget until #148
-gives the frame a one-write contract.
-
-The remaining caveat is unchanged: **"unchanged content is not re-uploaded" is a
-property of the _slot_**, so it is worth nothing once the slot has been
-collected. Residency is what `pin_image` is for.
+The slot-level caveat remains: unchanged content avoids re-upload only while
+its slot remains live. Residency is what `pin_image` is for.
 
 ## Placement Modes
 

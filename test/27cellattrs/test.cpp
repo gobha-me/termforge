@@ -109,6 +109,7 @@ TEST_CASE("Renderer: attribute-only change breaks the run (same colors)",
   s.write_text(0, 0, "A", kFg, kBg, Attr::None);
   s.write_text(1, 0, "B", kFg, kBg, Attr::Bold);  // same colors, +bold
   r.present(s);
+  r.flush();
   // The bold cell needs its own SGR 1 even though fg/bg are unchanged.
   REQUIRE(out.find("\033[1m") != std::string::npos);
 }

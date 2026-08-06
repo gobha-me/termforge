@@ -2,11 +2,10 @@
 
 #include <array>
 #include <cstddef>
-#include <cstdio>
-#include <cstring>
 #include <format>
 #include <limits>
 #include <span>
+#include <string_view>
 
 #include "detail/base64.hpp"
 #include "detail/encoded.hpp"
@@ -110,6 +109,10 @@ auto KittyDriver::capabilities() const noexcept -> Capabilities {
   c.kitty_graphics = true;
   c.truecolor = true;
   c.color_levels = 24;
+  // sync_updates is deliberately NOT set here: capabilities() describes what
+  // this TIER renders, while 2026 is a property of the session's wire. Terminal
+  // carries the probe/push result into TerminalDriver::set_sync_updates(),
+  // where the base-owned wrapper applies equally to every tier.
   return c;
 }
 
@@ -815,15 +818,20 @@ void KittyDriver::flush() {
   // the same flush as the frame that removed the region.
   //
   // "Since the last collection" and not "this frame": a flush is a WRITE
-  // boundary and the driver is never told where a frame ends (#187). See
-  // gc_regions() for what it does about that.
+  // boundary. Since #148 that IS the frame boundary -- App flushes once per
+  // frame, after every draw -- so the collection's frame window is now exact
+  // by construction rather than inferred. See gc_regions().
   const std::size_t before_gc = m_buf.size();
   gc_regions();
   tally_image_edit(m_buf.size() - before_gc);  // #139: deletes are image traffic
 
-  // #178: emit_frame is the sink AND the meter -- it writes m_buf wherever the
-  // output is pointed and calls tally_frame with exactly that count. It must
-  // stay AFTER gc_regions() above, or the deletions land in the next frame.
+  // #178: emit_frame is the sink AND the meter -- called exactly once here so
+  // the frame is ONE write (the #148 contract). The 2026 wrap, when active,
+  // is folded IN by emit_frame itself (it lives on TerminalDriver's one write
+  // boundary, not in this buffer), so kitty carries nothing about it here --
+  // begin/end never become a second/third write, and the GC ordering
+  // guarantees collection precedes wrap. emit_frame stays AFTER gc_regions()
+  // above, or the deletions land in the next frame.
   emit_frame(m_buf);
   m_buf.clear();
 }
@@ -866,62 +874,39 @@ void KittyDriver::set_placement_mode(PlacementMode mode) {
 }
 
 auto KittyDriver::gc_regions() -> void {
-  // A flush is a WRITE boundary; a collection needs a FRAME boundary, and
-  // nothing tells this driver where one is (#187). App flushes twice per frame
-  // and the first flush has drawn nothing, so a collection running there sees
-  // every slot still carrying the previous frame's stamp and cannot tell
-  // "nothing has been drawn yet" from "this region disappeared". It used to
-  // treat both as the second: every region deleted and fully re-transmitted
-  // every frame, and an id counter climbing one per frame until the
-  // placeholder path's one-byte encoding ran out.
+  // A flush is a WRITE boundary; a collection needs a FRAME boundary. Before
+  // #187 nothing told this driver where one was, and it collected on every
+  // flush: App flushed twice per frame, the first flush had drawn nothing,
+  // and a collection running there saw every slot still carrying the previous
+  // frame's stamp and read "not drawn yet" as "disappeared" -- every region
+  // deleted and fully re-transmitted every frame, an id counter climbing one
+  // per frame until the placeholder path's one-byte encoding ran out. #187's
+  // answer was inference: a flush with no draw since the last collection
+  // collects nothing, because that flush must be the frame's first and its
+  // "nothing drawn" is the frame-start marker, not a disappearance.
   //
-  // So a flush with no draw since the last collection collects nothing. m_clock
-  // advances only where a draw stamps a slot (draw_payload, draw_pinned) and
-  // m_frame_start_clock was assigned m_clock by whichever collection last ran,
-  // so `m_clock > m_frame_start_clock` is exactly "has anything been drawn
-  // since then" -- and on the branch that returns, the one write skipped below
-  // (m_frame_start_clock = m_clock) is provably assigning the variable to
-  // itself. So the three other readers of the frame WINDOW -- draw_pinned's two
-  // placeholder conflict guards and draw_payload's reciprocal -- see identical
-  // clock values. Note what that does NOT say: the two MAPS genuinely differ,
-  // which is the entire point, and those guards read them. A retained entry is
-  // by definition one whose last_used is at or below the boundary, so both
-  // predicates are false for it either way -- but the branch is newly REACHABLE
-  // and `>` vs `>=` there is now load-bearing. test/47frameshape drives both
-  // cross-frame handoffs for that reason.
+  // #148 removed the inference entirely. App now flushes ONCE per frame,
+  // after every draw of the frame (cells AND images), so collection can run
+  // on every flush again: a drawless flush is a drawless frame, not the first
+  // half of one. The clock boundary remains load-bearing for the cross-frame
+  // placeholder conflict guards; test/47frameshape drives both legal
+  // handoffs and both same-frame refusals.
   //
-  // kDrawlessFlushGrace bounds the other side: skipping forever would leak the
-  // last region's placement forever. Since #191 App flushes on every graphics
-  // frame whether or not it drew, so the grace is spent by the frame's own
-  // second write and a removed region's placement lingers no longer than the
-  // frame that removed it.
+  // What #187 could not fix and #148 closes for App: a caller that drew images
+  // in BOTH of the old split windows (some before present()'s flush, some
+  // after) made every flush non-drawless, so the guard never fired and each
+  // collection destroyed what the other window drew -- measured at 10
+  // transmits and 9 d=I for 10 frames of one unchanged image. Since #148 the
+  // frame has ONE image window (App's flush_pixel_regions, after the cell
+  // diff) and ONE write, so an App can no longer split a frame's images
+  // across two writes at all. #191's App::on_pixels is that window's hook;
+  // an application's draw_pinned lands in the same buffer as the frame's
+  // regions and cells and goes out in the frame's single write.
   //
-  // WHAT THIS DOES NOT FIX, because a heuristic cannot: a caller that draws
-  // images in BOTH of the windows App's cell flush separates -- some before
-  // Renderer::present's flush, some after -- makes every flush non-drawless, so
-  // the guard never fires and each collection destroys what the other window
-  // drew. Measured at 10 transmits and 9 d=I for 10 frames of one unchanged
-  // image, identical to the behaviour before this guard existed.
-  //
-  // #191 gave App a draw hook in the second window (App::on_pixels), so an
-  // application's own draw_pinned CAN land with App's pixel regions instead of
-  // before them. Measured through a real App over a pty answering as kitty,
-  // 4 seconds of examples/pinned each way: 88,744 bytes / 2 transmits / 0 d=I
-  // from on_pixels, against 12,781,041 bytes / 259 transmits / 257 d=I from
-  // on_render. 144x.
-  //
-  // Note "can", not "does". The hook offers a correct call site; it does not
-  // take the broken one away, and an App subclass that draws from on_render is
-  // still exactly this shape -- test/48apppixels measures one doing it. So the
-  // population is "any caller that draws in both windows", App subclasses
-  // included, and this driver still cannot defend itself against them: when
-  // every flush has drawn something there is nothing left to infer. Defending
-  // it needs a real frame boundary on TerminalDriver, which is #191's option
-  // (a) and has to be decided with #148.
-  const bool drew = m_clock > m_frame_start_clock;
-  if (!drew && ++m_drawless_flushes <= kDrawlessFlushGrace) return;
-  m_drawless_flushes = 0;
-
+  // A caller that bypasses App and drives this driver by hand is outside that
+  // guarantee -- the one-write frame is App's contract, not something the
+  // driver can enforce on a caller that flushes mid-frame. Within App the
+  // frame boundary is no longer a guess this function has to defend.
   // last_used is stamped with the per-draw clock. A region drawn since the
   // previous collection has a last_used above the boundary that collection
   // recorded; anything at or below it is gone from the UI.
@@ -969,9 +954,7 @@ auto KittyDriver::gc_regions() -> void {
     }
   }
   // Regions drawn from here on get higher stamps; anything still at or below
-  // this point at the next collection was not drawn in between. On the skipped
-  // branch above this is a self-assignment, which is the whole reason skipping
-  // is safe.
+  // this point at the next collection was not drawn in between.
   m_frame_start_clock = m_clock;
 }
 
@@ -1153,43 +1136,28 @@ auto KittyDriver::delete_placement(std::uint32_t image_id,
 }
 
 auto KittyDriver::delete_all() -> void {
-  // Nothing was ever uploaded, so there is nothing on the terminal to clear.
-  //
-  // Asked of the TRANSMIT PATH rather than reconstructed from the maps. Both
-  // obvious spellings are wrong: a counter over region ids misses a driver
-  // that only ever pinned (and since #190 there is no such counter to reach
-  // for), and adding `&& m_pinned.empty()` still misses pin ->
-  // flush -> unpin -> destruct, where the unpin's d=I is queued in m_buf and
-  // dies there unflushed while the image is very much still resident. One
-  // flag set where the bytes are actually produced cannot disagree with any of
-  // that (#109).
+  // Destruction is too late to trust a borrowed sink. It is also too late to
+  // substitute process stdout: for a server that would send one session's
+  // delete-all to the wrong stream. Explicit shutdown() is the only cleanup
+  // path; it calls on_shutdown() while the destination is known alive, meters
+  // the bytes, and then detaches it. Unmanaged destruction is deliberately
+  // silent (test/01 constructs several sinks before their drivers).
+}
+
+// TerminalDriver::shutdown() calls this while the output destination is known
+// alive. The d=A goes through the ordinary write/meter boundary; the base then
+// detaches the borrowed sink.
+auto KittyDriver::on_shutdown() -> void {
   if (!m_transmitted) return;
-  // Delete all images: a=d (delete), d=A (all).
-  //
-  // Written directly to stdout, NEVER through emit_frame — and #178 did not
-  // change that, deliberately. The reason is sharper than "a test string might
-  // already be gone": TerminalDriver's sink is NON-OWNING in both flavours. It
-  // borrows a ByteSink*, or points at its own StringSink adapter which borrows
-  // a std::string* — so a destructor has no grounds to assume the destination
-  // is still alive, whoever supplied it. test/01drivers is the concrete case:
-  // it constructs `KittyDriver d;` before `std::string out;` throughout, so the
-  // driver outlives the string in about ten cases and routing this through the
-  // sink would turn a harmless stdout write into a use-after-free.
-  //
-  // What fixes it is sink OWNERSHIP whose lifetime is the session's (#144's
-  // own precondition), or an explicit pre-destruction shutdown() — not a
-  // base-class sink. Until then this stays, and it is a real bug for a server:
-  // #144 row 7, one session ending wipes every OTHER session's images off the
-  // terminal.
-  //
-  // #139: these bytes are deliberately NOT metered. This is the sink bypass
-  // #148 names, and the only caller is ~KittyDriver — a counter incremented
-  // here would be read by nobody, since the object holding it is mid-
-  // destruction. Metering it becomes both possible and meaningful when #148
-  // gives the frame a one-write contract and this stops being a special case.
-  const char* cmd = "\033_Ga=d,d=A\033\\";
-  ::fwrite(cmd, 1, std::strlen(cmd), stdout);
-  ::fflush(stdout);
+  constexpr std::string_view kDeleteAll{"\033_Ga=d,d=A\033\\"};
+  // Preserve anything queued after the last frame (notably an on_stop unpin).
+  // Its image tallies are already pending, so emitting only kDeleteAll here
+  // would both drop bytes and make the meter's buckets exceed the write they
+  // describe. Append cleanup to the same buffer and close it once.
+  m_buf += kDeleteAll;
+  tally_image_edit(kDeleteAll.size());
+  emit_frame(m_buf);
+  m_buf.clear();
 }
 
 }  // namespace termforge

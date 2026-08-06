@@ -318,22 +318,19 @@ TEST_CASE("meter: a dropped region's cleanup is billed as image traffic",
   REQUIRE(d.draw_image(Rect{0, 0, 4, 2}, solid(16, 16, kP1)));
   flush_and_measure(d, out);
 
-  // The frame that drops the region is TWO flushes wide when the dropped region
-  // was the only one, because the driver is not told where a frame ends and a
-  // flush with nothing drawn cannot tell "nothing yet" from "gone" (#187). The
-  // first one is therefore silent, which is worth asserting here rather than
-  // just stepping over: this suite is about attribution, and a bucket cannot be
-  // wrong about bytes that were never emitted.
-  CHECK(flush_and_measure(d, out) == 0);
-  CHECK(d.last_frame_bytes().total() == 0);
-
-  // The collection lands on the next one, and every byte of it is image
-  // traffic — which is the actual subject of this case.
+  // #148 makes this drawless flush the dropped region's exact frame boundary.
+  // The collection therefore lands here, with no one-frame grace and no second
+  // write to infer. Every emitted byte is image traffic -- the actual subject
+  // of this case.
   const std::size_t written = flush_and_measure(d, out);
   const FrameBytes f = d.last_frame_bytes();
   REQUIRE(written > 0);
   CHECK(f.image_edit == written);
   CHECK(f.cells == 0);
+
+  // The meter closed on that boundary rather than carrying cleanup forward.
+  CHECK(flush_and_measure(d, out) == 0);
+  CHECK(d.last_frame_bytes().total() == 0);
 }
 
 TEST_CASE("meter: a placement-mode switch bills its teardown to image_edit",

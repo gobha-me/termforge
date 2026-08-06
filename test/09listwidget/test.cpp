@@ -566,8 +566,8 @@ TEST_CASE("ListWidget: selection survives a driver that drops colour (#72)",
   std::string out;
   d.set_output(&out);
   Renderer r(d);
-  r.present(s);  // first frame: the renderer diffs, so assert on this one
-  d.flush();
+  r.present(s);
+  r.flush();  // first frame: the renderer diffs, so assert on this one
   REQUIRE(out.find("▸") != std::string::npos);
 }
 
