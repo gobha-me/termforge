@@ -142,12 +142,65 @@ SGR-encoded), but it is `uint32_t` and wraps to `p=0` — which kitty reads as
 fix removes the counter entirely: `p=` is scoped per image id and a region owns
 its image id exclusively, so a region placement can always be `p=1`.
 
+### What review caught that the sweep could not — fifth cut running
+
+Eight finder angles, ten findings verified. **Three were mine, introduced by
+this cut**, and the two that matter were invisible to 14 mutations:
+
+- **#201, the placeholder ghost — a regression this cut created.** Under
+  `UnicodePlaceholders` the cell grid *is* the placement, and nothing ever
+  clears the cells a moving region leaves behind: the driver writes them
+  straight to `m_buf` so they never enter `Screen`, and `App` blanks only the
+  cells *under* a live region, so the renderer sees blank-was-blank and emits
+  nothing. Measured — three frames of motion paint 12 placeholder cells and the
+  vacated column is repainted exactly zero times. **Before this cut those
+  orphans named an id that never came back and rendered nothing. Now they name a
+  live image**, and a moving sprite trails slices of its current frame. Filed,
+  documented in three places, and deliberately **not** fixed here: the
+  collection runs *after* the frame's cell diff, so spaces emitted from it would
+  erase text drawn at that rect in the same frame. It is an App/Renderer or #148
+  change, and it is gated on #199 besides.
+- **The LRU branch's produced id had no test at all.** Mutation-proved *after*
+  review pointed at it: `slot.image_id = 1` passed all 51 tests, because
+  `test/01drivers` asserts only a *bound* (`id < kFirstPinnedImageId`) that 1 and
+  even 0 satisfy. My own sweep missed it because I enumerated mutations from the
+  lines I *changed*, and this line I only re-commented. **A sweep scoped to the
+  diff cannot see a path the diff promoted.** New case: touch the first rect
+  again before the 17th draw so the victim is id 2, making 1 the wrong answer.
+- **A case I re-pointed went vacuous, twice, and mutation is what caught it.**
+  `46pinned`'s "a pin never takes an id a live region is holding" lost its
+  precondition to the fix. Re-point #1 ("saturate the pool, then pin, expect
+  255") passes on a fresh driver whatever the regions hold. Re-point #2 (pin the
+  same sequence with and without region pressure, expect identical ids) *also*
+  cannot fail — verified by reinstating a monotonic counter so region ids climb
+  past the pin range, and the ids still matched, because `pin_payload` reads
+  only `m_pinned`. **The independence is structural, and a differential test
+  over a tautology is still a tautology.** Deleted, with the reasoning left
+  where it stood. This is the AGENTS.md rule this cut wrote, applied to itself.
+
+Also fixed: two new `-Wshadow` warnings that would break a downstream building
+with `-Wshadow -Werror` (termforge is consumed as a vendored subproject); a
+`std::set` use in `46pinned` relying on a transitive include; a `CHECK` the
+comment beside it called a precondition; and a missing
+`static_assert(kMaxRegionSlots > 0)` — at 0 the eviction branch is taken on the
+first draw against an empty map and dereferences `end()`.
+
+**And the claim four finders converged on: the `static_assert` was overclaimed.**
+Its message, the header, the docs, STATUS.md and the new AGENTS.md rule all said
+it *is* the disjointness that replaced the two deleted guards. It is not — it is
+compile-time over two constants and cannot observe an allocator. The runtime
+invariant is carried by the walk's bound and the eviction branch. Corrected
+everywhere, and AGENTS.md now says in as many words: **do not let a
+`static_assert` take credit for a loop.**
+
 ### What this does NOT fix
 
 - **The upload.** Stated three times above because it is the thing a reader will
   otherwise take away wrongly. Motion is still one full transmit per frame.
 - **The straddle** (#191 option (a) / #148) is untouched, and so are **#114**
   (z-order) and **#108**.
+- **#201, the placeholder ghost** — created by this cut, filed rather than
+  papered over, and gated on #199.
 - **#199's rendering question**, which needs a human at a real kitty and may
   reach further back than this cut.
 

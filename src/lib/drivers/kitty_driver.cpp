@@ -209,12 +209,25 @@ constexpr std::size_t kMaxRegionSlots = 16;
 // hold for every value it could ever have, including the unsigned wrap to 0
 // that a kFirstPinnedImageId above 255 produces -- which would then surface at
 // runtime as "all 0 resident slots are in use" refusing every pin.
+// Since #190 neither allocator reads the other's map, so what keeps the pools
+// apart is these two ranges plus the two runtime lines that stay inside them:
+// region_slot's walk (bounded by kMaxRegionSlots) and its LRU branch (which
+// reuses an id already in the pool). This assert orders the RANGES. It is a
+// necessary condition and not the whole invariant -- it is compile-time over
+// two constants and cannot observe an allocator, so do not read it as covering
+// region_slot. What covers region_slot is test/49regionids.
 static_assert(KittyDriver::kFirstPinnedImageId > kMaxRegionSlots,
-              "pinned ids must start above the region pool -- since #190 this "
-              "static_assert IS the disjointness rather than a tidiness check: "
-              "region_slot derives from [1, kMaxRegionSlots] and pin_payload "
-              "from [kFirstPinnedImageId, 255], and neither reads the other's "
-              "map any more");
+              "pinned ids must start above the region pool: region_slot "
+              "derives from [1, kMaxRegionSlots] and pin_payload from "
+              "[kFirstPinnedImageId, 255], and since #190 neither steps over "
+              "the other");
+// The region pool must be non-empty, and the reason is a crash rather than a
+// budget. region_slot's eviction branch is `m_regions.size() >=
+// kMaxRegionSlots`, so at 0 it is taken on the FIRST draw, against an empty
+// map: `m_regions.begin()` is end() and the LRU scan dereferences it. #190
+// promoted this constant from "a cap on tracked regions" to "the region id
+// pool", so its lower bound now belongs beside the pin pool's.
+static_assert(kMaxRegionSlots > 0, "the region pool is empty");
 static_assert(KittyDriver::kMaxPinnedImages > 0, "the pin budget is empty");
 static_assert(KittyDriver::kFirstPinnedImageId +
                       KittyDriver::kMaxPinnedImages - 1 ==
@@ -335,9 +348,17 @@ auto KittyDriver::region_slot(std::uint64_t key) -> RegionSlot& {
     // the moment it does not. This scan's failure mode under the same breakage
     // is a duplicate id inside the region pool: bad, bounded, and unable to
     // reach either the pin range or the one-byte ceiling.
+    // `k`/`s` rather than `key`/`slot`: this lambda moved here from
+    // pin_payload, where neither name was taken. Here both are -- `key` is this
+    // function's parameter and `slot` is the RegionSlot being filled in above --
+    // and the shadowing is not merely a warning to silence. A later edit that
+    // fused the search with the assignment would operate on the map's binding
+    // instead of the outer slot, with no diagnostic. termforge is consumed as a
+    // vendored subproject, so a downstream building with -Wshadow -Werror
+    // compiles THIS file.
     const auto held = [this](std::uint32_t candidate) {
-      for (const auto& [key, slot] : m_regions)
-        if (slot.image_id == candidate) return true;
+      for (const auto& [k, s] : m_regions)
+        if (s.image_id == candidate) return true;
       return false;
     };
     std::uint32_t id = 1;
@@ -500,8 +521,12 @@ auto KittyDriver::pin_image(const EncodedImage& image)
 auto KittyDriver::pin_payload(std::span<const std::byte> payload,
                               int format_code, Extent px)
     -> std::expected<PinnedImage, ErrorEvent> {
-  // Downward from the one-byte ceiling, so the region pool's upward walk has
-  // the whole rest of the range before the two meet.
+  // Downward from the one-byte ceiling, leaving the region pool the bottom of
+  // the range. The two walks run towards each other and stop at their own
+  // bounds -- this one at kFirstPinnedImageId, region_slot's at
+  // kMaxRegionSlots. Those bounds are ADJACENT, not separated: 16 and 17, with
+  // no slack between them. The static_assert below the constants orders them,
+  // which is all that is needed and less than a gap would be.
   //
   // Derived from the live map rather than tracked alongside it. A counter plus
   // a free list would be two containers agreeing about a fact only one of them
@@ -910,6 +935,16 @@ auto KittyDriver::gc_regions() -> void {
   // the LRU branch of region_slot) satisfy it, and nothing but these two
   // adjacent lines enforces it -- test/49regionids asserts the ORDER on the
   // wire for exactly that reason.
+  //
+  // WHAT THIS DOES NOT FREE, and #190 made it visible: under
+  // UnicodePlaceholders the cell grid IS the placement, and the loop below
+  // frees the image without clearing the cells that name it. They are not in
+  // Screen (place_unicode writes them straight to m_buf), so no renderer diff
+  // repaints them. Before ids recycled, an orphaned cell named an id that never
+  // came back and rendered nothing; now it can name a live image and paint a
+  // ghost at a rect the region has left (#201). Not fixed here on purpose: this
+  // runs AFTER the frame's cell diff, so spaces emitted from this loop would
+  // erase text the application drew at that rect in the same frame.
   for (auto it = m_regions.begin(); it != m_regions.end();) {
     if (it->second.last_used <= m_frame_start_clock) {
       delete_image(it->second.image_id);
