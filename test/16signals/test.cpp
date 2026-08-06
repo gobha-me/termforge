@@ -103,7 +103,7 @@ TEST_CASE("tty_restore: a fatal signal restores then re-raises with the default 
     rs.out_fd = fds[1];
     rs.in_screen = 1;
     rs.armed = 0;
-    detail::install_fatal_handlers();
+    if (!detail::install_fatal_handlers()) _exit(2);
     ::raise(SIGTERM);
     _exit(0);  // unreachable if re-raise works
   }

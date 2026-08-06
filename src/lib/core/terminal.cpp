@@ -56,10 +56,11 @@ struct Terminal::Impl {
   // Terminal is only ever in one of the two modes, never both.
   int saved_flags{0};
   bool flags_valid{false};
-  // Whether *this* Terminal installed the fatal-signal handlers. A session that
-  // declined to arm must not uninstall on the way out: the dispositions it would
-  // clear belong to the embedding program, which never asked us to touch them.
-  bool installed_handlers{false};
+  // Whether *this* Terminal acquired a fatal-handler lease. A session that
+  // declined to arm must not release on the way out: the process-wide
+  // dispositions belong to the embedding program, which never asked us to
+  // touch them. Re-entering raw mode reuses this same lease until destruction.
+  bool handler_lease{false};
 };
 
 Terminal::Terminal() : m_impl(std::make_unique<Impl>()) {}
@@ -80,10 +81,10 @@ Terminal::~Terminal() {
     rs.in_screen = 0;
     m_impl->in_screen = false;
   }
-  if (!m_impl->installed_handlers) return;
+  if (!m_impl->handler_lease) return;
   rs.armed = 0;
   detail::uninstall_fatal_handlers();
-  m_impl->installed_handlers = false;
+  m_impl->handler_lease = false;
 }
 
 // ── which streams this Terminal talks to (#179) ─────────────────────────────
@@ -273,8 +274,8 @@ auto Terminal::arm_restore() -> void {
   rs.saved = m_impl->saved;
   rs.tty_fd = m_impl->tty_fd;
   rs.armed = 1;
-  detail::install_fatal_handlers();
-  m_impl->installed_handlers = true;
+  if (!m_impl->handler_lease)
+    m_impl->handler_lease = detail::install_fatal_handlers();
   // atexit() covers exit(); the local-static init guarantees a single
   // registration. Note it is once per *process*, not per Terminal — which is
   // the sharpest reason the screen half (enter_screen) must never record a

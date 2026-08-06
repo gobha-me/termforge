@@ -22,6 +22,9 @@
 // a tty arms nothing and installs no handler — there is no termios to put back,
 // and a signal handler writing the 48-byte leave sequence into an
 // application-level stream is not a restore, it is a blob in someone's protocol.
+// Normal teardown restores the complete signal dispositions it replaced
+// (handler, mask and flags), but does not overwrite a newer handler installed by
+// another component while TermForge was active.
 //
 // Capability detection queries the *terminal* (escape-sequence responses), never
 // the display server — $WAYLAND_DISPLAY/$DISPLAY say nothing about what the
