@@ -6,9 +6,34 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-06, latest)
 
-**Latest release: v0.9.4 — the Kitty driver now emits the Unicode placeholder
-the protocol specifies.** #199 merged through PR #207 as `0032b1f`; the release
-tag points at that reviewed squash commit.
+**Latest release: v0.10.0 — App pixel regions now reach ANSI truecolour as
+well as Kitty native graphics.** #108 merged through PR #208; the release tag
+points at that reviewed squash commit.
+
+`App::collect_pixel_regions` and `App::on_pixels` now share one explicit
+enhanced-image gate: Kitty receives native placements, while `AnsiRgbDriver`
+samples the same widget raster into truecolour half-block cells. Baseline stays
+outside that gate. `FallbackDriver::draw_image` remains available to direct
+callers as a luminance ramp, but App preserves a widget's authored `draw()`
+cells because they are the information-complete fallback.
+
+`test/48apppixels` drives the real App loop through all three outcomes. The ANSI
+arm proves `draw_pixels` receives the driver's `{w, 2h}` extent, the authored
+sentinel cells are blanked, and the expected half-block colours reach the wire;
+the Baseline control proves the sentinel cells remain and neither pixel hook is
+called. Mutation checks kill removal of ANSI from the gate, admission of
+Baseline, and removal of the cell-blanking step.
+
+**Verification:** GCC 14.2 and Clang 20.1 build clean with `-Werror` and pass
+52/52 tests; `tools/consume/run.sh` passes `subdir`, `install`, and `vendored`.
+The change selects existing offline driver behavior and adds no probe or
+terminal-protocol encoding, so no live-emulator gate applies to this cut.
+
+## Previous release: v0.9.4 (#199)
+
+**The Kitty driver now emits the Unicode placeholder the protocol specifies.**
+#199 merged through PR #207 as `0032b1f`; the release tag points at that
+reviewed squash commit.
 
 `kPlaceholder` was U+10FEEE (`F4 8F BB AE`), one bit above Kitty's specified
 U+10EEEE (`F4 8E BB AE`). The old cell was accepted as ordinary text rather
