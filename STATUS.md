@@ -19,10 +19,12 @@ cells because they are the information-complete fallback.
 
 `test/48apppixels` drives the real App loop through all three outcomes. The ANSI
 arm proves `draw_pixels` receives the driver's `{w, 2h}` extent, the authored
-sentinel cells are blanked, and the expected half-block colours reach the wire;
-the Baseline control proves the sentinel cells remain and neither pixel hook is
-called. Mutation checks kill removal of ANSI from the gate, admission of
-Baseline, and removal of the cell-blanking step.
+sentinel cells are blanked, and the expected half-block colours reach the wire.
+An image → no-image → image sequence proves those cells return for a missing
+raster and are blanked again when it comes back. The Baseline control proves the
+sentinel cells remain and neither pixel hook is called. Mutation checks kill
+removal of ANSI from the gate, admission of Baseline, and removal of the
+cell-blanking step.
 
 **Verification:** GCC 14.2 and Clang 20.1 build clean with `-Werror` and pass
 52/52 tests; `tools/consume/run.sh` passes `subdir`, `install`, and `vendored`.

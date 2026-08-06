@@ -323,6 +323,56 @@ TEST_CASE("app pixels: ANSI receives the raster and blanks its cell fallback",
   CHECK(app.wire().find("48;2;30;30;200") != std::string::npos);
 }
 
+TEST_CASE("app pixels: ANSI restores cells for a temporarily absent raster",
+          "[apppixels][ansi][issue108]") {
+  // The reason ANSI joins the existing cell-blanking path, observed across
+  // production frames rather than inferred from one frame's bytes. Frame 0
+  // paints the raster over blank Screen cells; frame 1 gets nullptr from the
+  // widget and must repaint its authored QZJV fallback; frame 2 blanks those
+  // cells again before repainting the raster. Omitting the blanking step makes
+  // frame 0 leak QZJV beneath its raster, while blanking on the gap frame makes
+  // that frame's four positive assertions fail.
+  class AnsiBlinker final : public PixelApp {
+   public:
+    WriteCounter sink;
+
+    auto on_render(Screen& s) -> void override {
+      driver().set_output(&sink);
+      plate.present = (m_frame++ != 1);
+      PixelApp::on_render(s);
+    }
+    auto go() -> void {
+      test_run_frames(3, 20, 8, nullptr, std::make_unique<AnsiRgbDriver>());
+    }
+
+   private:
+    int m_frame{0};
+  } app;
+  app.go();
+
+  REQUIRE(app.sink.segments.size() == 3);
+  const auto& first = app.sink.segments[0];
+  const auto& gap = app.sink.segments[1];
+  const auto& third = app.sink.segments[2];
+
+  CHECK(first.find("\xE2\x96\x80") != std::string::npos);
+  CHECK(first.find('Q') == std::string::npos);
+  // The first draw_text resets the colors left by the preceding image, so its
+  // SGR bytes legitimately sit between CUP and Q. Assert destination and
+  // content independently instead of coupling this test to that cache state.
+  CHECK(gap.find("\033[1;1H") != std::string::npos);
+  CHECK(gap.find('Q') != std::string::npos);
+  CHECK(gap.find('Z') != std::string::npos);
+  CHECK(gap.find('J') != std::string::npos);
+  CHECK(gap.find('V') != std::string::npos);
+  CHECK(gap.find("\xE2\x96\x80") == std::string::npos);
+  CHECK(third.find("\xE2\x96\x80") != std::string::npos);
+  CHECK(third.find('Q') == std::string::npos);
+  CHECK(third.find('Z') == std::string::npos);
+  CHECK(third.find('J') == std::string::npos);
+  CHECK(third.find('V') == std::string::npos);
+}
+
 TEST_CASE("app pixels: the DEFAULT tier keeps cells and reaches no pixel",
           "[apppixels]") {
   // The Baseline control for #108. FallbackDriver CAN turn Image pixels into a
