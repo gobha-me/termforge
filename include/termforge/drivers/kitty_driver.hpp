@@ -412,8 +412,11 @@ class KittyDriver final : public TerminalDriver {
   // Carrying a region across a frame nobody drew it in needs the grace to
   // absorb that blank frame's two writes AND the next frame's leading one, so
   // the first value that buys anything is **3**; at 2 the collection merely
-  // slides one write later and the region is still deleted, still re-uploaded,
-  // still given a fresh id. Measured at 1/2/3/4, not derived. Pre-#191 a blank
+  // slides one write later and the region is still deleted and still fully
+  // re-uploaded. (It is no longer given a FRESH id -- #190 made it come back
+  // under the id it gave up, which changes what the grace would buy but not
+  // whether 2 buys it. test/48apppixels asserts the single id for exactly this
+  // blank-frame path.) Measured at 1/2/3/4, not derived. Pre-#191 a blank
   // frame issued one write and 2 would have worked -- so this is inherited
   // arithmetic that the cadence change falsified, and it is written down here
   // because the next reader will reach for 2 exactly as the last one did.

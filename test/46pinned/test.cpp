@@ -30,6 +30,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -813,49 +814,33 @@ TEST_CASE("pinned: a recycled id does not resurrect a stale handle",
   REQUIRE(d.draw_pinned(Rect{1, 2, 3, 2}, *second).has_value());
 }
 
-TEST_CASE("pinned: a saturated region pool cannot reach the pinned range "
-          "(#190)", "[pinned][kitty][failure]") {
-  // This case used to drive the region counter to 255 by moving a rect every
-  // frame -- 255 distinct rects, the 255th holding the top of the one-byte
-  // range -- and then assert that a pin issued afterwards avoided it. #190
-  // removed the counter, so there is no longer any way to drive a region id
-  // into the pinned range at all. That is the whole point of the fix, and it
-  // takes the old precondition with it.
-  //
-  // So the case is re-pointed rather than deleted: the property (a pin is
-  // unreachable from region pressure) still needs one, and the strongest
-  // pressure available now is a SATURATED pool rather than a climbing counter.
-  // The churn side is asserted by "region ids never enter the pinned range,
-  // however hard the churn" above; this is the other side.
-  KittyDriver d;
-  std::string out;
-  d.set_output(&out);
-
-  // Fill the region pool -- all of it, in ONE frame, so nothing is collected
-  // and every slot is genuinely live at once when the pin is issued. 16 is
-  // kMaxRegionSlots, which is file-local to the driver and deliberately not
-  // exported; spelled as a literal here rather than promoted to the header for
-  // a test.
-  for (int i = 0; i < 16; ++i)
-    REQUIRE(d.draw_image(Rect{i, 0, 1, 1}, art(i)).has_value());
-  d.flush();
-
-  // The precondition, asserted rather than assumed: sixteen live regions
-  // holding sixteen DISTINCT ids, which is the state the pin is issued into.
-  // Without it a driver that handed every region id 1 would look like evidence.
-  std::set<std::uint32_t> pool;
-  for (std::uint32_t id = 1; id <= 16; ++id) pool.insert(id);
-  REQUIRE(ids_named(out) == pool);
-
-  const auto p = d.pin_image(art(37));
-  REQUIRE(p.has_value());
-  // The top of the pin pool, undisturbed. Asserted as the exact id and not
-  // merely as ">= kFirstPinnedImageId": pin_payload no longer scans m_regions,
-  // so a scan that still did would find nothing to avoid and land in the same
-  // place for a different reason. The exact value is what tells the two apart.
-  CHECK(p->id == 255);
-  CHECK(p->id >= KittyDriver::kFirstPinnedImageId);
-}
+// The case that used to sit here -- "a pin never takes an id a live region is
+// holding", re-pointed at "a saturated region pool cannot reach the pinned
+// range" -- was DELETED at #190 rather than kept, and the reasoning is worth
+// more than the case was.
+//
+// It drove 255 distinct rects to push a region id to the top of the one-byte
+// range, then asserted a pin issued afterwards avoided it. It was the tree's
+// only witness that pin_payload consulted m_regions. #190 removed that consult,
+// because region ids can no longer leave [1, kMaxRegionSlots] -- so the case
+// lost its precondition, and every re-pointing attempted for it was vacuous:
+//
+//   * "saturate the pool, then pin, expect 255" passes on a fresh driver
+//     whatever m_regions holds, since m_pinned is empty and the walk starts at
+//     255. Deleting the whole 16-region setup left it green.
+//   * "pin the same sequence with and without region pressure, expect identical
+//     ids" cannot fail either. Verified by mutation, not assumed: reinstating a
+//     monotonic region counter so region ids climb past kFirstPinnedImageId
+//     still produced identical pin ids, because pin_payload reads only
+//     m_pinned. The independence is structural, and a differential test over a
+//     tautology is still a tautology.
+//
+// A test that cannot fail is worse than no test, because it reads as coverage.
+// The properties that survive ARE covered, non-vacuously, by cases that can
+// fail: "region ids never enter the pinned range, however hard the churn"
+// above (300 churning rects, asserted as an exact id set -- a monotonic
+// counter fails it), test/49regionids' saturation and eviction cases, and the
+// budget case's 239-then-240 pins for the pin pool's own bound.
 
 TEST_CASE("pinned: an empty destination rect refuses",
           "[pinned][kitty][failure]") {

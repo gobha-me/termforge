@@ -237,18 +237,40 @@ only the ones that read the variables you reasoned about.
 **When an invariant becomes structural, its guards go with it** (#190). Bounding
 region ids to their own pool made two #109 guards unreachable — the region
 allocator's step-over-pinned-ids loop and `pin_image`'s scan of the region map.
-Both were deleted and the `static_assert` ordering the two ranges is what
-replaced them, because a guard that cannot fire is a fault in the *code*, and
-one that advertises a hazard the code no longer has is worse than absent: the
-next reader goes looking for the bug it implies. **Test the invariant, never the
-dead guard.** Two exceptions, and both were taken in the same cut. A branch that
-**totalizes a function over its parameter's own type** is not this shape —
-`emit_id_as_sgr`'s 24-bit form is unreachable for every id the driver allocates
-and stays, because `std::uint32_t` is wider than the invariant and the
-alternative is emitting a malformed `38;5;300`. And a guard whose deletion would
-let control **fall through into the corruption it names** is not this shape
-either: `pin_image`'s refusal was kept and *merged* with the size check above it,
-which turned out to be the same predicate over the same map computed twice.
+Both were deleted, because a guard that cannot fire is a fault in the *code*,
+and one that advertises a hazard the code no longer has is worse than absent:
+the next reader goes looking for the bug it implies. **Test the invariant, never
+the dead guard.** Be precise about what replaced them: the `static_assert`
+orders the two *ranges* and is a necessary condition, but it is compile-time
+over two constants and cannot observe an allocator — the invariant is carried at
+runtime by the walk's own bound and the eviction branch, and covered by
+`test/49regionids`. Do not let a `static_assert` take credit for a loop.
+
+The exceptions are where the judgement lives, so treat the list as open rather
+than closed — #190 hit three in one cut:
+
+- A branch that **totalizes a function over its parameter's own type** is not
+  this shape. `emit_id_as_sgr`'s 24-bit form is unreachable for every id the
+  driver allocates and stays, because `std::uint32_t` is wider than the
+  invariant and the alternative is emitting a malformed `38;5;300`.
+- A guard whose deletion would let control **fall through into the corruption it
+  names** is not this shape. `pin_image`'s refusal was kept and *merged* with the
+  size check above it, which turned out to be the same predicate over the same
+  map computed twice.
+- A bound that **is the algorithm's own termination** is not this shape, even
+  though no input reaches it. `region_slot`'s walk stops at `kMaxRegionSlots`
+  and the pigeonhole makes that id free whenever the walk lands there, so
+  deleting the bound is behaviourally invisible today and mutation-survives. It
+  stays: it is what makes the range a property of the loop instead of an
+  argument made in a comment, and it is the line the two deletions above rest on.
+
+**The same rule applies to TESTS, and that cost a case.** When the coupling a
+test existed to check becomes structural, the test stops being able to fail —
+and a green test reads as coverage in a way a deleted guard does not. #190
+deleted `test/46pinned`'s "a pin never takes an id a live region is holding"
+after **two** re-pointings that were each verified vacuous by mutation rather
+than by eye. Re-point a case only if you can name a mutation it still kills;
+otherwise delete it, and say why where it stood.
 
 **A rate claim is a claim; measure it** (#190). "This counter climbs per churn
 event, so it matters over a long session" was derived correctly from the code and

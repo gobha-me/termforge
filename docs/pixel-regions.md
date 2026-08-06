@@ -764,6 +764,19 @@ Two smaller residues, both characterised as numbers in `test/47frameshape`:
 - A region that **moves** is re-uploaded every frame. Since #190 it does so
   under a *recycled* id, so the cost is bytes and not budget — but it is still
   the full payload, and `pin_image` is what removes that half.
+- **Under `UnicodePlaceholders`, a moving region leaves its old placeholder
+  cells on screen (#201).** The cell grid *is* the placement there, and nothing
+  clears it: the driver writes those cells straight to its buffer so they never
+  enter `Screen`, and `App` blanks only the cells *under* a live region — once
+  the region moves away the renderer sees blank-was-blank and emits nothing.
+  Pre-#190 the orphaned cells named an id that was never reissued, so they
+  rendered nothing; **#190's recycling makes them name a live image**, and a
+  moving sprite trails slices of its current frame behind it. Classic placement
+  is unaffected. The fix is App- or Renderer-side rather than three lines in the
+  driver, because the collection runs *after* the frame's cell diff and spaces
+  emitted there would erase text drawn at that rect in the same frame — and it
+  is gated on #199, since a wrong placeholder character means neither behaviour
+  renders at all.
 
 ### A graphics frame is two writes, and the meter reads the second
 

@@ -56,6 +56,7 @@ using termforge::Rect;
 using tfsupport::data_deletes_of;
 using tfsupport::ids_named;
 using tfsupport::total_transmits;
+using tfsupport::transmits_of;
 
 namespace {
 
@@ -121,9 +122,12 @@ TEST_CASE("region ids: 300 frames of motion stay inside one byte (#190)",
   // compare against, so motion still costs one full upload per frame. The API
   // answer for that is pin_image (#109), which allocates no image id at all.
   //
-  // It is also the precondition for everything below: without it a driver that
-  // had stopped drawing entirely would satisfy both of the next two.
-  CHECK(total_transmits(out) == 300);
+  // It is also the precondition for everything below -- without it a driver
+  // that had stopped drawing entirely would satisfy both of the next two -- so
+  // it is a REQUIRE, matching every other precondition in this suite. A CHECK
+  // here would let the two id assertions report meaningless values instead of
+  // being suppressed by the one failure that explains them.
+  REQUIRE(total_transmits(out) == 300);
   // The cost it does fix. Two ids for 300 frames -- not one, because the
   // vacated slot is still live when the next rect allocates.
   CHECK(ids_named(out) == std::set<std::uint32_t>{1, 2});
@@ -208,6 +212,56 @@ TEST_CASE("region ids: two live regions never share an id",
   std::set<std::uint32_t> pool;
   for (std::uint32_t id = 1; id <= kRegionSlots; ++id) pool.insert(id);
   CHECK(ids_named(out) == pool);
+}
+
+TEST_CASE("region ids: eviction reuses the VICTIM's id, not just some free one",
+          "[regionids][kitty]") {
+  // The other id-producing path, and until this case nothing asserted the value
+  // it produces. #190 promoted it: its comment used to justify itself on its
+  // own ("recycle the evicted ids so ids stay small") and now says it draws
+  // from the same pool the derivation does, which makes WHICH id it hands back
+  // a claim rather than an implementation detail.
+  //
+  // test/01drivers' eviction case asserts a BOUND -- every id below
+  // kFirstPinnedImageId -- which is satisfied by handing every evicted slot the
+  // constant 1. Mutation-proved before this case was written: replacing
+  // `slot.image_id = lru->second.image_id` with `slot.image_id = 1` passed all
+  // 51 tests. So the fixture below is built to make 1 the WRONG answer.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  // Sixteen rects, one frame: ids 1..16 in draw order, and last_used ascends
+  // with them.
+  for (std::uint32_t i = 0; i < kRegionSlots; ++i)
+    REQUIRE(d.draw_image(Rect{static_cast<int>(i), 0, 1, 1},
+                         art(static_cast<int>(i))).has_value());
+
+  // Now touch the FIRST rect again, in the same frame. It is no longer the
+  // least-recently-drawn, so the eviction victim becomes the second rect --
+  // which holds id 2, not id 1. That is the whole point of the fixture: a
+  // driver that returns a constant, or the smallest free id, or the first map
+  // entry, all answer 1 here, and 1 is held by a region that is still live.
+  REQUIRE(d.draw_image(Rect{0, 0, 1, 1}, art(0)).has_value());
+
+  // The seventeenth rect. The pool is full, so this takes the LRU branch.
+  REQUIRE(d.draw_image(Rect{99, 0, 1, 1}, art(99)).has_value());
+  d.flush();
+
+  // The victim's data is freed, and only the victim's.
+  CHECK(data_deletes_of(out, 2) == 1);
+  CHECK(data_deletes_of(out, 1) == 0);
+  // The seventeenth region transmits under the VICTIM's id: id 2 uploads twice
+  // across this frame (once as the second rect, once as the seventeenth) while
+  // id 1 uploads once and is never re-used, because its region is still live.
+  // Under the constant-1 mutant these two swap, and two live regions share id 1.
+  CHECK(transmits_of(out, 2) == 2);
+  CHECK(transmits_of(out, 1) == 1);
+  // Seventeen rects, sixteen ids, none outside the pool.
+  std::set<std::uint32_t> pool;
+  for (std::uint32_t id = 1; id <= kRegionSlots; ++id) pool.insert(id);
+  CHECK(ids_named(out) == pool);
+  CHECK(total_transmits(out) == static_cast<int>(kRegionSlots) + 1);
 }
 
 // ── the ordering that makes reuse safe ──────────────────────────────────────
