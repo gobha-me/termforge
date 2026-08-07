@@ -2,8 +2,8 @@
 # kitty_repro.sh — minimal standalone repros for the kitty graphics paths that
 # KittyDriver emits. Run inside a real kitty (>= 0.28) terminal:
 #
-#   ./tools/kitty_repro.sh          # all eight stanzas, with a pause between each
-#   ./tools/kitty_repro.sh 8        # ONLY stanza 8
+#   ./tools/kitty_repro.sh          # all nine stanzas, with a pause between each
+#   ./tools/kitty_repro.sh 9        # ONLY stanza 9
 #   ./tools/kitty_repro.sh 3 4      # a subset, in the order given
 #   ./tools/kitty_repro.sh --dump   # emit the wire bytes, touch no terminal
 #
@@ -34,6 +34,8 @@
 #   8  #199 — compare U+10FEEE with the spec's U+10EEEE under BOTH 38;5 and
 #      38;2 id encoding, including an id above 255. Self-contained; run before
 #      changing KittyDriver.
+#   9  #201 — clear a retired placeholder grid BEFORE same-frame replacement
+#      text, then reuse its id at a new rect. Self-contained.
 #
 # All commands use q=0 so kitty REPORTS errors; every response the terminal
 # sends is captured and echoed in readable form. A response of "_Gi=42;OK"
@@ -48,9 +50,9 @@ stanzas=()
 for arg in "$@"; do
   case $arg in
     --dump) dump=1 ;;
-    [1-8]) stanzas+=("$arg") ;;
+    [1-9]) stanzas+=("$arg") ;;
     *)
-      echo "usage: $0 [--dump] [1-8]..." >&2
+      echo "usage: $0 [--dump] [1-9]..." >&2
       exit 2
       ;;
   esac
@@ -391,15 +393,53 @@ stanza_8() {
   say "do not infer it from another block or from an OK response."
 }
 
+stanza_9() {
+  say ""
+  say "== Stanza 9: #201 retired placeholder cells are cleared before reuse =="
+  say "A RED block appears on the left. After the pause, that same 2x2 cell"
+  say "rect becomes the text OK while the SAME image id renders GREEN on the"
+  say "right. A green ghost behind/around OK means the old grid survived."
+
+  local rt rp rd rg gp
+  printf '\n\n\n\n'
+  printf '%s[4A%s7' "$ESC" "$ESC"  # old rect origin, then save it
+  send_quiet "${ESC}_Ga=t,t=d,f=32,i=46,s=2,v=2,m=0,q=0;${red_b64}${ST}"; rt=$reply_out
+  send_quiet "${ESC}_Ga=p,i=46,p=1,U=1,c=2,r=2,q=0${ST}"; rp=$reply_out
+  placeholder_grid '[38;5;46m'
+  printf '%s8%s[4B\r' "$ESC" "$ESC"
+  pause "Press Enter to clear the old grid, write OK, and reuse id 46..."
+
+  # Restore the old rect. These are the implementation's logical phases in
+  # their required order: clear grid, replacement text, delete/reuse, new grid.
+  printf '%s8' "$ESC"
+  printf '%s[0m%s[38;2;224;224;240m%s[48;2;10;10;20m  ' "$ESC" "$ESC" "$ESC"
+  printf '%s8%s[1B  ' "$ESC" "$ESC"
+  printf '%s8%s[0m%s[38;2;255;255;255mOK' "$ESC" "$ESC" "$ESC"
+  send_quiet "${ESC}_Ga=d,d=I,i=46,q=0${ST}"; rd=$reply_out
+  send_quiet "${ESC}_Ga=t,t=d,f=32,i=46,s=2,v=2,m=0,q=0;${green_b64}${ST}"; rg=$reply_out
+  send_quiet "${ESC}_Ga=p,i=46,p=2,U=1,c=2,r=2,q=0${ST}"; gp=$reply_out
+  printf '%s8%s[6C' "$ESC" "$ESC"
+  placeholder_grid '[38;5;46m'
+  printf '%s8%s[4B\r' "$ESC" "$ESC"
+
+  say "$(printf 'transmit(red) response: %q' "$rt")"
+  say "$(printf 'place(red)    response: %q' "$rp")"
+  say "$(printf 'delete(red)   response: %q' "$rd")"
+  say "$(printf 'transmit(grn) response: %q' "$rg")"
+  say "$(printf 'place(grn)    response: %q' "$gp")"
+  say "Report: (a) left reads OK with no green ghost, (b) right is a green"
+  say "2x2-cell block, and (c) whether any response contains ';E'."
+}
+
 if (( ${#stanzas[@]} )); then
   run_all=0
   for n in "${stanzas[@]}"; do "stanza_$n"; done
 else
-  for n in 1 2 3 4 5 6 7 8; do "stanza_$n"; done
+  for n in 1 2 3 4 5 6 7 8 9; do "stanza_$n"; done
   say ""
   say "Report: (a) stanza 1 red block, (b) green after stanza 2, (c) stanza 3"
   say "blue block, (d) YELLOW block after stanza 4, (e) stanza 5 shows a"
   say "green 2x2 block, (f) stanza 6 as described above, (g) stanza 7's three"
   say "questions, (h) stanza 8's six labelled blocks, (i) any response"
-  say "containing ';E' (an error)."
+  say "containing ';E' (an error), (j) stanza 9's three requested results."
 fi

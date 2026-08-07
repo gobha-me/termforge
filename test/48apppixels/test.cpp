@@ -42,6 +42,7 @@
 
 #include "support/apc.hpp"
 #include "support/image.hpp"
+#include "support/terminal_grid.hpp"
 #include "termforge/core/app.hpp"
 #include "termforge/core/screen.hpp"
 #include "termforge/core/types.hpp"
@@ -413,6 +414,50 @@ TEST_CASE("app pixels: an unchanged region transmits ONCE across many frames",
   CHECK(data_deletes_of(app.wire(), 1) == 0);
   CHECK(placements_of(app.wire(), 1) == 1);
   CHECK(ids_named(app.wire()) == std::set<std::uint32_t>{1});
+}
+
+TEST_CASE("app pixels: moving placeholders clear the terminal cell grid",
+          "[apppixels][kitty][placeholders]") {
+  // #201's production-cadence acceptance. APC counts cannot see this bug: the
+  // old image is deleted correctly while its U+10EEEE cells remain outside
+  // Screen, and #190 later reuses their id. Read the terminal grid itself.
+  class MovingRegionApp final : public PixelApp {
+   public:
+    WriteCounter sink;
+
+    auto on_render(Screen&) -> void override {
+      driver().set_output(&sink);
+      if (!m_mode_set) {
+        static_cast<KittyDriver&>(driver()).set_placement_mode(
+            KittyDriver::PlacementMode::UnicodePlaceholders);
+        m_mode_set = true;
+      }
+      plate.region = Rect{m_frame * 3, 1, 2, 1};
+      render_pixel_regions(plate);
+      ++m_frame;
+    }
+    auto go() -> void {
+      test_run_frames(3, 12, 4, nullptr, std::make_unique<KittyDriver>());
+    }
+
+   private:
+    int m_frame{0};
+    bool m_mode_set{false};
+  } app;
+  app.go();
+
+  REQUIRE(app.sink.segments.size() == 4);  // 3 frames + shutdown
+  tfsupport::TerminalGrid grid{12, 4};
+  for (int frame = 0; frame < 3; ++frame) grid.feed(app.sink.segments[frame]);
+
+  // Id 1 was reused at x=6. Without the cleanup, its old x=0 grid resolves to
+  // the new image and this first assertion sees two placeholders, not blanks.
+  CHECK_FALSE(grid.at(0, 1).placeholder());
+  CHECK_FALSE(grid.at(1, 1).placeholder());
+  CHECK_FALSE(grid.at(3, 1).placeholder());
+  CHECK_FALSE(grid.at(4, 1).placeholder());
+  CHECK(grid.at(6, 1).placeholder());
+  CHECK(grid.at(7, 1).placeholder());
 }
 
 TEST_CASE("app pixels: App's frame is ONE write carrying the whole frame (#148)",

@@ -194,6 +194,7 @@ class KittyDriver final : public TerminalDriver {
   // One tracked screen region drawn via draw_image. The image id is stable
   // for the region's lifetime: new content retransmits under the same id.
   struct RegionSlot {
+    Rect rect{};  // cells occupied by the placeholder grid (#201)
     std::uint32_t image_id{0};
     std::uint32_t placement_id{0};
     std::uint64_t content_hash{0};  // 0 = nothing transmitted yet
@@ -233,6 +234,7 @@ class KittyDriver final : public TerminalDriver {
   // left behind floats above the text grid whether or not its data is
   // resident.
   struct PinPlacement {
+    Rect rect{};  // cells occupied by the placeholder grid (#201)
     std::uint32_t image_id{0};
     std::uint32_t placement_id{0};
     std::uint64_t last_used{0};  // same per-draw clock as RegionSlot
@@ -321,7 +323,17 @@ class KittyDriver final : public TerminalDriver {
   // Fetch (or create, evicting LRU past the cap) the slot for a region. A
   // created slot's image id is DERIVED from the live map -- the smallest free
   // id in [1, kMaxRegionSlots] -- never taken from a counter (#190).
-  auto region_slot(std::uint64_t key) -> RegionSlot&;
+  auto region_slot(Rect dest) -> RegionSlot&;
+
+  // Retire the text-grid half of a Unicode-placeholder placement (#201).
+  // A stale placement is discovered after the frame's cell diff has already
+  // been queued, so its spaces are accumulated separately and prepended in
+  // flush(). That ordering lets same-frame replacement text land afterwards.
+  // A same-frame LRU victim has already emitted its grid in m_buf and is
+  // cleared in place instead.
+  auto queue_placeholder_clear(Rect cells, std::uint64_t last_used) -> void;
+  auto emit_placeholder_clear(Rect cells) -> void;
+  auto prepend_placeholder_clears() -> std::size_t;
 
   // Delete one region's image (and its placements) from terminal memory.
   auto delete_image(std::uint32_t image_id) -> void;
@@ -358,11 +370,19 @@ class KittyDriver final : public TerminalDriver {
   // The sink lives on TerminalDriver since #178; m_buf stays per-driver
   // because hoisting the frame buffer is #148's business, not this one's.
   std::string m_buf;
+  std::vector<Rect> m_placeholder_clears;
   int m_cur_fg{-1};
   int m_cur_bg{-1};
   // Active SGR attributes (#62) as the Attr bitmask's underlying value, -1 =
   // none emitted yet (see AnsiRgbDriver  text rendering is identical here).
   int m_cur_attrs{-1};
+  // SGR state the terminal has at the START of m_buf. A prepended placeholder
+  // cleanup resets rendition while painting spaces, then restores this exact
+  // state so the already-built frame remains valid even when its first text
+  // run legitimately omitted an unchanged colour or attribute.
+  int m_frame_start_fg{-1};
+  int m_frame_start_bg{-1};
+  int m_frame_start_attrs{-1};
 
   PlacementMode m_mode{PlacementMode::Classic};
   // There is deliberately no m_next_image_id beside this. Image ids are

@@ -36,6 +36,7 @@
 
 #include "support/image.hpp"
 #include "support/legacy_driver.hpp"
+#include "support/terminal_grid.hpp"
 #include "termforge/drivers/kitty_driver.hpp"
 
 #include "support/apc.hpp"
@@ -303,6 +304,7 @@ TEST_CASE("pinned: one image placed at two rects uploads once",
 TEST_CASE("pinned: unpin frees the data and kills the handle",
           "[pinned][kitty][failure]") {
   KittyDriver d;
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
   std::string out;
   d.set_output(&out);
 
@@ -310,12 +312,18 @@ TEST_CASE("pinned: unpin frees the data and kills the handle",
   REQUIRE(pinned.has_value());
   REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *pinned).has_value());
   d.flush();
+  tfsupport::TerminalGrid grid{4, 3};
+  grid.feed(out);
+  REQUIRE(grid.at(0, 0).placeholder());
 
   out.clear();
   REQUIRE(d.unpin_image(*pinned).has_value());
   d.flush();
+  grid.feed(out);
   // Here d=I IS correct: the application said it was done with the image.
   CHECK(data_deletes_of(out, pinned->id) == 1);
+  CHECK_FALSE(grid.at(0, 0).placeholder());
+  CHECK_FALSE(grid.at(1, 0).placeholder());
 
   out.clear();
   const auto again = d.draw_pinned(Rect{0, 0, 2, 2}, *pinned);
@@ -747,6 +755,14 @@ TEST_CASE("pinned: a moving sprite is not refused under placeholders",
   }
   CHECK(transmits_of(out, p->id) == 1);
   CHECK(data_deletes_of(out, p->id) == 0);
+
+  // Placement-only deletes are correct on the APC side and insufficient on
+  // the cell side: the old U+10EEEE grids still name the live pinned image.
+  // Only the final rect may retain placeholders after five moves.
+  tfsupport::TerminalGrid grid{10, 4};
+  grid.feed(out);
+  for (int x = 0; x < 4; ++x) CHECK_FALSE(grid.at(x, 1).placeholder());
+  for (int x = 4; x < 7; ++x) CHECK(grid.at(x, 1).placeholder());
 }
 
 TEST_CASE("pinned: an unpinned draw to the same rect refuses under "
@@ -925,12 +941,18 @@ TEST_CASE("pinned: switching back to classic retires the virtual placement",
   REQUIRE(p.has_value());
   REQUIRE(d.draw_pinned(Rect{1, 2, 3, 2}, *p).has_value());
   d.flush();
+  tfsupport::TerminalGrid grid{8, 5};
+  grid.feed(out);
+  REQUIRE(grid.at(1, 2).placeholder());
 
   out.clear();
   d.set_placement_mode(KittyDriver::PlacementMode::Classic);
   d.flush();  // set_placement_mode queues its deletes like everything else
+  grid.feed(out);
   CHECK(placement_deletes_of(out, p->id) == 1);
   CHECK(data_deletes_of(out, p->id) == 0);
+  CHECK_FALSE(grid.at(1, 2).placeholder());
+  CHECK_FALSE(grid.at(3, 3).placeholder());
 
   out.clear();
   REQUIRE(d.draw_pinned(Rect{1, 2, 3, 2}, *p).has_value());

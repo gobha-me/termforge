@@ -11,6 +11,7 @@
 #include "detail/encoded.hpp"
 #include "detail/placement.hpp"
 #include "detail/sgr_attrs.hpp"
+#include "termforge/core/screen.hpp"
 
 namespace termforge {
 
@@ -296,10 +297,12 @@ auto KittyDriver::clamp_dest(Rect cells, bool& clamped) const noexcept -> Rect {
   return dest;
 }
 
-auto KittyDriver::region_slot(std::uint64_t key) -> RegionSlot& {
+auto KittyDriver::region_slot(Rect dest) -> RegionSlot& {
+  const std::uint64_t key = region_key(dest.x, dest.y, dest.w, dest.h);
   if (auto it = m_regions.find(key); it != m_regions.end()) return it->second;
 
   RegionSlot slot;
+  slot.rect = dest;
   if (m_regions.size() >= kMaxRegionSlots) {
     // Evict the least-recently-drawn region. last_used is a per-draw clock,
     // so regions drawn earlier in this same flush are genuinely older than
@@ -309,6 +312,7 @@ auto KittyDriver::region_slot(std::uint64_t key) -> RegionSlot& {
     for (auto it = m_regions.begin(); it != m_regions.end(); ++it)
       if (it->second.last_used < lru->second.last_used) lru = it;
     delete_image(lru->second.image_id);
+    queue_placeholder_clear(lru->second.rect, lru->second.last_used);
     // Reuse the evicted ids on the spot. This is the same pool the branch
     // below derives from -- eviction just happens to know which id came free
     // without having to look for it.
@@ -626,7 +630,9 @@ auto KittyDriver::unpin_image(PinnedImage image)
   // separate escape -- only their bookkeeping has to go.
   delete_image(image.id);
   std::erase_if(m_pin_places, [&](const auto& kv) {
-    return kv.second.image_id == image.id;
+    if (kv.second.image_id != image.id) return false;
+    queue_placeholder_clear(kv.second.rect, kv.second.last_used);
+    return true;
   });
   m_pinned.erase(image.id);
   tally_image_edit(m_buf.size() - before);
@@ -703,7 +709,7 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
     // rather than leaving two live at one rect -- the same treatment a
     // content change gets on the unpinned path, and for the same reason.
     if (place.placed) delete_placement(place.image_id, place.placement_id);
-    place = PinPlacement{image.id, m_next_placement_id++, 0, false, fit};
+    place = PinPlacement{dest, image.id, m_next_placement_id++, 0, false, fit};
   }
   const bool fit_changed = place.fit != fit;
   place.fit = fit;
@@ -768,7 +774,7 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   // disjoint sub-ranges of m_buf, which only grows until flush() clears it.
   ImageTally tally{*this, m_buf.size()};
 
-  auto& slot = region_slot(region_key(dest.x, dest.y, dest.w, dest.h));
+  auto& slot = region_slot(dest);
   bool content_changed = false;
   if (const auto hash = payload_hash(payload, px, format_code);
       hash != slot.content_hash) {
@@ -826,6 +832,14 @@ void KittyDriver::flush() {
   gc_regions();
   tally_image_edit(m_buf.size() - before_gc);  // #139: deletes are image traffic
 
+  // #201: gc_regions discovers a vanished placeholder grid only after the
+  // renderer has queued this frame's diff. Prepend the repair so it executes
+  // BEFORE that diff; appending spaces here would erase replacement text the
+  // application legitimately drew at the vacated rect in this same frame.
+  // prepend_placeholder_clears restores the SGR state m_buf was built against,
+  // so an unchanged first text run may still omit its colours safely.
+  tally_image_edit(prepend_placeholder_clears());
+
   // #178: emit_frame is the sink AND the meter -- called exactly once here so
   // the frame is ONE write (the #148 contract). The 2026 wrap, when active,
   // is folded IN by emit_frame itself (it lives on TerminalDriver's one write
@@ -835,6 +849,9 @@ void KittyDriver::flush() {
   // above, or the deletions land in the next frame.
   emit_frame(m_buf);
   m_buf.clear();
+  m_frame_start_fg = m_cur_fg;
+  m_frame_start_bg = m_cur_bg;
+  m_frame_start_attrs = m_cur_attrs;
 }
 
 void KittyDriver::set_placement_mode(PlacementMode mode) {
@@ -846,6 +863,13 @@ void KittyDriver::set_placement_mode(PlacementMode mode) {
   // classic placements terminal-side and force every region to re-place
   // under the new mode on its next draw.
   const std::size_t before = m_buf.size();
+  if (m_mode == PlacementMode::UnicodePlaceholders) {
+    for (const auto& [key, slot] : m_regions)
+      if (slot.placed) queue_placeholder_clear(slot.rect, slot.last_used);
+    for (const auto& [key, place] : m_pin_places)
+      if (place.placed)
+        queue_placeholder_clear(place.rect, place.last_used);
+  }
   if (m_mode == PlacementMode::Classic) {
     for (const auto& [key, slot] : m_regions)
       if (slot.placed) delete_image(slot.image_id);
@@ -922,17 +946,18 @@ auto KittyDriver::gc_regions() -> void {
   // adjacent lines enforces it -- test/49regionids asserts the ORDER on the
   // wire for exactly that reason.
   //
-  // WHAT THIS DOES NOT FREE, and #190 made it visible: under
+  // THE SECOND RESOURCE, which #190 made visible: under
   // UnicodePlaceholders the cell grid IS the placement, and the loop below
   // frees the image without clearing the cells that name it. They are not in
   // Screen (place_unicode writes them straight to m_buf), so no renderer diff
   // repaints them. Before ids recycled, an orphaned cell named an id that never
   // came back and rendered nothing; now it can name a live image and paint a
-  // ghost at a rect the region has left (#201). Not fixed here on purpose: this
-  // runs AFTER the frame's cell diff, so spaces emitted from this loop would
-  // erase text the application drew at that rect in the same frame.
+  // ghost at a rect the region has left. queue_placeholder_clear records that
+  // rect and flush prepends its spaces before the already-built cell diff, so
+  // same-frame replacement text follows rather than being erased (#201).
   for (auto it = m_regions.begin(); it != m_regions.end();) {
     if (it->second.last_used <= m_frame_start_clock) {
+      queue_placeholder_clear(it->second.rect, it->second.last_used);
       delete_image(it->second.image_id);
       it = m_regions.erase(it);
     } else {
@@ -947,8 +972,10 @@ auto KittyDriver::gc_regions() -> void {
   // pinned image" structural.
   for (auto it = m_pin_places.begin(); it != m_pin_places.end();) {
     if (it->second.last_used <= m_frame_start_clock) {
-      if (it->second.placed)
+      if (it->second.placed) {
+        queue_placeholder_clear(it->second.rect, it->second.last_used);
         delete_placement(it->second.image_id, it->second.placement_id);
+      }
       it = m_pin_places.erase(it);
     } else {
       ++it;
@@ -957,6 +984,69 @@ auto KittyDriver::gc_regions() -> void {
   // Regions drawn from here on get higher stamps; anything still at or below
   // this point at the next collection was not drawn in between.
   m_frame_start_clock = m_clock;
+}
+
+auto KittyDriver::queue_placeholder_clear(Rect cells, std::uint64_t last_used)
+    -> void {
+  if (m_mode != PlacementMode::UnicodePlaceholders || cells.empty()) return;
+
+  // A same-frame LRU victim has already painted its grid into m_buf. A prefix
+  // would run before that grid and the later bytes would put the orphan right
+  // back, so clear it at the eviction point. Every collection victim is from
+  // the previous frame and takes the prefix path below.
+  if (last_used > m_frame_start_clock) {
+    emit_placeholder_clear(cells);
+  } else {
+    m_placeholder_clears.push_back(cells);
+  }
+}
+
+auto KittyDriver::emit_placeholder_clear(Rect cells) -> void {
+  const Cell blank;
+  const std::string spaces(static_cast<std::size_t>(cells.w), ' ');
+  for (int row = 0; row < cells.h; ++row)
+    draw_text(cells.x, cells.y + row, spaces, blank.fg, blank.bg, blank.attrs);
+}
+
+auto KittyDriver::prepend_placeholder_clears() -> std::size_t {
+  if (m_placeholder_clears.empty()) return 0;
+
+  const Cell blank;
+  std::string prefix;
+  prefix += "\033[0m";
+  prefix += std::format("\033[38;2;{};{};{}m", blank.fg.r, blank.fg.g,
+                        blank.fg.b);
+  prefix += std::format("\033[48;2;{};{};{}m", blank.bg.r, blank.bg.g,
+                        blank.bg.b);
+  for (const Rect cells : m_placeholder_clears) {
+    const std::string spaces(static_cast<std::size_t>(cells.w), ' ');
+    for (int row = 0; row < cells.h; ++row) {
+      prefix += std::format("\033[{};{}H", cells.y + row + 1, cells.x + 1);
+      prefix += spaces;
+    }
+  }
+
+  // Restore exactly the rendition state the existing m_buf was constructed
+  // against. -1 means that state was deliberately unknown, so reset is enough:
+  // the first following draw_text already contains a complete run setup.
+  prefix += "\033[0m";
+  if (m_frame_start_attrs >= 0) {
+    detail::append_sgr_attrs_enable(
+        prefix,
+        static_cast<Attr>(static_cast<std::uint8_t>(m_frame_start_attrs)));
+  }
+  const auto append_rgb = [&prefix](int sgr, int id) {
+    if (id < 0) return;
+    prefix += std::format("\033[{};2;{};{};{}m", sgr, (id >> 16) & 0xFF,
+                          (id >> 8) & 0xFF, id & 0xFF);
+  };
+  append_rgb(38, m_frame_start_fg);
+  append_rgb(48, m_frame_start_bg);
+
+  const std::size_t bytes = prefix.size();
+  m_buf.insert(0, prefix);
+  m_placeholder_clears.clear();
+  return bytes;
 }
 
 // ── Kitty APC protocol ──────────────────────────────────────────────────────
