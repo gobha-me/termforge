@@ -70,6 +70,10 @@ class Input {
 
   auto parse_csi(std::string_view buf) -> std::size_t;  // after ESC [
   auto parse_ss3(std::string_view buf) -> std::size_t;  // after ESC O
+  // APC (ESC _ ... ST): kitty graphics replies under q=0/q=1 (#165). OK is
+  // consumed silently; any other status becomes an ErrorEvent so a rejected
+  // EncodedImage is not a silent blank.
+  auto parse_apc(std::string_view buf) -> std::size_t;
   auto consume_paste(std::string_view buf) -> std::size_t;  // inside a paste
   auto flush_esc() -> void;  // held lone ESC -> Escape keypress
 };

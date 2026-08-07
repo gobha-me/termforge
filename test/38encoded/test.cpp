@@ -130,6 +130,10 @@ TEST_CASE("encoded: a PNG rides f=100, and nothing rides f=32",
   // at all.
   CHECK(count_of(out, "f=100") == 1);
   CHECK(count_of(out, "f=32") == 0);
+  // #165: EncodedImage transmits with q=1 so a rejection is not silent.
+  // Placements still use q=2; the transmit chunk is the one that carries the
+  // opaque payload and is the only place the quiet level changed.
+  CHECK(out.find("m=0,q=1;") != std::string::npos);
 }
 
 TEST_CASE("encoded: the payload the terminal reassembles is the one we gave it",

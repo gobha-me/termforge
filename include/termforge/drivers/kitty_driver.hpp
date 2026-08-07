@@ -266,7 +266,8 @@ class KittyDriver final : public TerminalDriver {
 
   // Everything both pin_image overloads share once the payload is in hand.
   auto pin_payload(std::span<const std::byte> payload, int format_code,
-                   Extent px) -> std::expected<PinnedImage, ErrorEvent>;
+                   Extent px, int quiet = 2)
+      -> std::expected<PinnedImage, ErrorEvent>;
 
   // The pinned entry `image` names, or a Warning saying which way it is
   // invalid. Both cases are real: a handle from another driver (a server runs
@@ -279,7 +280,7 @@ class KittyDriver final : public TerminalDriver {
   // the declared pixel extent, emitted as s=/v=. Retransmit with an existing
   // id replaces that image's data on the terminal.
   auto transmit(std::span<const std::byte> payload, int format_code, Extent px,
-                std::uint32_t id) -> void;
+                std::uint32_t id, int quiet = 2) -> void;
 
   // Everything both public draw_image overloads share once the payload is in
   // hand: the placeholder clamp, byte attribution, slot keying and LRU, the
@@ -287,9 +288,13 @@ class KittyDriver final : public TerminalDriver {
   // placement. Computes its own hash rather than taking one -- that is what
   // makes "the format participates in image identity" impossible to forget at
   // a call site.
+  //
+  // `quiet` is the kitty q= value on the transmit: 2 for library-built RGBA
+  // (cannot be malformed), 1 for EncodedImage so a rejected payload still
+  // produces an error reply the input layer can raise as an ErrorEvent (#165).
   auto draw_payload(Rect cells, std::span<const std::byte> payload,
-                    int format_code, Extent px, PlacementFit fit)
-      -> std::expected<void, ErrorEvent>;
+                    int format_code, Extent px, PlacementFit fit,
+                    int quiet = 2) -> std::expected<void, ErrorEvent>;
 
   // Classic placement: position the cursor and place (a=p, C=1), scaled to
   // cols x rows cells under Stretch, or at the transmitted resolution under

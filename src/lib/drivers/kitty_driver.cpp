@@ -493,8 +493,10 @@ auto KittyDriver::draw_image(Rect cells, const EncodedImage& image,
       !ok) {
     return ok;
   }
+  // q=1: suppress success, still report errors (#165). An opaque payload can
+  // be rejected by the terminal; quiet-all (q=2) made that a silent blank.
   return draw_payload(cells, image.bytes, wire_format(image.format),
-                      image.pixels, fit);
+                      image.pixels, fit, /*quiet=*/1);
 }
 
 // ── resident images (#109) ──────────────────────────────────────────────────
@@ -523,11 +525,12 @@ auto KittyDriver::pin_image(const EncodedImage& image)
       !ok) {
     return std::unexpected{ok.error()};
   }
-  return pin_payload(image.bytes, wire_format(image.format), image.pixels);
+  return pin_payload(image.bytes, wire_format(image.format), image.pixels,
+                     /*quiet=*/1);
 }
 
 auto KittyDriver::pin_payload(std::span<const std::byte> payload,
-                              int format_code, Extent px)
+                              int format_code, Extent px, int quiet)
     -> std::expected<PinnedImage, ErrorEvent> {
   // Downward from the configured ceiling, leaving the region pool the bottom
   // of the range. The two walks run towards each other and stop at their own
@@ -574,7 +577,7 @@ auto KittyDriver::pin_payload(std::span<const std::byte> payload,
   // bytes sit in m_buf until the next flush() -- pin_image does not write, it
   // queues, exactly like every draw does.
   const std::size_t before = m_buf.size();
-  transmit(payload, format_code, px, id);
+  transmit(payload, format_code, px, id, quiet);
   tally_image_transmit(m_buf.size() - before);
 
   const std::uint32_t serial = ++m_next_pin_serial;
@@ -736,7 +739,8 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
 }
 
 auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
-                               int format_code, Extent px, PlacementFit fit)
+                               int format_code, Extent px, PlacementFit fit,
+                               int quiet)
     -> std::expected<void, ErrorEvent> {
   bool clamped = false;
   const Rect dest = clamp_dest(cells, clamped);
@@ -779,7 +783,7 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   if (const auto hash = payload_hash(payload, px, format_code);
       hash != slot.content_hash) {
     const std::size_t before = m_buf.size();
-    transmit(payload, format_code, px, slot.image_id);
+    transmit(payload, format_code, px, slot.image_id, quiet);
     tally.transmitted = m_buf.size() - before;
     slot.content_hash = hash;
     content_changed = true;
@@ -1052,7 +1056,7 @@ auto KittyDriver::prepend_placeholder_clears() -> std::size_t {
 // ── Kitty APC protocol ──────────────────────────────────────────────────────
 
 auto KittyDriver::transmit(std::span<const std::byte> payload, int format_code,
-                           Extent px, std::uint32_t id) -> void {
+                           Extent px, std::uint32_t id, int quiet) -> void {
   // The one place image data is produced, and therefore the only honest answer
   // to "does this terminal hold anything of ours" that ~KittyDriver can ask.
   m_transmitted = true;
@@ -1083,15 +1087,17 @@ auto KittyDriver::transmit(std::span<const std::byte> payload, int format_code,
       // First chunk: full transmission parameters.
       // a=t (transmit only, no display — display happens via placeholders),
       // t=d (direct), f=<32 RGBA | 100 PNG>, i=<id>, s=W, v=H, m=<more>,
-      // q=2 (quiet).
+      // q=<quiet>. Library-built RGBA uses q=2 (no reply). EncodedImage uses
+      // q=1 so a rejected payload still produces an error reply (#165); Input
+      // raises that as an ErrorEvent rather than mistaking ESC _ for Alt+_.
       //
       // s=/v= are load-bearing for f=32 and redundant for f=100 (kitty reads
       // a PNG's geometry out of the datastream). Emitted for both anyway:
       // kitty ignores them where they do not apply, and one format string
       // beats two that can drift.
       m_buf += std::format(
-          "\033_Ga=t,t=d,f={},i={},s={},v={},m={},q=2;{}\033\\",
-          format_code, id, px.w, px.h, more ? 1 : 0, chunk);
+          "\033_Ga=t,t=d,f={},i={},s={},v={},m={},q={};{}\033\\",
+          format_code, id, px.w, px.h, more ? 1 : 0, quiet, chunk);
       first = false;
     } else {
       // Continuation chunks: only m and payload. The protocol allows m and q

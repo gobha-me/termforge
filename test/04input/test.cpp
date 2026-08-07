@@ -3,6 +3,7 @@
 #include "termforge/core/input.hpp"
 
 using termforge::Event;
+using termforge::ErrorEvent;
 using termforge::Input;
 using termforge::Key;
 using termforge::KeyAction;
@@ -10,6 +11,7 @@ using termforge::KeyEvent;
 using termforge::MouseEvent;
 using termforge::PasteEvent;
 using termforge::ResizeEvent;
+using termforge::Severity;
 
 namespace {
 auto first_key(std::deque<Event>& ev) -> KeyEvent {
@@ -861,4 +863,37 @@ TEST_CASE("Input: captured modifier and lock keypresses emit nothing",
                           "\033[57358;193:3u"}) {  // CAPS_LOCK release
     REQUIRE(in.decode(seq).empty());
   }
+}
+
+TEST_CASE("Input: a kitty graphics OK reply is consumed silently (#165)",
+          "[input][kitty]") {
+  Input in;
+  auto ev = in.decode("\033_Gi=1;OK\033\\");
+  REQUIRE(ev.empty());
+}
+
+TEST_CASE("Input: a kitty graphics error reply is an ErrorEvent (#165)",
+          "[input][kitty][failure]") {
+  Input in;
+  auto ev = in.decode("\033_Gi=1;EINVAL:PNG:not a PNG\033\\");
+  REQUIRE(ev.size() == 1);
+  const auto* err = std::get_if<ErrorEvent>(&ev[0]);
+  REQUIRE(err != nullptr);
+  REQUIRE(err->severity == Severity::Warning);
+  REQUIRE(err->source == "kitty");
+  REQUIRE(err->message.find("EINVAL") != std::string::npos);
+}
+
+TEST_CASE("Input: a graphics reply is not Alt+_ (#165)",
+          "[input][kitty][failure]") {
+  // Before the APC branch, ESC _ decoded as Alt+_ and the body leaked as chars.
+  Input in;
+  auto ev = in.decode("\033_Gi=2;ENOTSUPPORTED\033\\a");
+  REQUIRE(ev.size() == 2);
+  REQUIRE(std::holds_alternative<ErrorEvent>(ev[0]));
+  const auto* key = std::get_if<KeyEvent>(&ev[1]);
+  REQUIRE(key != nullptr);
+  REQUIRE(key->key == Key::Char);
+  REQUIRE(key->ch == U'a');
+  REQUIRE_FALSE(key->alt);
 }

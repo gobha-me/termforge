@@ -298,6 +298,7 @@ auto Input::decode_one(std::string_view buf) -> std::size_t {
     if (buf.size() < 2) return 0;  // need more
     if (buf[1] == '[') return parse_csi(buf);
     if (buf[1] == 'O') return parse_ss3(buf);  // SS3: app-cursor keys, F1–F4
+    if (buf[1] == '_') return parse_apc(buf);  // APC: kitty graphics replies
     // Alt+char: ESC followed by a printable char.
     if (buf[1] >= 0x20 && buf[1] < 0x7F) {
       m_events.push_back(KeyEvent{Key::Char, static_cast<char32_t>(buf[1]), false, true, false});
@@ -525,6 +526,32 @@ auto Input::parse_ss3(std::string_view buf) -> std::size_t {
   if (have_p2) apply_key_mods(ev, p2);
   m_events.push_back(ev);
   return i;
+}
+
+auto Input::parse_apc(std::string_view buf) -> std::size_t {
+  // buf starts with ESC _. APC body runs until ST (ESC \). Kitty graphics
+  // replies look like "_Gi=<id>;OK" or "_Gi=<id>;EINVAL:..." (#165). Without
+  // this branch, ESC _ is decoded as Alt+_ and the rest of the reply becomes
+  // spurious Char events — worse than q=2's silence.
+  for (std::size_t i = 2; i + 1 < buf.size(); ++i) {
+    if (buf[i] != '\033' || buf[i + 1] != '\\') continue;
+    const auto body = buf.substr(2, i - 2);
+    if (!body.empty() && body[0] == 'G') {
+      const auto semi = body.rfind(';');
+      if (semi != std::string_view::npos) {
+        const auto status = body.substr(semi + 1);
+        if (status.size() < 2 || status[0] != 'O' || status[1] != 'K') {
+          // Warning: the transmit was not honoured — nothing was drawn for
+          // that payload. Matches AGENTS.md's degradation-as-events rule.
+          m_events.push_back(ErrorEvent{
+              Severity::Warning, "kitty",
+              std::string{"graphics response: "} + std::string{status}});
+        }
+      }
+    }
+    return i + 2;
+  }
+  return 0;  // ST not yet present
 }
 
 auto Input::consume_paste(std::string_view buf) -> std::size_t {

@@ -490,15 +490,15 @@ Keying on the declared extent alone is the other tempting shortcut, and it is
 worse: every plate an application bakes to a fixed size hashes identically, so
 only the first one ever uploads.
 
-### The blind spot: `q=2`
+### The blind spot: `q=2` (partially closed by #165)
 
-TermForge emits `q=2`, which suppresses the terminal's responses. Until now the
-payload was RGBA the library built itself and could not be malformed. An
-opaque application-supplied payload can be — and a terminal that rejects it
-says so on a channel nobody is reading, so `draw_image` returns success and
-nothing renders. Fixing it needs a response reader, which the driver does not
-have; `tools/png_repro.sh` runs the same sequences under `q=0` so a human can
-see what a real terminal actually says.
+Library-built RGBA still transmits with `q=2` (quiet): those payloads cannot
+be malformed, so there is no error to hear. `EncodedImage` transmits with
+`q=1` (errors only). `Input` parses APC graphics replies (`ESC _G...ST`) and
+raises a `Warning` `ErrorEvent` for any non-OK status, so a rejected PNG is no
+longer a silent blank. Success replies are consumed without an event. A full
+per-id correlation into the same `draw_image` call is still future work; the
+event arrives on the ordinary input queue after the call has returned.
 
 ### What this does not deliver
 
