@@ -6,9 +6,51 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-07, latest)
 
-**Latest release: v0.10.0 — App pixel regions now reach ANSI truecolour as
-well as Kitty native graphics.** #108 merged through PR #208; the release tag
-points at that reviewed squash commit.
+**Latest release: v0.10.1 — retiring a Kitty Unicode-placeholder placement
+now retires its terminal cell grid too.** #201 merged through PR #210; the
+release tag points at that reviewed squash commit.
+
+The driver now stores the cell rectangle beside every ordinary region and
+pinned placement. GC, same-frame LRU eviction, pinned-placement collection,
+explicit unpin, and Unicode-to-Classic mode changes all clear the grid they
+retire. Previous-frame cleanup is prepended before the frame's already-queued
+cell diff, so text authored into a vacated rectangle in that same frame lands
+after the repair. The prefix restores the exact cached foreground, background,
+and attribute state the diff was built against. Same-frame LRU cleanup remains
+at the eviction point because its old grid is already in that buffer.
+
+`test/support/terminal_grid.hpp` is an independent offline terminal-grid
+emulator for CUP, SGR, ASCII, and the specified U+10EEEE bytes. The real App
+cadence, same-frame replacement text, pinned motion/unpin, mode changes, LRU id
+reuse, and byte accounting now assert the cells a user sees rather than only
+the APC commands. Cleanup stays inside the frame's one write and is billed as
+image-edit traffic.
+
+The first real-Kitty run exposed a fault in repro stanza 9 rather than the
+driver: its right-hand grid used LF between rows, and the tty's `ONLCR` returned
+the second row to column 1, producing a convincing green block below `OK`.
+The gate correctly failed; the stanza now positions each row explicitly. On
+the repeated run, `OK` had no green cells behind or below it, the complete green
+2x2 block appeared on the right, all four transmit/place replies were `OK`, the
+delete was silent as expected, and no response contained `;E`.
+
+**Verification:** GCC 14.2, Clang 20.1, and ASan+UBSan each pass 52/52 tests;
+the opt-in Clang toolchain configures from a fresh tree; and
+`tools/consume/run.sh` passes `subdir`, `install`, and `vendored`. Mutation
+checks kill omitted ordinary/pinned/LRU cleanup, late cleanup ordering, lost
+SGR colour/attribute restoration, and missing byte tallying. PR #210's eight
+CI jobs passed twice, including the repro correction.
+
+**Next: #206.** The fresh Clang toolchain configure succeeded during this cut,
+so first re-check the issue against current `main` and close it with evidence if
+the failure is no longer reproducible; otherwise keep the build-system fix
+independent of this terminal-protocol release.
+
+## Previous release: v0.10.0 (#108)
+
+**App pixel regions now reach ANSI truecolour as well as Kitty native
+graphics.** #108 merged through PR #208; the release tag points at that
+reviewed squash commit.
 
 `App::collect_pixel_regions` and `App::on_pixels` now share one explicit
 enhanced-image gate: Kitty receives native placements, while `AnsiRgbDriver`
