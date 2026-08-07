@@ -6,9 +6,38 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-07, latest)
 
-**Latest release: v0.10.2 — the Kitty tier now guarantees 256 resident images.**
-#205 merged through PR #216; the release tag points at that reviewed squash
+**Latest release: v0.10.3 — Kitty placement ids are derived from live state.**
+#200 merged through PR #218; the release tag points at that reviewed squash
 commit.
+
+Ordinary image regions now use `p=1`, which is unique because every region owns
+its image id. Pinned placements derive the smallest free positive `p=` from the
+live placements of that same image. The driver scans the placement map once,
+then probes an occupied-id set; it no longer carries a session-wide monotonic
+placement counter, and `p=0` is unreachable.
+
+`test/49regionids` holds a moving region through 300 frames and proves every
+placement uses `p=1`. It also proves two pinned images have independent
+namespaces beginning at 1, one image receives distinct ids, retiring its middle
+placement deletes exactly `p=2`, and the resulting hole is reused. The shared
+APC parser keeps those assertions about complete decimal ids rather than byte
+fragments. Mutation checks kill a changed region constant, a process-wide
+pinned namespace, and deletion of the wrong placement id.
+
+**Verification:** GCC 14.2, a fresh Clang 20.1 opt-in toolchain, and
+ASan+UBSan each pass 52/52 tests; `tools/consume/run.sh` passes `subdir`,
+`install`, and `vendored` with Clang. The Kitty graphics specification assigns
+placement ids 1 through 4294967295 and scopes them to an image; existing
+real-Kitty repro stanza 7 already exercises positive per-image placement ids
+and targeted `d=i` deletion, so this cut adds no unevidenced wire form.
+
+**Next: #195.** Add the persistent pixel surface and game canvas from #198's
+second milestone without weakening the authored-cell Baseline fallback.
+
+## Previous release: v0.10.2 (#205)
+
+**The Kitty tier now guarantees 256 resident images.** #205 merged through PR
+#216; the release tag points at that reviewed squash commit.
 
 `KittyDriver::kMaxPinnedImages` and `max_pinned_images()` now report a deliberate
 256-image compatibility floor, up from 239. The region pool remains `[1, 16]`;
@@ -37,12 +66,6 @@ no `;E`, so the newly reachable branch has an empirical protocol witness.
 CMake 3.28.3 / Clang 20.1.8 configure succeeded through Catch2's flag probe on
 current `main`, so it was closed with the evidence rather than changing the
 toolchain around a failure that no longer reproduced.
-
-**Next: #200.** The remaining monotonic Kitty id is the shared placement
-counter. Region placements can use `p=1` because their image ids are exclusive;
-pinned placements need only derive a free `p=` within their own image's live
-placements. That removes the `p=0` wrap which a 16-region 60fps session reaches
-in about 52 days.
 
 ## Previous release: v0.10.1 (#201)
 
