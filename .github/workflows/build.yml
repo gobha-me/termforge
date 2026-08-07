@@ -72,6 +72,35 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  # Fresh configure through the advertised opt-in toolchain (#206). The jobs
+  # above pass -DCMAKE_CXX_COMPILER= directly, so a regression that only
+  # breaks cmake/toolchain/clang.cmake stayed invisible.
+  clang-toolchain:
+    name: Clang toolchain file (fresh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clang 20
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 20
+
+      - name: Configure (fresh, toolchain file)
+        run: >
+          cmake -B build-clang
+          -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/clang.cmake
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_FLAGS="-Werror"
+
+      - name: Build
+        run: cmake --build build-clang -j$(nproc)
+
+      - name: Test
+        run: ctest --test-dir build-clang --output-on-failure
+
   asan-ubsan:
     name: ASan + UBSan (GCC, Ubuntu latest)
     runs-on: ubuntu-latest
