@@ -6,9 +6,49 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-07, latest)
 
-**Latest release: v0.10.1 — retiring a Kitty Unicode-placeholder placement
-now retires its terminal cell grid too.** #201 merged through PR #210; the
-release tag points at that reviewed squash commit.
+**Latest release: v0.10.2 — the Kitty tier now guarantees 256 resident images.**
+#205 merged through PR #216; the release tag points at that reviewed squash
+commit.
+
+`KittyDriver::kMaxPinnedImages` and `max_pinned_images()` now report a deliberate
+256-image compatibility floor, up from 239. The region pool remains `[1, 16]`;
+the adjacent pin pool is `[17, 272]`, derived downward from the live map exactly
+as before. This is an application-visible slot guarantee, not a claim about
+terminal memory. GLOAM's frozen 246-image inventory fits with ten slots of
+headroom; terminal-side byte accounting remains #112.
+
+`test/46pinned` hardcodes that downstream inventory rather than looping to the
+constant, so restoring 239 fails on asset 240 instead of teaching the test to
+accept the regression. It pins 246 distinct opaque payloads, proves their ids
+are unique, reaches id 272 through Unicode placeholders, and asserts the exact
+`38;2;0;1;16` SGR. Unpin/re-pin then recycles that id with a new serial and
+proves the stale handle can neither draw nor delete the replacement. The
+existing exhaustion case admits 256 pins, refuses the 257th with a `Warning`,
+and returns the slot after unpin.
+
+**Verification:** GCC 14.2, a fresh Clang 20.1 opt-in toolchain, and
+ASan+UBSan each pass 52/52 tests; `tools/consume/run.sh` passes `subdir`,
+`install`, and `vendored` with Clang. Mutation checks kill the old 239-slot
+policy and a compact-SGR spelling for id 272. #199's real-Kitty gate already
+rendered U+10EEEE with 24-bit id 300 and received `OK` for transmit/place with
+no `;E`, so the newly reachable branch has an empirical protocol witness.
+
+#206 was rechecked first as the previous handoff required. Its exact fresh
+CMake 3.28.3 / Clang 20.1.8 configure succeeded through Catch2's flag probe on
+current `main`, so it was closed with the evidence rather than changing the
+toolchain around a failure that no longer reproduced.
+
+**Next: #200.** The remaining monotonic Kitty id is the shared placement
+counter. Region placements can use `p=1` because their image ids are exclusive;
+pinned placements need only derive a free `p=` within their own image's live
+placements. That removes the `p=0` wrap which a 16-region 60fps session reaches
+in about 52 days.
+
+## Previous release: v0.10.1 (#201)
+
+**Retiring a Kitty Unicode-placeholder placement now retires its terminal cell
+grid too.** #201 merged through PR #210; the release tag points at that reviewed
+squash commit.
 
 The driver now stores the cell rectangle beside every ordinary region and
 pinned placement. GC, same-frame LRU eviction, pinned-placement collection,
