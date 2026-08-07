@@ -74,6 +74,7 @@ auto art(int seed) -> Image {
 using tfsupport::data_deletes_of;
 using tfsupport::ids_named;
 using tfsupport::placement_deletes_of;
+using tfsupport::placement_ids_of;
 using tfsupport::placements_of;
 using tfsupport::total_transmits;
 using tfsupport::transmits_of;
@@ -300,6 +301,7 @@ TEST_CASE("pinned: one image placed at two rects uploads once",
   const auto ps = tfsupport::placements(out);
   REQUIRE(ps.size() == 2);
   CHECK(tfsupport::key_value(ps[0], "p") != tfsupport::key_value(ps[1], "p"));
+  CHECK(placement_ids_of(out, pinned->id) == std::set<std::uint32_t>{1, 2});
 }
 
 TEST_CASE("pinned: unpin frees the data and kills the handle",

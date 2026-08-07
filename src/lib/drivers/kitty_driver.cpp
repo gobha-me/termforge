@@ -6,6 +6,7 @@
 #include <limits>
 #include <span>
 #include <string_view>
+#include <unordered_set>
 
 #include "detail/base64.hpp"
 #include "detail/encoded.hpp"
@@ -203,6 +204,11 @@ constexpr int kFormatPng = 100;
 // deleted terminal-side and reused. Far above any realistic UI.
 constexpr std::size_t kMaxRegionSlots = 16;
 
+// A region owns its image id exclusively, so its placement namespace contains
+// one member. Keeping the value at the call site rather than in RegionSlot
+// makes p=0 unreachable and the no-counter invariant structural (#200).
+constexpr std::uint32_t kRegionPlacementId = 1;
+
 }  // namespace
 
 // The pinned range sits ABOVE the region range, and the two must not meet:
@@ -316,7 +322,6 @@ auto KittyDriver::region_slot(Rect dest) -> RegionSlot& {
     // below derives from -- eviction just happens to know which id came free
     // without having to look for it.
     slot.image_id = lru->second.image_id;
-    slot.placement_id = lru->second.placement_id;
     m_regions.erase(lru);
   } else {
     // The smallest id in [1, kMaxRegionSlots] that no live region is holding.
@@ -371,7 +376,6 @@ auto KittyDriver::region_slot(Rect dest) -> RegionSlot& {
     std::uint32_t id = 1;
     while (id < static_cast<std::uint32_t>(kMaxRegionSlots) && held(id)) ++id;
     slot.image_id = id;
-    slot.placement_id = m_next_placement_id++;
   }
   return m_regions.emplace(key, slot).first->second;
 }
@@ -619,6 +623,41 @@ auto KittyDriver::resolve_pin(PinnedImage image, std::string_view fn)
   return &it->second;
 }
 
+auto KittyDriver::next_pin_placement_id(std::uint32_t image_id) const
+    -> std::expected<std::uint32_t, ErrorEvent> {
+  // p= is scoped by image id: placements of a different resident image are a
+  // different namespace and must not advance this one. Derive from the map
+  // that owns the live set, for the same reason the two image-id allocators do
+  // (#190): collection erases an entry and thereby returns its id without a
+  // counter or free list that another path can forget to update.
+  // m_pin_places is intentionally uncapped, so do not rescan the whole map
+  // once per candidate. Collect this image's namespace in one pass, then the
+  // smallest-free walk is expected O(1) per probe and bounded by the number of
+  // ids collected. Other images consume no entries in this set -- the scope
+  // is part of the wire identity, not an optimization.
+  std::unordered_set<std::uint32_t> held;
+  for (const auto& [key, place] : m_pin_places) {
+    (void)key;
+    if (place.image_id == image_id) held.insert(place.placement_id);
+  }
+
+  std::uint32_t id = 1;
+  while (held.contains(id)) {
+    // This branch totalizes the allocator over uint32_t. It is not expected to
+    // be reachable in practice -- the map would already hold 2^32-1 entries
+    // for one image -- but falling through would emit p=0, which kitty treats
+    // as an unspecified placement rather than the one the caller named.
+    if (id == std::numeric_limits<std::uint32_t>::max()) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "kitty",
+          std::format("draw_pinned: all placement ids for image {} are in use",
+                      image_id)}};
+    }
+    ++id;
+  }
+  return id;
+}
+
 auto KittyDriver::unpin_image(PinnedImage image)
     -> std::expected<void, ErrorEvent> {
   auto entry = resolve_pin(image, "unpin_image");
@@ -696,20 +735,40 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
     }
   }
 
+  auto place_it = m_pin_places.find(key);
+  const bool needs_placement_id =
+      place_it == m_pin_places.end() || place_it->second.image_id != image.id;
+  std::uint32_t new_placement_id = 1;
+  if (needs_placement_id) {
+    auto id = next_pin_placement_id(image.id);
+    if (!id) return std::unexpected{id.error()};
+    new_placement_id = *id;
+  }
+
   // #139: everything this emits is control traffic, so `transmitted` stays 0.
   // No payload crosses the wire from here -- there is no transmit() call in
   // this function, which is the structural form of what #109 asks for rather
-  // than a property a test has to keep watching.
+  // than a property a test has to keep watching. Allocation above can refuse;
+  // it deliberately runs before this tally and before any map/wire mutation.
   ImageTally tally{*this, m_buf.size()};
 
-  auto& place = m_pin_places[key];
-  if (place.image_id != image.id) {
+  if (needs_placement_id) {
     // This rect was showing a different pinned image. Retire that placement
     // rather than leaving two live at one rect -- the same treatment a
     // content change gets on the unpinned path, and for the same reason.
-    if (place.placed) delete_placement(place.image_id, place.placement_id);
-    place = PinPlacement{dest, image.id, m_next_placement_id++, 0, false, fit};
+    if (place_it != m_pin_places.end() && place_it->second.placed) {
+      delete_placement(place_it->second.image_id,
+                       place_it->second.placement_id);
+    }
+    const PinPlacement replacement{dest, image.id, new_placement_id, 0, false,
+                                   fit};
+    if (place_it == m_pin_places.end()) {
+      place_it = m_pin_places.emplace(key, replacement).first;
+    } else {
+      place_it->second = replacement;
+    }
   }
+  auto& place = place_it->second;
   const bool fit_changed = place.fit != fit;
   place.fit = fit;
   place.last_used = ++m_clock;
@@ -802,7 +861,7 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   const bool fit_changed = slot.fit != fit;
   slot.fit = fit;
 
-  emit_placement(slot.image_id, slot.placement_id, slot.placed, dest, fit,
+  emit_placement(slot.image_id, kRegionPlacementId, slot.placed, dest, fit,
                  content_changed || fit_changed);
 
   if (clamped && !m_warned_clamp) {

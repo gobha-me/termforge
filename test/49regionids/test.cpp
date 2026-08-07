@@ -1,11 +1,13 @@
-// TermForge — which ids the region pool hands out (#190).
+// TermForge — which image and placement ids the live maps hand out (#190,
+// #200).
 //
 // A subject the other graphics suites keep touching and none of them owns.
 // `test/47frameshape` is about what the CALLER'S CADENCE costs; `test/46pinned`
 // is about RESIDENCY; `test/01drivers` is about the protocol a draw emits. The
 // id an allocation lands on is a fourth thing, and it was left implicit in all
-// three -- which is how a monotonic counter crossed both advertised id pools
-// in about four seconds without a single case noticing.
+// three -- which is how one monotonic counter crossed both advertised image-id
+// pools in about four seconds and another remained able to wrap to p=0 after
+// about 52 days without a single case noticing.
 //
 // The defect. A region's identity is its destination RECT, so a sprite stepping
 // one cell per frame is a new key every frame. The vacated slot was collected
@@ -14,13 +16,15 @@
 // that the associated rendering failure was U+10FEEE, not the 24-bit 38;2
 // form; the allocator still violated both public pools and had no bound.
 //
-// The fix is a derivation: the smallest id in [1, kMaxRegionSlots] no live
-// region holds, taken from the map itself rather than from a counter beside it.
-// So the properties this file asserts are (1) the bound, (2) WHICH free id is
-// chosen, (3) that two live regions never collide, and (4) that a recycled id
-// is deleted terminal-side before it is transmitted under again.
+// The fixes are derivations from the maps that own the live sets. An image id
+// is the smallest id in [1, kMaxRegionSlots] no live region holds. A placement
+// id is always 1 for an ordinary region, whose image id is exclusive, and the
+// smallest positive p= no live placement of the SAME pinned image holds.
+// Besides the image-id lifecycle below, this suite therefore asserts the
+// placement namespaces, exact hole reuse and exact targeted deletion.
 //
-// (4) IS AN ORDER AND NOT A COUNT, which is why it needs its own parser below.
+// Recycled image-id safety IS AN ORDER AND NOT A COUNT, which is why it needs
+// its own parser below.
 // Every erase from the driver's region map is preceded by delete_image on the
 // same id in the same buffer, and that is the only reason reuse is safe.
 //
@@ -56,6 +60,7 @@ using termforge::Pixel;
 using termforge::Rect;
 using tfsupport::data_deletes_of;
 using tfsupport::ids_named;
+using tfsupport::placement_ids_of;
 using tfsupport::total_transmits;
 using tfsupport::transmits_of;
 
@@ -91,6 +96,23 @@ auto history_of(std::string_view out, std::string_view id) -> std::string {
     }
   }
   return order;
+}
+
+// The p= values retired with a=d,d=i for one image, kept local because this
+// suite is the first caller that needs exact delete ids rather than a count.
+auto placement_delete_ids_of(std::string_view out, std::uint32_t image_id)
+    -> std::set<std::uint32_t> {
+  std::set<std::uint32_t> ids;
+  for (const tfsupport::Apc& c : tfsupport::apcs(out)) {
+    if (tfsupport::key_value(c, "a") != "d" ||
+        tfsupport::key_value(c, "d") != "i" ||
+        tfsupport::key_value(c, "i") != std::to_string(image_id)) {
+      continue;
+    }
+    const std::string p = tfsupport::key_value(c, "p");
+    if (!p.empty()) ids.insert(static_cast<std::uint32_t>(std::stoul(p)));
+  }
+  return ids;
 }
 
 }  // namespace
@@ -130,10 +152,78 @@ TEST_CASE("region ids: 300 frames of motion stay inside the region pool (#190)",
   // The cost it does fix. Two ids for 300 frames -- not one, because the
   // vacated slot is still live when the next rect allocates.
   CHECK(ids_named(out) == std::set<std::uint32_t>{1, 2});
+  // #200: every region owns its image id exclusively, so its placement
+  // namespace has exactly one member no matter how often the region churns.
+  // A restored global counter answers hundreds of distinct values here.
+  CHECK(placement_ids_of(out, 1) == std::set<std::uint32_t>{1});
+  CHECK(placement_ids_of(out, 2) == std::set<std::uint32_t>{1});
   // The wire spelling closes the pool bound independently of the parsed ids:
   // region ids never need the larger 38;2 form. That form is valid (#199), so
   // this is an allocator assertion rather than a rendering-failure proxy.
   CHECK(out.find("\033[38;2;0;0;") == std::string::npos);
+}
+
+// ── placement ids are positive, per-image and derived (#200) ───────────────
+
+TEST_CASE("placement ids: each pinned image derives and reuses its own pool",
+          "[regionids][pinned][kitty]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto a = d.pin_image(art(210));
+  const auto b = d.pin_image(art(211));
+  REQUIRE(a.has_value());
+  REQUIRE(b.has_value());
+
+  const Rect a1{0, 0, 2, 2};
+  const Rect a2{4, 0, 2, 2};
+  const Rect a3{8, 0, 2, 2};
+  const Rect b1{12, 0, 2, 2};
+  const Rect b2{16, 0, 2, 2};
+
+  REQUIRE(d.draw_pinned(a1, *a).has_value());
+  REQUIRE(d.draw_pinned(a2, *a).has_value());
+  REQUIRE(d.draw_pinned(a3, *a).has_value());
+  REQUIRE(d.draw_pinned(b1, *b).has_value());
+  REQUIRE(d.draw_pinned(b2, *b).has_value());
+  d.flush();
+
+  // p= is scoped by image id. Both images start at 1; only the three
+  // simultaneous placements of A advance A's namespace. A global counter or
+  // a derivation that forgets the image predicate makes B start at 4.
+  REQUIRE(placement_ids_of(out, a->id) ==
+          std::set<std::uint32_t>{1, 2, 3});
+  REQUIRE(placement_ids_of(out, b->id) ==
+          std::set<std::uint32_t>{1, 2});
+
+  // Keep A's outer placements and both of B's. Collection must retire only
+  // A's middle p=2; unchanged survivors emit no fresh placement commands.
+  out.clear();
+  REQUIRE(d.draw_pinned(a1, *a).has_value());
+  REQUIRE(d.draw_pinned(a3, *a).has_value());
+  REQUIRE(d.draw_pinned(b1, *b).has_value());
+  REQUIRE(d.draw_pinned(b2, *b).has_value());
+  d.flush();
+  REQUIRE(placement_delete_ids_of(out, a->id) ==
+          std::set<std::uint32_t>{2});
+  CHECK(placement_delete_ids_of(out, b->id).empty());
+  CHECK(placement_ids_of(out, a->id).empty());
+  CHECK(placement_ids_of(out, b->id).empty());
+
+  // The map erase above returns p=2. A new A placement takes that exact hole,
+  // not 4 and never 0, while p=1 and p=3 remain live and untouched.
+  out.clear();
+  REQUIRE(d.draw_pinned(a1, *a).has_value());
+  REQUIRE(d.draw_pinned(a3, *a).has_value());
+  REQUIRE(d.draw_pinned(Rect{20, 0, 2, 2}, *a).has_value());
+  REQUIRE(d.draw_pinned(b1, *b).has_value());
+  REQUIRE(d.draw_pinned(b2, *b).has_value());
+  d.flush();
+  CHECK(placement_ids_of(out, a->id) == std::set<std::uint32_t>{2});
+  CHECK(placement_ids_of(out, b->id).empty());
+  CHECK(placement_delete_ids_of(out, a->id).empty());
+  CHECK(placement_delete_ids_of(out, b->id).empty());
 }
 
 // ── which free id, not merely a free one ────────────────────────────────────
