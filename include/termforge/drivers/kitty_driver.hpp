@@ -109,6 +109,10 @@ class KittyDriver final : public TerminalDriver {
       -> std::expected<PinnedImage, ErrorEvent> override;
   auto pin_image(const EncodedImage& image)
       -> std::expected<PinnedImage, ErrorEvent> override;
+  auto replace_pinned(PinnedImage image, const Image& frame)
+      -> std::expected<void, ErrorEvent> override;
+  auto replace_pinned(PinnedImage image, const EncodedImage& frame)
+      -> std::expected<void, ErrorEvent> override;
   auto unpin_image(PinnedImage image)
       -> std::expected<void, ErrorEvent> override;
   auto draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
@@ -213,6 +217,8 @@ class KittyDriver final : public TerminalDriver {
   // structural rather than a condition someone can delete.
   struct PinnedEntry {
     Extent px{};  // the declared extent -- what Exact is enforced against
+    int format_code{0};
+    std::uint64_t content_hash{0};
     // Monotonic per driver and NEVER reused, unlike the map key. Terminal-side
     // image ids are recycled inside the finite public budget, so
     // the key alone cannot tell "this handle's image" from "a later image that
@@ -267,6 +273,16 @@ class KittyDriver final : public TerminalDriver {
   auto pin_payload(std::span<const std::byte> payload, int format_code,
                    Extent px) -> std::expected<PinnedImage, ErrorEvent>;
 
+  // Replace the root frame of a pinned image through kitty's animation-frame
+  // edit action. Normal a=t retransmission under an existing id deletes that
+  // image's placements; a=f,r=1,X=1 updates the data while preserving them.
+  // Extent and wire format are immutable for a handle, and validation happens
+  // before this queues anything so refusal preserves the last good frame.
+  auto replace_payload(std::uint32_t id, PinnedEntry& entry,
+                       std::span<const std::byte> payload, int format_code,
+                       Extent px)
+      -> std::expected<void, ErrorEvent>;
+
   // The pinned entry `image` names, or a Warning saying which way it is
   // invalid. Both cases are real: a handle from another driver (a server runs
   // one per session) and a handle whose image was already unpinned.
@@ -286,6 +302,11 @@ class KittyDriver final : public TerminalDriver {
   // id replaces that image's data on the terminal.
   auto transmit(std::span<const std::byte> payload, int format_code, Extent px,
                 std::uint32_t id) -> void;
+
+  // Edit the existing root frame in place. This is data transmission, not an
+  // image delete/recreate and not a placement edit.
+  auto replace_root_frame(std::span<const std::byte> payload, int format_code,
+                          Extent px, std::uint32_t id) -> void;
 
   // Everything both public draw_image overloads share once the payload is in
   // hand: the placeholder clamp, byte attribution, slot keying and LRU, the

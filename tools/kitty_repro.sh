@@ -2,8 +2,8 @@
 # kitty_repro.sh — minimal standalone repros for the kitty graphics paths that
 # KittyDriver emits. Run inside a real kitty (>= 0.28) terminal:
 #
-#   ./tools/kitty_repro.sh          # all nine stanzas, with a pause between each
-#   ./tools/kitty_repro.sh 9        # ONLY stanza 9
+#   ./tools/kitty_repro.sh          # all ten stanzas, with a pause between each
+#   ./tools/kitty_repro.sh 10       # ONLY stanza 10
 #   ./tools/kitty_repro.sh 3 4      # a subset, in the order given
 #   ./tools/kitty_repro.sh --dump   # emit the wire bytes, touch no terminal
 #
@@ -36,6 +36,9 @@
 #      changing KittyDriver.
 #   9  #201 — clear a retired placeholder grid BEFORE same-frame replacement
 #      text, then reuse its id at a new rect. Self-contained.
+#  10  #196 — edit a pinned image's root frame with a=f,r=1,X=1 and verify
+#      that its existing classic placement refreshes without re-placement.
+#      Self-contained.
 #
 # All commands use q=0 so kitty REPORTS errors; every response the terminal
 # sends is captured and echoed in readable form. A response of "_Gi=42;OK"
@@ -50,9 +53,9 @@ stanzas=()
 for arg in "$@"; do
   case $arg in
     --dump) dump=1 ;;
-    [1-9]) stanzas+=("$arg") ;;
+    [1-9]|10) stanzas+=("$arg") ;;
     *)
-      echo "usage: $0 [--dump] [1-9]..." >&2
+      echo "usage: $0 [--dump] [1-9|10]..." >&2
       exit 2
       ;;
   esac
@@ -444,15 +447,33 @@ stanza_9() {
   say "2x2-cell block, and (c) whether any response contains ';E'."
 }
 
+stanza_10() {
+  say ""
+  say "== Stanza 10: #196 root-frame edit preserves a classic placement =="
+  say "A RED block appears. After the pause, a=f edits root frame 1 with"
+  say "simple replacement (X=1), with NO delete and NO second placement."
+  send "transmit(red)" \
+    "${ESC}_Ga=t,t=d,f=32,i=47,s=2,v=2,m=0,q=0;${red_b64}${ST}"
+  place_below "place(red)   " \
+    "${ESC}_Ga=p,i=47,p=1,c=2,r=2,C=1,q=0${ST}" 2
+  pause "Press Enter to replace the root frame with GREEN..."
+  send "frame(green) " \
+    "${ESC}_Ga=f,t=d,f=32,i=47,s=2,v=2,r=1,X=1,m=0,q=0;${green_b64}${ST}"
+  say "Report: (a) the existing block turned GREEN without a new placement,"
+  say "and (b) whether any response contains ';E'. A block that stays red or"
+  say "disappears is a failure, even if the frame command reports OK."
+}
+
 if (( ${#stanzas[@]} )); then
   run_all=0
   for n in "${stanzas[@]}"; do "stanza_$n"; done
 else
-  for n in 1 2 3 4 5 6 7 8 9; do "stanza_$n"; done
+  for n in 1 2 3 4 5 6 7 8 9 10; do "stanza_$n"; done
   say ""
   say "Report: (a) stanza 1 red block, (b) green after stanza 2, (c) stanza 3"
   say "blue block, (d) YELLOW block after stanza 4, (e) stanza 5 shows a"
   say "green 2x2 block, (f) stanza 6 as described above, (g) stanza 7's three"
   say "questions, (h) stanza 8's six labelled blocks, (i) any response"
-  say "containing ';E' (an error), (j) stanza 9's three requested results."
+  say "containing ';E' (an error), (j) stanza 9's three requested results,"
+  say "and (k) stanza 10's existing block turns green without re-placement."
 fi

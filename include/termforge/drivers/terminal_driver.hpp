@@ -267,9 +267,9 @@ class TerminalDriver {
   // A driver caches what it draws, keyed on the destination rect and bounded.
   // That is right for a dashboard and wrong for a sprite set: move a sprite one
   // cell and it is a new cache entry, a new upload, and an eviction of
-  // something else -- none of which the application can see. These four give an
-  // application the other lifetime: transmit once, place anywhere, release when
-  // it says so.
+  // something else -- none of which the application can see. These operations
+  // give an application the other lifetime: transmit once, place anywhere,
+  // release when it says so.
   //
   // NONE OF THEM IS PURE. Third-party drivers are an explicit extensibility
   // goal and a new pure virtual breaks every one of them on upgrade
@@ -319,6 +319,30 @@ class TerminalDriver {
     return std::unexpected{ErrorEvent{
         Severity::Warning, "driver",
         "pin_image: this tier cannot hold an image resident"}};
+  }
+
+  // Replace the pixels attached to a resident handle without changing its
+  // identity or its live placements. A tier may require the replacement to
+  // keep the original extent and format; if it cannot honour the request it
+  // returns a Warning and leaves the last successful frame resident.
+  //
+  // NON-PURE for the same compatibility reason as pin_image: an out-of-tree
+  // driver written before mutable resident images must keep compiling and
+  // answer honestly. Two overloads mirror pin_image and retain EncodedImage's
+  // borrowed-for-the-call, shipped-verbatim contract.
+  virtual auto replace_pinned(PinnedImage /*image*/, const Image& /*frame*/)
+      -> std::expected<void, ErrorEvent> {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "replace_pinned: this tier cannot replace a resident image"}};
+  }
+
+  virtual auto replace_pinned(PinnedImage /*image*/,
+                              const EncodedImage& /*frame*/)
+      -> std::expected<void, ErrorEvent> {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "replace_pinned: this tier cannot replace a resident image"}};
   }
 
   // Release a pinned image: the terminal frees the data and every placement of

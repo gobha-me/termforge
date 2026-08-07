@@ -32,6 +32,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <chrono>
 #include <memory>
 #include <expected>
@@ -54,10 +55,12 @@
 
 using namespace termforge;
 using tfsupport::data_deletes_of;
+using tfsupport::frame_updates_of;
 using tfsupport::ids_named;
 using tfsupport::placement_deletes_of;
 using tfsupport::placements_of;
 using tfsupport::total_transmits;
+using tfsupport::total_data_transmits;
 using tfsupport::transmits_of;
 
 namespace {
@@ -205,6 +208,44 @@ class SpriteApp final : public PixelApp {
   PinnedImage m_pin{};
   int m_refusals{0};
   PlateWidget m_dialog;  // a modal that draws nothing but occupies the stack
+};
+
+// #196's production shape: one logical framebuffer, one resident handle, new
+// opaque bytes every frame. The frame data is intentionally tiny while its
+// declared extent is the real 320x180 contract; PNG bytes are opaque to the
+// library and borrowed only for replace_pinned's call.
+class MutableSpriteApp final : public PixelApp {
+ public:
+  int pixel_calls{0};
+  int refusals{0};
+  [[nodiscard]] auto pin_id() const -> std::uint32_t { return m_pin.id; }
+
+  auto on_pixels(TerminalDriver& d) -> void override {
+    ++pixel_calls;
+    const std::array<std::byte, 6> bytes{
+        std::byte{0x89}, std::byte{'P'}, std::byte{'N'}, std::byte{'G'},
+        static_cast<std::byte>(m_frame & 0xFF),
+        static_cast<std::byte>((m_frame >> 8) & 0xFF)};
+    const EncodedImage frame{ImageFormat::Png, bytes, Extent{320, 180}};
+
+    if (!m_pin) {
+      const auto pinned = d.pin_image(frame);
+      if (!pinned) {
+        ++refusals;
+        return;
+      }
+      m_pin = *pinned;
+    } else if (!d.replace_pinned(m_pin, frame)) {
+      ++refusals;
+      return;
+    }
+    if (!d.draw_pinned(Rect{1, 1, 18, 6}, m_pin)) ++refusals;
+    ++m_frame;
+  }
+
+ private:
+  int m_frame{0};
+  PinnedImage m_pin{};
 };
 
 // The #108 counterpart to SpriteApp. Pinning is intentionally Kitty-only, so
@@ -510,6 +551,23 @@ TEST_CASE("app pixels: a sprite drawn from on_pixels is placed ONCE (#191)",
   CHECK(data_deletes_of(app.wire(), 1) == 0);
   CHECK(placement_deletes_of(app.wire(), app.pin_id()) == 0);
   CHECK(placements_of(app.wire(), app.pin_id()) == 1);
+}
+
+TEST_CASE("app pixels: mutable resident frames keep one id and placement (#196)",
+          "[apppixels][kitty][pinned][replacement]") {
+  MutableSpriteApp app;
+  app.run(60);
+
+  REQUIRE(app.pixel_calls == 60);
+  REQUIRE(app.refusals == 0);
+  CHECK(transmits_of(app.wire(), app.pin_id()) == 1);
+  CHECK(frame_updates_of(app.wire(), app.pin_id()) == 59);
+  // The widget plate is the other ordinary transmission in this production
+  // run; every mutable-frame payload is still under the one pinned id.
+  CHECK(total_data_transmits(app.wire()) == 61);
+  CHECK(placements_of(app.wire(), app.pin_id()) == 1);
+  CHECK(placement_deletes_of(app.wire(), app.pin_id()) == 0);
+  CHECK(data_deletes_of(app.wire(), app.pin_id()) == 0);
 }
 
 TEST_CASE("app pixels: an app whose ONLY images come from on_pixels is written",
