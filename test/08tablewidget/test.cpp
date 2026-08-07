@@ -372,7 +372,7 @@ TEST_CASE("TableWidget: BorderStyle::Ascii keeps the whole widget 7-bit",
   t.set_selected(0);
   t.draw(s);
 
-  REQUIRE(s.at(0, 1).text == ">");
+  REQUIRE(s.at(0, 1).text == "*");
   REQUIRE(t.gutter_cols() == 2);  // same geometry as the Unicode family
   for (int y = 0; y < 3; ++y) {
     for (int x = 0; x < 20; ++x) REQUIRE(all_seven_bit(s.at(x, y).text));

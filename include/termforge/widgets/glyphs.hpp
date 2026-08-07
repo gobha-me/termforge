@@ -146,9 +146,10 @@ struct MarkGlyphs {
   // › (U+2039/U+203A) rather than ◂ U+25C2 / ▸ U+25B8 because ▸ is already
   // `selector` above, and a TabBar paints both on the SAME row -- the same
   // glyph meaning "this tab is active" in one column and "there are more tabs"
-  // in another is a legend nobody can read. The ASCII forms < > do collide with
-  // selector's >, which is why #22's tests assert the marker by column rather
-  // than by searching the row.
+  // in another is a legend nobody can read. Ascii used to reinstate that
+  // collision with selector and arrow_right both ">"; #132 moved the Ascii
+  // selector to "*" so the overflow indicators keep the natural "< >" and the
+  // active mark stays distinct on the FallbackDriver tier where colour is gone.
   std::string_view arrow_left, arrow_right;
 
   // Every field once, so a sweep does not have to name them. See the
@@ -182,7 +183,7 @@ struct MarkGlyphs {
 inline constexpr MarkGlyphs kUnicodeMarks{"[", "]", "x", "(", ")", "•",
                                           "▾", "▸", "▴", "‹", "›"};
 inline constexpr MarkGlyphs kAsciiMarks{"[", "]", "x", "(", ")", "*",
-                                        "v", ">", "^", "<", ">"};
+                                        "v", "*", "^", "<", ">"};
 
 // All members are string_view, so the size is exactly the field count -- which
 // makes this the tripwire on all()'s hardcoded extent.

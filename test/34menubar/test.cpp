@@ -315,7 +315,7 @@ TEST_CASE("MenuBar: BorderStyle::Ascii keeps the bar row 7-bit",
   const Screen s = drawn(mb, 20);
 
   const auto [x, w] = active_run(s);
-  REQUIRE(s.at(x, 0).text == ">");  // by COLUMN: arrow_right is ">" here too
+  REQUIRE(s.at(x, 0).text == "*");  // selector; arrow_right stays ">"
   REQUIRE(all_seven_bit(row_text(s, 0)));
 }
 
