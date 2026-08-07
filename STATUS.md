@@ -6,9 +6,34 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-07, latest)
 
-**Latest release: v0.11.1 — ASCII selectors and right arrows are distinct.**
-#132 merged through PR #214; the release tag points at that reviewed squash
-commit.
+**Latest release: v0.11.2 — MenuBar colours state keyboard focus.** #155
+merged through PR #213; the release tag points at that reviewed squash commit.
+
+MenuBar now applies its active foreground/background only while focused, so an
+unfocused bar no longer looks like it owns Left/Right input. Its cell marker
+remains tied to `m_active`: a click-driven bar and FallbackDriver still show
+which title the cursor names even when the colour channel is absent. This is
+the same persistent-marker/transient-colour split as TabBar.
+
+`test/34menubar` covers the default unfocused frame, focus gain, blur, marker
+stability, identical row text, colour removal and both dirty redraw edges. The
+other MenuBar suites were audited for dependence on the old always-highlighted
+state. Restoring the old `is_active`-only colour condition makes the new case
+fail on its first unfocused assertion.
+
+**Verification:** GCC 14.2 and Clang 20.1 build all targets clean with
+`-Werror` and pass 53/53 tests; ASan also passes 53/53. This changes only cell
+styling and adds no terminal-protocol wire form, so no live-emulator gate
+applies.
+
+**Next: #196.** Replace mutable resident Kitty frame data under one stable
+image id; `PixelSurface` remains an ordinary per-frame region until that leaf
+and #197's producer-directed dirty submission land.
+
+## Previous release: v0.11.1 (#132)
+
+**ASCII selectors and right arrows are distinct.** #132 merged through PR
+#214; the release tag points at that reviewed squash commit.
 
 `MarkGlyphs::selector` is now `*` for `BorderStyle::Ascii`, while
 `arrow_right` remains the natural `>`. FallbackDriver users can therefore tell
@@ -22,10 +47,6 @@ collision makes that invariant test fail.
 **Verification:** GCC 14.2 and Clang 20.1 build all targets clean with
 `-Werror` and pass 53/53 tests; ASan also passes 53/53. This is a cell-glyph
 change with no terminal-protocol wire form, so no live-emulator gate applies.
-
-**Next: PR #213 / #155.** Finish reviewing the remaining pre-existing PR that
-gates MenuBar's active-title colours on focus. Once the old PR queue is empty,
-resume #196's stable Kitty image replacement work.
 
 ## Previous release: v0.11.0 (#195)
 

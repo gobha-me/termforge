@@ -333,17 +333,29 @@ TEST_CASE("MenuBar: unfocused, the marker stays and the focus colours go",
   drawn(mb, 20);
   mb.on_event(key(Key::Right));
 
-  mb.set_focused(false);
   const Screen cold = drawn(mb, 20);
   REQUIRE(active_run(cold).second == 0);  // no focus colours...
   REQUIRE(cold.at(4, 0).text == "▸");     // ...but the mark remains
+  REQUIRE_FALSE(mb.dirty());
 
   mb.set_focused(true);
+  REQUIRE(mb.dirty());
   const Screen hot = drawn(mb, 20);
   REQUIRE(active_run(hot) == std::pair{4, 6});
   REQUIRE(hot.at(4, 0).text == "▸");
   REQUIRE(row_text(cold, 0) == row_text(hot, 0));
   REQUIRE(cold.at(4, 0).bg != hot.at(4, 0).bg);
+
+  // Blur is the production direction that removes the focus channel. Pin the
+  // redraw edge as well as the resulting cells so an event-driven app cannot
+  // leave the old highlight behind.
+  REQUIRE_FALSE(mb.dirty());
+  mb.set_focused(false);
+  REQUIRE(mb.dirty());
+  const Screen cold_again = drawn(mb, 20);
+  REQUIRE(active_run(cold_again).second == 0);
+  REQUIRE(row_text(cold_again, 0) == row_text(cold, 0));
+  REQUIRE_FALSE(mb.dirty());
 }
 
 TEST_CASE("MenuBar: the active title survives a driver that drops colour",
