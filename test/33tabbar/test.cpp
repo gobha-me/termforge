@@ -15,9 +15,10 @@
 //   - every fixture calls set_focused(true), because the focus COLOURS are now
 //     a focused-only channel (the marker is not). The unfocused appearance has
 //     its own case rather than being the silent default of every other one.
-//   - the active marker is never asserted by searching the row for ">": under
-//     BorderStyle::Ascii, MarkGlyphs::arrow_right is ALSO ">" (see
-//     test/20formcontrols). Assert by column.
+//   - the active marker is asserted by column, never by searching the row:
+//     BorderStyle::Ascii deliberately distinguishes MarkGlyphs::selector "*"
+//     from MarkGlyphs::arrow_right ">" (see test/20formcontrols), and both can
+//     appear on the same strip.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -170,8 +171,8 @@ TEST_CASE("TabBar: one tab fills the strip and shows no indicator",
   const Screen s = drawn(t, 20);
   REQUIRE(t.active() == 0);
   REQUIRE(t.first_visible() == 0);
-  // ">Only " -- marker in the pad column, then the title, then the trailing pad.
-  REQUIRE(row_text(s, 0, 0, 6) == ">Only ");
+  // "*Only " -- marker in the pad column, then the title, then the trailing pad.
+  REQUIRE(row_text(s, 0, 0, 6) == "*Only ");
   // Nothing past the tab: no spurious overflow indicator from an off-by-one in
   // the two-pass rule.
   REQUIRE(row_text(s, 0, 6, 14) == std::string(14, ' '));
@@ -402,7 +403,7 @@ TEST_CASE("TabBar: a tab wider than the strip is truncated but still reachable",
   // Marker plus as much title as fits, and the last column still goes to the
   // overflow indicator -- there IS a tab past this one, and suppressing the
   // indicator because the first tab is greedy would hide it.
-  REQUIRE(row_text(s, 0, 0, 3) == ">Ga");
+  REQUIRE(row_text(s, 0, 0, 3) == "*Ga");
   REQUIRE(s.at(3, 0).text == ">");
 
   // Reaching a clipped tab that is NOT already active takes the wheel: at four
@@ -431,8 +432,9 @@ TEST_CASE("TabBar: a narrow strip never paints two indicators in one column",
   // leaves a column that scrolls in whichever direction the hit-test happens to
   // test first -- permanently one-directional, the unreachable-item class #85
   // closed. The rule is that '<' wins: it is the way back.
-  // Unicode style on purpose: under Ascii, ‹ and › are < and >, and > is ALSO
-  // the active marker, so a glyph-driven probe cannot tell the three apart.
+  // Unicode style on purpose: it lets a glyph-driven probe identify each
+  // indicator directly without coupling this collision test to the separate
+  // Ascii selector/arrow distinction.
   for (const int w : {1, 2, 3, 4, 12}) {
     for (const bool at_end : {false, true}) {
       TabBar t{kTitles};
@@ -476,8 +478,7 @@ TEST_CASE("TabBar: a narrow strip still paints the tab it is scrolled to",
   // content column for itself: the tab at the offset is painted CLIPPED, not
   // dropped, or the offset points at something neither visible nor clickable
   // and the strip is dead at that width. Asserted through the highlight rather
-  // than the glyph, because under Ascii the marker and the › indicator are both
-  // ">" and a glyph compare would pass for the wrong reason.
+  // than the glyph because visibility, not marker choice, is the contract here.
   for (const int w : {1, 2, 3}) {
     TabBar t{kTitles};
     t.set_geometry({0, 0, w, 1});

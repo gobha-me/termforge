@@ -6,9 +6,31 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-07, latest)
 
-**Latest release: v0.11.0 — PixelSurface is the persistent software-framebuffer
-widget.** #195 merged through PR #220; the release tag points at that reviewed
-squash commit.
+**Latest release: v0.11.1 — ASCII selectors and right arrows are distinct.**
+#132 merged through PR #214; the release tag points at that reviewed squash
+commit.
+
+`MarkGlyphs::selector` is now `*` for `BorderStyle::Ascii`, while
+`arrow_right` remains the natural `>`. FallbackDriver users can therefore tell
+an active ListWidget, TableWidget, Select, MenuBar or TabBar item from a TabBar
+right-overflow indicator without relying on colour that tier does not render.
+The shared glyph-table assertion pins both spellings and their inequality;
+every affected widget fixture pins the resulting appearance, including a
+TabBar row that can carry the selector and arrow at once. Restoring the old
+collision makes that invariant test fail.
+
+**Verification:** GCC 14.2 and Clang 20.1 build all targets clean with
+`-Werror` and pass 53/53 tests; ASan also passes 53/53. This is a cell-glyph
+change with no terminal-protocol wire form, so no live-emulator gate applies.
+
+**Next: PR #213 / #155.** Finish reviewing the remaining pre-existing PR that
+gates MenuBar's active-title colours on focus. Once the old PR queue is empty,
+resume #196's stable Kitty image replacement work.
+
+## Previous release: v0.11.0 (#195)
+
+**PixelSurface is the persistent software-framebuffer widget.** #195 merged
+through PR #220; the release tag points at that reviewed squash commit.
 
 `PixelSurface` owns one fixed-resolution RGBA `Image`, exposes mutable pixel and
 Image access without exposing the vector's shape, resizes storage only through
@@ -32,10 +54,6 @@ targets clean with `-Werror` and pass 53/53 tests; ASan+UBSan also passes 53/53.
 `tools/consume/run.sh` passes `subdir`, `install`, and `vendored` with Clang.
 The change composes existing image encodings and adds no terminal-protocol wire
 form, so no live-emulator gate applies.
-
-**Next: #196.** Replace mutable resident Kitty frame data under one stable
-image id; `PixelSurface` remains an ordinary per-frame region until that leaf
-and #197's producer-directed dirty submission land.
 
 ## Previous release: v0.10.3 (#200)
 
