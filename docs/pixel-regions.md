@@ -549,7 +549,7 @@ everything". An unpinned region has to retransmit after a mode switch because
 `d=I` discarded what it would have reused; a pinned one has nothing to
 retransmit because nothing was discarded.
 
-### The budget is 239 images, as a compatibility policy
+### The budget is 256 images, as a compatibility policy
 
 Not terminal memory — the terminal's real capacity is unknowable under `q=2`
 with no response reader, and reporting it is #112's job. The original ceiling
@@ -559,17 +559,18 @@ With the correct U+10EEEE placeholder, both `38;5` and `38;2` render, including
 an image id of 300. The previous runs used U+10FEEE, so their blank output said
 nothing about the colour encoding.
 
-The shipped finite budget remains until capacity and accounting get a
-deliberate contract rather than an arbitrary larger constant (#205, #112). Ids
-currently come from two pools inside `[1, 255]`: regions allocate upward from
-1; pins allocate downward from 255, giving
-`KittyDriver::kMaxPinnedImages == 239`.
+#205 gives that finite policy a concrete contract: the flagship tier guarantees
+256 pinned images. That covers GLOAM's frozen 246-image art inventory with ten
+slots of headroom without claiming to know the terminal's byte capacity; byte
+accounting remains #112. Ids come from two adjacent pools: regions allocate
+upward in `[1, 16]`; pins allocate downward in `[17, 272]`, giving
+`KittyDriver::kMaxPinnedImages == 256`.
 
 **The pools are disjoint by construction, and neither allocator reads the
 other's map** (#190). Both *derive* a free id from their own live map rather
 than tracking one beside it: `region_slot` takes the smallest id in
 `[1, kMaxRegionSlots]` that no live region holds, `pin_payload` the largest in
-`[kFirstPinnedImageId, 255]` that no resident image holds. A `static_assert`
+`[kFirstPinnedImageId, 272]` that no resident image holds. A `static_assert`
 orders the two ranges. So a region id cannot reach the pin range — not because
 each side checks, but because there is no value in the pin range a region can
 name.
@@ -591,7 +592,7 @@ no content hash to compare against. **The byte answer for motion is
 `pin_image`**: `draw_pinned` allocates no image id at all, which is exactly why
 #109 exists.
 
-`pin_image` refuses when all 239 **resident slots** are in use, and only then —
+`pin_image` refuses when all 256 **resident slots** are in use, and only then —
 unpinned regions cannot contribute to that. Deriving from the live map also
 means a pin/unpin cycle cannot walk the budget off its end, and there is no
 second container to disagree with the first.
@@ -611,10 +612,10 @@ a monotonic `serial`. All three are load-bearing:
 
 ### What this does not deliver
 
-**More than 239 resident images.** #199 established that placeholder encoding
-does not impose that ceiling either, but it did not invent a terminal-memory
-capacity or change an existing public limit. The capacity decision is #205,
-residency accounting is #112, and a caller-owned id range is #110.
+**More than 256 resident images.** The fixed compatibility floor is an
+application-visible guarantee, not a terminal-memory measurement. Raising it
+again or making it configurable belongs with residency accounting in #112; a
+caller-owned id range remains #110.
 
 **Two live placements of one pinned image under `UnicodePlaceholders`.** A
 placeholder cell encodes the image id and no placement id, so two of them are

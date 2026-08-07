@@ -16,11 +16,11 @@
 // one — so ids stay inside the driver's current compatibility budget.
 //
 // Ids come from two pools and the split is the id budget (#109). Regions
-// allocate upward from 1 and pinned images take the rest of the configured
-// range (kFirstPinnedImageId..255). THE POOLS ARE DISJOINT BY CONSTRUCTION
-// (#190): each allocator DERIVES a free id from its own live map — region_slot
-// walks up from 1 and stops at kMaxRegionSlots, pin_payload walks down from
-// 255 and stops at kFirstPinnedImageId — and the static_assert in the .cpp
+// allocate upward from 1 and pinned images take the configured range beginning
+// at kFirstPinnedImageId. THE POOLS ARE DISJOINT BY CONSTRUCTION (#190): each
+// allocator DERIVES a free id from its own live map — region_slot walks up from
+// 1 and stops at kMaxRegionSlots, pin_payload walks down from the configured
+// ceiling and stops at kFirstPinnedImageId — and the static_assert in the .cpp
 // orders the two ranges. So neither allocator reads the other's map; there is
 // nothing to step over. Before #190 the region side was a monotonic counter
 // that never gave a collected id back, a region that MOVED cost an id per
@@ -126,13 +126,13 @@ class KittyDriver final : public TerminalDriver {
   // This is a compatibility budget, not measured terminal memory. #199 proved
   // that the placeholder path's 24-bit SGR form works, including for id 300;
   // the old 255 protocol ceiling was a misdiagnosis of the wrong codepoint.
-  // Keep the shipped finite budget until capacity gets its own contract (#205,
-  // with accounting in #112), rather than silently turning an explicit public
-  // limit into an arbitrary larger one. Region ids occupy 1..kMaxRegionSlots
-  // by construction (#190), leaving everything above them in this budget for
-  // pins.
+  // #205 deliberately sets a 256-image floor: it covers GLOAM's frozen
+  // 246-image inventory with ten slots of headroom while keeping the policy
+  // finite and queryable. Terminal-side byte accounting remains #112. Region
+  // ids occupy 1..kMaxRegionSlots by construction (#190), leaving this whole
+  // adjacent range for pins.
   static constexpr std::uint32_t kFirstPinnedImageId = 17;
-  static constexpr std::size_t kMaxPinnedImages = 255 - kFirstPinnedImageId + 1;
+  static constexpr std::size_t kMaxPinnedImages = 256;
   // The flagship tier is the only one with an opaque-payload channel.
   [[nodiscard]] auto supports_image_format(ImageFormat f) const noexcept
       -> bool override;
@@ -358,9 +358,8 @@ class KittyDriver final : public TerminalDriver {
   //
   // Ids <= 255 use the compact 38;5 form; larger ids use the protocol's 38;2
   // form. #199 verified both on real kitty with U+10EEEE, including id 300.
-  // The driver's allocators currently stay <= 255 as a separate compatibility
-  // budget (see kMaxPinnedImages), so the larger branch totalizes this helper
-  // for its full uint32_t parameter rather than expanding allocator capacity.
+  // #205 made ids 256..272 reachable from the pinned-image allocator, so both
+  // branches are now part of the public 256-image compatibility budget.
   auto emit_id_as_sgr(std::uint32_t id) -> void;
 
   // Append a Unicode placeholder cell (U+10EEEE + diacritics) to m_buf.
