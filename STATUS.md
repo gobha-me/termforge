@@ -7,7 +7,7 @@ which holds standing conventions, not state).
 ## Where we are (2026-08-07, latest)
 
 **Latest release: v0.11.0 — PixelSurface is the persistent software-framebuffer
-widget.** #195 merged through its reviewed PR; the release tag points at that
+widget.** #195 merged through PR #220; the release tag points at that reviewed
 squash commit.
 
 `PixelSurface` owns one fixed-resolution RGBA `Image`, exposes mutable pixel and
