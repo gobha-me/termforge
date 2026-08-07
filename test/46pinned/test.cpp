@@ -28,6 +28,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -72,11 +73,13 @@ auto art(int seed) -> Image {
 // d=I (data) is a different counter from d=i (one placement) because telling
 // those apart is the whole of this suite's subject.
 using tfsupport::data_deletes_of;
+using tfsupport::frame_updates_of;
 using tfsupport::ids_named;
 using tfsupport::placement_deletes_of;
 using tfsupport::placement_ids_of;
 using tfsupport::placements_of;
 using tfsupport::total_transmits;
+using tfsupport::total_data_transmits;
 using tfsupport::transmits_of;
 
 // Every cursor-positioning CSI in emission order, as (col, row) ONE-BASED --
@@ -102,6 +105,169 @@ auto cursor_moves(std::string_view out) -> std::vector<std::pair<int, int>> {
 }
 
 }  // namespace
+
+// ── mutable resident frames (#196) ─────────────────────────────────────────
+
+TEST_CASE("pinned: 1800 changed frames replace one root without re-placement",
+          "[pinned][kitty][replacement]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  constexpr Extent pixels{320, 180};
+  constexpr Rect cells{2, 1, 40, 18};
+  auto bytes_for = [](int frame) {
+    return std::array<std::byte, 8>{
+        std::byte{0x89}, std::byte{'P'}, std::byte{'N'}, std::byte{'G'},
+        static_cast<std::byte>(frame & 0xFF),
+        static_cast<std::byte>((frame >> 8) & 0xFF), std::byte{0x0D},
+        std::byte{0x0A}};
+  };
+
+  auto bytes = bytes_for(0);
+  std::vector<std::byte> expected(bytes.begin(), bytes.end());
+  expected.reserve(1800 * bytes.size());
+  const auto pinned =
+      d.pin_image(EncodedImage{ImageFormat::Png, bytes, pixels});
+  REQUIRE(pinned.has_value());
+  REQUIRE(d.draw_pinned(cells, *pinned).has_value());
+  d.flush();
+
+  int failed_frame = -1;
+  for (int frame = 1; frame < 1800; ++frame) {
+    bytes = bytes_for(frame);
+    expected.insert(expected.end(), bytes.begin(), bytes.end());
+    if (!d.replace_pinned(
+            *pinned, EncodedImage{ImageFormat::Png, bytes, pixels})) {
+      failed_frame = frame;
+      break;
+    }
+    if (!d.draw_pinned(cells, *pinned)) {
+      failed_frame = frame;
+      break;
+    }
+    d.flush();
+  }
+  CAPTURE(failed_frame);
+  REQUIRE(failed_frame == -1);
+
+  CHECK(ids_named(out) == std::set<std::uint32_t>{pinned->id});
+  CHECK(transmits_of(out, pinned->id) == 1);
+  CHECK(frame_updates_of(out, pinned->id) == 1799);
+  CHECK(total_data_transmits(out) == 1800);
+  CHECK(placements_of(out, pinned->id) == 1);
+  CHECK(placement_deletes_of(out, pinned->id) == 0);
+  CHECK(data_deletes_of(out, pinned->id) == 0);
+  CHECK(tfsupport::reassemble(out) == expected);
+
+  const auto commands = tfsupport::apcs(out);
+  const auto update =
+      std::find_if(commands.begin(), commands.end(), [](const auto& c) {
+        return tfsupport::key_value(c, "a") == "f";
+      });
+  REQUIRE(update != commands.end());
+  CHECK(tfsupport::key_value(*update, "r") == "1");
+  CHECK(tfsupport::key_value(*update, "X") == "1");
+  CHECK(tfsupport::key_value(*update, "f") == "100");
+  CHECK(tfsupport::key_value(*update, "s") == "320");
+  CHECK(tfsupport::key_value(*update, "v") == "180");
+
+  REQUIRE(d.unpin_image(*pinned).has_value());
+  d.flush();
+  CHECK(data_deletes_of(out, pinned->id) == 1);
+  CHECK(placement_deletes_of(out, pinned->id) == 0);
+}
+
+TEST_CASE("pinned: a chunked root replacement reassembles verbatim",
+          "[pinned][kitty][replacement][encoded]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  std::vector<std::byte> first(5000, std::byte{0x11});
+  std::vector<std::byte> second(5000, std::byte{0xE7});
+  const auto pinned = d.pin_image(
+      EncodedImage{ImageFormat::Png, first, Extent{320, 180}});
+  REQUIRE(pinned.has_value());
+  REQUIRE(d.replace_pinned(
+               *pinned,
+               EncodedImage{ImageFormat::Png, second, Extent{320, 180}})
+              .has_value());
+  d.flush();
+
+  first.insert(first.end(), second.begin(), second.end());
+  CHECK(tfsupport::reassemble(out) == first);
+  CHECK(frame_updates_of(out, pinned->id) == 1);
+  CHECK(tfsupport::count_of(out, "\033_Gm=") >= 2);
+}
+
+TEST_CASE("pinned: replacement refusal preserves the last queued frame",
+          "[pinned][kitty][replacement][failure]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const auto pinned = d.pin_image(art(2));
+  REQUIRE(pinned.has_value());
+  d.flush();
+  out.clear();
+
+  const Image changed = art(3);
+  REQUIRE(d.replace_pinned(*pinned, changed).has_value());
+  d.flush();
+  CHECK(frame_updates_of(out, pinned->id) == 1);
+  CHECK(d.last_frame_bytes().image_transmit > 0);
+  CHECK(d.last_frame_bytes().image_edit == 0);
+
+  const auto wrong_extent = d.replace_pinned(
+      *pinned, tfsupport::solid(3, 2, Pixel{1, 2, 3, 255}));
+  REQUIRE_FALSE(wrong_extent.has_value());
+  CHECK(wrong_extent.error().severity == Severity::Warning);
+  CHECK(wrong_extent.error().message ==
+        "replace_pinned: extent must remain 2x2 (got 3x2)");
+
+  const std::array<std::byte, 4> png{std::byte{1}, std::byte{2}, std::byte{3},
+                                     std::byte{4}};
+  const auto wrong_format = d.replace_pinned(
+      *pinned, EncodedImage{ImageFormat::Png, png, Extent{2, 2}});
+  REQUIRE_FALSE(wrong_format.has_value());
+  CHECK(wrong_format.error().message ==
+        "replace_pinned: image format must remain f=32 (got f=100)");
+
+  d.flush();
+  CHECK(frame_updates_of(out, pinned->id) == 1);  // refusals emitted nothing
+  REQUIRE(d.replace_pinned(*pinned, changed).has_value());
+  d.flush();
+  CHECK(frame_updates_of(out, pinned->id) == 1);  // last good hash survived
+  CHECK(d.last_frame_bytes().total() == 0);       // identical frame is a no-op
+}
+
+TEST_CASE("pinned: replacement rejects empty, foreign, and stale handles",
+          "[pinned][kitty][replacement][failure]") {
+  KittyDriver a;
+  KittyDriver b;
+  std::string a_out;
+  std::string b_out;
+  a.set_output(&a_out);
+  b.set_output(&b_out);
+  const auto pinned = a.pin_image(art(4));
+  REQUIRE(pinned.has_value());
+
+  const auto empty = b.replace_pinned(PinnedImage{}, art(5));
+  REQUIRE_FALSE(empty.has_value());
+  CHECK(empty.error().message ==
+        "replace_pinned: handle is empty -- it was never returned by pin_image");
+  const auto foreign = b.replace_pinned(*pinned, art(5));
+  REQUIRE_FALSE(foreign.has_value());
+  CHECK(foreign.error().message.find(
+            "replace_pinned: handle was issued by a different driver") == 0);
+
+  REQUIRE(a.unpin_image(*pinned).has_value());
+  const auto stale = a.replace_pinned(*pinned, art(5));
+  REQUIRE_FALSE(stale.has_value());
+  CHECK(stale.error().message ==
+        "replace_pinned: handle is stale -- the image was already unpinned");
+}
 
 // ── the acceptance test (#109) ──────────────────────────────────────────────
 
@@ -738,6 +904,18 @@ TEST_CASE("pinned: a driver that never heard of pinning refuses honestly",
   REQUIRE_FALSE(p2.has_value());
   CHECK(p2.error().message ==
         "pin_image: this tier cannot hold an image resident");
+
+  const auto r1 =
+      base.replace_pinned(PinnedImage{1, 1}, Image{1, 1, {Pixel{}}});
+  REQUIRE_FALSE(r1.has_value());
+  CHECK(r1.error().message ==
+        "replace_pinned: this tier cannot replace a resident image");
+  const auto r2 = base.replace_pinned(
+      PinnedImage{1, 1},
+      EncodedImage{ImageFormat::Rgba32, bytes, Extent{1, 1}});
+  REQUIRE_FALSE(r2.has_value());
+  CHECK(r2.error().message ==
+        "replace_pinned: this tier cannot replace a resident image");
 
   // The two-argument convenience is non-virtual and delegates, so it produces
   // the THREE-argument message — which is what proves the delegation runs.

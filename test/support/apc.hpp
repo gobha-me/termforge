@@ -55,18 +55,6 @@ inline auto apcs(std::string_view out) -> std::vector<Apc> {
   return found;
 }
 
-// The transmit chunks only: a=t opens a transmission, and the continuation
-// chunks that follow carry m= and nothing else.
-inline auto transmit_chunks(const std::vector<Apc>& all) -> std::vector<Apc> {
-  std::vector<Apc> out;
-  for (const Apc& a : all) {
-    const bool opener = a.keys.find("a=t") != std::string::npos;
-    const bool continuation = a.has_payload && a.keys.starts_with("m=");
-    if (opener || continuation) out.push_back(a);
-  }
-  return out;
-}
-
 // The placement commands only (#137). A placement is `a=p`; every other APC in
 // the stream is a transmit, a delete, or a continuation chunk.
 inline auto placements(std::string_view out) -> std::vector<Apc> {
@@ -107,6 +95,21 @@ inline auto key_value(const Apc& a, std::string_view key) -> std::string {
   return {};
 }
 
+// The payload chunks only: a=t opens an image transmission, a=f opens an
+// animation-frame edit, and the continuation chunks that follow carry m= and
+// nothing else. Parse a= as a key rather than depending on its position: key
+// ordering is not part of the wire contract.
+inline auto transmit_chunks(const std::vector<Apc>& all) -> std::vector<Apc> {
+  std::vector<Apc> out;
+  for (const Apc& a : all) {
+    const std::string action = key_value(a, "a");
+    const bool opener = action == "t" || action == "f";
+    const bool continuation = a.has_payload && a.keys.starts_with("m=");
+    if (opener || continuation) out.push_back(a);
+  }
+  return out;
+}
+
 // Independent base64 DECODER, deliberately not detail::base64_encode run
 // backwards. Asserting that the emitted payload equals base64_encode(input)
 // would put the driver and the test on the same side of the same function; a
@@ -140,7 +143,7 @@ inline auto b64_decode(std::string_view s) -> std::vector<std::byte> {
 
 // The payloads the terminal reassembles, in order, concatenated.
 //
-// Decoded PER TRANSMISSION, not over one joined string: each a=t opens an
+// Decoded PER TRANSMISSION, not over one joined string: each a=t/a=f opens an
 // independent base64 stream with its own padding, so running two of them
 // together through one decoder shifts everything after the first stream's
 // pad by a couple of bits. That is a bug in this helper's arithmetic, not in
@@ -155,7 +158,8 @@ inline auto reassemble(std::string_view out) -> std::vector<std::byte> {
     stream.clear();
   };
   for (const Apc& a : transmit_chunks(apcs(out))) {
-    if (a.keys.find("a=t") != std::string::npos) finish();  // a new upload
+    const std::string action = key_value(a, "a");
+    if (action == "t" || action == "f") finish();  // a new upload
     stream += a.payload;
   }
   finish();
@@ -200,6 +204,9 @@ inline auto cmds_of(std::string_view out, std::string_view a, std::string_view d
 inline auto transmits_of(std::string_view out, std::uint32_t id) -> int {
   return cmds_of(out, "t", "", id);
 }
+inline auto frame_updates_of(std::string_view out, std::uint32_t id) -> int {
+  return cmds_of(out, "f", "", id);
+}
 inline auto data_deletes_of(std::string_view out, std::uint32_t id) -> int {
   return cmds_of(out, "d", "I", id);
 }
@@ -232,6 +239,17 @@ inline auto total_transmits(std::string_view out) -> int {
   int n = 0;
   for (const Apc& c : apcs(out))
     if (key_value(c, "a") == "t") ++n;
+  return n;
+}
+
+// Initial image transmissions plus root-frame updates: every command that
+// carries a new data payload, counted once at its opener.
+inline auto total_data_transmits(std::string_view out) -> int {
+  int n = 0;
+  for (const Apc& c : apcs(out)) {
+    const std::string action = key_value(c, "a");
+    if (action == "t" || action == "f") ++n;
+  }
   return n;
 }
 

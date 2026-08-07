@@ -576,6 +576,8 @@ it likes, and releases when it says so.
 ```cpp
 auto pin_image(const Image&) -> std::expected<PinnedImage, ErrorEvent>;
 auto pin_image(const EncodedImage&) -> std::expected<PinnedImage, ErrorEvent>;
+auto replace_pinned(PinnedImage, const Image&) -> std::expected<void, ErrorEvent>;
+auto replace_pinned(PinnedImage, const EncodedImage&) -> std::expected<void, ErrorEvent>;
 auto draw_pinned(Rect cells, PinnedImage, PlacementFit) -> std::expected<...>;
 auto draw_pinned(Rect cells, PinnedImage) -> std::expected<...>;  // Stretch
 auto unpin_image(PinnedImage) -> std::expected<void, ErrorEvent>;
@@ -585,6 +587,28 @@ auto unpin_image(PinnedImage) -> std::expected<void, ErrorEvent>;
 `max_pinned_images()` is the capability query *and* the budget: a tier that
 cannot pin answers 0, so there is no `supports_pinning()` that could disagree
 with what `pin_image` actually does. Ask before committing to an art set.
+
+### Mutable content keeps the handle and placement (#196)
+
+`replace_pinned` changes the data attached to a handle without allocating a
+new image id or recreating its live placements. On Kitty this is not an
+ordinary retransmit: `a=t` under an existing id replaces the image itself and
+invalidates its placements. The driver instead edits the existing root frame
+with `a=f,r=1,X=1`, a full-canvas simple replacement. The initial
+`pin_image` remains the only `a=t`; each changed frame is one `a=f` under the
+same id, and `draw_pinned` continues to touch the same placement each frame.
+Those keys are the protocol's documented animation-frame edit path:
+<https://sw.kovidgoyal.net/kitty/graphics-protocol/#animation>.
+
+The handle's declared extent and wire format are immutable. A mismatch returns
+a `Warning` before any bytes or bookkeeping change, leaving the last
+successfully queued frame resident. An identical payload is a no-op. The raw
+and encoded overloads retain their existing contracts: RGBA length is
+validated, while PNG is opaque, unparsed, and shipped verbatim.
+
+The replacement edits content lifetime only. Placement lifetime remains the
+separate rule below: omit `draw_pinned` for a frame and normal collection may
+retire that placement while the image data and handle remain resident.
 
 ### The image's lifetime and the placement's lifetime are separate
 
@@ -681,9 +705,11 @@ are two ids — so pinning is what owes the refusal, and it refuses with a
 **Residency accounting.** How many bytes the terminal is holding, and how close
 to its limit, is #112.
 
-**Deduplication.** Two `pin_image` calls on identical pixels are two handles,
-two ids and two uploads. Collapsing them would make `unpin_image` a refcount
-question this API does not ask.
+**Deduplication between handles.** Two `pin_image` calls on identical pixels
+are two handles, two ids and two uploads. Collapsing them would make
+`unpin_image` a refcount question this API does not ask. Within one handle,
+`replace_pinned` does suppress an identical frame because its identity and
+lifetime are already explicit.
 
 ## Interaction with Diff Rendering
 

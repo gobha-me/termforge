@@ -6,7 +6,36 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-07, latest)
 
-**Latest release: v0.11.2 — MenuBar colours state keyboard focus.** #155
+**Next release candidate: v0.12.0 — mutable resident Kitty frames.** #196 is
+implemented on `feat/196-stable-pinned-replacement`, pending the real-emulator
+protocol gate before merge and release.
+
+`TerminalDriver` now offers non-pure raw and encoded `replace_pinned`
+overloads. Kitty keeps the handle's image id and placement stable by editing
+root frame 1 with `a=f,r=1,X=1`; it never uses ordinary same-id retransmission,
+which would invalidate the placements. Extent and wire format remain immutable
+per handle, malformed/stale/foreign requests return `Warning`, and every
+synchronous refusal leaves both the wire buffer and last-good content hash
+unchanged. Identical frames are suppressed.
+
+The direct offline acceptance case submits 1,800 distinct declared 320x180
+frames: one id, one initial `a=t`, 1,799 `a=f` updates, one placement, no delete
+until explicit unpin, verbatim reassembly, and bounded bookkeeping. A second
+case covers chunk continuation, and `test/48apppixels` observes the same stable
+id/placement through App's injected real `frame_step` path. Replacing `a=f`
+with `a=t` makes both suites fail.
+
+**Verification so far:** GCC 14.2, Clang 20.1 and ASan/UBSan build all targets
+clean and pass 53/53 tests. Clang consumption passes `subdir`, `install`, and
+`vendored`. `tools/kitty_repro.sh 10` is the isolated live check; its `--dump`
+form emits exactly one transmit, one placement, and one root-frame edit. A
+human still has to confirm the existing red placement turns green without an
+error on the required emulator matrix before this terminal-protocol change can
+merge.
+
+## Previous release: v0.11.2 (#155)
+
+**MenuBar colours state keyboard focus.** #155
 merged through PR #213; the release tag points at that reviewed squash commit.
 
 MenuBar now applies its active foreground/background only while focused, so an
@@ -25,10 +54,6 @@ fail on its first unfocused assertion.
 `-Werror` and pass 53/53 tests; ASan also passes 53/53. This changes only cell
 styling and adds no terminal-protocol wire form, so no live-emulator gate
 applies.
-
-**Next: #196.** Replace mutable resident Kitty frame data under one stable
-image id; `PixelSurface` remains an ordinary per-frame region until that leaf
-and #197's producer-directed dirty submission land.
 
 ## Previous release: v0.11.1 (#132)
 

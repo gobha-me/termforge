@@ -138,6 +138,13 @@ file is the tactical version.
   not own the image it shows and must take the second. Reaching for `d=I` on a
   structure that does not own its image deletes a stranger's data — and does it
   silently, because `q=2` means the terminal's objection reaches nobody.
+- **Mutable resident content edits the root frame; it does not retransmit the
+  image** (#196). A normal `a=t` under an existing id invalidates the image's
+  placements, so `replace_pinned` uses `a=f,r=1,X=1` to replace root-frame data
+  under the stable id. Extent and wire format are immutable for the handle: a
+  mismatch is a `Warning` emitted before wire or hash state changes, preserving
+  the last successful frame. The payload remains subject to the same raw-length
+  and opaque-encoded rules as `pin_image`.
 - **Raw mode is RAII** — `Terminal` restores termios on destruction. Never
   leave the terminal in raw mode on any exit path, **including one an exception
   takes**: a destructor is not a guarantee (an exception escaping `main`

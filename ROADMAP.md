@@ -142,7 +142,9 @@ completed items.
   AVX2 multiversioning, runtime dispatch. Benchmark before/after.
 
 - [ ] **6.3 — KittyDriver animation**
-  Frame-based animation via image ID replacement. `std::jthread`.
+  #196 provides client-driven root-frame replacement under one pinned image id
+  while preserving placements. Terminal-driven frame sequencing and
+  `std::jthread` remain.
 
 - [ ] **6.4 — Doxygen docs + custom-driver guide**
 

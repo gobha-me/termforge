@@ -183,6 +183,35 @@ auto payload_hash(std::span<const std::byte> payload, Extent px,
   return hash == 0 ? 1 : hash;
 }
 
+// Both ordinary image transmission and root-frame replacement have identical
+// base64/chunk framing. Only the first APC's control keys differ. Keeping the
+// continuation path here means the protocol's multiple-of-four invariant
+// cannot drift between immutable and mutable resident images.
+template <typename FirstChunk>
+auto append_chunked(std::string& out, std::span<const std::byte> payload,
+                    FirstChunk first_chunk) -> void {
+  const std::string b64 = detail::base64_encode(payload);
+  constexpr std::size_t kChunkSize = 4096;
+  static_assert(kChunkSize % 4 == 0,
+                "kitty requires non-final chunk sizes to be a multiple of 4");
+
+  std::size_t offset = 0;
+  bool first = true;
+  while (offset < b64.size() || first) {
+    const auto chunk = b64.substr(offset, kChunkSize);
+    const bool more = (offset + kChunkSize) < b64.size();
+    if (first) {
+      first_chunk(chunk, more);
+      first = false;
+    } else {
+      // Continuation chunks carry only m= and the payload. Repeating the
+      // opener's f=/s=/v= keys starts a different operation on the terminal.
+      out += std::format("\033_Gm={};{}\033\\", more ? 1 : 0, chunk);
+    }
+    offset += kChunkSize;
+  }
+}
+
 // kitty f= values. Only these two exist here: the library encodes nothing, so
 // a format is only supportable if the application can hand us bytes already
 // in it (#163).
@@ -581,8 +610,69 @@ auto KittyDriver::pin_payload(std::span<const std::byte> payload,
   tally_image_transmit(m_buf.size() - before);
 
   const std::uint32_t serial = ++m_next_pin_serial;
-  m_pinned.emplace(id, PinnedEntry{px, serial, 0, 0});
+  m_pinned.emplace(id, PinnedEntry{.px = px,
+                                   .format_code = format_code,
+                                   .content_hash =
+                                       payload_hash(payload, px, format_code),
+                                   .serial = serial});
   return PinnedImage{id, instance_token(), serial};
+}
+
+auto KittyDriver::replace_pinned(PinnedImage image, const Image& frame)
+    -> std::expected<void, ErrorEvent> {
+  auto entry = resolve_pin(image, "replace_pinned");
+  if (!entry) return std::unexpected{entry.error()};
+  if (frame.empty()) {
+    return std::unexpected{
+        ErrorEvent{Severity::Warning, "kitty", "replace_pinned: empty image"}};
+  }
+  return replace_payload(image.id, **entry, std::as_bytes(frame.pixels()),
+                         kFormatRgba32,
+                         Extent{frame.width(), frame.height()});
+}
+
+auto KittyDriver::replace_pinned(PinnedImage image, const EncodedImage& frame)
+    -> std::expected<void, ErrorEvent> {
+  auto entry = resolve_pin(image, "replace_pinned");
+  if (!entry) return std::unexpected{entry.error()};
+  if (auto ok =
+          detail::validate_payload(frame, *this, "kitty", "replace_pinned");
+      !ok) {
+    return std::unexpected{ok.error()};
+  }
+  return replace_payload(image.id, **entry, frame.bytes,
+                         wire_format(frame.format), frame.pixels);
+}
+
+auto KittyDriver::replace_payload(std::uint32_t id, PinnedEntry& entry,
+                                  std::span<const std::byte> payload,
+                                  int format_code, Extent px)
+    -> std::expected<void, ErrorEvent> {
+  // Root-frame editing composes into the image's existing canvas. Making
+  // either property mutable would require an explicit delete/recreate policy,
+  // which would invalidate the very placements this operation promises to
+  // preserve. Refuse before queuing bytes or changing the remembered hash.
+  if (entry.px != px) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        std::format("replace_pinned: extent must remain {}x{} (got {}x{})",
+                    entry.px.w, entry.px.h, px.w, px.h)}};
+  }
+  if (entry.format_code != format_code) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        std::format("replace_pinned: image format must remain f={} (got f={})",
+                    entry.format_code, format_code)}};
+  }
+
+  const std::uint64_t hash = payload_hash(payload, px, format_code);
+  if (entry.content_hash == hash) return {};
+
+  const std::size_t before = m_buf.size();
+  replace_root_frame(payload, format_code, px, id);
+  tally_image_transmit(m_buf.size() - before);
+  entry.content_hash = hash;
+  return {};
 }
 
 auto KittyDriver::resolve_pin(PinnedImage image, std::string_view fn)
@@ -1111,33 +1201,10 @@ auto KittyDriver::prepend_placeholder_clears() -> std::size_t {
 
 auto KittyDriver::transmit(std::span<const std::byte> payload, int format_code,
                            Extent px, std::uint32_t id) -> void {
-  // The one place image data is produced, and therefore the only honest answer
-  // to "does this terminal hold anything of ours" that ~KittyDriver can ask.
+  // Initial image transmission makes terminal-side ownership real; root-frame
+  // replacement below can only operate on an image this path already created.
   m_transmitted = true;
-  // Base64 the payload, whatever it is. The span carries its own length, so
-  // this cannot disagree with the buffer the way a length recomputed from
-  // width()*height() could -- and for a pre-encoded payload there is no such
-  // length to recompute in the first place (#163).
-  const std::string b64 = detail::base64_encode(payload);
-
-  // Chunk into ≤4096-byte APC payloads.
-  constexpr std::size_t kChunkSize = 4096;
-  // The protocol requires every chunk but the last to be a multiple of 4 --
-  // otherwise the terminal's decoder resynchronises mid-quantum and the
-  // reassembled payload is garbage. 4096 satisfies it, and has since #10, but
-  // it satisfied it by accident: nothing said so and nothing checked. It says
-  // so now, because a pre-encoded payload makes a corrupted reassembly a
-  // silent black frame rather than visibly wrong pixels.
-  static_assert(kChunkSize % 4 == 0,
-                "kitty requires non-final chunk sizes to be a multiple of 4");
-  std::size_t offset = 0;
-  bool first = true;
-
-  while (offset < b64.size() || first) {
-    const auto chunk = b64.substr(offset, kChunkSize);
-    const bool more = (offset + kChunkSize) < b64.size();
-
-    if (first) {
+  append_chunked(m_buf, payload, [&](const std::string& chunk, bool more) {
       // First chunk: full transmission parameters.
       // a=t (transmit only, no display — display happens via placeholders),
       // t=d (direct), f=<32 RGBA | 100 PNG>, i=<id>, s=W, v=H, m=<more>,
@@ -1150,15 +1217,21 @@ auto KittyDriver::transmit(std::span<const std::byte> payload, int format_code,
       m_buf += std::format(
           "\033_Ga=t,t=d,f={},i={},s={},v={},m={},q=2;{}\033\\",
           format_code, id, px.w, px.h, more ? 1 : 0, chunk);
-      first = false;
-    } else {
-      // Continuation chunks: only m and payload. The protocol allows m and q
-      // here and nothing else -- repeating f=/s=/v= is an error, not a
-      // redundancy.
-      m_buf += std::format("\033_Gm={};{}\033\\", more ? 1 : 0, chunk);
-    }
-    offset += kChunkSize;
-  }
+  });
+}
+
+auto KittyDriver::replace_root_frame(std::span<const std::byte> payload,
+                                     int format_code, Extent px,
+                                     std::uint32_t id) -> void {
+  m_transmitted = true;
+  append_chunked(m_buf, payload, [&](const std::string& chunk, bool more) {
+    // a=f transmits animation frame data. r=1 edits the existing root frame
+    // and X=1 replaces rather than alpha-blending its full canvas. Unlike a=t
+    // under the same image id, this operation leaves placements intact.
+    m_buf += std::format(
+        "\033_Ga=f,t=d,f={},i={},s={},v={},r=1,X=1,m={},q=2;{}\033\\",
+        format_code, id, px.w, px.h, more ? 1 : 0, chunk);
+  });
 }
 
 auto KittyDriver::place_classic(std::uint32_t image_id,
