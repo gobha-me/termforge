@@ -165,8 +165,12 @@ auto MenuBar::draw(Screen& screen) -> void {
   const std::string mark = detail::fitted_glyph(glyphs.selector, 1);
   for (std::size_t i = 0; i < m_menus.size(); ++i) {
     const bool is_active = (static_cast<int>(i) == m_active);
-    const auto& fg = is_active ? m_active_fg : m_fg;
-    const auto& bg = is_active ? m_active_bg : m_bg;
+    // Colours are focus-gated (#155); the marker below is not. Same split as
+    // TabBar (#22): the mark states which title the cursor is on, the inversion
+    // states that the arrow keys are here.
+    const bool lit = is_active && focused();
+    const auto& fg = lit ? m_active_fg : m_fg;
+    const auto& bg = lit ? m_active_bg : m_bg;
     const auto& span = layout[i];
     const int mx = span.x;
 

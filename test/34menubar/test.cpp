@@ -23,13 +23,12 @@
 //     would re-run the widget's own arithmetic and agree with its mistake.
 //     That is how #10's hit-span drift stayed invisible. highlighted_run is
 //     the only oracle here.
-//   - the marker is never asserted by searching the row for ">": under
-//     BorderStyle::Ascii, MarkGlyphs::arrow_right is ALSO ">" (see
-//     test/20formcontrols). Assert by column.
-//   - fixtures deliberately do NOT call set_focused. The bar's marker tracks
-//     m_active, not focused() -- see menu_bar.hpp -- and the click-driven bar
-//     of docs/modal-overlays.md is never focused. A focus gate would be
-//     invisible to a suite that focused everything.
+//   - the marker is never asserted by searching the row for the overflow
+//     indicator: under BorderStyle::Ascii, MarkGlyphs::arrow_right is ">" and
+//     the selector is now "*" (#132). Assert by column.
+//   - colour-channel fixtures call set_focused(true): active title colours are
+//     focus-gated (#155), while the marker is not. A suite that never focuses
+//     would see only the mark and miss a colour regression.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -86,11 +85,13 @@ auto drawn(MenuBar& mb, int cols, int rows = 1) -> Screen {
 
 // A bar with the given titles, geometry applied and one frame drawn, with
 // menu `active` selected via Right (the only closed-bar way in, and the one
-// the issue says moves an invisible cursor today).
+// the issue says moves an invisible cursor today). Focused so active_run can
+// see the colour channel (#155); the mark-only path is pinned separately.
 auto bar_with(const std::vector<std::string>& titles, int active, int cols)
     -> Screen {
   MenuBar mb;
   mb.set_menus(menus_from(titles));
+  mb.set_focused(true);
   mb.set_geometry({0, 0, cols, 1});
   drawn(mb, cols);
   for (int i = 0; i < active; ++i) mb.on_event(key(Key::Right));
@@ -157,6 +158,7 @@ TEST_CASE("MenuBar: add_menu sanitizes too, not only set_menus",
   MenuBar mb;
   for (const auto& title : {"A", "\033[7mX\033[0m", "Gamma!"})
     mb.add_menu({title, {{"item", {}}}});
+  mb.set_focused(true);
   mb.set_geometry({0, 0, 20, 1});
   drawn(mb, 20);
   mb.on_event(key(Key::Right));
@@ -204,6 +206,7 @@ TEST_CASE("MenuBar: item labels are sanitized too, not just titles",
   // answers with, so the widget claimed columns it never painted.
   MenuBar mb;
   mb.set_menus({{"F", {{"\033[7mnew\033[0m", {}}, {"b", {}}}}});
+  mb.set_focused(true);
   mb.set_geometry({0, 0, 20, 1});
   drawn(mb, 20, 4);
   mb.on_event(key(Key::Enter));  // opens; item 0 becomes the selection
@@ -308,6 +311,7 @@ TEST_CASE("MenuBar: BorderStyle::Ascii keeps the bar row 7-bit",
           "[menubar][glyphs]") {
   MenuBar mb;
   mb.set_menus(menus_from({"A", "Beta", "Gamma!"}));
+  mb.set_focused(true);
   mb.set_style(BorderStyle::Ascii);
   mb.set_geometry({0, 0, 20, 1});
   drawn(mb, 20);
@@ -319,6 +323,41 @@ TEST_CASE("MenuBar: BorderStyle::Ascii keeps the bar row 7-bit",
   REQUIRE(all_seven_bit(row_text(s, 0)));
 }
 
+TEST_CASE("MenuBar: unfocused, the marker stays and the focus colours go",
+          "[menubar][failure]") {
+  // #155: same split as TabBar. The mark states which title the cursor is on;
+  // the inversion states that the arrow keys are here.
+  MenuBar mb;
+  mb.set_menus(menus_from({"A", "Beta", "Gamma!"}));
+  mb.set_geometry({0, 0, 20, 1});
+  drawn(mb, 20);
+  mb.on_event(key(Key::Right));
+
+  const Screen cold = drawn(mb, 20);
+  REQUIRE(active_run(cold).second == 0);  // no focus colours...
+  REQUIRE(cold.at(4, 0).text == "▸");     // ...but the mark remains
+  REQUIRE_FALSE(mb.dirty());
+
+  mb.set_focused(true);
+  REQUIRE(mb.dirty());
+  const Screen hot = drawn(mb, 20);
+  REQUIRE(active_run(hot) == std::pair{4, 6});
+  REQUIRE(hot.at(4, 0).text == "▸");
+  REQUIRE(row_text(cold, 0) == row_text(hot, 0));
+  REQUIRE(cold.at(4, 0).bg != hot.at(4, 0).bg);
+
+  // Blur is the production direction that removes the focus channel. Pin the
+  // redraw edge as well as the resulting cells so an event-driven app cannot
+  // leave the old highlight behind.
+  REQUIRE_FALSE(mb.dirty());
+  mb.set_focused(false);
+  REQUIRE(mb.dirty());
+  const Screen cold_again = drawn(mb, 20);
+  REQUIRE(active_run(cold_again).second == 0);
+  REQUIRE(row_text(cold_again, 0) == row_text(cold, 0));
+  REQUIRE_FALSE(mb.dirty());
+}
+
 TEST_CASE("MenuBar: the active title survives a driver that drops colour",
           "[menubar][failure]") {
   // The acceptance case. Two menus with IDENTICAL titles, so colour is the only
@@ -328,6 +367,7 @@ TEST_CASE("MenuBar: the active title survives a driver that drops colour",
   // (which is what the #76 case in 12primitives now guards from its side).
   MenuBar mb;
   mb.set_menus(menus_from({"F", "F"}));
+  mb.set_focused(true);
   mb.set_geometry({0, 0, 12, 1});
   drawn(mb, 12);
   mb.on_event(key(Key::Right));
@@ -360,6 +400,7 @@ TEST_CASE("MenuBar: the marker never paints past the bar's right edge",
   for (const int active : {1, 2}) {
     MenuBar mb;
     mb.set_menus(menus_from({"AAAAA", "B", "C"}));
+    mb.set_focused(true);
     mb.set_geometry({0, 0, 8, 1});
     drawn(mb, 12);
     for (int i = 0; i < active; ++i) mb.on_event(key(Key::Right));
@@ -391,6 +432,7 @@ TEST_CASE("MenuBar: a clipped title's dropdown is as wide as the title ASKED for
   // its span wants 15, while the only item's label costs 2 + 4 == 6.
   MenuBar mb;
   mb.set_menus(menus_from({"A", "Configuration"}));
+  mb.set_focused(true);
   mb.set_geometry({0, 0, 8, 1});  // narrower than the screen, on purpose
   drawn(mb, 24, 4);
   mb.on_event(key(Key::Right));  // active = 1, whose span the bar clips
@@ -417,6 +459,7 @@ TEST_CASE("MenuBar: the marker follows the bar's rect, not the screen origin",
   // would have had the glyph painted into the widget ABOVE it.
   MenuBar mb;
   mb.set_menus(menus_from({"A", "Beta", "Gamma!"}));
+  mb.set_focused(true);
   mb.set_geometry({2, 1, 18, 1});
   Screen warm{24, 3};
   mb.draw(warm);
@@ -468,6 +511,7 @@ TEST_CASE("MenuBar: a bar left of the screen clips its titles, it does not move 
   // the 'F' at -1 are gone, and "ile" lands at its true position.
   MenuBar mb;
   mb.set_menus(menus_from({"File", "Edit"}));
+  mb.set_focused(true);
   mb.set_geometry({-2, 0, 12, 1});
   const Screen s = drawn(mb, 16);
 

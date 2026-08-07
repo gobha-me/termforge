@@ -43,16 +43,13 @@
 // geometry: no title moves and no click span changes width. TabBar reached the
 // same answer for the same reason (#22).
 //
-// The mark tracks m_active, NOT focused(), and that is deliberate: do not
-// "fix" it to match TabBar. TabBar has two facts to state — which view is live
-// (persistent) and where the arrow keys go (transient) — so it splits its two
-// channels between them. MenuBar's m_active is one fact, a cursor meaning "the
-// menu Enter or a click would open"; nothing outside the widget consumes it
-// and set_menus resets it. So both channels state that one fact and differ
-// only by driver tier, which is the whole point. A focused() gate would make
-// colour and glyph disagree on a colour-capable driver, and would keep the bug
-// entirely for the click-driven bar in docs/modal-overlays.md, which is never
-// focused.
+// The mark tracks m_active, NOT focused(). The colours are focus-gated
+// (#155), matching TabBar (#22): the mark states which title the cursor is on
+// (true whether or not anyone is looking), and the inversion states that the
+// arrow keys are here. An unfocused bar therefore shows a bare ▸Title with no
+// highlight — the honest reading of "the cursor is here but keys are
+// elsewhere". The click-driven bar in docs/modal-overlays.md still states its
+// active title via the mark alone, which is the channel FallbackDriver keeps.
 //
 // TITLES AND ITEM LABELS ARE SANITIZED AT THE SETTER (#129), so the string
 // layout_menus() measures is byte-for-byte the string draw() paints. Doing it
