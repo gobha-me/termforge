@@ -6,9 +6,8 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-07, latest)
 
-**Next release candidate: v0.12.0 — mutable resident Kitty frames.** #196 is
-implemented on `feat/196-stable-pinned-replacement`, pending the real-emulator
-protocol gate before merge and release.
+**Latest release: v0.12.0 — mutable resident Kitty frames.** #196 merged
+through PR #221; the release tag points at that reviewed squash commit.
 
 `TerminalDriver` now offers non-pure raw and encoded `replace_pinned`
 overloads. Kitty keeps the handle's image id and placement stable by editing
@@ -25,13 +24,12 @@ case covers chunk continuation, and `test/48apppixels` observes the same stable
 id/placement through App's injected real `frame_step` path. Replacing `a=f`
 with `a=t` makes both suites fail.
 
-**Verification so far:** GCC 14.2, Clang 20.1 and ASan/UBSan build all targets
+**Verification:** GCC 14.2, Clang 20.1 and ASan/UBSan build all targets
 clean and pass 53/53 tests. Clang consumption passes `subdir`, `install`, and
 `vendored`. `tools/kitty_repro.sh 10` is the isolated live check; its `--dump`
-form emits exactly one transmit, one placement, and one root-frame edit. A
-human still has to confirm the existing red placement turns green without an
-error on the required emulator matrix before this terminal-protocol change can
-merge.
+form emits exactly one transmit, one placement, and one root-frame edit. The
+project owner confirmed the required real-terminal observation: the existing
+placement refreshed correctly and the protocol gate passed.
 
 ## Previous release: v0.11.2 (#155)
 
