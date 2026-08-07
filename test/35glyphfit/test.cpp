@@ -56,8 +56,9 @@ TEST_CASE("fitted_glyph: every in-tree mark survives its own gutter unchanged",
   //
   // Swept through all(), so a glyph appended to MarkGlyphs is covered without
   // touching this file -- the same discipline glyphs.hpp's own static_asserts
-  // enforce. Deliberately NOT a uniqueness check: in the Ascii family
-  // `selector` and `arrow_right` are both ">" (#132).
+  // enforce. Deliberately NOT a uniqueness check across the whole table: the
+  // Ascii radio_mark and selector both use "*" (different widgets). #132 only
+  // required selector != arrow_right on the same TabBar row.
   for (const auto style : kStyles) {
     const MarkGlyphs g = mark_glyphs(style);
     for (const auto glyph : g.all()) {

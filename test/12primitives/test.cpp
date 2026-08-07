@@ -1365,7 +1365,7 @@ TEST_CASE("MenuBar: BorderStyle::Ascii keeps the open menu 7-bit (#76)",
   mb.draw(s);
 
   REQUIRE(mb.style() == BorderStyle::Ascii);
-  REQUIRE(s.at(0, 1).text == ">");
+  REQUIRE(s.at(0, 1).text == "*");
   for (int y = 0; y < 5; ++y)
     for (int x = 0; x < 40; ++x) REQUIRE(all_seven_bit(s.at(x, y).text));
 }

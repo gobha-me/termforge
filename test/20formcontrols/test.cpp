@@ -114,11 +114,12 @@ TEST_CASE("mark_glyphs: the Ascii family is 7-bit throughout",
   REQUIRE(mark_glyphs(BorderStyle::Single).selector != g.selector);
   REQUIRE(mark_glyphs(BorderStyle::Single).arrow_left != g.arrow_left);
   REQUIRE(mark_glyphs(BorderStyle::Single).arrow_right != g.arrow_right);
-  // NOT asserted, deliberately: in this family arrow_right and selector are
-  // both ">". Pinning that would freeze a wart as a contract -- giving Ascii a
-  // distinct arrow_right is an improvement, not a regression, and nothing
-  // depends on the collision (test/33tabbar asserts the marker by column, which
-  // is right either way).
+  // NOT asserted on Unicode vs Ascii selector equality alone: #132 made the
+  // Ascii selector "*" so it no longer collides with arrow_right's ">". The
+  // wart this used to refuse to pin is gone; assert the distinction instead.
+  REQUIRE(g.selector != g.arrow_right);
+  REQUIRE(g.selector == "*");
+  REQUIRE(g.arrow_right == ">");
 }
 
 TEST_CASE("mark_glyphs: the four Unicode families share one table",
@@ -1805,7 +1806,7 @@ TEST_CASE("Select: BorderStyle::Ascii keeps the OPEN list 7-bit too (#76)",
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(s);
 
-  REQUIRE(s.at(0, 1).text == ">");
+  REQUIRE(s.at(0, 1).text == "*");
   REQUIRE(rect_is_ascii(s, Rect{0, 0, 20, 6}));
 }
 

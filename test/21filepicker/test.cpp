@@ -552,7 +552,7 @@ TEST_CASE("FilePicker: BorderStyle::Ascii reaches the entry list and the error"
   bool marked = false;
   for (int y = 0; y < screen.rows(); ++y)
     for (int x = 0; x < screen.cols(); ++x)
-      if (screen.at(x, y).text == ">") marked = true;
+      if (screen.at(x, y).text == "*") marked = true;
   REQUIRE(marked);
 
   // Now the error dialog, which is the other widget the app cannot reach.
