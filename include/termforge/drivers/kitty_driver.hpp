@@ -196,7 +196,6 @@ class KittyDriver final : public TerminalDriver {
   struct RegionSlot {
     Rect rect{};  // cells occupied by the placeholder grid (#201)
     std::uint32_t image_id{0};
-    std::uint32_t placement_id{0};
     std::uint64_t content_hash{0};  // 0 = nothing transmitted yet
     std::uint64_t last_used{0};     // per-draw LRU clock (strictly increasing)
     bool placed{false};             // placement command already emitted
@@ -273,6 +272,13 @@ class KittyDriver final : public TerminalDriver {
   // one per session) and a handle whose image was already unpinned.
   auto resolve_pin(PinnedImage image, std::string_view fn)
       -> std::expected<PinnedEntry*, ErrorEvent>;
+
+  // The smallest positive p= no tracked placement of this image holds.
+  // Placement ids are scoped by image id on the kitty wire, so consulting
+  // placements of any other image would recreate #200's unnecessary global
+  // sequence. Exhaustion refuses before draw_pinned mutates state or emits.
+  auto next_pin_placement_id(std::uint32_t image_id) const
+      -> std::expected<std::uint32_t, ErrorEvent>;
 
   // Transmit an opaque payload under `id` via chunked APC sequences.
   // `format_code` is the kitty f= value (32 = raw RGBA, 100 = PNG); `px` is
@@ -384,24 +390,13 @@ class KittyDriver final : public TerminalDriver {
   int m_frame_start_attrs{-1};
 
   PlacementMode m_mode{PlacementMode::Classic};
-  // There is deliberately no m_next_image_id beside this. Image ids are
-  // DERIVED from the live maps by both allocators (#190) -- region_slot walks
-  // up from 1, pin_payload walks down from the configured ceiling -- because a
-  // counter is a second container agreeing about a fact only one of them owns,
-  // and the one that used to be here disagreed by three orders of magnitude.
-  //
-  // Placement ids are still a counter, and the asymmetry is deliberate rather
-  // than an oversight: p= is never SGR-encoded, so it has no one-byte ceiling
-  // and none of #190's urgency. It is not free of the shape, though, and the
-  // arithmetic belongs next to the declaration rather than in a ticket: this
-  // counter is shared by region slots and pinned placements and takes one per
-  // new rect per frame, so kMaxRegionSlots regions churning at 60fps exhaust
-  // 2^32 in about 52 days -- inside a long-lived server session's lifetime,
-  // and at wrap it emits p=0, which kitty reads as "unspecified". Filed
-  // separately; the likely answer is that p= is scoped per image id and a
-  // region owns its image id exclusively, so a region placement could simply
-  // always be p=1.
-  std::uint32_t m_next_placement_id{1};
+  // There are deliberately no image-id or placement-id counters here. Image
+  // ids are DERIVED from their live maps (#190): region_slot walks up from 1
+  // and pin_payload walks down from the configured ceiling. Placement ids are
+  // scoped per image on the kitty wire (#200): a region owns its image id and
+  // always uses p=1, while a pin derives the smallest free positive p= from
+  // m_pin_places. The containers own the facts, so collection returns ids
+  // without a second counter or free list having to agree with each erase.
   // Monotonic per-draw clock, advanced ONLY where a draw stamps a slot. It is
   // not a frame counter and not a flush counter: every draw bumps it, so slots
   // drawn within one flush get distinct timestamps and a 17th region evicts the

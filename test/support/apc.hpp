@@ -210,6 +210,22 @@ inline auto placements_of(std::string_view out, std::uint32_t id) -> int {
   return cmds_of(out, "p", "", id);
 }
 
+// The distinct placement ids created for one image. Counts are enough for the
+// lifecycle suites above; allocator suites need the exact p= values so a
+// global counter cannot satisfy "two placements happened" while assigning the
+// wrong namespace. p= is matched only on a=p commands -- delete commands also
+// carry it, but describe retirement rather than allocation.
+inline auto placement_ids_of(std::string_view out, std::uint32_t image_id)
+    -> std::set<std::uint32_t> {
+  std::set<std::uint32_t> ids;
+  for (const Apc& c : placements(out)) {
+    if (key_value(c, "i") != std::to_string(image_id)) continue;
+    const std::string p = key_value(c, "p");
+    if (!p.empty()) ids.insert(static_cast<std::uint32_t>(std::stoul(p)));
+  }
+  return ids;
+}
+
 // Every transmission OPENER, whatever its id. Continuation chunks carry m= and
 // no a=, so nothing is counted twice.
 inline auto total_transmits(std::string_view out) -> int {
