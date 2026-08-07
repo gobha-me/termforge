@@ -13,6 +13,7 @@ add_library(${PROJECT_NAME}_lib STATIC
   widgets/table_widget.cpp
   widgets/list_widget.cpp
   widgets/waveform_widget.cpp
+  widgets/pixel_surface.cpp
   widgets/label.cpp
   widgets/button.cpp
   widgets/progress_bar.cpp

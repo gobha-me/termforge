@@ -84,6 +84,12 @@ file is the tactical version.
   for direct callers, while a widget's authored `draw()` cells remain its
   information-complete Baseline. Both region collection and `on_pixels` use the
   same gate; do not widen one without the other.
+  **`PixelSurface` owns a fixed logical pixel grid** (#195). Cell geometry only
+  changes its destination; `reset` is the explicit storage-resize boundary.
+  Its ASCII draw is the information-complete Baseline, while App carries the
+  widget's `pixel_fit` into the enhanced draw and turns a driver refusal into
+  an `ErrorEvent`. It remains an ordinary per-frame region until #196/#197 add
+  stable replacement and producer-directed dirty submission.
 - **A pre-encoded payload is shipped verbatim** (#163). `EncodedImage` carries
   opaque bytes the *terminal* decodes; the library never encodes, decodes,
   inspects or resamples them — that is the application's asset pipeline's job,

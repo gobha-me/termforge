@@ -164,8 +164,8 @@ class Image {
   // buffer that disagrees with them is an out-of-bounds read whose bytes get
   // base64'd to the terminal. The drivers' `empty()` guard does not catch a
   // short-but-non-empty buffer on its own. And a constructor is the only place
-  // the invariant can be established, because there is no mutable access to the
-  // buffer afterwards.
+  // the invariant can be established, because later mutable access reaches
+  // pixel VALUES but never the vector's size.
   //
   // Collapsing to empty rather than padding the buffer out to width*height is
   // deliberate, on three counts. It cannot allocate, so it cannot throw:
@@ -225,6 +225,14 @@ class Image {
                     static_cast<std::size_t>(x)];
   }
 
+  // Mutable access changes pixel values but cannot change the buffer's shape,
+  // so the width*height invariant above remains structural. PixelSurface uses
+  // these overloads to expose a software framebuffer without copying it.
+  [[nodiscard]] auto at(int x, int y) -> Pixel& {
+    return m_pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(m_width) +
+                    static_cast<std::size_t>(x)];
+  }
+
   // The whole buffer, row-major, always exactly width()*height() elements (see
   // the constructor). Exists so callers needing the raw bytes — the kitty
   // transmit path, #90's kernels — get the length FROM the object instead of
@@ -232,6 +240,7 @@ class Image {
   [[nodiscard]] auto pixels() const noexcept -> std::span<const Pixel> {
     return m_pixels;
   }
+  [[nodiscard]] auto pixels() noexcept -> std::span<Pixel> { return m_pixels; }
 
   // ── region ops (#63) ───────────────────────────────────────────────────
   // All of these CLIP: they never throw, and never read or write outside

@@ -246,8 +246,8 @@ class App {
   // same-rect collision under UnicodePlaceholders, where two cell grids would
   // overwrite each other: App's region is drawn first and stamps the rect, so
   // the draw_pinned from here is the one refused. The widget tree wins, and you
-  // are told. Unlike App's own region draws, whose std::expected is discarded,
-  // yours comes straight back to you: handle it.
+  // are told. App queues its region refusal as an ErrorEvent for the next
+  // frame; yours comes straight back to you in this window: handle it.
   //
   // TWO THINGS SUPPRESS THIS CALL ENTIRELY, and both are properties of the
   // frame rather than of what you draw:
@@ -901,6 +901,7 @@ class App {
   struct PixelRegion {
     Rect rect;
     const Image* image{nullptr};
+    PlacementFit fit{PlacementFit::Stretch};
   };
   std::vector<PixelRegion> m_pixel_regions;
 

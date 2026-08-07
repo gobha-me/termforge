@@ -1,6 +1,6 @@
 # Pixel Regions: Native Graphics in a Cell Framework
 
-**Status:** Accepted — implemented as proof of concept in WaveformWidget.
+**Status:** Accepted — implemented by WaveformWidget and PixelSurface.
 
 ## Problem
 
@@ -57,7 +57,9 @@ Kitty native graphics or ANSI truecolour raster.
 │                 extent(region)              │
 │         img = widget->draw_pixels(region,   │
 │                 ext)          ─ borrowed    │
-│         driver->draw_image(region, *img)    │
+│         fit = widget->pixel_fit(region)     │
+│         driver->draw_image(region, *img,    │
+│                 fit)                       │
 └─────────────────────────────────────────────┘
 ```
 
@@ -86,6 +88,12 @@ class Widget {
   virtual auto draw_pixels(Rect region, Extent pixels) -> const Image* {
     return nullptr;
   }
+
+  // How the returned image maps into this region. Existing widgets inherit
+  // Stretch; shipped/pre-rendered pixel grids may opt into Exact.
+  virtual auto pixel_fit(Rect region) const noexcept -> PlacementFit {
+    return PlacementFit::Stretch;
+  }
 };
 ```
 
@@ -105,6 +113,52 @@ The return was `std::optional<Image>` by value until #84. That cost
 nothing while the path ran at one pixel per cell — an 80×24 region was
 7.7 KB — but at device resolution it is ~983 KB, and `draw_pixels` is
 called every frame.
+
+Image-draw failures are queued back through App's normal `ErrorEvent` path.
+They arrive on the next frame because the driver draw happens after that
+frame's input pump. A region submission is a new draw request each frame, so a
+persistent refusal produces one event per request rather than being silently
+coalesced. App does not erase an Exact-fit refusal after it has blanked the
+corresponding cell region.
+
+### PixelSurface: a persistent software framebuffer (#195)
+
+`PixelSurface` is the reusable one-region form for an application-generated
+framebuffer:
+
+```cpp
+PixelSurface canvas{Extent{320, 180}};
+
+void on_tick(std::chrono::duration<double>) override {
+  auto pixels = canvas.pixels();       // mutable row-major RGBA; marks dirty
+  render_scene(pixels, canvas.extent());
+}
+
+void on_render(Screen& screen) override {
+  canvas.set_geometry(Rect{1, 2, screen.cols() - 2, screen.rows() - 3});
+  canvas.draw(screen);                 // authored ASCII Baseline
+  render_pixel_regions(canvas);        // Kitty/ANSI enhancement
+}
+```
+
+The `Image` is owned by the widget and keeps its logical resolution until an
+explicit `reset(Extent, Pixel)`. Changing the cell rectangle does not resize or
+rerasterize it: `draw_pixels` returns the same buffer and the driver applies
+the selected `PlacementFit` (Stretch by default). The mutable `Image::at()` and
+`Image::pixels()` overloads expose pixel values but not the vector itself, so a
+caller cannot break the width × height invariant.
+
+The Baseline path nearest-neighbour samples into the destination cells,
+composites straight alpha over the standard cell background, and maps the
+result through the ASCII luminance ramp. Under `Exact`, one image pixel maps to
+one cell and the immediate-mode widget blanks the unused part of its rect.
+
+This surface is deliberately an ordinary pixel region, not yet a mutable
+resident-image handle. A visible unchanged surface still submits every App
+frame as a region keepalive; Kitty's content hash makes that zero wire bytes,
+but the driver still examines the buffer. Omitting the submission retires the
+region, and resuming retransmits it. Stable same-ID replacement is #196 and
+producer-directed dirty submission is #197.
 
 ### Why This Works
 

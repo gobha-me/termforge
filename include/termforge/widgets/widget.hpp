@@ -129,6 +129,16 @@ class Widget {
     return nullptr;
   }
 
+  // Placement policy for one declared pixel region. Stretch preserves the
+  // historical widget contract: generated content is rasterized for, or
+  // scaled to, the destination rect. A widget carrying a pre-rendered grid may
+  // opt into Exact. Non-pure so every existing out-of-tree widget remains
+  // source-compatible when it recompiles against this header.
+  [[nodiscard]] virtual auto pixel_fit(Rect /*region*/) const noexcept
+      -> PlacementFit {
+    return PlacementFit::Stretch;
+  }
+
   auto set_geometry(Rect r) -> void { m_rect = r; }
   [[nodiscard]] auto rect() const noexcept -> Rect { return m_rect; }
 

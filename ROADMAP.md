@@ -35,6 +35,8 @@ completed items.
 - Epic 4.1 (dashboard.cpp) — TableWidget + WaveformWidget + TextBox
 - Pixel regions (docs/pixel-regions.md) — Widget extension for native
   graphics alongside cell fallback
+- PixelSurface (#195) — persistent fixed-resolution RGBA canvas with an ASCII
+  Baseline and App-managed Kitty/ANSI enhancement
 
 ---
 
@@ -102,6 +104,10 @@ completed items.
   The `on_tick(dt)` contract (#59): motion in cells per *second*, fixed vs
   variable timestep, and a stall the clamp has to absorb. The piece 4.2
   needs from the loop.
+
+- [x] **4.7 — pixel_surface.cpp** ✅
+  A persistent 320x180 software framebuffer mutated from `on_tick`, presented
+  through the normal pixel-region window, and preserved across terminal resize.
 
 - [ ] **4.2 — game.cpp** (blocked on MapWidget)
 
