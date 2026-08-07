@@ -6,12 +6,44 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-07, latest)
 
-**Latest release: v0.10.3 — Kitty placement ids are derived from live state.**
-#200 merged through PR #218; the release tag points at that reviewed squash
-commit.
+**Latest release: v0.11.0 — PixelSurface is the persistent software-framebuffer
+widget.** #195 merged through PR #220; the release tag points at that reviewed
+squash commit.
 
-Ordinary image regions now use `p=1`, which is unique because every region owns
-its image id. Pinned placements derive the smallest free positive `p=` from the
+`PixelSurface` owns one fixed-resolution RGBA `Image`, exposes mutable pixel and
+Image access without exposing the vector's shape, resizes storage only through
+explicit `reset`, and maps cell geometry through a selectable `PlacementFit`.
+Its authored Baseline is a straight-alpha-composited ASCII luminance view;
+Kitty and ANSI receive the same owned buffer through App's existing enhanced
+pixel window. App now carries the widget's non-pure, backward-compatible
+`pixel_fit` result into `draw_image` and queues every refused draw as the
+required `ErrorEvent` on the next frame.
+
+The `pixel_surface` example mutates a persistent 320x180 frame from `on_tick`
+and submits it from `on_render`. `test/51pixelsurface` covers owned-buffer
+lifetime across geometry changes, explicit recreation, dirty marking, Stretch
+and Exact Baselines, alpha, empty inputs, real App cadence on Kitty/ANSI/
+Fallback, Exact refusal events, and overlay suspend/resume. Mutation checks
+kill dropped fit propagation, discarded driver errors, missing dirty marking,
+and broken Stretch sampling.
+
+**Verification:** GCC 14.2 and a fresh Clang 20.1 opt-in toolchain build all
+targets clean with `-Werror` and pass 53/53 tests; ASan+UBSan also passes 53/53.
+`tools/consume/run.sh` passes `subdir`, `install`, and `vendored` with Clang.
+The change composes existing image encodings and adds no terminal-protocol wire
+form, so no live-emulator gate applies.
+
+**Next: #196.** Replace mutable resident Kitty frame data under one stable
+image id; `PixelSurface` remains an ordinary per-frame region until that leaf
+and #197's producer-directed dirty submission land.
+
+## Previous release: v0.10.3 (#200)
+
+**Kitty placement ids are derived from live state.** #200 merged through PR
+#218; the release tag points at that reviewed squash commit.
+
+Ordinary image regions use `p=1`, which is unique because every region owns its
+image id. Pinned placements derive the smallest free positive `p=` from the
 live placements of that same image. The driver scans the placement map once,
 then probes an occupied-id set; it no longer carries a session-wide monotonic
 placement counter, and `p=0` is unreachable.
@@ -30,9 +62,6 @@ ASan+UBSan each pass 52/52 tests; `tools/consume/run.sh` passes `subdir`,
 placement ids 1 through 4294967295 and scopes them to an image; existing
 real-Kitty repro stanza 7 already exercises positive per-image placement ids
 and targeted `d=i` deletion, so this cut adds no unevidenced wire form.
-
-**Next: #195.** Add the persistent pixel surface and game canvas from #198's
-second milestone without weakening the authored-cell Baseline fallback.
 
 ## Previous release: v0.10.2 (#205)
 

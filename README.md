@@ -37,9 +37,10 @@ Landed and verified:
   IDs with LRU eviction. Flagship driver.
 - **AnsiRgbDriver** — truecolor half-block rendering with SGR run-coalescing.
 - **FallbackDriver** — plain-ASCII luminance, the bare-TTY floor.
-- **Widgets** — `Widget` base (with pixel-region support), TextBox scrollback,
-  TableWidget, ListWidget, WaveformWidget, MapWidget (tile maps: TileSet +
-  camera + layers), and the primitives Label, Button,
+- **Widgets** — `Widget` base (with pixel-region support), `PixelSurface` (an
+  owned, fixed-resolution software framebuffer with an ASCII cell fallback),
+  TextBox scrollback, TableWidget, ListWidget, WaveformWidget, MapWidget (tile
+  maps: TileSet + camera + layers), and the primitives Label, Button,
   ProgressBar, TextInput, Frame, MenuBar, TabBar. Mouse event routing via
   `Widget::hit_test` (topmost-first); `FocusRing` owns the Tab order.
   The scrollable three paint a shared one-column scrollbar (track + thumb,
@@ -166,10 +167,11 @@ and Clang.
 - `src/bin` — a chat-scrollback demo (live TextBox + input line) that runs on
   the real interactive loop. Under a non-TTY it exits cleanly with "stdout is
   not a tty" — the failure path working as designed.
-- `examples/` — focused demos per subsystem: `dashboard` (TableWidget +
-  WaveformWidget + TextBox), `motion` (`on_tick` — fixed vs variable timestep
-  and the stall clamp, live), `widgets` (all primitives + focus model), `image`,
-  `chat`, `input`, `colors`, `low_level`, `hello`.
+- `examples/` — focused demos per subsystem: `pixel_surface` (a persistent
+  320×180 software framebuffer), `dashboard` (TableWidget + WaveformWidget +
+  TextBox), `motion` (`on_tick` — fixed vs variable timestep and the stall
+  clamp, live), `widgets` (all primitives + focus model), `image`, `chat`,
+  `input`, `colors`, `low_level`, `hello`.
 
 A btop-style system monitor (`forge-top`) is planned as a permanent
 dogfooding harness for all driver tiers (see ROADMAP / issue #16).

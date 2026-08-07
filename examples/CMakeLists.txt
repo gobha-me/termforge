@@ -12,6 +12,7 @@ set(EXAMPLES
   low_level
   dashboard
   motion
+  pixel_surface
   widgets
   dialogs
   forms

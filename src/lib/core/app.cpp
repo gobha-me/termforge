@@ -662,7 +662,7 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
     // as "draw_image: empty image", leaving a hole in the UI.
     if (const Image* img = widget.draw_pixels(region, px);
         img != nullptr && !img->empty()) {
-      m_pixel_regions.push_back({region, img});
+      m_pixel_regions.push_back({region, img, widget.pixel_fit(region)});
 
       // Clear the Screen cells in this region so the cell diff does not emit
       // the fallback underneath the image. This is load-bearing on ANSI too:
@@ -694,7 +694,8 @@ auto App::flush_pixel_regions() -> void {
   // Ungated: m_pixel_regions can only be non-empty if collect_pixel_regions
   // already passed the same test.
   for (const auto& pr : m_pixel_regions) {
-    m_driver->draw_image(pr.rect, *pr.image);
+    if (auto drawn = m_driver->draw_image(pr.rect, *pr.image, pr.fit); !drawn)
+      m_input.push_error(std::move(drawn.error()));
   }
 
   // After the regions, so a same-rect collision resolves in the widget tree's
