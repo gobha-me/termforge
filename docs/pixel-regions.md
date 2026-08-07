@@ -716,10 +716,12 @@ retires it.
   retransmits it; pin content that the application intends to keep resident.
 - A moving ordinary region still uploads under a recycled id because region
   identity is the destination rectangle. Pinning removes that payload churn.
-- Under `UnicodePlaceholders`, moving a region can leave its old placeholder
-  cells on screen (#201). The driver writes those cells directly, outside
-  `Screen`, so the Renderer does not know that the old rectangle needs spaces.
-  Classic placement is unaffected.
+- Under `UnicodePlaceholders`, the driver owns both terminal-side image data
+  and a text-grid placement. Collection now retires both halves (#201): stale
+  rectangle clears are prepended before the frame's already-buffered cell diff,
+  so an unchanged blank is repaired while replacement text authored in that
+  same frame lands afterwards. The cleanup is part of the frame's one write and
+  is billed as image-edit traffic. Classic placement is unaffected.
 
 ### A graphics frame is one write, and the meter reads the whole frame
 

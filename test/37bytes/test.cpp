@@ -309,6 +309,27 @@ TEST_CASE("meter: the placeholder cell grid is image traffic, not cell traffic",
   CHECK(written > 0);
 }
 
+TEST_CASE("meter: placeholder cleanup is image_edit, not cell traffic",
+          "[bytes][placeholders]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  const auto art = solid(8, 8, kP1);
+
+  REQUIRE(d.draw_image(Rect{0, 0, 2, 1}, art));
+  flush_and_measure(d, out);
+  REQUIRE(d.draw_image(Rect{4, 0, 2, 1}, art));
+  const std::size_t written = flush_and_measure(d, out);
+  const FrameBytes f = d.last_frame_bytes();
+
+  REQUIRE(written > 0);
+  CHECK(f.image_transmit > 0);
+  CHECK(f.image_edit > 0);
+  CHECK(f.cells == 0);
+  CHECK(f.total() == written);
+}
+
 TEST_CASE("meter: a dropped region's cleanup is billed as image traffic",
           "[bytes]") {
   KittyDriver d;

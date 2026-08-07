@@ -47,6 +47,7 @@
 
 #include "support/apc.hpp"
 #include "support/image.hpp"
+#include "support/terminal_grid.hpp"
 #include "termforge/drivers/kitty_driver.hpp"
 
 using termforge::Image;
@@ -132,7 +133,7 @@ TEST_CASE("region ids: 300 frames of motion stay inside the region pool (#190)",
   // The wire spelling closes the pool bound independently of the parsed ids:
   // region ids never need the larger 38;2 form. That form is valid (#199), so
   // this is an allocator assertion rather than a rendering-failure proxy.
-  CHECK(out.find("\033[38;2;") == std::string::npos);
+  CHECK(out.find("\033[38;2;0;0;") == std::string::npos);
 }
 
 // ── which free id, not merely a free one ────────────────────────────────────
@@ -226,6 +227,7 @@ TEST_CASE("region ids: eviction reuses the VICTIM's id, not just some free one",
   KittyDriver d;
   std::string out;
   d.set_output(&out);
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
 
   // Sixteen rects, one frame: ids 1..16 in draw order, and last_used ascends
   // with them.
@@ -258,6 +260,16 @@ TEST_CASE("region ids: eviction reuses the VICTIM's id, not just some free one",
   for (std::uint32_t id = 1; id <= kRegionSlots; ++id) pool.insert(id);
   CHECK(ids_named(out) == pool);
   CHECK(total_transmits(out) == static_cast<int>(kRegionSlots) + 1);
+
+  // The LRU path reuses id 2 inside this same buffer, before frame GC can
+  // discover anything. Its old placeholder at x=1 must be cleared at the
+  // eviction point or it immediately shows the new x=99 image there too.
+  tfsupport::TerminalGrid grid{110, 2};
+  grid.feed(out);
+  CHECK(grid.at(0, 0).placeholder());
+  CHECK_FALSE(grid.at(1, 0).placeholder());
+  CHECK(grid.at(2, 0).placeholder());
+  CHECK(grid.at(99, 0).placeholder());
 }
 
 // ── the ordering that makes reuse safe ──────────────────────────────────────

@@ -23,13 +23,16 @@
 
 #include "support/apc.hpp"
 #include "support/image.hpp"
+#include "support/terminal_grid.hpp"
 #include "termforge/drivers/kitty_driver.hpp"
 
 using termforge::FrameBytes;
+using termforge::Attr;
 using termforge::Image;
 using termforge::KittyDriver;
 using termforge::Pixel;
 using termforge::Rect;
+using termforge::Rgb;
 using tfsupport::data_deletes_of;
 using tfsupport::ids_named;
 using tfsupport::placement_deletes_of;
@@ -341,4 +344,38 @@ TEST_CASE("frame shape: a moving region gives its ids back",
   CHECK(total_transmits(out) == 8);
   CHECK(ids_named(out) == std::set<std::uint32_t>{1, 2});
   CHECK(data_deletes_of(out, 1) + data_deletes_of(out, 2) == 7);
+}
+
+TEST_CASE("frame shape: placeholder cleanup precedes replacement text",
+          "[frameshape][kitty][placeholders]") {
+  // #201's ordering edge. gc_regions runs after the frame's text was queued;
+  // appending spaces there erases SAFE. The cleanup must be prepended, then
+  // restore the SGR state that frame 1's cached text run was built against.
+  KittyDriver d;
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  std::string out;
+  d.set_output(&out);
+  const Rgb fg{1, 2, 3};
+  const Rgb bg{4, 5, 6};
+
+  REQUIRE(d.draw_image(Rect{0, 1, 2, 1}, art(30)).has_value());
+  // Last in frame 0 on purpose: this leaves a known SGR state for frame 1.
+  d.draw_text(10, 3, "X", fg, bg, Attr::Bold);
+  d.flush();
+
+  // Same style, so draw_text legitimately emits no SGR before SAFE. A cleanup
+  // prefix that resets without restoring would therefore paint the right text
+  // in the wrong colours while every string assertion stayed green.
+  d.draw_text(0, 1, "SAFE", fg, bg, Attr::Bold);
+  REQUIRE(d.draw_image(Rect{6, 1, 2, 1}, art(31)).has_value());
+  d.flush();
+
+  tfsupport::TerminalGrid grid{14, 5};
+  grid.feed(out);
+  CHECK(grid.row_text(1).substr(0, 4) == "SAFE");
+  CHECK(grid.at(0, 1).fg == 0x010203);
+  CHECK(grid.at(0, 1).bg == 0x040506);
+  CHECK(grid.at(0, 1).bold);
+  CHECK(grid.at(6, 1).placeholder());
+  CHECK(grid.at(7, 1).placeholder());
 }
