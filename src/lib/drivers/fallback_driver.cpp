@@ -14,11 +14,23 @@ namespace termforge {
 
 namespace {
 // Map a pixel to a coarse ASCII luminance ramp (darkest -> brightest).
+// Alpha weights the ramp (#99): a==0 is a space, not opaque black.
 auto luminance_char(const Pixel& p) -> char {
+  if (p.a == 0) return ' ';
   const int lum = (static_cast<int>(p.r) * 299 + static_cast<int>(p.g) * 587 +
                    static_cast<int>(p.b) * 114) / 1000;  // 0..255
+  const int weighted = lum * static_cast<int>(p.a) / 255;
   static constexpr char ramp[] = " .:-=+*#%@";
-  return ramp[lum * 9 / 255];
+  return ramp[weighted * 9 / 255];
+}
+
+auto has_translucent(std::span<const std::byte> rgba, Extent px) -> bool {
+  const std::size_t n =
+      static_cast<std::size_t>(px.w) * static_cast<std::size_t>(px.h);
+  for (std::size_t i = 0; i < n; ++i) {
+    if (static_cast<unsigned char>(rgba[i * 4 + 3]) < 255) return true;
+  }
+  return false;
 }
 }  // namespace
 
@@ -155,6 +167,11 @@ auto FallbackDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
       const int sx = map(col, px.w, cells.w);
       m_buf += luminance_char(detail::rgba_at(rgba, px, sx, sy));
     }
+  }
+  if (has_translucent(rgba, px)) {
+    return std::unexpected{ErrorEvent{
+        Severity::Info, "fallback",
+        "draw_image: alpha channel dropped — luminance ramp has no alpha"}};
   }
   return {};
 }

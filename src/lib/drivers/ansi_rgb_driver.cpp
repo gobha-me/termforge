@@ -147,6 +147,20 @@ auto AnsiRgbDriver::draw_image(Rect cells, const EncodedImage& image,
   return draw_rgba(cells, image.bytes, image.pixels, fit);
 }
 
+namespace {
+
+// True when any pixel drops a channel this tier cannot honour (#99).
+auto has_translucent(std::span<const std::byte> rgba, Extent px) -> bool {
+  const std::size_t n =
+      static_cast<std::size_t>(px.w) * static_cast<std::size_t>(px.h);
+  for (std::size_t i = 0; i < n; ++i) {
+    if (static_cast<unsigned char>(rgba[i * 4 + 3]) < 255) return true;
+  }
+  return false;
+}
+
+}  // namespace
+
 auto AnsiRgbDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
                               Extent px, PlacementFit fit)
     -> std::expected<void, ErrorEvent> {
@@ -178,6 +192,8 @@ auto AnsiRgbDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
     return exact ? i : detail::sample_index(i, src_dim, dst_dim);
   };
 
+  const bool translucent = has_translucent(rgba, px);
+
   // Render two rows per cell (upper/lower half-block). Under Stretch the
   // destination height is 2 * cells.h and therefore always even, so the
   // odd-height pairing with a transparent lower half that this loop used to
@@ -189,6 +205,11 @@ auto AnsiRgbDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
   // inside the image and its lower row outside. Clamping the lower row to
   // px.h - 1 would DUPLICATE a source row, which is the very artifact Exact
   // exists to prevent, so the lower half is transparent black instead.
+  //
+  // #99: a==0 means "leave this half alone" rather than opaque black. A cell
+  // whose both halves are transparent is skipped entirely. Partial alpha is
+  // still dropped to the rgb channels (a cell has no alpha); that is the Info
+  // event below.
   for (int row = 0; row < cover_h; row += 2) {
     m_buf += std::format("\033[{};{}H", cells.y + row / 2 + 1, cells.x + 1);
     const int sy_up = map(row, px.h, dst.h);
@@ -199,13 +220,23 @@ auto AnsiRgbDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
       const Pixel up = detail::rgba_at(rgba, px, sx, sy_up);
       const Pixel lo =
           have_lo ? detail::rgba_at(rgba, px, sx, sy_lo) : Pixel{0, 0, 0, 0};
-      const int fg = rgb_id(up), bg = rgb_id(lo);
+      if (up.a == 0 && lo.a == 0) {
+        // Fully transparent cell: advance the cursor with a space, no SGR.
+        cur_fg = cur_bg = -1;
+        m_buf += ' ';
+        continue;
+      }
+      // a==0 half: treat as black so the opaque half still shows; the Info
+      // event already told the caller alpha was dropped.
+      const Pixel up_draw = up.a == 0 ? Pixel{0, 0, 0, 255} : up;
+      const Pixel lo_draw = lo.a == 0 ? Pixel{0, 0, 0, 255} : lo;
+      const int fg = rgb_id(up_draw), bg = rgb_id(lo_draw);
       if (fg != cur_fg) {
-        m_buf += std::format("\033[38;2;{};{};{}m", up.r, up.g, up.b);
+        m_buf += std::format("\033[38;2;{};{};{}m", up_draw.r, up_draw.g, up_draw.b);
         cur_fg = fg;
       }
       if (bg != cur_bg) {
-        m_buf += std::format("\033[48;2;{};{};{}m", lo.r, lo.g, lo.b);
+        m_buf += std::format("\033[48;2;{};{};{}m", lo_draw.r, lo_draw.g, lo_draw.b);
         cur_bg = bg;
       }
       m_buf += "\xE2\x96\x80";  // U+2580 UPPER HALF BLOCK
@@ -213,6 +244,11 @@ auto AnsiRgbDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
   }
   m_buf += "\033[0m";
   m_cur_fg = m_cur_bg = m_cur_attrs = -1;  // reset invalidated the SGR state
+  if (translucent) {
+    return std::unexpected{ErrorEvent{
+        Severity::Info, "ansi_rgb",
+        "draw_image: alpha channel dropped — half-block cells have no alpha"}};
+  }
   return {};
 }
 

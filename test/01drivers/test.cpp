@@ -867,3 +867,67 @@ TEST_CASE("Drivers: an empty destination rect is a warning, not a crash",
   REQUIRE_FALSE(ansi.draw_image(Rect{0, 0, 4, 0}, img).has_value());
   REQUIRE_FALSE(kitty.draw_image(Rect{}, img).has_value());
 }
+
+TEST_CASE("AnsiRgbDriver: translucent pixels draw and raise Info (#99)",
+          "[drivers][failure][alpha]") {
+  AnsiRgbDriver d;
+  std::string out;
+  d.set_output(&out);
+  // One opaque half, one clear — previously the clear half was opaque black.
+  Image img{1, 2, {Pixel{255, 0, 0, 255}, Pixel{0, 0, 0, 0}}};
+  auto r = d.draw_image(Rect{0, 0, 1, 1}, img);
+  REQUIRE_FALSE(r.has_value());
+  REQUIRE(r.error().severity == Severity::Info);
+  REQUIRE(r.error().source == "ansi_rgb");
+  REQUIRE(r.error().message.find("alpha") != std::string::npos);
+  d.flush();
+  REQUIRE_FALSE(out.empty());  // lesser route still drew
+  REQUIRE(out.find("\xE2\x96\x80") != std::string::npos);
+}
+
+TEST_CASE("AnsiRgbDriver: a fully transparent cell is not painted black (#99)",
+          "[drivers][failure][alpha]") {
+  AnsiRgbDriver d;
+  std::string out;
+  d.set_output(&out);
+  Image img{1, 2, {Pixel{0, 0, 0, 0}, Pixel{0, 0, 0, 0}}};
+  auto r = d.draw_image(Rect{0, 0, 1, 1}, img);
+  REQUIRE_FALSE(r.has_value());
+  REQUIRE(r.error().severity == Severity::Info);
+  d.flush();
+  // Space, no half-block, no 48;2;0;0;0 black fill for the clear cell.
+  REQUIRE(out.find("\xE2\x96\x80") == std::string::npos);
+  REQUIRE(out.find("48;2;0;0;0") == std::string::npos);
+}
+
+TEST_CASE("FallbackDriver: translucent pixels draw and raise Info (#99)",
+          "[drivers][failure][alpha]") {
+  FallbackDriver d;
+  std::string out;
+  d.set_output(&out);
+  Image img{2, 1, {Pixel{255, 255, 255, 255}, Pixel{255, 255, 255, 0}}};
+  auto r = d.draw_image(Rect{0, 0, 2, 1}, img);
+  REQUIRE_FALSE(r.has_value());
+  REQUIRE(r.error().severity == Severity::Info);
+  REQUIRE(r.error().source == "fallback");
+  d.flush();
+  // Opaque white is a bright ramp glyph; a==0 is a space, not '@'.
+  REQUIRE(out.find('@') != std::string::npos);
+  // After the CUP, two glyphs: bright then space.
+  const auto cup = out.find("H");
+  REQUIRE(cup != std::string::npos);
+  REQUIRE(out[cup + 1] == '@');
+  REQUIRE(out[cup + 2] == ' ');
+}
+
+TEST_CASE("KittyDriver: translucent pixels stay silent success (#99)",
+          "[drivers][kitty][alpha]") {
+  // Kitty transmits f=32 RGBA; alpha is the terminal's job. No degradation.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  Image img{1, 1, {Pixel{255, 0, 0, 128}}};
+  REQUIRE(d.draw_image(Rect{0, 0, 1, 1}, img).has_value());
+  d.flush();
+  REQUIRE(out.find("f=32") != std::string::npos);
+}

@@ -379,6 +379,22 @@ onto the scene — is the normal way to build a sprite frame, and is what
 `docs/map-widget.md` commits the sprite tier to. Assuming opacity is silently
 wrong at every antialiased edge, with no diagnostic.
 
+### Per-tier alpha survival (#99)
+
+`KittyDriver` transmits `f=32` RGBA and the terminal composites — alpha
+survives. The other two tiers have no alpha channel on the wire:
+
+| tier | what happens to `a < 255` | event |
+|---|---|---|
+| Kitty | transmitted verbatim | none |
+| AnsiRgb | rgb kept; `a==0` halves skip / become black underlay; partial alpha dropped | `Info` |
+| Fallback | luminance weighted by `a` (`a==0` → space) | `Info` |
+
+Both floor tiers still draw (Info = lesser route honoured) and return
+`std::unexpected` with that `ErrorEvent`, matching the Attr degradation shape
+from #62. A caller that ignores the event has a hole in its diagnostics, not
+its pixels.
+
 ## Pre-encoded payloads (#163)
 
 Everything above assumes the library holds pixels. Sometimes it should not.
