@@ -4,7 +4,7 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-06, latest)
+## Where we are (2026-08-07, latest)
 
 **Latest release: v0.10.0 — App pixel regions now reach ANSI truecolour as
 well as Kitty native graphics.** #108 merged through PR #208; the release tag
