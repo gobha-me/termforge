@@ -208,11 +208,10 @@ constexpr std::size_t kMaxRegionSlots = 16;
 // The pinned range sits ABOVE the region range, and the two must not meet:
 // regions allocate upward from 1 and pins downward from the configured ceiling.
 //
-// These assert PROPERTIES, not the definition. `kMaxPinnedImages == 255 -
-// kFirstPinnedImageId + 1` would restate kMaxPinnedImages' own initialiser and
-// hold for every value it could ever have, including the unsigned wrap to 0
-// that a kFirstPinnedImageId above 255 produces -- which would then surface at
-// runtime as "all 0 resident slots are in use" refusing every pin.
+// These assert PROPERTIES, not the definition. The public pin budget is a
+// deliberate 256-image compatibility floor (#205), and its range now extends
+// above 255; #199's real-kitty gate proved the 24-bit placeholder spelling at
+// id 300 before that range became reachable from this allocator.
 // Since #190 neither allocator reads the other's map, so what keeps the pools
 // apart is these two ranges plus the two runtime lines that stay inside them:
 // region_slot's walk (bounded by kMaxRegionSlots) and its LRU branch (which
@@ -223,7 +222,7 @@ constexpr std::size_t kMaxRegionSlots = 16;
 static_assert(KittyDriver::kFirstPinnedImageId > kMaxRegionSlots,
               "pinned ids must start above the region pool: region_slot "
               "derives from [1, kMaxRegionSlots] and pin_payload from "
-              "[kFirstPinnedImageId, 255], and since #190 neither steps over "
+              "[kFirstPinnedImageId, 272], and since #190 neither steps over "
               "the other");
 // The region pool must be non-empty, and the reason is a crash rather than a
 // budget. region_slot's eviction branch is `m_regions.size() >=
@@ -235,9 +234,9 @@ static_assert(kMaxRegionSlots > 0, "the region pool is empty");
 static_assert(KittyDriver::kMaxPinnedImages > 0, "the pin budget is empty");
 static_assert(KittyDriver::kFirstPinnedImageId +
                       KittyDriver::kMaxPinnedImages - 1 ==
-                  255,
-              "the pin range must end at the configured compatibility "
-              "ceiling");
+                  272,
+              "the pin range must carry the public 256-image compatibility "
+              "budget from id 17 through id 272");
 
 KittyDriver::ImageTally::~ImageTally() {
   const std::size_t all = drv.m_buf.size() - start;

@@ -28,6 +28,7 @@
 
 #include <unistd.h>
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <set>
@@ -391,9 +392,11 @@ TEST_CASE("pinned: the budget is public, enforced, and returned on unpin",
     // Every id stays inside the configured public budget and above the region
     // pool. #199 proved that placeholder encoding itself is not the ceiling.
     CHECK(p->id >= KittyDriver::kFirstPinnedImageId);
-    CHECK(p->id <= 255);
+    CHECK(p->id <= KittyDriver::kFirstPinnedImageId +
+                       KittyDriver::kMaxPinnedImages - 1);
     held.push_back(*p);
   }
+  CHECK(KittyDriver::kMaxPinnedImages == 256);
   CHECK(d.max_pinned_images() == KittyDriver::kMaxPinnedImages);
 
   d.flush();
@@ -412,6 +415,74 @@ TEST_CASE("pinned: the budget is public, enforced, and returned on unpin",
   const auto after = d.pin_image(art(11));
   REQUIRE(after.has_value());
   CHECK(after->id == held.front().id);
+}
+
+TEST_CASE("pinned: the 256-image policy carries GLOAM's 246-image inventory",
+          "[pinned][kitty][encoded][placeholders][failure]") {
+  // #205's concrete downstream acceptance, deliberately hardcoded instead of
+  // looping to kMaxPinnedImages: restoring the old 239-slot policy must fail on
+  // the 240th asset rather than teaching the test to accept the regression.
+  constexpr std::size_t kGloamImages = 246;
+
+  KittyDriver d;
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  std::string out;
+  d.set_output(&out);
+
+  std::vector<PinnedImage> held;
+  std::set<std::uint32_t> ids;
+  held.reserve(kGloamImages);
+
+  for (std::size_t i = 0; i < kGloamImages; ++i) {
+    // Opaque PNG bytes are never parsed (#163); one distinct byte is enough to
+    // make every authored payload distinct without smuggling a decoder into
+    // the test or the library.
+    const std::array payload{static_cast<std::byte>(i)};
+    const auto pin = d.pin_image(
+        EncodedImage{ImageFormat::Png, payload, Extent{1, 1}});
+    REQUIRE(pin.has_value());
+    CHECK(ids.insert(pin->id).second);
+    held.push_back(*pin);
+  }
+  REQUIRE(held.size() == kGloamImages);
+  CHECK(ids.size() == kGloamImages);
+
+  // Pins allocate down from id 272, so the first handle makes the newly
+  // reachable 24-bit SGR branch observable through the public API.
+  const PinnedImage high = held.front();
+  REQUIRE(high.id == 272);
+  REQUIRE(high.id > 255);
+  REQUIRE(d.draw_pinned(Rect{2, 3, 1, 1}, high).has_value());
+  d.flush();
+  CHECK(out.find("\033[38;2;0;1;16m") != std::string::npos);
+  CHECK(transmits_of(out, high.id) == 1);
+  CHECK(placements_of(out, high.id) == 1);
+
+  // Recycle that high slot and prove the old handle cannot alias the new
+  // image. The other 245 handles remain live throughout this sequence.
+  out.clear();
+  REQUIRE(d.unpin_image(high).has_value());
+  const std::array replacement_payload{std::byte{0xFF}, std::byte{0x00}};
+  const auto replacement = d.pin_image(
+      EncodedImage{ImageFormat::Png, replacement_payload, Extent{1, 1}});
+  REQUIRE(replacement.has_value());
+  REQUIRE(replacement->id == high.id);
+  CHECK(replacement->serial != high.serial);
+  d.flush();
+
+  out.clear();
+  const auto stale_draw = d.draw_pinned(Rect{2, 3, 1, 1}, high);
+  REQUIRE_FALSE(stale_draw.has_value());
+  CHECK(stale_draw.error().message.find("stale") != std::string::npos);
+  const auto stale_unpin = d.unpin_image(high);
+  REQUIRE_FALSE(stale_unpin.has_value());
+  CHECK(stale_unpin.error().message.find("stale") != std::string::npos);
+  d.flush();
+  CHECK(out.empty());
+
+  REQUIRE(d.draw_pinned(Rect{2, 3, 1, 1}, *replacement).has_value());
+  d.flush();
+  CHECK(placements_of(out, replacement->id) == 1);
 }
 
 TEST_CASE("pinned: empty and malformed payloads refuse before any upload",
@@ -575,7 +646,7 @@ TEST_CASE("pinned: region ids never enter the pinned range, however hard the "
   // `while (m_pinned.contains(...)) ++m_next_image_id` skip that stood in for
   // it. #190 deleted that skip along with the counter: region_slot now derives
   // the smallest free id in [1, kMaxRegionSlots] and pin_payload the largest
-  // free one in [kFirstPinnedImageId, 255], so the pools are disjoint by
+  // free one in [kFirstPinnedImageId, 272], so the pools are disjoint by
   // construction and neither reads the other's map.
   //
   // The case therefore asserts the INVARIANT rather than the guard. It is the
@@ -856,7 +927,7 @@ TEST_CASE("pinned: a recycled id does not resurrect a stale handle",
 // fail: "region ids never enter the pinned range, however hard the churn"
 // above (300 churning rects, asserted as an exact id set -- a monotonic
 // counter fails it), test/49regionids' saturation and eviction cases, and the
-// budget case's 239-then-240 pins for the pin pool's own bound.
+// budget case's 256-then-257 pins for the pin pool's own bound.
 
 TEST_CASE("pinned: an empty destination rect refuses",
           "[pinned][kitty][failure]") {
