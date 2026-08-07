@@ -29,6 +29,17 @@ void on_winch(int) {
   if (auto* app = g_active.load(std::memory_order_relaxed); app != nullptr)
     app->request_resize();
 }
+
+// The App-level image pass is an ENHANCEMENT over Widget::draw(), not every
+// driver's ability to spell draw_image(). FallbackDriver can turn pixels into
+// a luminance ramp for direct callers, but that is not an information-complete
+// replacement for a widget's authored cell path. Kitty and ANSI truecolour do
+// replace that path with a strictly richer presentation, so they enter; the
+// Baseline tier keeps the cells (#108).
+[[nodiscard]] auto enhanced_image_path(const TerminalDriver& driver) -> bool {
+  const Capabilities caps = driver.capabilities();
+  return caps.kitty_graphics || caps.truecolor;
+}
 }  // namespace
 
 App::App() = default;
@@ -641,7 +652,7 @@ auto App::render_pixel_regions(Widget& widget) -> void {
 }
 
 auto App::collect_pixel_regions(Widget& widget) -> void {
-  if (!m_driver || !m_driver->capabilities().kitty_graphics) return;
+  if (!m_driver || !enhanced_image_path(*m_driver)) return;
 
   for (const auto& region : widget.pixel_regions()) {
     // The widget cannot ask the driver itself, so hand it the answer.
@@ -653,9 +664,10 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
         img != nullptr && !img->empty()) {
       m_pixel_regions.push_back({region, img});
 
-      // Clear the Screen cells in this region so the cell diff doesn't
-      // emit text that would compete with the placeholder cells. The
-      // pixel image provides all visual content for these cells.
+      // Clear the Screen cells in this region so the cell diff does not emit
+      // the fallback underneath the image. This is load-bearing on ANSI too:
+      // when the region disappears, the next authored cell path then differs
+      // from blank and is repainted instead of leaving the old half-blocks.
       for (int y = region.y; y < region.y + region.h; ++y)
         for (int x = region.x; x < region.x + region.w; ++x)
           m_screen->at(x, y) = Cell{};
@@ -674,9 +686,10 @@ auto App::flush_pixel_regions() -> void {
   // grid lands last so that diff cannot overwrite it -- one write, images on
   // top, no torn pair.
   //
-  // Keep the application hook on the same capability gate as the region path.
-  // Widening both to the cell-rendered image tiers is #108.
-  const bool graphics = m_driver && m_driver->capabilities().kitty_graphics;
+  // Keep the application hook on the same capability gate as the region path:
+  // Kitty gets native placements, ANSI truecolour gets half-block raster, and
+  // Baseline keeps its authored cells (#108).
+  const bool enhanced = m_driver && enhanced_image_path(*m_driver);
 
   // Ungated: m_pixel_regions can only be non-empty if collect_pixel_regions
   // already passed the same test.
@@ -692,16 +705,13 @@ auto App::flush_pixel_regions() -> void {
   // collecting also blanks the cells it covers -- has no analogue here, since a
   // direct driver draw touches no cell. The tie-breaker is that an app drawing
   // through both paths must not keep half its images and lose the other half.
-  if (graphics && m_overlays.empty()) on_pixels(*m_driver);
+  if (enhanced && m_overlays.empty()) on_pixels(*m_driver);
 
-  // No flush here. On the graphics tier this window runs on EVERY frame --
-  // even one with no regions and an empty on_pixels -- because the draws
-  // above are also what drive kitty's per-frame collection cadence: making
-  // this window a property of every frame rather than of what it happened to
-  // contain keeps the collection exact. Running it costs nothing on such a
-  // frame (zero draw calls); the write itself is
-  // frame_step's Renderer::flush(). Non-graphics tiers have no image window
-  // at all and are untouched at one write per frame.
+  // No flush here. On an enhanced tier this window runs on EVERY frame -- even
+  // one with no regions and an empty on_pixels. On Kitty those draws also drive
+  // per-frame collection cadence; on ANSI the empty call is simply free. The
+  // write itself is frame_step's Renderer::flush(). Baseline has no image
+  // window at all and is untouched at one write per frame.
 }
 
 auto App::set_size(Size size) -> std::expected<void, ErrorEvent> {

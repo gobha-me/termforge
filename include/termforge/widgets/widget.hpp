@@ -24,11 +24,10 @@
 //   * MenuBar's open dropdown draws below rect() on purpose, matched by its
 //     hit_test override, so drawing and hit-testing never disagree.
 //
-// Pixel regions (see docs/pixel-regions.md): widgets optionally declare
-// rect(s) where they can provide native pixel data. The App checks the
-// active driver's capabilities and calls draw_pixels() only when the
-// driver supports images. The cell-based draw() is the always-present
-// fallback; draw_pixels() is the enhancement.
+// Pixel regions (see docs/pixel-regions.md): widgets optionally declare rect(s)
+// where they can provide enhanced image data. App calls draw_pixels() on Kitty
+// native graphics and ANSI truecolour raster, not at Baseline. The cell-based
+// draw() is the always-present fallback; draw_pixels() is the enhancement.
 
 #include <chrono>
 #include <optional>
@@ -102,8 +101,11 @@ class Widget {
   // the active driver asked for via preferred_pixel_extent(). A widget has no
   // driver access by design (docs/pixel-regions.md rejects that as
   // alternative A), so the App is what carries the answer here. Called only
-  // when the active driver supports images AND the region was declared via
-  // pixel_regions(). Return nullptr to fall back to cells this frame.
+  // on App's enhanced image tiers (Kitty native graphics or ANSI truecolour)
+  // AND when the region was declared via pixel_regions(). FallbackDriver's
+  // direct Image-to-ramp support does not opt a widget into this pass: its
+  // authored draw() cells remain the Baseline. Return nullptr to fall back to
+  // cells this frame.
   //
   // LIFETIME -- the widget owns the buffer, and the App only borrows it. The
   // returned pixels must stay valid and unmodified until this widget's next

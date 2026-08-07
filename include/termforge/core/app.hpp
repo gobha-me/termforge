@@ -252,8 +252,13 @@ class App {
   // TWO THINGS SUPPRESS THIS CALL ENTIRELY, and both are properties of the
   // frame rather than of what you draw:
   //
-  //   * a driver without kitty_graphics. This matches the existing pixel-region
-  //     path's scope; widening both paths to cell-rendered image tiers is #108.
+  //   * the Baseline driver. Since #108 this hook and the widget region path
+  //     run for Kitty native graphics AND ANSI truecolour half-block raster.
+  //     FallbackDriver's direct draw_image luminance ramp remains available to
+  //     direct callers, but App keeps a widget's authored cells on that tier --
+  //     a ramp cannot infer their information. This hook being called does not
+  //     imply every image operation is supported: pin_image remains
+  //     Kitty-only, so handle each operation's std::expected as usual.
   //   * an overlay on the stack, matching render_pixel_regions. They share the
   //     first of that guard's two reasons -- images are emitted with the cell
   //     diff and would paint through the dialog -- and not its second, since
@@ -491,12 +496,12 @@ class App {
   // one with a FallbackDriver, so there is one loop and one wiring path.
   //
   // It exists because the tier decides which half of frame_step() runs at all:
-  // FallbackDriver::capabilities().kitty_graphics is false and
-  // collect_pixel_regions() returns on it, so with the default driver **no test
-  // can run App's frame loop over the pixel path**. That is how #187 hid — the
-  // driver suites all draw before they flush, and the one caller that does not
-  // was unreachable from a test. Pass a KittyDriver here and the frame shape is
-  // OBSERVED rather than replayed; test/48apppixels is that suite.
+  // FallbackDriver is the Baseline tier and collect_pixel_regions() returns on
+  // it, so with the default driver **no test can run App's frame loop over the
+  // enhanced image path**. That is how #187 hid — the driver suites all draw
+  // before they flush, and the one caller that does not was unreachable from a
+  // test. Pass a KittyDriver or AnsiRgbDriver here and the frame shape is
+  // OBSERVED rather than replayed; test/48apppixels covers both.
   //
   // The driver is built fresh per call either way, so a probe that calls this
   // twice hands the second call a driver whose counters start at zero while the
@@ -700,14 +705,15 @@ class App {
   [[nodiscard]] auto driver() -> TerminalDriver& { return *m_driver; }
   [[nodiscard]] auto terminal() -> Terminal& { return m_term; }
 
-  // Render a widget's pixel regions through the active driver (if it
-  // supports images). Call after widget.draw(screen) in on_render.
+  // Render a widget's pixel regions through the active enhanced-image driver
+  // (Kitty or ANSI truecolour). Call after widget.draw(screen) in on_render.
   // The cells are collected now and the images are issued in the frame's
   // image window (flush_pixel_regions), which since #148 queues after the cell
   // diff in the one flush that carries the whole frame -- so the image and the
   // text it covers go out together, the image on top.
-  // No-op when the driver has no image capability — the cell fallback
-  // from draw() is already in the Screen.
+  // No-op at Baseline — the authored cell fallback from draw() is already in
+  // the Screen. FallbackDriver's direct luminance-ramp image support does not
+  // opt widgets into this pass (#108).
   //
   // Also a no-op while an overlay is up: images queue after the cell diff,
   // so an image collected during on_render would paint straight through the
