@@ -172,6 +172,19 @@ placeholder_grid() {
   printf '%s[0m\n' "$ESC"
 }
 
+# A grid whose top-left cursor is already selected, with an explicit 1-based
+# column for the second row. Unlike placeholder_grid(), this does not use LF:
+# the tty's ONLCR output processing would return that row to column 1 and turn
+# an intentionally offset grid into what looks exactly like a stale-cell ghost.
+placeholder_grid_at() {
+  local sgr=$1 column=$2 placeholder=${3:-$PH_SPEC}
+  printf '%s%s' "$ESC" "$sgr"
+  printf '%s%s%s%s%s%s' "$placeholder" "$D0" "$D0" "$placeholder" "$D0" "$D1"
+  printf '%s[1B%s[%dG' "$ESC" "$ESC" "$column"
+  printf '%s%s%s%s%s%s' "$placeholder" "$D1" "$D0" "$placeholder" "$D1" "$D1"
+  printf '%s[0m' "$ESC"
+}
+
 # Two copies of the same image side by side. Only the placeholder codepoint
 # differs, so a visible left/right difference answers #199 without sharing a
 # constant with the driver or asking the observer to compare across time.
@@ -405,7 +418,7 @@ stanza_9() {
   printf '%s[4A%s7' "$ESC" "$ESC"  # old rect origin, then save it
   send_quiet "${ESC}_Ga=t,t=d,f=32,i=46,s=2,v=2,m=0,q=0;${red_b64}${ST}"; rt=$reply_out
   send_quiet "${ESC}_Ga=p,i=46,p=1,U=1,c=2,r=2,q=0${ST}"; rp=$reply_out
-  placeholder_grid '[38;5;46m'
+  placeholder_grid_at '[38;5;46m' 1
   printf '%s8%s[4B\r' "$ESC" "$ESC"
   pause "Press Enter to clear the old grid, write OK, and reuse id 46..."
 
@@ -419,7 +432,7 @@ stanza_9() {
   send_quiet "${ESC}_Ga=t,t=d,f=32,i=46,s=2,v=2,m=0,q=0;${green_b64}${ST}"; rg=$reply_out
   send_quiet "${ESC}_Ga=p,i=46,p=2,U=1,c=2,r=2,q=0${ST}"; gp=$reply_out
   printf '%s8%s[6C' "$ESC" "$ESC"
-  placeholder_grid '[38;5;46m'
+  placeholder_grid_at '[38;5;46m' 7
   printf '%s8%s[4B\r' "$ESC" "$ESC"
 
   say "$(printf 'transmit(red) response: %q' "$rt")"
