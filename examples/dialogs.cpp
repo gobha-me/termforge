@@ -1,8 +1,9 @@
 // TermForge example: dialogs
 //
 // The modal overlay stack and the three standard dialogs. Three buttons raise
-// a MessageDialog, a ConfirmDialog and a PromptDialog; a status line reports
-// what each one returned. While a dialog is up the buttons underneath are
+// a MessageDialog, ConfirmDialog, PromptDialog, ChoiceDialog and file picker;
+// a status line reports what each one returned. While a dialog is up the
+// buttons underneath are
 // dead to both the keyboard and the mouse, and the background is dimmed —
 // that is the whole point of push_overlay().
 //
@@ -29,10 +30,13 @@
 
 #include <chrono>
 #include <filesystem>
+#include <optional>
 #include <string>
+#include <utility>
 
 #include "termforge/core/app.hpp"
 #include "termforge/widgets/button.hpp"
+#include "termforge/widgets/choice_dialog.hpp"
 #include "termforge/widgets/dialogs.hpp"
 #include "termforge/widgets/file_picker_dialog.hpp"
 #include "termforge/widgets/focus_ring.hpp"
@@ -47,16 +51,19 @@ class DialogsDemo final : public App {
     m_btn_message.set_label("[ Message ]");
     m_btn_confirm.set_label("[ Confirm ]");
     m_btn_prompt.set_label("[ Prompt ]");
+    m_btn_choice.set_label("[ Choose ]");
     m_btn_open.set_label("[ Open File ]");
 
     m_btn_message.on_activate([this] { show(m_message); });
     m_btn_confirm.on_activate([this] { show(m_confirm); });
     m_btn_prompt.on_activate([this] { show(m_prompt); });
+    m_btn_choice.on_activate([this] { show(m_choice); });
     m_btn_open.on_activate([this] { show(m_open); });
 
     m_ring.add(&m_btn_message);
     m_ring.add(&m_btn_confirm);
     m_ring.add(&m_btn_prompt);
+    m_ring.add(&m_btn_choice);
     m_ring.add(&m_btn_open);
 
     // Every dialog closes the same way: drop it off the overlay stack. The
@@ -64,6 +71,7 @@ class DialogsDemo final : public App {
     m_message.on_close([this] { pop_overlay(); });
     m_confirm.on_close([this] { pop_overlay(); });
     m_prompt.on_close([this] { pop_overlay(); });
+    m_choice.on_close([this] { pop_overlay(); });
     m_open.on_close([this] { pop_overlay(); });
     // The picker's read errors raise a MessageDialog as a nested overlay on
     // top of it; that error dialog pops only itself when dismissed. The
@@ -83,6 +91,26 @@ class DialogsDemo final : public App {
     });
     m_prompt.on_cancel([this] { m_status.set_text("prompt: cancelled"); });
     m_prompt.set_placeholder("untitled.txt");
+
+    m_choice.set_choices({
+        {"Kitty graphics", "Prefer the native image protocol."},
+        {"ANSI truecolor", "Use portable half-block rasterization."},
+        {"ASCII only", "Keep output compatible with a bare TTY."},
+    });
+    m_choice.set_other_enabled(true);
+    m_choice.set_other_placeholder("Another rendering preference");
+    static_cast<void>(m_choice.set_selection_limits(1, 2));
+    m_choice.on_result([this](std::optional<ChoiceResult> result) {
+      if (!result) {
+        m_status.set_text("choice: cancelled");
+        return;
+      }
+      std::string summary = "choice: " +
+                            std::to_string(result->selected_indices.size()) +
+                            " selected";
+      if (result->other) summary += ", other=\"" + *result->other + "\"";
+      m_status.set_text(std::move(summary));
+    });
 
     // The file picker starts in the cwd and reports an optional<path>:
     // a path on OK/select, nullopt on cancel.
@@ -114,16 +142,16 @@ class DialogsDemo final : public App {
   }
 
   auto on_tick(std::chrono::duration<double> dt) -> void override {
-    // The four PAGE buttons, and nothing else. Their press flash is on screen
+    // The five PAGE buttons, and nothing else. Their press flash is on screen
     // while it burns down, so it needs ticks to burn down at wall-clock speed.
     //
-    // The four dialogs are deliberately absent. A dialog's own OK/Cancel closes
+    // The dialogs are deliberately absent. A dialog's own OK/Cancel closes
     // the dialog on activation, so its flash never renders however hard you
     // tick it — and the flash it is left holding is cleared by the showing
     // boundary rather than by the app (#122). Forward a tick to a dialog only
     // when it holds something that animates while it is up.
     tick_widgets(dt, {&m_btn_message, &m_btn_confirm, &m_btn_prompt,
-                      &m_btn_open});
+                      &m_btn_choice, &m_btn_open});
   }
 
   auto on_render(Screen& screen) -> void override {
@@ -135,7 +163,8 @@ class DialogsDemo final : public App {
     const Rect inner = m_frame.content_rect();
 
     int x = inner.x + 1;
-    for (auto* b : {&m_btn_message, &m_btn_confirm, &m_btn_prompt, &m_btn_open}) {
+    for (auto* b : {&m_btn_message, &m_btn_confirm, &m_btn_prompt,
+                    &m_btn_choice, &m_btn_open}) {
       const int bw = static_cast<int>(b->label().size()) + 1;
       b->set_geometry({x, inner.y + 1, bw, 1});
       b->draw(screen);
@@ -153,7 +182,7 @@ class DialogsDemo final : public App {
   auto show(Dialog& dialog) -> void { push_overlay(dialog); }
 
   Frame m_frame{"TermForge Dialogs"};
-  Button m_btn_message, m_btn_confirm, m_btn_prompt, m_btn_open;
+  Button m_btn_message, m_btn_confirm, m_btn_prompt, m_btn_choice, m_btn_open;
   Label m_status;
   FocusRing m_ring;
 
@@ -161,6 +190,8 @@ class DialogsDemo final : public App {
   ConfirmDialog m_confirm{"Confirm", "Delete this file? This cannot be undone.",
                           {}};
   PromptDialog m_prompt{"Prompt", "Name the new file:", {}};
+  ChoiceDialog m_choice{"Rendering", "Choose one or two output preferences:",
+                        ChoiceMode::Multiple};
   FilePickerDialog m_open{"Open File"};
 };
 

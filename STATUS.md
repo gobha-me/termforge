@@ -6,7 +6,31 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-10, latest)
 
-**Latest release: v0.15.0 — 320x180 game workload evidence.**
+**Latest release: v0.16.0 — composable choice dialogs.** #219 adds a
+stdlib-only `ChoiceDialog` composition for single- and multiple-choice forms,
+including optional free-text Other input, selection bounds, distinct submit
+and cancel results, sanitized presentation text, and a bounded scrolling
+viewport. Reconfiguration preserves values without retaining stale child
+pointers, and result callbacks remain safe when close handling destroys or
+reconfigures the dialog.
+
+`test/52choicedialog` covers the production event order and the failure-shaped
+edges: empty single-choice submission, valid empty multiple-choice submission,
+duplicate labels, visible selection-limit refusal, required Other text,
+reconfiguration, callback destruction, reopening, malformed/control text,
+mouse activation, zero-sized geometry, duplicate activation and enhanced key
+releases. `Dialog` gains only the protected child-reset seam needed by this
+composition; existing public behavior is unchanged.
+
+**Verification:** GCC 14.2 and Clang 20 Release `-Werror` builds pass all 54
+suites. GCC ASan+UBSan passes 54/54, and both compilers pass the subdirectory,
+installed-package and plain-vendored consumer paths. This release introduces
+no terminal protocol wire form, so no emulator gate applies. Direct Kitty
+cadence validation remains separately tracked by #225.
+
+## Previous release: v0.15.0 (#198)
+
+**v0.15.0 — 320x180 game workload evidence.**
 #198 step 6 now has an in-repo `game` example that advances a fixed 120 Hz
 simulation, generates a deterministic 320x180 RGBA frame at a requested 30 FPS,
 and retains `PixelSurface`'s ASCII Baseline. Its headless mode drives the real

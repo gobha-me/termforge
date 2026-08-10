@@ -50,6 +50,13 @@ auto Dialog::add_child(Widget* w, bool tab_stop) -> void {
   if (tab_stop) m_ring.add(w);
 }
 
+auto Dialog::clear_children() -> void {
+  for (Widget* child : m_children)
+    if (child != nullptr) child->set_focused(false);
+  m_children.clear();
+  m_ring.clear();
+}
+
 auto Dialog::begin_result() -> bool {
   if (m_reported) return false;
   m_reported = true;

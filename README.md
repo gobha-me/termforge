@@ -64,9 +64,11 @@ Landed and verified:
   one enum.
 - **Modal dialogs** — an overlay stack in `App` that draws last and captures
   all input, plus `MessageDialog` / `ConfirmDialog` / `PromptDialog` that size
-  and center themselves, and `FilePickerDialog`, a modal file browser composed
-  from those pieces (path field + dirs-first listing + OK/Cancel) with
-  permission errors surfaced as a nested dialog. See `docs/modal-overlays.md`.
+  and center themselves, `ChoiceDialog` for single/multiple choice with an
+  optional free-form answer, and `FilePickerDialog`, a modal file browser
+  composed from those pieces (path field + dirs-first listing + OK/Cancel)
+  with permission errors surfaced as a nested dialog. See
+  `docs/modal-overlays.md`.
 - **Simulation split** — `App::on_tick(dt)` advances state, `on_render` only
   draws, so motion is measured in seconds rather than in frames and runs at the
   same speed at any frame budget. Variable `dt` by default; `set_tick_hz(n)`

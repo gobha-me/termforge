@@ -147,6 +147,12 @@ class Dialog : public Widget {
   // with no way for the ring to repair it.
   auto add_child(Widget* w, bool tab_stop = true) -> void;
 
+  // Drop every registered child and focus-ring member. Composite dialogs
+  // whose controls are configured at runtime use this before destroying or
+  // rebuilding those controls; without it the dialog would retain dangling
+  // Widget* entries. Existing child objects are not owned or destroyed.
+  auto clear_children() -> void;
+
   // A result may be reported once per showing. Returns false if this showing
   // has already reported one — a mouse press and an Enter can arrive in the
   // same input batch, and a confirm must not fire twice. The latch clears on
@@ -190,6 +196,7 @@ class Dialog : public Widget {
   auto close() -> void;
 
   [[nodiscard]] auto ring() -> FocusRing& { return m_ring; }
+  [[nodiscard]] auto ring() const -> const FocusRing& { return m_ring; }
   // The body text as wrapped by the last layout(), one entry per screen row.
   [[nodiscard]] auto body_lines() const noexcept
       -> const std::vector<std::string>& {
