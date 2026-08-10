@@ -41,8 +41,9 @@ Landed and verified:
   support), `PixelSurface` (an owned, fixed-resolution software framebuffer
   with producer-directed dirty submission and an ASCII cell fallback),
   TextBox scrollback, TableWidget, ListWidget, WaveformWidget, MapWidget (tile
-  maps: TileSet + camera + layers), and the primitives Label, Button,
-  ProgressBar, TextInput, Frame, MenuBar, TabBar. Mouse event routing via
+  maps: TileSet + camera + layers + a persistent atlas-sprite tier), and the
+  primitives Label, Button, ProgressBar, TextInput, Frame, MenuBar, TabBar.
+  Mouse event routing via
   `Widget::hit_test` (topmost-first); `FocusRing` owns the Tab order.
   The scrollable three paint a shared one-column scrollbar (track + thumb,
   click-to-page-jump) when their content overflows, so a viewport never hides
@@ -76,8 +77,8 @@ Landed and verified:
   container — so a ProgressBar's pulse and a Button's press flash are measured
   in seconds too. See `examples/motion.cpp`.
 
-Deferred per the roadmap: `SixelDriver` (Epic 5), the MapWidget sprite tier +
-game example, SIMD waveform rasterization, framebuffer driver.
+Deferred per the roadmap: `SixelDriver` (Epic 5), the MapWidget game example,
+SIMD waveform rasterization, framebuffer driver.
 
 ## Why
 

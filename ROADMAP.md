@@ -78,11 +78,12 @@ completed items.
   select), Button/ListWidget (already did). Drag motion (bit 32) no
   longer decodes as a press. Tests: `test/13mouse`.
 
-- [x] **3.6 — MapWidget** (glyph tier DONE 2026-07-30, #86)
+- [x] **3.6 — MapWidget** (glyph tier #86, sprite tier #64)
   Tile-based 2D map renderer: TileSet + camera + layers, painter's-algorithm
-  compositing, tile-size in cells, partial-tile rule. Glyph tier is a pure cell
-  widget; the kitty sprite tier is designed (docs/map-widget.md) and gated on
-  the #83 cell-rect contract + #63 Image ops. Tests: `test/29mapwidget`.
+  compositing, tile-size in cells, partial-tile rule. The enhanced tier owns an
+  atlas, alpha-composites a persistent viewport image, and retains the glyph
+  representation as its complete Baseline. Tests: `test/29mapwidget` and the
+  real App cadence in `test/48apppixels`.
 
 ---
 
@@ -112,7 +113,7 @@ completed items.
   A persistent 320x180 software framebuffer mutated from `on_tick`, presented
   through the normal pixel-region window, and preserved across terminal resize.
 
-- [ ] **4.2 — game.cpp** (blocked on MapWidget)
+- [ ] **4.2 — game.cpp** (MapWidget is ready; workload remains with #88)
 
 ---
 
@@ -185,7 +186,7 @@ completed items.
 5. ~~Epic 6.1 (CI)~~ **DONE** (GCC/Clang/Fedora/ASan, `-Werror`)
 6. ~~Epic 6.6 (Kitty waveform bug)~~ **FIXED** (verify in real kitty)
 7. **Audit fix wave (issues #3–#16)** — in progress 2026-07-24; #3/#4/#5/#9/#14 landed, kitty placement GC (#6/#7), probe hardening (#8), terminal robustness (#13, v0.0.2), display-width + wide cells (#10, v0.0.3), dirty/clear contract (#11, v0.0.4) landed; widget bundle (#12) next
-8. ~~Epic 3.6 (MapWidget)~~ **DONE** (glyph tier, #86; sprite tier gated on #83)
+8. ~~Epic 3.6 (MapWidget)~~ **DONE** (glyph tier #86; sprite tier #64)
 9. **forge-top demo (issue #16)** — btop-style dogfooding harness, all tiers
 10. **Epic 5 (Sixel)** — kitty + half-blocks bracket the matrix
 11. **Epic 6.2-6.5 (Polish)** — as time allows

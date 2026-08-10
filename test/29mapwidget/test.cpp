@@ -10,6 +10,11 @@
 #include "termforge/widgets/map_widget.hpp"
 
 using termforge::MapWidget;
+using termforge::Extent;
+using termforge::Image;
+using termforge::Pixel;
+using termforge::PixelRegionMode;
+using termforge::Rect;
 using termforge::Rgb;
 using termforge::Screen;
 using termforge::TileDef;
@@ -38,6 +43,20 @@ auto make_widget(int map_w, int map_h) -> MapWidget {
   w.set_tileset(make_tileset());
   w.set_map_size(map_w, map_h);
   return w;
+}
+
+auto make_sprite_tileset() -> TileSet {
+  // Two 2x2 sprites in one 4x2 atlas: opaque red, then half-alpha blue.
+  std::vector<Pixel> pixels(8, Pixel{255, 0, 0, 255});
+  for (int y = 0; y < 2; ++y)
+    for (int x = 2; x < 4; ++x)
+      pixels[static_cast<std::size_t>(y) * 4 + x] = Pixel{0, 0, 255, 128};
+
+  TileSet ts;
+  ts.set_atlas(Image{4, 2, std::move(pixels)}, Extent{2, 2});
+  ts.define(1, TileDef{"RR", kWall, {}, Rect{0, 0, 2, 2}});
+  ts.define(2, TileDef{"BB", kPlayer, {}, Rect{2, 0, 2, 2}});
+  return ts;
 }
 
 }  // namespace
@@ -531,4 +550,172 @@ TEST_CASE("MapWidget: viewport_tiles reports the floored whole-tile window", "[m
 
   w.set_geometry({0, 0, 0, 0});
   REQUIRE(w.viewport_tiles() == std::pair{0, 0});
+}
+
+// ── sprite tier (#64) ──────────────────────────────────────────────────────
+
+TEST_CASE("TileSet: atlas authoring keeps legacy TileDef initialization valid",
+          "[mapwidget][sprites]") {
+  TileDef legacy{"#", kWall, {}};
+  CHECK_FALSE(legacy.sprite.has_value());
+
+  TileSet ts = make_sprite_tileset();
+  CHECK(ts.atlas().width() == 4);
+  CHECK(ts.atlas().height() == 2);
+  CHECK(ts.sprite_extent() == Extent{2, 2});
+  REQUIRE(ts.get(1).sprite.has_value());
+  CHECK(*ts.get(1).sprite == Rect{0, 0, 2, 2});
+
+  ts.set_atlas({}, Extent{2, 2});
+  CHECK(ts.atlas().empty());
+  CHECK(ts.sprite_extent().empty());
+}
+
+TEST_CASE("MapWidget: sprite layers source-over compose from one atlas",
+          "[mapwidget][sprites]") {
+  MapWidget w;
+  w.set_tileset(make_sprite_tileset());
+  w.set_map_size(1, 1);
+  w.set_tile_size(2, 1);
+  w.set_geometry({3, 2, 2, 1});
+  w.set_tile(0, 0, 0, 1);  // opaque red terrain
+  const int actors = w.add_layer("actors");
+  w.set_tile(actors, 0, 0, 2);  // half-alpha blue actor
+
+  REQUIRE(w.pixel_regions() == std::vector<Rect>{{3, 2, 2, 1}});
+  const Image* raster = w.draw_pixels({3, 2, 2, 1}, Extent{16, 16});
+  REQUIRE(raster != nullptr);
+  CHECK(raster->width() == 2);
+  CHECK(raster->height() == 2);
+  // 50% blue over opaque red, with the scalar oracle's exact rounding.
+  CHECK(raster->at(0, 0) == Pixel{127, 0, 128, 255});
+  CHECK(raster->at(1, 1) == Pixel{127, 0, 128, 255});
+  CHECK(w.rasterization_count() == 1);
+  CHECK(w.pixel_region_state(w.rect()).mode == PixelRegionMode::Persistent);
+}
+
+TEST_CASE("MapWidget: incomplete visible sprite authoring keeps the whole glyph Baseline",
+          "[mapwidget][sprites][failure]") {
+  TileSet ts = make_sprite_tileset();
+  ts.define(3, TileDef{"GG", kGrass, {}});  // deliberately glyph-only
+  ts.define(4, TileDef{"XX", kItem, {}, Rect{3, 0, 2, 2}});  // outside atlas
+
+  MapWidget w;
+  w.set_tileset(std::move(ts));
+  w.set_map_size(2, 1);
+  w.set_tile_size(2, 1);
+  w.set_geometry({0, 0, 4, 1});
+  w.set_tile(0, 0, 0, 1);
+  w.set_tile(0, 1, 0, 3);
+
+  CHECK(w.pixel_regions().empty());
+  Screen s{4, 1};
+  w.draw(s);
+  CHECK(s.at(0, 0).text == "R");
+  CHECK(s.at(2, 0).text == "G");
+
+  w.set_tile(0, 1, 0, 4);
+  CHECK(w.pixel_regions().empty());
+  CHECK(w.draw_pixels({0, 0, 4, 1}, Extent{32, 16}) == nullptr);
+}
+
+TEST_CASE("MapWidget: sprite region excludes trailing partial cells",
+          "[mapwidget][sprites]") {
+  MapWidget w;
+  w.set_tileset(make_sprite_tileset());
+  w.set_map_size(3, 1);
+  w.set_tile_size(2, 1);
+  w.set_geometry({5, 4, 5, 1});  // two complete tiles plus one leftover cell
+  w.set_tile(0, 0, 0, 1);
+  w.set_tile(0, 1, 0, 2);
+
+  REQUIRE(w.pixel_regions() == std::vector<Rect>{{5, 4, 4, 1}});
+  const Image* raster = w.draw_pixels({5, 4, 4, 1}, Extent{40, 16});
+  REQUIRE(raster != nullptr);
+  CHECK(raster->width() == 4);
+  CHECK(raster->height() == 2);
+}
+
+TEST_CASE("MapWidget: persistent raster cache separates content from placement",
+          "[mapwidget][sprites][cache]") {
+  MapWidget w;
+  w.set_tileset(make_sprite_tileset());
+  w.set_map_size(2, 1);
+  w.set_tile_size(2, 1);
+  w.set_geometry({0, 0, 4, 1});
+  w.set_tile(0, 0, 0, 1);
+  w.set_tile(0, 1, 0, 2);
+
+  Rect region = w.pixel_regions().front();
+  REQUIRE(w.draw_pixels(region, Extent{32, 16}) != nullptr);
+  CHECK(w.rasterization_count() == 1);
+  w.pixel_region_submitted(region);
+  CHECK_FALSE(w.pixel_region_state(region).content_dirty);
+  CHECK(w.submission_count() == 1);
+
+  // Clean redraw and movement reuse the exact owned viewport image.
+  REQUIRE(w.draw_pixels(region, Extent{800, 600}) != nullptr);
+  CHECK(w.rasterization_count() == 1);
+  w.set_geometry({7, 3, 4, 1});
+  region = w.pixel_regions().front();
+  CHECK(region == Rect{7, 3, 4, 1});
+  REQUIRE(w.draw_pixels(region, Extent{32, 16}) != nullptr);
+  CHECK(w.rasterization_count() == 1);
+
+  // Logical mutation rebuilds once, then returns to the clean cache.
+  w.set_tile(0, 0, 0, 2);
+  CHECK(w.pixel_region_state(region).content_dirty);
+  REQUIRE(w.draw_pixels(region, Extent{32, 16}) != nullptr);
+  CHECK(w.rasterization_count() == 2);
+  REQUIRE(w.draw_pixels(region, Extent{32, 16}) != nullptr);
+  CHECK(w.rasterization_count() == 2);
+
+  // A viewport-size change changes the composed logical grid, unlike movement.
+  w.set_geometry({7, 3, 2, 1});
+  region = w.pixel_regions().front();
+  const Image* smaller = w.draw_pixels(region, Extent{16, 16});
+  REQUIRE(smaller != nullptr);
+  CHECK(smaller->width() == 2);
+  CHECK(w.rasterization_count() == 3);
+}
+
+TEST_CASE("MapWidget: every visual mutator invalidates the sprite cache",
+          "[mapwidget][sprites][cache]") {
+  MapWidget w;
+  w.set_tileset(make_sprite_tileset());
+  w.set_map_size(3, 1);
+  w.set_tile_size(2, 1);
+  w.set_geometry({0, 0, 4, 1});
+  w.set_tile(0, 0, 0, 1);
+  w.set_tile(0, 1, 0, 1);
+  w.set_tile(0, 2, 0, 2);
+
+  const auto rasterize = [&] {
+    const auto regions = w.pixel_regions();
+    REQUIRE(regions.size() == 1);
+    REQUIRE(w.draw_pixels(regions.front(), Extent{32, 16}) != nullptr);
+    return w.rasterization_count();
+  };
+
+  CHECK(rasterize() == 1);
+  w.set_camera(1, 0);
+  CHECK(rasterize() == 2);
+
+  const int overlay = w.add_layer("overlay");
+  CHECK(rasterize() == 3);
+  w.set_tile(overlay, 1, 0, 2);
+  CHECK(rasterize() == 4);
+  w.set_layer_visible(overlay, false);
+  CHECK(rasterize() == 5);
+  w.set_layer_visible(overlay, true);
+  CHECK(rasterize() == 6);
+  w.clear_layer(overlay);
+  CHECK(rasterize() == 7);
+
+  w.set_map_size(4, 1);
+  CHECK(rasterize() == 8);
+  w.set_tile_size(1, 1);
+  CHECK(rasterize() == 9);
+  w.set_tileset(make_sprite_tileset());
+  CHECK(rasterize() == 10);
 }

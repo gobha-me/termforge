@@ -1,6 +1,9 @@
 #include "termforge/widgets/map_widget.hpp"
 
 #include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <vector>
 
 namespace termforge {
 
@@ -15,6 +18,16 @@ auto TileSet::define(int id, TileDef def) -> void {
   m_defs[idx] = std::move(def);
 }
 
+auto TileSet::set_atlas(Image atlas, Extent tile_pixels) -> void {
+  if (atlas.empty() || tile_pixels.empty()) {
+    m_atlas = {};
+    m_sprite_extent = {};
+    return;
+  }
+  m_atlas = std::move(atlas);
+  m_sprite_extent = tile_pixels;
+}
+
 auto TileSet::get(int id) const -> const TileDef& {
   if (id < 0) return kEmpty;
   const auto idx = static_cast<std::size_t>(id);
@@ -26,7 +39,7 @@ auto TileSet::get(int id) const -> const TileDef& {
 
 auto MapWidget::set_tileset(TileSet tiles) -> void {
   m_tileset = std::move(tiles);
-  mark_dirty();
+  invalidate_pixels();
 }
 
 auto MapWidget::set_map_size(int w, int h) -> void {
@@ -57,21 +70,21 @@ auto MapWidget::set_map_size(int w, int h) -> void {
     layer.cells = std::move(next);
   }
   clamp_camera();
-  mark_dirty();
+  invalidate_pixels();
 }
 
 auto MapWidget::set_tile_size(int cells_w, int cells_h) -> void {
   m_tile_w = std::max(1, cells_w);
   m_tile_h = std::max(1, cells_h);
   clamp_camera();
-  mark_dirty();
+  invalidate_pixels();
 }
 
 auto MapWidget::set_camera(int map_x, int map_y) -> void {
   m_cam_x = map_x;
   m_cam_y = map_y;
   clamp_camera();
-  mark_dirty();
+  invalidate_pixels();
 }
 
 auto MapWidget::center_on(int map_x, int map_y) -> void {
@@ -86,7 +99,7 @@ auto MapWidget::add_layer(std::string name) -> int {
                          static_cast<std::size_t>(m_map_h),
                      kEmptyId);
   m_layers.push_back(std::move(layer));
-  mark_dirty();
+  invalidate_pixels();
   return static_cast<int>(m_layers.size()) - 1;
 }
 
@@ -96,7 +109,7 @@ auto MapWidget::set_tile(int layer, int x, int y, int id) -> void {
   m_layers[static_cast<std::size_t>(layer)]
       .cells[static_cast<std::size_t>(y) * static_cast<std::size_t>(m_map_w) +
              static_cast<std::size_t>(x)] = id;
-  mark_dirty();
+  invalidate_pixels();
 }
 
 auto MapWidget::tile(int layer, int x, int y) const -> int {
@@ -111,12 +124,18 @@ auto MapWidget::clear_layer(int layer) -> void {
   if (layer < 0 || layer >= static_cast<int>(m_layers.size())) return;
   auto& cells = m_layers[static_cast<std::size_t>(layer)].cells;
   std::fill(cells.begin(), cells.end(), kEmptyId);
-  mark_dirty();
+  invalidate_pixels();
 }
 
 auto MapWidget::set_layer_visible(int layer, bool visible) -> void {
   if (layer < 0 || layer >= static_cast<int>(m_layers.size())) return;
   m_layers[static_cast<std::size_t>(layer)].visible = visible;
+  invalidate_pixels();
+}
+
+auto MapWidget::invalidate_pixels() noexcept -> void {
+  ++m_content_gen;
+  m_content_dirty = true;
   mark_dirty();
 }
 
@@ -175,7 +194,9 @@ auto MapWidget::draw(Screen& screen) -> void {
   // Re-clamp against the CURRENT geometry: set_geometry is non-virtual, so a
   // rect shrink or tile_size change since the last mutator can strand the
   // camera past the map edge. Covers the path no setter runs on.
+  const auto old_camera = std::pair{m_cam_x, m_cam_y};
   clamp_camera();
+  if (old_camera != std::pair{m_cam_x, m_cam_y}) invalidate_pixels();
 
   // Immediate mode: blank the whole rect first, then draw on top. Trailing
   // partial tiles are never drawn, so the leftover columns/rows keep this
@@ -225,6 +246,130 @@ auto MapWidget::draw(Screen& screen) -> void {
   }
 
   clear_dirty();
+}
+
+auto MapWidget::sprite_region() const noexcept -> Rect {
+  const Rect r = rect();
+  const auto [vtw, vth] = viewport_tiles();
+  if (r.empty() || vtw <= 0 || vth <= 0) return {};
+  return Rect{r.x, r.y, vtw * m_tile_w, vth * m_tile_h};
+}
+
+auto MapWidget::valid_sprite(const TileDef& def) const noexcept -> bool {
+  if (!def.sprite || m_tileset.atlas().empty() ||
+      m_tileset.sprite_extent().empty())
+    return false;
+  const Rect src = *def.sprite;
+  const Extent expected = m_tileset.sprite_extent();
+  if (src.w != expected.w || src.h != expected.h) return false;
+  return src.intersect(Rect{0, 0, m_tileset.atlas().width(),
+                            m_tileset.atlas().height()}) == src;
+}
+
+auto MapWidget::complete_sprite_window() const -> bool {
+  const auto [vtw, vth] = viewport_tiles();
+  if (vtw <= 0 || vth <= 0 || m_map_w <= 0 || m_map_h <= 0 ||
+      m_layers.empty() || m_tileset.atlas().empty() ||
+      m_tileset.sprite_extent().empty())
+    return false;
+
+  const auto [cam_x, cam_y] = clamped_camera();
+  const int tx1 = std::min(cam_x + vtw, m_map_w);
+  const int ty1 = std::min(cam_y + vth, m_map_h);
+  bool saw_sprite = false;
+  for (int ty = cam_y; ty < ty1; ++ty) {
+    for (int tx = cam_x; tx < tx1; ++tx) {
+      for (const auto& layer : m_layers) {
+        if (!layer.visible) continue;
+        const int id =
+            layer.cells[static_cast<std::size_t>(ty) *
+                            static_cast<std::size_t>(m_map_w) +
+                        static_cast<std::size_t>(tx)];
+        if (id == kEmptyId) continue;
+        const TileDef& def = m_tileset.get(id);
+        if (!valid_sprite(def)) return false;
+        saw_sprite = true;
+      }
+    }
+  }
+  return saw_sprite;
+}
+
+auto MapWidget::pixel_regions() -> std::vector<Rect> {
+  const Rect r = rect();
+  const Extent view_cells{r.w, r.h};
+  if (view_cells != m_last_view_cells) {
+    m_last_view_cells = view_cells;
+    invalidate_pixels();
+  }
+
+  const Rect region = sprite_region();
+  if (region.empty() || !complete_sprite_window()) return {};
+  return {region};
+}
+
+auto MapWidget::draw_pixels(Rect region, Extent /*preferred*/)
+    -> const Image* {
+  if (region != sprite_region() || !complete_sprite_window()) return nullptr;
+
+  const auto [vtw, vth] = viewport_tiles();
+  const Extent sprite = m_tileset.sprite_extent();
+  const std::int64_t raster_w = std::int64_t{vtw} * sprite.w;
+  const std::int64_t raster_h = std::int64_t{vth} * sprite.h;
+  if (raster_w <= 0 || raster_h <= 0 ||
+      raster_w > std::numeric_limits<int>::max() ||
+      raster_h > std::numeric_limits<int>::max())
+    return nullptr;
+  const auto w = static_cast<std::size_t>(raster_w);
+  const auto h = static_cast<std::size_t>(raster_h);
+  if (w > std::numeric_limits<std::size_t>::max() / h) return nullptr;
+
+  if (m_raster_valid && m_raster_gen == m_content_gen &&
+      m_raster.width() == static_cast<int>(raster_w) &&
+      m_raster.height() == static_cast<int>(raster_h))
+    return &m_raster;
+
+  const Pixel bg{m_bg.r, m_bg.g, m_bg.b, 255};
+  Image next{static_cast<int>(raster_w), static_cast<int>(raster_h),
+             std::vector<Pixel>(w * h, bg)};
+
+  const auto [cam_x, cam_y] = clamped_camera();
+  const int tx1 = std::min(cam_x + vtw, m_map_w);
+  const int ty1 = std::min(cam_y + vth, m_map_h);
+  for (int ty = cam_y; ty < ty1; ++ty) {
+    for (int tx = cam_x; tx < tx1; ++tx) {
+      const int dx = (tx - cam_x) * sprite.w;
+      const int dy = (ty - cam_y) * sprite.h;
+      for (const auto& layer : m_layers) {
+        if (!layer.visible) continue;
+        const int id =
+            layer.cells[static_cast<std::size_t>(ty) *
+                            static_cast<std::size_t>(m_map_w) +
+                        static_cast<std::size_t>(tx)];
+        if (id == kEmptyId) continue;
+        const TileDef& def = m_tileset.get(id);
+        // complete_sprite_window() established this before allocation.
+        next.blend(m_tileset.atlas(), *def.sprite, dx, dy);
+      }
+    }
+  }
+
+  m_raster = std::move(next);
+  m_raster_gen = m_content_gen;
+  m_raster_valid = true;
+  ++m_rasterization_count;
+  return &m_raster;
+}
+
+auto MapWidget::pixel_region_state(Rect /*region*/) const noexcept
+    -> PixelRegionState {
+  return PixelRegionState{.mode = PixelRegionMode::Persistent,
+                          .content_dirty = m_content_dirty};
+}
+
+auto MapWidget::pixel_region_submitted(Rect /*region*/) noexcept -> void {
+  m_content_dirty = false;
+  ++m_submission_count;
 }
 
 }  // namespace termforge

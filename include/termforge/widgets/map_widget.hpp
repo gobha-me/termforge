@@ -1,6 +1,6 @@
 #pragma once
 
-// TermForge — MapWidget: tile-based 2D map rendering (glyph tier).
+// TermForge — MapWidget: tile-based 2D map rendering.
 //
 // Renders a grid of tiles — terrain, entities, overlay — into cells, with a
 // widget-owned camera over a map that may be larger than the viewport. A tile
@@ -8,17 +8,17 @@
 // fg/bg). Layers compose in the widget by painter's algorithm: for each cell
 // the topmost visible layer with a non-empty id wins outright.
 //
-// v1 is GLYPH-ONLY. The sprite tier — authored art composited with alpha on
-// the kitty path — is fully designed in docs/map-widget.md but gated on the
-// #83 cell-rect contract and #63's Image ops, and slots in later WITHOUT an
-// API break: pixel_regions()/draw_pixels() are inherited base no-ops here, so
-// App::collect_pixel_regions never selects this widget and its cells are
-// never wiped. Do NOT override them in v1.
+// The Baseline is the glyph path above. When every non-empty tile visible in
+// the current window has a valid atlas sprite, the enhanced Kitty/ANSI path
+// composites the layers into one persistent viewport Image. Incomplete sprite
+// authoring selects the complete glyph Baseline for the whole window instead
+// of making individual tiles disappear.
 //
-// Immediate mode (widget.hpp): draw() runs every frame and must fully repaint
-// rect() — fill_rect first, then draw on top. The cell Renderer diffs, so no
-// raster cache is needed on this tier.
+// draw() remains immediate-mode and fully repaints rect(). The sprite raster is
+// separately memoized and uses Widget's Persistent pixel-region contract, so
+// unchanged maps neither rebuild the atlas composition nor upload a new frame.
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
@@ -31,14 +31,16 @@ namespace termforge {
 
 // The appearance of one tile id. `glyph` is a plain member, NOT an optional:
 // a cell representation must always exist, so the degradation contract is
-// enforced by the type system rather than by documentation. When the sprite
-// tier lands it arrives as an ADDITIONAL optional field beside this one, so a
-// sprite can never be authored without a glyph fallback next to it.
+// enforced by the type system rather than by documentation. `sprite` is an
+// ADDITIONAL optional field beside it, so a sprite can never be authored
+// without a glyph fallback next to it.
 struct TileDef {
-  std::string glyph;            // UTF-8 grapheme — REQUIRED, may be " "
+  std::string glyph;  // UTF-8 text written at the tile origin; REQUIRED
   Rgb fg{theme::kFg};
   Rgb bg{theme::kBg};
-  // Sprite tier (future work): std::optional<Image> sprite;
+  // Source rectangle in TileSet's atlas. Optional so glyph-only applications
+  // and existing aggregate initializers remain source-compatible.
+  std::optional<Rect> sprite{};
 };
 
 // Maps tile ids to their TileDef. Unknown ids resolve to a blank TileDef
@@ -47,13 +49,24 @@ class TileSet {
  public:
   auto define(int id, TileDef def) -> void;
 
+  // One application-authored atlas, owned by the set. Every sprite rectangle
+  // must have exactly tile_pixels' extent and lie wholly inside the atlas.
+  // Invalid/empty input disables the sprite tier while retaining glyphs.
+  auto set_atlas(Image atlas, Extent tile_pixels) -> void;
+
   // kEmpty (blank glyph, theme colours) for any id never defined.
   [[nodiscard]] auto get(int id) const -> const TileDef&;
 
   [[nodiscard]] auto size() const noexcept -> std::size_t { return m_defs.size(); }
+  [[nodiscard]] auto atlas() const noexcept -> const Image& { return m_atlas; }
+  [[nodiscard]] auto sprite_extent() const noexcept -> Extent {
+    return m_sprite_extent;
+  }
 
  private:
   std::vector<TileDef> m_defs;  // indexed by id; sparse ids stay default
+  Image m_atlas;
+  Extent m_sprite_extent{};
 
   // The shared blank returned for out-of-range / undefined ids. Static so get()
   // can return a reference without a per-call temporary.
@@ -116,6 +129,22 @@ class MapWidget final : public Widget {
 
   auto draw(Screen& screen) -> void override;
 
+  // One stable enhanced region: its vector ordinal is its persistent identity.
+  auto pixel_regions() -> std::vector<Rect> override;
+  auto draw_pixels(Rect region, Extent preferred) -> const Image* override;
+  [[nodiscard]] auto pixel_region_state(Rect region) const noexcept
+      -> PixelRegionState override;
+  auto pixel_region_submitted(Rect region) noexcept -> void override;
+
+  // Deterministic cache/submission observation. These count successful raster
+  // builds and accepted content writes, never clean keepalives or movement.
+  [[nodiscard]] auto rasterization_count() const noexcept -> std::uint64_t {
+    return m_rasterization_count;
+  }
+  [[nodiscard]] auto submission_count() const noexcept -> std::uint64_t {
+    return m_submission_count;
+  }
+
  private:
   struct Layer {
     std::string name;
@@ -143,6 +172,22 @@ class MapWidget final : public Widget {
   int m_tile_w{1}, m_tile_h{1};  // cells
   int m_cam_x{0}, m_cam_y{0};    // top-left tile of the viewport
   Rgb m_bg{theme::kBg};          // background fill for uncovered cells
+
+  // Pixel content has its own lifetime. draw() clears Widget::dirty(), while
+  // this bit clears only after App reports an accepted enhanced-frame write.
+  auto invalidate_pixels() noexcept -> void;
+  [[nodiscard]] auto sprite_region() const noexcept -> Rect;
+  [[nodiscard]] auto complete_sprite_window() const -> bool;
+  [[nodiscard]] auto valid_sprite(const TileDef& def) const noexcept -> bool;
+
+  Image m_raster;
+  Extent m_last_view_cells{};
+  std::uint64_t m_content_gen{1};
+  std::uint64_t m_raster_gen{0};
+  std::uint64_t m_rasterization_count{0};
+  std::uint64_t m_submission_count{0};
+  bool m_content_dirty{true};
+  bool m_raster_valid{false};
 };
 
 }  // namespace termforge
