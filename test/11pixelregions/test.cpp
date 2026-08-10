@@ -11,6 +11,7 @@
 using termforge::Extent;
 using termforge::Image;
 using termforge::Pixel;
+using termforge::PixelRegionMode;
 using termforge::Rect;
 using termforge::Rgb;
 using termforge::Screen;
@@ -36,6 +37,19 @@ TEST_CASE("Widget: default draw_pixels returns nullptr", "[pixelregions]") {
   };
   MinimalWidget m;
   REQUIRE(m.draw_pixels({0, 0, 10, 10}, Extent{10, 10}) == nullptr);
+}
+
+TEST_CASE("Widget: default pixel submission remains immediate mode",
+          "[pixelregions][compatibility]") {
+  struct MinimalWidget final : Widget {
+    auto draw(Screen&) -> void override {}
+  };
+  MinimalWidget m;
+  const auto state = m.pixel_region_state(Rect{0, 0, 2, 1});
+  CHECK(state.mode == PixelRegionMode::Immediate);
+  CHECK(state.content_dirty);
+  // The non-pure acknowledgement hook is a no-op for old widgets.
+  m.pixel_region_submitted(Rect{0, 0, 2, 1});
 }
 
 // ── WaveformWidget pixel path ───────────────────────────────────────────────

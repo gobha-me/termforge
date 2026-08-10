@@ -370,9 +370,10 @@ class TerminalDriver {
   // interchangeable at a call site. Distinct name, no name-hiding interaction,
   // no default argument.
   //
-  // Placements are NOT resident. This one lives until the frame in which it is
-  // not drawn, exactly like an ordinary draw_image -- the image survives, the
-  // placement does not. An application redraws each frame as it always did.
+  // Placements are NOT resident data. This one lives until a frame in which it
+  // is neither drawn nor retained: the image survives that omission, while the
+  // placement does not. Immediate callers draw each frame as before; App uses
+  // retain_pinned below for clean Persistent regions.
   virtual auto draw_pinned(Rect /*cells*/, PinnedImage /*image*/,
                            PlacementFit /*fit*/)
       -> std::expected<void, ErrorEvent> {
@@ -387,6 +388,22 @@ class TerminalDriver {
   auto draw_pinned(Rect cells, PinnedImage image)
       -> std::expected<void, ErrorEvent> {
     return draw_pinned(cells, image, PlacementFit::Stretch);
+  }
+
+  // Keep an existing pinned placement live for this frame without changing
+  // its destination, fit or content (#197). The default delegates to
+  // draw_pinned, which is semantically exact for an older out-of-tree driver;
+  // a tier that can distinguish liveness from placement emission may override
+  // it and emit nothing. NON-PURE for the same compatibility reason as every
+  // resident-image addition above.
+  virtual auto retain_pinned(Rect cells, PinnedImage image, PlacementFit fit)
+      -> std::expected<void, ErrorEvent> {
+    return draw_pinned(cells, image, fit);
+  }
+
+  auto retain_pinned(Rect cells, PinnedImage image)
+      -> std::expected<void, ErrorEvent> {
+    return retain_pinned(cells, image, PlacementFit::Stretch);
   }
 
   // The pixel resolution a widget should rasterize at to fill `cells` on THIS

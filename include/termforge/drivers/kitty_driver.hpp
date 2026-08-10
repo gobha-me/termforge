@@ -117,10 +117,13 @@ class KittyDriver final : public TerminalDriver {
       -> std::expected<void, ErrorEvent> override;
   auto draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
       -> std::expected<void, ErrorEvent> override;
+  auto retain_pinned(Rect cells, PinnedImage image, PlacementFit fit)
+      -> std::expected<void, ErrorEvent> override;
   // The base's Stretch convenience overload is non-virtual, so overriding the
   // three-argument one above would HIDE it for every call made through
   // KittyDriver's static type. Same trap as draw_image, same fix.
   using TerminalDriver::draw_pinned;
+  using TerminalDriver::retain_pinned;
 
   // How many images this tier can hold resident, and why the number is what it
   // is. Handed to the caller rather than kept as a private refusal threshold

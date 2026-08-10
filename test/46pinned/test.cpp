@@ -776,7 +776,9 @@ TEST_CASE("pinned: placeholders allow only one live placement per image",
   d.flush();
   out.clear();
 
-  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *p).has_value());  // same rect: fine
+  // A no-wire retain is still this frame's live placement for the collision
+  // rule. Dropping its clock update makes the second call incorrectly pass.
+  REQUIRE(d.retain_pinned(Rect{0, 0, 2, 2}, *p).has_value());
   const auto second = d.draw_pinned(Rect{6, 0, 2, 2}, *p);
   REQUIRE_FALSE(second.has_value());
   CHECK(second.error().severity == Severity::Warning);
@@ -930,12 +932,46 @@ TEST_CASE("pinned: a driver that never heard of pinning refuses honestly",
   CHECK(d3.error().message ==
         "draw_pinned: this tier cannot hold an image resident");
 
+  // retain_pinned is another NON-pure addition. Its default delegates to the
+  // old draw path, so a legacy driver compiles and answers with that path's
+  // honest refusal rather than silently pretending a placement was retained.
+  const auto k2 = base.retain_pinned(Rect{0, 0, 1, 1}, PinnedImage{1, 1});
+  REQUIRE_FALSE(k2.has_value());
+  CHECK(k2.error().message ==
+        "draw_pinned: this tier cannot hold an image resident");
+  const auto k3 = base.retain_pinned(Rect{0, 0, 1, 1}, PinnedImage{1, 1},
+                                     PlacementFit::Exact);
+  REQUIRE_FALSE(k3.has_value());
+  CHECK(k3.error().message ==
+        "draw_pinned: this tier cannot hold an image resident");
+
   const auto u = base.unpin_image(PinnedImage{1, 1});
   REQUIRE_FALSE(u.has_value());
   CHECK(u.error().message ==
         "unpin_image: this tier cannot hold an image resident");
 
   CHECK_FALSE(legacy.drew_image());  // none of it reached the draw path
+}
+
+TEST_CASE("pinned: retain keeps a placement live without emitting it again",
+          "[pinned][kitty][persistent]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const auto pin = d.pin_image(art(19));
+  REQUIRE(pin.has_value());
+  REQUIRE(d.draw_pinned(Rect{2, 3, 2, 2}, *pin).has_value());
+  d.flush();
+  const std::size_t first_frame = out.size();
+
+  REQUIRE(d.retain_pinned(Rect{2, 3, 2, 2}, *pin).has_value());
+  d.flush();
+
+  CHECK(out.size() == first_frame);
+  CHECK(d.last_frame_bytes().image_transmit == 0);
+  CHECK(d.last_frame_bytes().image_edit == 0);
+  CHECK(placements_of(out, pin->id) == 1);
+  CHECK(placement_deletes_of(out, pin->id) == 0);
 }
 
 TEST_CASE("pinned: the Stretch convenience is reachable through KittyDriver",
@@ -1045,6 +1081,21 @@ TEST_CASE("pinned: an unpinned draw to the same rect refuses under "
     const auto r = d.draw_pinned(Rect{2, 1, 3, 2}, *p);
     REQUIRE_FALSE(r.has_value());
     CHECK(r.error().message.find("draw_pinned: an unpinned image") == 0);
+  }
+  SECTION("unpinned first, then retained") {
+    KittyDriver d;
+    d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+    std::string out;
+    d.set_output(&out);
+    const auto p = d.pin_image(art(35));
+    REQUIRE(p.has_value());
+    REQUIRE(d.draw_pinned(Rect{2, 1, 3, 2}, *p).has_value());
+    d.flush();
+
+    REQUIRE(d.draw_image(Rect{2, 1, 3, 2}, art(36)).has_value());
+    const auto r = d.retain_pinned(Rect{2, 1, 3, 2}, *p);
+    REQUIRE_FALSE(r.has_value());
+    CHECK(r.error().message.find("retain_pinned: an unpinned image") == 0);
   }
 }
 

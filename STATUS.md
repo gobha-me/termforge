@@ -4,9 +4,45 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-07, latest)
+## Where we are (2026-08-10, latest)
 
-**Latest release: v0.12.0 — mutable resident Kitty frames.** #196 merged
+**Latest release: v0.13.0 — persistent dirty-frame submission.** #197 merged
+through PR #222; the release tag points at that reviewed squash commit.
+
+`Widget` now has backward-compatible Immediate/Persistent pixel-region state
+and an accepted-submission acknowledgement. Immediate remains the non-pure
+default for existing widgets. Persistent regions are keyed by widget and
+vector ordinal, so destination movement is placement state rather than new
+content; omitting one retires it, while a modal overlay suspends only its
+placement.
+
+`PixelSurface` uses that contract: mutable access or `invalidate()` marks its
+content dirty, and App clears the flag only after the frame's one `ByteSink`
+write succeeds. Kitty pins once, applies later content through #196's stable
+root-frame edit, and uses the new non-pure `retain_pinned` hook to advance
+placement collection without emitting a payload, placement, or delete. ANSI
+skips clean rasterization and redraws only for content, placement, or a full
+repaint. A refused dirty write is recreated and retried; refusing a clean
+zero-image-byte frame does not manufacture a new submission.
+
+The real App-order suite covers 300 clean frames (one payload, one image id,
+one placement, no deletes), one invalidation after that interval (one
+root-frame update), movement without payload, logical-extent recreation,
+Unicode placeholder
+suppression, ANSI invalidation, overlay suspension, explicit lifetime end, and
+dirty/clean sink-refusal paths. Direct Kitty cases pin the no-wire retention
+and collision clocks, and the legacy-driver case proves the new virtual stayed
+non-pure. Removing the retention clock makes `test/46pinned` fail.
+
+**Verification:** GCC 14.2, Clang 20.1 and ASan/UBSan build all targets clean
+and pass 53/53 tests. Clang consumption passes `subdir`, `install`, and
+`vendored`. No new terminal protocol wire form was introduced: this composes
+the already live-verified pin/place/root-frame-edit/delete forms, so no new
+emulator gate applies.
+
+## Previous release: v0.12.0 (#196)
+
+**Mutable resident Kitty frames.** #196 merged
 through PR #221; the release tag points at that reviewed squash commit.
 
 `TerminalDriver` now offers non-pure raw and encoded `replace_pinned`

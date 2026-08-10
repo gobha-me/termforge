@@ -37,8 +37,9 @@ Landed and verified:
   IDs with LRU eviction. Flagship driver.
 - **AnsiRgbDriver** — truecolor half-block rendering with SGR run-coalescing.
 - **FallbackDriver** — plain-ASCII luminance, the bare-TTY floor.
-- **Widgets** — `Widget` base (with pixel-region support), `PixelSurface` (an
-  owned, fixed-resolution software framebuffer with an ASCII cell fallback),
+- **Widgets** — `Widget` base (with immediate and persistent pixel-region
+  support), `PixelSurface` (an owned, fixed-resolution software framebuffer
+  with producer-directed dirty submission and an ASCII cell fallback),
   TextBox scrollback, TableWidget, ListWidget, WaveformWidget, MapWidget (tile
   maps: TileSet + camera + layers), and the primitives Label, Button,
   ProgressBar, TextInput, Frame, MenuBar, TabBar. Mouse event routing via

@@ -815,6 +815,7 @@ class App {
   auto flush_pixel_regions() -> void;
   // The unconditional collection pass render_pixel_regions guards.
   auto collect_pixel_regions(Widget& widget) -> void;
+  auto finish_pixel_frame(bool output_accepted) -> void;
   auto save_backdrop(const Screen& screen) -> void;
   auto dim_screen(Screen& screen) -> void;
   // Fire on_stop() if a completed on_start() is owed one (#97). run_loop()
@@ -899,11 +900,45 @@ class App {
   // instead would copy the whole buffer out of a widget's cache every frame,
   // which is the entire point of the change.
   struct PixelRegion {
+    Widget* owner{nullptr};
+    std::size_t ordinal{0};
     Rect rect;
     const Image* image{nullptr};
     PlacementFit fit{PlacementFit::Stretch};
+    PixelRegionMode mode{PixelRegionMode::Immediate};
+    bool content_dirty{true};
   };
   std::vector<PixelRegion> m_pixel_regions;
+
+  // App-owned submission state for Persistent widget regions (#197). The key
+  // is (owner, ordinal), never Rect: movement is placement state and must not
+  // turn the same framebuffer into new content. Raw widget pointers are keys
+  // only; an unseen normal frame retires the entry without dereferencing it,
+  // while an overlay frame deliberately retains the image data and lets the
+  // placement alone be collected.
+  struct PersistentPixelRegion {
+    Widget* owner{nullptr};
+    std::size_t ordinal{0};
+    PinnedImage pin{};
+    Extent extent{};
+    Rect rect{};
+    PlacementFit fit{PlacementFit::Stretch};
+    bool content_ready{false};
+    bool visible{false};
+    bool seen{false};
+    bool recreate{false};
+
+    // Changes queued into the current driver frame become accepted state only
+    // after emit_frame's sink succeeds.
+    Extent pending_extent{};
+    Rect pending_rect{};
+    PlacementFit pending_fit{PlacementFit::Stretch};
+    bool pending_content{false};
+    bool pending_visible{false};
+    bool touched_wire{false};
+  };
+  std::vector<PersistentPixelRegion> m_persistent_pixels;
+  bool m_pixel_force_repaint{false};
 
   // Overlay stack, bottom-first. Raw pointers: see push_overlay.
   struct OverlayEntry {

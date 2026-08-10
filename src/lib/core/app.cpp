@@ -1,5 +1,6 @@
 #include "termforge/core/app.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -54,6 +55,7 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
   // them served here without any probe traffic (#181) — query_capabilities()
   // short-circuits on the push itself.
   m_caps = {};
+  m_persistent_pixels.clear();
   if (auto r = m_term.query_capabilities(); r) m_caps = *r;
   m_driver = m_term.select_driver(m_caps);
   if (auto r = m_driver->init(); !r) return r;
@@ -193,6 +195,7 @@ auto App::run_loop() -> int {
 
 auto App::frame_step() -> void {
   const auto frame_start = now_steady();
+  m_pixel_force_repaint = false;
   if (m_resize_pending) {
     // Clear *before* measuring: a SIGWINCH landing between the ioctl and
     // the store would otherwise be erased by it, leaving the screen at a
@@ -202,6 +205,10 @@ auto App::frame_step() -> void {
     const auto size = current_size();
     m_screen->resize(size.cols, size.rows);
     m_renderer->invalidate();
+    // A full cell repaint includes the blank cells under persistent images.
+    // Their content is unchanged, but their placement must be emitted again
+    // after that diff (especially for Unicode placeholders and ANSI cells).
+    m_pixel_force_repaint = true;
     // Before the dispatch, and so before this frame's collect pass: push it
     // after and the first frame of every resize rasterizes at the old cell
     // geometry, which under kitty is a visibly wrong scale.
@@ -215,6 +222,12 @@ auto App::frame_step() -> void {
   // just produced rather than one frame of stale state.
   tick_step(frame_start);
   m_pixel_regions.clear();
+  for (auto& region : m_persistent_pixels) {
+    region.seen = false;
+    region.pending_content = false;
+    region.pending_visible = false;
+    region.touched_wire = false;
+  }
   on_render(*m_screen);
   render_overlays(*m_screen);
   m_renderer->present(*m_screen);
@@ -238,7 +251,9 @@ auto App::frame_step() -> void {
   // exactly once rather than once per write it used to split into. Queued
   // through the same channel setup() uses for degradations, so it drains on
   // the next frame's pump and dispatch_event routes it past the overlay stack.
-  if (auto e = m_driver->take_output_error()) m_input.push_error(std::move(*e));
+  auto output_error = m_driver->take_output_error();
+  finish_pixel_frame(!output_error.has_value());
+  if (output_error) m_input.push_error(std::move(*output_error));
   wait_frame(frame_start);
 }
 
@@ -368,6 +383,7 @@ auto App::test_wire_headless(int cols, int rows, std::string* sink,
   // silently hide it -- and the tier is exactly what such a test is asserting
   // about.
   m_driver = std::move(driver);
+  m_persistent_pixels.clear();
   m_driver->set_output(sink);
   m_screen = std::make_unique<Screen>(cols, rows);
   m_renderer = std::make_unique<Renderer>(*m_driver);
@@ -654,15 +670,57 @@ auto App::render_pixel_regions(Widget& widget) -> void {
 auto App::collect_pixel_regions(Widget& widget) -> void {
   if (!m_driver || !enhanced_image_path(*m_driver)) return;
 
-  for (const auto& region : widget.pixel_regions()) {
+  const auto regions = widget.pixel_regions();
+  for (std::size_t ordinal = 0; ordinal < regions.size(); ++ordinal) {
+    const Rect region = regions[ordinal];
+    const PixelRegionState state = widget.pixel_region_state(region);
+    const PlacementFit fit = widget.pixel_fit(region);
+    PersistentPixelRegion* retained = nullptr;
+    if (state.mode == PixelRegionMode::Persistent) {
+      const auto it = std::find_if(
+          m_persistent_pixels.begin(), m_persistent_pixels.end(),
+          [&](const PersistentPixelRegion& candidate) {
+            return candidate.owner == &widget &&
+                   candidate.ordinal == ordinal;
+          });
+      if (it == m_persistent_pixels.end()) {
+        m_persistent_pixels.push_back(
+            PersistentPixelRegion{.owner = &widget, .ordinal = ordinal});
+        retained = &m_persistent_pixels.back();
+      } else {
+        retained = &*it;
+      }
+      retained->seen = true;
+    }
+
     // The widget cannot ask the driver itself, so hand it the answer.
     const Extent px = m_driver->preferred_pixel_extent(region);
+    bool needs_image = state.mode == PixelRegionMode::Immediate;
+    if (retained != nullptr) {
+      needs_image = !retained->content_ready || state.content_dirty ||
+                    retained->recreate;
+      // A non-resident enhanced tier (currently ANSI) needs the source again
+      // when placement must be repainted; App never borrows it across frames.
+      if (m_driver->max_pinned_images() == 0 &&
+          (!retained->visible || retained->rect != region ||
+           retained->fit != fit || m_pixel_force_repaint)) {
+        needs_image = true;
+      }
+    }
+
+    const Image* image = needs_image ? widget.draw_pixels(region, px) : nullptr;
     // Non-empty as well as non-null: an engaged optional holding an Image{}
     // used to blank the covered cells here and then be rejected by the driver
     // as "draw_image: empty image", leaving a hole in the UI.
-    if (const Image* img = widget.draw_pixels(region, px);
-        img != nullptr && !img->empty()) {
-      m_pixel_regions.push_back({region, img, widget.pixel_fit(region)});
+    const bool cached = retained != nullptr && retained->content_ready;
+    if ((image != nullptr && !image->empty()) || (!needs_image && cached)) {
+      m_pixel_regions.push_back({.owner = &widget,
+                                 .ordinal = ordinal,
+                                 .rect = region,
+                                 .image = image,
+                                 .fit = fit,
+                                 .mode = state.mode,
+                                 .content_dirty = state.content_dirty});
 
       // Clear the Screen cells in this region so the cell diff does not emit
       // the fallback underneath the image. This is load-bearing on ANSI too:
@@ -671,6 +729,11 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
       for (int y = region.y; y < region.y + region.h; ++y)
         for (int x = region.x; x < region.x + region.w; ++x)
           m_screen->at(x, y) = Cell{};
+    } else if (retained != nullptr) {
+      // No enhanced frame exists for this visible region. Its placement will
+      // be collected at this frame boundary; remember that so a later retry
+      // uses draw_pinned rather than a no-wire retain of a vanished placement.
+      retained->visible = false;
     }
   }
 }
@@ -694,8 +757,170 @@ auto App::flush_pixel_regions() -> void {
   // Ungated: m_pixel_regions can only be non-empty if collect_pixel_regions
   // already passed the same test.
   for (const auto& pr : m_pixel_regions) {
-    if (auto drawn = m_driver->draw_image(pr.rect, *pr.image, pr.fit); !drawn)
-      m_input.push_error(std::move(drawn.error()));
+    if (pr.mode == PixelRegionMode::Immediate) {
+      if (auto drawn = m_driver->draw_image(pr.rect, *pr.image, pr.fit);
+          !drawn) {
+        m_input.push_error(std::move(drawn.error()));
+      }
+      continue;
+    }
+
+    const auto state_it = std::find_if(
+        m_persistent_pixels.begin(), m_persistent_pixels.end(),
+        [&](const PersistentPixelRegion& candidate) {
+          return candidate.owner == pr.owner &&
+                 candidate.ordinal == pr.ordinal;
+        });
+    if (state_it == m_persistent_pixels.end()) continue;
+    auto& state = *state_it;
+
+    if (m_driver->max_pinned_images() == 0) {
+      const bool placement_changed = !state.visible || state.rect != pr.rect ||
+                                     state.fit != pr.fit ||
+                                     m_pixel_force_repaint;
+      const bool submit_content = !state.content_ready || pr.content_dirty;
+      if (submit_content || placement_changed) {
+        // collect_pixel_regions asks for the image when either predicate can
+        // reach here; keep the guard defensive because a null borrowed view is
+        // a fallback request, never permission to dereference it.
+        if (pr.image == nullptr) continue;
+        if (auto drawn = m_driver->draw_image(pr.rect, *pr.image, pr.fit);
+            !drawn) {
+          m_input.push_error(std::move(drawn.error()));
+          continue;
+        }
+        state.pending_visible = true;
+        state.pending_rect = pr.rect;
+        state.pending_fit = pr.fit;
+        state.touched_wire = true;
+        if (submit_content) {
+          state.pending_content = true;
+          state.pending_extent =
+              Extent{pr.image->width(), pr.image->height()};
+        }
+      }
+      continue;
+    }
+
+    const bool submit_content = !state.content_ready || pr.content_dirty ||
+                                state.recreate;
+    const Extent next_extent =
+        pr.image != nullptr
+            ? Extent{pr.image->width(), pr.image->height()}
+            : state.extent;
+    if (!m_driver->supports_placement_fit(pr.fit)) {
+      m_input.push_error(ErrorEvent{
+          Severity::Warning, "app",
+          "persistent pixel region: requested placement fit is unsupported "
+          "by this driver"});
+      continue;
+    }
+    if (pr.fit == PlacementFit::Exact) {
+      const Extent needed = m_driver->image_cell_extent(next_extent);
+      if (needed.w > pr.rect.w || needed.h > pr.rect.h) {
+        m_input.push_error(ErrorEvent{
+            Severity::Warning, "app",
+            std::format("persistent pixel region: Exact placement needs "
+                        "{}x{} cells for {}x{} pixels, but destination is "
+                        "{}x{}",
+                        needed.w, needed.h, next_extent.w, next_extent.h,
+                        pr.rect.w, pr.rect.h)});
+        continue;
+      }
+    }
+    const bool extent_changed =
+        state.content_ready && pr.image != nullptr && state.extent != next_extent;
+
+    if ((state.recreate || extent_changed) && state.pin) {
+      if (auto released = m_driver->unpin_image(state.pin); !released) {
+        m_input.push_error(std::move(released.error()));
+        continue;
+      }
+      state.pin = {};
+      state.visible = false;
+      state.touched_wire = true;
+    }
+
+    bool content_ok = true;
+    if (!state.pin) {
+      if (pr.image == nullptr) continue;
+      auto pinned = m_driver->pin_image(*pr.image);
+      if (!pinned) {
+        m_input.push_error(std::move(pinned.error()));
+        continue;
+      }
+      state.pin = *pinned;
+      state.touched_wire = true;
+    } else if (submit_content && pr.image != nullptr && !state.recreate &&
+               !extent_changed) {
+      if (auto replaced = m_driver->replace_pinned(state.pin, *pr.image);
+          !replaced) {
+        m_input.push_error(std::move(replaced.error()));
+        content_ok = false;
+      } else {
+        state.touched_wire = true;
+      }
+    }
+    if (!content_ok) {
+      // Preserve the last accepted frame when replacement was refused. The
+      // producer stays dirty, but the existing placement need not turn into a
+      // hole while it waits for a retry.
+      if (state.visible && state.rect == pr.rect && state.fit == pr.fit) {
+        if (auto kept = m_driver->retain_pinned(pr.rect, state.pin, pr.fit);
+            !kept) {
+          m_input.push_error(std::move(kept.error()));
+        }
+      }
+      continue;
+    }
+
+    const bool placement_changed = !state.visible || state.rect != pr.rect ||
+                                   state.fit != pr.fit ||
+                                   m_pixel_force_repaint || state.recreate ||
+                                   extent_changed;
+    // retain_pinned is a non-pure compatibility hook: Kitty's override is a
+    // no-wire clock refresh, while an older driver inherits the honest
+    // draw_pinned fallback and may append placement bytes. Treat either route
+    // as touching driver state so a refused sink write retries conservatively.
+    state.touched_wire = true;
+    auto placed = placement_changed
+                      ? m_driver->draw_pinned(pr.rect, state.pin, pr.fit)
+                      : m_driver->retain_pinned(pr.rect, state.pin, pr.fit);
+    if (!placed) {
+      m_input.push_error(std::move(placed.error()));
+      continue;
+    }
+    state.pending_visible = true;
+    state.pending_rect = pr.rect;
+    state.pending_fit = pr.fit;
+    if (submit_content) {
+      state.pending_content = true;
+      state.pending_extent = next_extent;
+    }
+  }
+
+  // An overlay suspends the underlying placement but deliberately keeps its
+  // resident data. Outside that explicit suspension, omission ends the
+  // persistent region's lifetime and returns its pin budget in this frame.
+  for (auto it = m_persistent_pixels.begin();
+       it != m_persistent_pixels.end();) {
+    if (it->seen) {
+      ++it;
+      continue;
+    }
+    if (!m_overlays.empty()) {
+      it->visible = false;
+      ++it;
+      continue;
+    }
+    if (it->pin) {
+      if (auto released = m_driver->unpin_image(it->pin); !released) {
+        m_input.push_error(std::move(released.error()));
+        ++it;
+        continue;
+      }
+    }
+    it = m_persistent_pixels.erase(it);
   }
 
   // After the regions, so a same-rect collision resolves in the widget tree's
@@ -713,6 +938,50 @@ auto App::flush_pixel_regions() -> void {
   // per-frame collection cadence; on ANSI the empty call is simply free. The
   // write itself is frame_step's Renderer::flush(). Baseline has no image
   // window at all and is untouched at one write per frame.
+}
+
+auto App::finish_pixel_frame(bool output_accepted) -> void {
+  const FrameBytes emitted = m_driver->last_frame_bytes();
+  const bool image_wire =
+      emitted.image_transmit != 0 || emitted.image_edit != 0;
+  for (auto& state : m_persistent_pixels) {
+    if (!output_accepted) {
+      // Driver bookkeeping has already advanced past the refused sink write.
+      // Recreate resident content on the next visible frame so its retry
+      // cannot be suppressed by the driver's now-ahead content hash. A clean
+      // Kitty retain advances only collection clocks and emits zero image
+      // bytes; a refusal of an otherwise empty/cell-only frame must not turn
+      // that accepted content dirty again. The per-frame meter is the exact
+      // write-side answer, including for a legacy retain that delegated to a
+      // placement draw.
+      if (state.touched_wire && image_wire) {
+        state.visible = false;
+        if (state.pin) state.recreate = true;
+      }
+      state.pending_content = false;
+      state.pending_visible = false;
+      state.touched_wire = false;
+      continue;
+    }
+
+    if (state.pending_visible) {
+      state.visible = true;
+      state.rect = state.pending_rect;
+      state.fit = state.pending_fit;
+    }
+    if (state.pending_content) {
+      state.content_ready = true;
+      state.extent = state.pending_extent;
+      state.recreate = false;
+      // The key may be stale only after an unseen region was erased, and those
+      // entries are removed before this walk. Seen owners remain alive for the
+      // complete on_render -> flush -> acknowledgement window.
+      state.owner->pixel_region_submitted(state.pending_rect);
+    }
+    state.pending_content = false;
+    state.pending_visible = false;
+    state.touched_wire = false;
+  }
 }
 
 auto App::set_size(Size size) -> std::expected<void, ErrorEvent> {

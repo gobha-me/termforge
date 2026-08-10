@@ -42,7 +42,7 @@ PixelSurface::PixelSurface(Extent extent, Pixel fill)
 
 auto PixelSurface::reset(Extent extent, Pixel fill) -> void {
   m_image = make_image(extent, fill);
-  mark_dirty();
+  invalidate();
 }
 
 auto PixelSurface::draw(Screen& screen) -> void {
@@ -89,6 +89,19 @@ auto PixelSurface::draw_pixels(Rect region, Extent /*preferred*/)
     -> const Image* {
   if (region != rect() || region.empty() || m_image.empty()) return nullptr;
   return &m_image;
+}
+
+auto PixelSurface::pixel_region_state(Rect region) const noexcept
+    -> PixelRegionState {
+  (void)region;
+  return PixelRegionState{.mode = PixelRegionMode::Persistent,
+                          .content_dirty = m_content_dirty};
+}
+
+auto PixelSurface::pixel_region_submitted(Rect region) noexcept -> void {
+  (void)region;
+  m_content_dirty = false;
+  ++m_submission_count;
 }
 
 auto PixelSurface::pixel_fit(Rect /*region*/) const noexcept -> PlacementFit {
