@@ -75,6 +75,29 @@ placement, no data/placement deletes during the run, and zero image bytes on
 the deliberate clean frames. Shutdown's final `d=A` is reported separately
 from in-frame lifecycle traffic.
 
+#### Constrained remote observation
+
+The first 60-second run used Kitty 0.32.2 through Guacamole and an aggressive
+scanning proxy. It is useful W5 transport evidence, but is not the direct-Kitty
+release reference and did not pass the 30 FPS gate.
+
+| measure | result |
+| --- | ---: |
+| frames / elapsed | 1,510 / 60.901 s |
+| achieved cadence / missed 33.3 ms work budgets | 24.794 FPS / 227 |
+| average / p95 / maximum frame work | 17.464 / 66.692 / 2,533.974 ms |
+| average generation / submission | 0.190 / 17.273 ms |
+| wire per frame / observed throughput | 290.9 KiB / 7.043 MiB/s |
+| clean frames | 50, all with 0 image bytes |
+| resident lifecycle | 1 id, 1 upload, 1,459 updates, 1 placement, 0 deletes |
+
+At that wire shape, 30 FPS averages 8.521 MiB/s. The much larger live
+submission time compared with the 0.741 ms headless baseline, plus one 2.534 s
+stall, indicates that the pty/terminal/remote-display path dominated this run.
+That attribution is an inference from the two measurements; a direct,
+unproxied capture is still needed to separate the layers and pass the release
+gate. The visual no-flicker observation was not reported for this run.
+
 ## Ownership boundary with RasterForge
 
 This workload intentionally keeps only application-authored procedural raster

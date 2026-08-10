@@ -26,6 +26,14 @@ replacement frame or flicker was visible. Broader #88 kernel/W2-W5 work remains
 open, and RasterForge #24 owns the sister project's raster-kernel benchmark
 axis; TermForge keeps only App cadence and terminal wire behavior here.
 
+A first capture on Kitty 0.32.2 through Guacamole and an aggressive scanning
+proxy retained one image id and placement, emitted no deletes, and emitted zero
+image bytes on all 50 clean frames. It reached 24.794 FPS at 7.043 MiB/s rather
+than the requested 30 FPS, with submission time dominating the misses and a
+2.534-second maximum stall. This is recorded as constrained #88 transport
+evidence, not as the release reference; a direct unproxied run and the visual
+flicker observation remain required.
+
 **Verification so far:** GCC 14.2 and Clang 20 Release `-Werror` builds each
 pass all 53 suites. GCC ASan+UBSan also passes 53/53, and Clang passes the
 subdirectory, installed-package and plain-vendored consumer acceptance paths.
