@@ -113,7 +113,10 @@ completed items.
   A persistent 320x180 software framebuffer mutated from `on_tick`, presented
   through the normal pixel-region window, and preserved across terminal resize.
 
-- [ ] **4.2 — game.cpp** (MapWidget is ready; workload remains with #88)
+- [x] **4.2 — game.cpp** ✅
+  Deterministic 320x180 RGBA workload with a fixed 120 Hz simulation, a 30 FPS
+  display cadence, an ASCII Baseline, headless App-path measurement and a
+  real-Kitty 60-second capture mode (#198 step 6 / #88 workload slice).
 
 ---
 

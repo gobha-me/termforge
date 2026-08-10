@@ -55,6 +55,17 @@ class FailingOnceSink final : public ByteSink {
   std::string accepted;
 };
 
+class SegmentSink final : public ByteSink {
+ public:
+  auto write(std::span<const char> bytes)
+      -> std::expected<void, ErrorEvent> override {
+    segments.emplace_back(bytes.data(), bytes.size());
+    return {};
+  }
+
+  std::vector<std::string> segments;
+};
+
 class SurfaceApp final : public App {
  public:
   PixelSurface surface{Extent{320, 180}, Pixel{0, 0, 0, 255}};
@@ -125,6 +136,52 @@ class SurfaceApp final : public App {
   std::chrono::steady_clock::time_point m_now{};
   BlockingOverlay m_overlay;
   int m_frame{0};
+};
+
+// #198 step 6's production workload shape. It mutates one fixed 320x180
+// surface on every display frame except two deliberate clean frames. The
+// point is the App cadence, not the cost of the tiny synthetic producer: one
+// initial resident upload, root-frame edits for changes, and no image wire at
+// all when the producer leaves the surface clean.
+class DynamicSurfaceApp final : public App {
+ public:
+  PixelSurface surface{Extent{320, 180}, Pixel{8, 16, 24, 255}};
+  SegmentSink sink;
+  std::vector<FrameBytes> observed_frames;
+
+  auto on_render(Screen& screen) -> void override {
+    driver().set_output(&sink);
+    if (m_frame > 0) observed_frames.push_back(driver().last_frame_bytes());
+    const bool unchanged = m_frame == 30 || m_frame == 60;
+    if (!unchanged) {
+      surface.pixels()[0] =
+          Pixel{static_cast<std::uint8_t>(m_frame), 80, 160, 255};
+    }
+    screen.clear();
+    surface.set_geometry({2, 1, 16, 6});
+    surface.draw(screen);
+    render_pixel_regions(surface);
+    ++m_frame;
+  }
+
+  auto run() -> void {
+    test_run_frames(62, 20, 8, nullptr, std::make_unique<KittyDriver>());
+  }
+
+ protected:
+  [[nodiscard]] auto now_steady() const
+      -> std::chrono::steady_clock::time_point override {
+    return m_now;
+  }
+  auto wait_readable(int timeout_ms) -> bool override {
+    m_now += std::chrono::milliseconds(timeout_ms);
+    return false;
+  }
+  auto read_available(char*, int) -> int override { return 0; }
+
+ private:
+  int m_frame{0};
+  std::chrono::steady_clock::time_point m_now{};
 };
 
 }  // namespace
@@ -294,6 +351,40 @@ TEST_CASE("300 clean PixelSurface frames retain one upload and placement",
   CHECK(tfsupport::data_deletes_of(app.wire, 272) == 0);
   CHECK(tfsupport::placement_deletes_of(app.wire, 272) == 0);
   CHECK(app.surface.submission_count() == 1);
+}
+
+TEST_CASE("320x180 dynamic App workload keeps one id and emits no clean-frame "
+          "image bytes",
+          "[pixelsurface][app][kitty][persistent][game]") {
+  DynamicSurfaceApp app;
+  app.run();
+
+  // 62 frame writes plus the explicit shutdown handoff. Keeping the segments
+  // separate is load-bearing: the clean-frame assertion is about the caller's
+  // production frame boundary, not merely the aggregate stream.
+  REQUIRE(app.sink.segments.size() == 63);
+  std::string wire;
+  for (std::size_t i = 0; i < 62; ++i) wire += app.sink.segments[i];
+
+  CHECK(tfsupport::ids_named(wire) == std::set<std::uint32_t>{272});
+  CHECK(tfsupport::transmits_of(wire, 272) == 1);
+  CHECK(tfsupport::frame_updates_of(wire, 272) == 59);
+  CHECK(tfsupport::placements_of(wire, 272) == 1);
+  CHECK(tfsupport::data_deletes_of(wire, 272) == 0);
+  CHECK(tfsupport::placement_deletes_of(wire, 272) == 0);
+  CHECK(tfsupport::apcs(app.sink.segments[30]).empty());
+  CHECK(tfsupport::apcs(app.sink.segments[60]).empty());
+  CHECK(app.surface.submission_count() == 60);
+
+  REQUIRE(app.observed_frames.size() == 61);
+  for (std::size_t i = 0; i < app.observed_frames.size(); ++i) {
+    CHECK(app.observed_frames[i].total() == app.sink.segments[i].size());
+  }
+  CHECK(app.observed_frames[30].image_transmit == 0);
+  CHECK(app.observed_frames[30].image_edit == 0);
+  CHECK(app.observed_frames[60].image_transmit == 0);
+  CHECK(app.observed_frames[60].image_edit == 0);
+  CHECK(app.sink.segments.back().find("a=d,d=A") != std::string::npos);
 }
 
 TEST_CASE("clean Unicode-placeholder frames do not repaint the retained grid",

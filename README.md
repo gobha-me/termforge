@@ -77,8 +77,8 @@ Landed and verified:
   container — so a ProgressBar's pulse and a Button's press flash are measured
   in seconds too. See `examples/motion.cpp`.
 
-Deferred per the roadmap: `SixelDriver` (Epic 5), the MapWidget game example,
-SIMD waveform rasterization, framebuffer driver.
+Deferred per the roadmap: `SixelDriver` (Epic 5), the broader benchmark/SIMD
+workloads, framebuffer driver.
 
 ## Why
 
@@ -169,11 +169,16 @@ and Clang.
 - `src/bin` — a chat-scrollback demo (live TextBox + input line) that runs on
   the real interactive loop. Under a non-TTY it exits cleanly with "stdout is
   not a tty" — the failure path working as designed.
-- `examples/` — focused demos per subsystem: `pixel_surface` (a persistent
-  320×180 software framebuffer), `dashboard` (TableWidget + WaveformWidget +
-  TextBox), `motion` (`on_tick` — fixed vs variable timestep and the stall
-  clamp, live), `widgets` (all primitives + focus model), `image`, `chat`,
-  `input`, `colors`, `low_level`, `hello`.
+- `examples/` — focused demos per subsystem: `game` (a deterministic 320×180
+  workload with headless benchmark and real-Kitty capture modes),
+  `pixel_surface` (the persistent framebuffer primitive), `dashboard`
+  (TableWidget + WaveformWidget + TextBox), `motion` (`on_tick` — fixed vs
+  variable timestep and the stall clamp, live), `widgets` (all primitives +
+  focus model), `image`, `chat`, `input`, `colors`, `low_level`, `hello`.
+
+The game workload can be measured without a TTY or captured on a real Kitty
+terminal. See [docs/performance.md](docs/performance.md) for commands, metric
+definitions, and the current baseline.
 
 A btop-style system monitor (`forge-top`) is planned as a permanent
 dogfooding harness for all driver tiers (see ROADMAP / issue #16).
