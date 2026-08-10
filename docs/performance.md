@@ -69,34 +69,37 @@ least 60 wall-clock seconds:
 ```
 
 Record the Kitty version, host/compiler, generated JSON, and whether any blank
-replacement frame or flicker was visible. The release gate is: sustained 30
-FPS on the named reference machine, one bounded image-id set, one stable
-placement, no data/placement deletes during the run, and zero image bytes on
-the deliberate clean frames. Shutdown's final `d=A` is reported separately
-from in-frame lifecycle traffic.
+replacement frame or flicker was visible. The direct validation target is:
+sustained 30 FPS on the named reference machine, one bounded image-id set, one
+stable placement, no data/placement deletes during the run, and zero image
+bytes on the deliberate clean frames. Shutdown's final `d=A` is reported
+separately from in-frame lifecycle traffic. Issue
+[#225](https://github.com/gobha-me/termforge/issues/225) tracks the direct,
+unproxied run deferred from v0.15.0.
 
 #### Constrained remote observation
 
-The first 60-second run used Kitty 0.32.2 through Guacamole and an aggressive
-scanning proxy. It is useful W5 transport evidence, but is not the direct-Kitty
-release reference and did not pass the 30 FPS gate.
+Two 60-second runs used Kitty 0.32.2 through Guacamole and an aggressive
+scanning proxy. They are useful W5 transport evidence, but are not the
+direct-Kitty reference and did not pass the 30 FPS target.
 
-| measure | result |
-| --- | ---: |
-| frames / elapsed | 1,510 / 60.901 s |
-| achieved cadence / missed 33.3 ms work budgets | 24.794 FPS / 227 |
-| average / p95 / maximum frame work | 17.464 / 66.692 / 2,533.974 ms |
-| average generation / submission | 0.190 / 17.273 ms |
-| wire per frame / observed throughput | 290.9 KiB / 7.043 MiB/s |
-| clean frames | 50, all with 0 image bytes |
-| resident lifecycle | 1 id, 1 upload, 1,459 updates, 1 placement, 0 deletes |
+| measure | run 1 | run 2 |
+| --- | ---: | ---: |
+| frames / elapsed | 1,510 / 60.901 s | 1,274 / 60.004 s |
+| achieved cadence / missed 33.3 ms work budgets | 24.794 FPS / 227 | 21.232 FPS / 253 |
+| average / p95 / maximum frame work | 17.464 / 66.692 / 2,533.974 ms | 24.196 / 111.549 / 806.524 ms |
+| average generation / submission | 0.190 / 17.273 ms | 0.209 / 23.986 ms |
+| wire per frame / observed throughput | 290.9 KiB / 7.043 MiB/s | 290.9 KiB / 6.032 MiB/s |
+| clean frames | 50, all 0 image bytes | 42, all 0 image bytes |
+| resident lifecycle | 1 id, 1 upload, 1,459 updates, 1 placement, 0 deletes | 1 id, 1 upload, 1,231 updates, 1 placement, 0 deletes |
 
-At that wire shape, 30 FPS averages 8.521 MiB/s. The much larger live
-submission time compared with the 0.741 ms headless baseline, plus one 2.534 s
-stall, indicates that the pty/terminal/remote-display path dominated this run.
-That attribution is an inference from the two measurements; a direct,
-unproxied capture is still needed to separate the layers and pass the release
-gate. The visual no-flicker observation was not reported for this run.
+At that wire shape, 30 FPS averages about 8.52 MiB/s. The much larger live
+submission times compared with the 0.741 ms headless baseline, plus stalls up
+to 2.534 seconds, indicate that the pty/terminal/remote-display path dominated
+these runs. That attribution is an inference from the measurements; a direct,
+unproxied capture is still needed to separate the layers. No blank frames or
+flicker were visible in the first run, but it was visibly choppy. v0.15.0
+therefore records the lifecycle result and defers the cadence claim to #225.
 
 ## Ownership boundary with RasterForge
 

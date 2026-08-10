@@ -6,7 +6,7 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-10, latest)
 
-**Next release candidate: v0.15.0 — 320x180 game workload evidence.**
+**Latest release: v0.15.0 — 320x180 game workload evidence.**
 #198 step 6 now has an in-repo `game` example that advances a fixed 120 Hz
 simulation, generates a deterministic 320x180 RGBA frame at a requested 30 FPS,
 and retains `PixelSurface`'s ASCII Baseline. Its headless mode drives the real
@@ -20,25 +20,27 @@ deliberately clean frames emitted zero image bytes. The App-order test repeats
 that contract over segmented writes instead of inferring it from aggregate
 wire.
 
-The remaining release gate is empirical: a human must run the 60-second
-capture on real Kitty, record its version/report, and confirm that no blank
-replacement frame or flicker was visible. Broader #88 kernel/W2-W5 work remains
-open, and RasterForge #24 owns the sister project's raster-kernel benchmark
-axis; TermForge keeps only App cadence and terminal wire behavior here.
+Broader #88 kernel/W2-W5 work remains open, and RasterForge #24 owns the sister
+project's raster-kernel benchmark axis; TermForge keeps only App cadence and
+terminal wire behavior here. Direct, unproxied Kitty validation is tracked by
+#225 rather than silently treating a constrained remote run as a performance
+pass.
 
 A first capture on Kitty 0.32.2 through Guacamole and an aggressive scanning
 proxy retained one image id and placement, emitted no deletes, and emitted zero
 image bytes on all 50 clean frames. It reached 24.794 FPS at 7.043 MiB/s rather
 than the requested 30 FPS, with submission time dominating the misses and a
-2.534-second maximum stall. This is recorded as constrained #88 transport
-evidence, not as the release reference; a direct unproxied run and the visual
-flicker observation remain required.
+2.534-second maximum stall. No blank frames or flicker were visible, but the
+result was visibly choppy. A second run retained the same lifecycle at 21.232
+FPS and 6.032 MiB/s. These are constrained #88 transport evidence, not a claim
+that the 30 FPS direct-Kitty target passed; #225 preserves that retest.
 
-**Verification so far:** GCC 14.2 and Clang 20 Release `-Werror` builds each
+**Verification:** GCC 14.2 and Clang 20 Release `-Werror` builds each
 pass all 53 suites. GCC ASan+UBSan also passes 53/53, and Clang passes the
 subdirectory, installed-package and plain-vendored consumer acceptance paths.
-The example CLI/report smoke cases pass. Hosted CI and the real-Kitty capture
-remain before release.
+The example CLI/report smoke cases pass, and all eight hosted CI jobs are green.
+Two constrained real-Kitty captures pin the live lifecycle result; #225 owns
+the deferred direct, unproxied cadence validation.
 
 ## Previous release: v0.14.0 (#64)
 
