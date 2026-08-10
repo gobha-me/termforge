@@ -6,7 +6,35 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-10, latest)
 
-**Latest release: v0.14.0 — persistent MapWidget sprite tier.** #64 merged
+**Next release candidate: v0.15.0 — 320x180 game workload evidence.**
+#198 step 6 now has an in-repo `game` example that advances a fixed 120 Hz
+simulation, generates a deterministic 320x180 RGBA frame at a requested 30 FPS,
+and retains `PixelSurface`'s ASCII Baseline. Its headless mode drives the real
+App/Kitty frame path and its live mode captures at least 60 seconds to JSON.
+
+The Release headless baseline on the local i9-13900H/GCC 14.2 runner processed
+180 frames at 0.803 ms average frame work (0.839 ms p95), 292.6 KiB/frame and
+346.92 MiB/s into a discard/count sink. The lifecycle stayed at one image id,
+one upload, 174 root-frame updates and one placement with no deletes; all five
+deliberately clean frames emitted zero image bytes. The App-order test repeats
+that contract over segmented writes instead of inferring it from aggregate
+wire.
+
+The remaining release gate is empirical: a human must run the 60-second
+capture on real Kitty, record its version/report, and confirm that no blank
+replacement frame or flicker was visible. Broader #88 kernel/W2-W5 work remains
+open, and RasterForge #24 owns the sister project's raster-kernel benchmark
+axis; TermForge keeps only App cadence and terminal wire behavior here.
+
+**Verification so far:** GCC 14.2 and Clang 20 Release `-Werror` builds each
+pass all 53 suites. GCC ASan+UBSan also passes 53/53, and Clang passes the
+subdirectory, installed-package and plain-vendored consumer acceptance paths.
+The example CLI/report smoke cases pass. Hosted CI and the real-Kitty capture
+remain before release.
+
+## Previous release: v0.14.0 (#64)
+
+**v0.14.0 — persistent MapWidget sprite tier.** #64 merged
 through PR #223, completing #198 step 5 and the remaining MapWidget work.
 
 `TileSet` now owns one application-authored RGBA atlas, and each `TileDef` may
