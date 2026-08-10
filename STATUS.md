@@ -6,7 +6,35 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-10, latest)
 
-**Latest release: v0.13.0 — persistent dirty-frame submission.** #197 merged
+**Latest release: v0.14.0 — persistent MapWidget sprite tier.** #64 merged
+through PR #223, completing #198 step 5 and the remaining MapWidget work.
+
+`TileSet` now owns one application-authored RGBA atlas, and each `TileDef` may
+name a same-sized source rectangle while retaining its required glyph, fg, and
+bg Baseline. Existing three-field aggregate initialization remains valid. When
+every visible non-empty tile has a valid sprite, `MapWidget` alpha-composites
+its visible layers into one native-resolution viewport image; incomplete
+authoring selects the complete glyph window instead of silently dropping a
+logical tile.
+
+The viewport is a Persistent pixel region. Visual mutators advance a content
+generation, geometry-size changes rebuild the raster, movement changes only
+placement, and App acknowledges content only after an accepted sink write.
+The production-cadence suite observes one transmit across 300 clean Kitty
+frames, one root-frame edit after mutation, and placement-only movement;
+ANSI receives the raster, FallbackDriver retains glyphs, and a refused frame
+retries the cached raster without losing its dirty state. Mutation checks kill
+dropped invalidation, lost source-over composition, and an Immediate-mode
+regression.
+
+**Verification:** GCC 14.2 and Clang 20.1 Release builds compile all targets
+clean with `-Werror` and pass 53/53 tests. Combined ASan/UBSan passes 53/53;
+Clang consumption passes `subdir`, `install`, and `vendored`. No new terminal
+protocol wire form was introduced, so no new emulator gate applies.
+
+## Previous release: v0.13.0 (#197)
+
+**Persistent dirty-frame submission.** #197 merged
 through PR #222; the release tag points at that reviewed squash commit.
 
 `Widget` now has backward-compatible Immediate/Persistent pixel-region state
