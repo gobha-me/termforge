@@ -11,6 +11,7 @@ set(EXAMPLES
   chat
   low_level
   dashboard
+  game
   motion
   pixel_surface
   widgets
