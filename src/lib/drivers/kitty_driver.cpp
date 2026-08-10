@@ -883,6 +883,67 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
   return {};
 }
 
+auto KittyDriver::retain_pinned(Rect cells, PinnedImage image,
+                                PlacementFit fit)
+    -> std::expected<void, ErrorEvent> {
+  auto entry = resolve_pin(image, "retain_pinned");
+  if (!entry) return std::unexpected{entry.error()};
+  if (cells.empty()) {
+    return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
+                                      "retain_pinned: empty destination rect"}};
+  }
+  if (auto ok = detail::validate_fit(fit, cells, (*entry)->px, *this, "kitty",
+                                     "retain_pinned");
+      !ok) {
+    return ok;
+  }
+
+  bool clamped = false;
+  const Rect dest = clamp_dest(cells, clamped);
+  (void)clamped;  // draw_pinned reported this placement's one-shot warning
+  const std::uint64_t key = region_key(dest.x, dest.y, dest.w, dest.h);
+
+  // Retention is the no-wire half of draw_pinned. It is valid only while the
+  // exact placement App remembers is still live; anything else delegates to
+  // the ordinary draw, which creates or edits the placement correctly.
+  auto place = m_pin_places.find(key);
+  if (place == m_pin_places.end() || place->second.image_id != image.id ||
+      !place->second.placed || place->second.fit != fit) {
+    return draw_pinned(cells, image, fit);
+  }
+
+  // The same two Unicode-placeholder collisions draw_pinned refuses still
+  // exist when no bytes are emitted: an ordinary region can overwrite this
+  // retained grid, and retaining two rects for one image is still ambiguous.
+  if (m_mode == PlacementMode::UnicodePlaceholders) {
+    if ((*entry)->last_place_clock > m_frame_start_clock &&
+        (*entry)->last_place_key != key) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "kitty",
+          "retain_pinned: a pinned image can have only one live placement "
+          "under UnicodePlaceholders -- the placeholder cell encodes the "
+          "image id and not the placement id"}};
+    }
+    if (const auto region = m_regions.find(key);
+        region != m_regions.end() &&
+        region->second.last_used > m_frame_start_clock) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "kitty",
+          "retain_pinned: an unpinned image was already drawn to this rect "
+          "this frame -- under UnicodePlaceholders the two cell grids "
+          "overwrite each other"}};
+    }
+  }
+
+  // Nothing is appended. Advancing the same clocks draw_pinned advances is
+  // what keeps gc_regions from retiring the placement at this frame boundary
+  // and keeps the within-frame collision predicates exact.
+  place->second.last_used = ++m_clock;
+  (*entry)->last_place_key = key;
+  (*entry)->last_place_clock = m_clock;
+  return {};
+}
+
 auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
                                int format_code, Extent px, PlacementFit fit)
     -> std::expected<void, ErrorEvent> {

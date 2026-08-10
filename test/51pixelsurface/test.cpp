@@ -7,7 +7,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
+#include <expected>
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -35,6 +37,24 @@ struct BlockingOverlay final : Widget {
   }
 };
 
+class FailingOnceSink final : public ByteSink {
+ public:
+  auto write(std::span<const char> bytes)
+      -> std::expected<void, ErrorEvent> override {
+    ++writes;
+    if (writes == fail_on) {
+      return std::unexpected{ErrorEvent{Severity::Warning, "sink",
+                                        "first frame refused"}};
+    }
+    accepted.append(bytes.data(), bytes.size());
+    return {};
+  }
+
+  int writes{0};
+  int fail_on{1};
+  std::string accepted;
+};
+
 class SurfaceApp final : public App {
  public:
   PixelSurface surface{Extent{320, 180}, Pixel{0, 0, 0, 255}};
@@ -52,13 +72,25 @@ class SurfaceApp final : public App {
   }
 
   auto on_render(Screen& screen) -> void override {
+    if (output_override != nullptr) driver().set_output(output_override);
+    if (m_frame == 1) content_dirty_on_second_frame = surface.content_dirty();
     if (m_frame == suspend_on_frame) push_overlay(m_overlay);
     if (m_frame == resume_on_frame) pop_overlay();
+    if (m_frame == invalidate_on_frame) {
+      surface.pixels()[0] = Pixel{220, 40, 80, 255};
+    }
+    if (m_frame == reset_on_frame) {
+      surface.reset(Extent{160, 90}, Pixel{90, 40, 180, 255});
+    }
+    if (m_frame == move_on_frame) destination = moved_destination;
+    if (m_frame == resize_on_frame) request_resize();
+    const bool submit_pixels =
+        stop_submitting_on_frame < 0 || m_frame < stop_submitting_on_frame;
     ++m_frame;
     screen.clear();
     surface.set_geometry(destination);
     surface.draw(screen);
-    render_pixel_regions(surface);
+    if (submit_pixels) render_pixel_regions(surface);
   }
 
   auto run_with(std::unique_ptr<TerminalDriver> driver, int frames = 1)
@@ -69,6 +101,14 @@ class SurfaceApp final : public App {
   Rect destination{2, 1, 4, 2};
   int suspend_on_frame{-1};
   int resume_on_frame{-1};
+  int invalidate_on_frame{-1};
+  int reset_on_frame{-1};
+  int move_on_frame{-1};
+  int resize_on_frame{-1};
+  int stop_submitting_on_frame{-1};
+  Rect moved_destination{8, 3, 4, 2};
+  ByteSink* output_override{nullptr};
+  bool content_dirty_on_second_frame{false};
 
  protected:
   [[nodiscard]] auto now_steady() const
@@ -130,13 +170,17 @@ TEST_CASE("PixelSurface mutable access and recreation update dirty state",
   surface.set_geometry({0, 0, 2, 1});
   Screen screen{2, 1};
 
+  REQUIRE(surface.content_dirty());
+  REQUIRE(surface.submission_count() == 0);
   surface.draw(screen);
   REQUIRE_FALSE(surface.dirty());
+  REQUIRE(surface.content_dirty());
   (void)std::as_const(surface).pixels();
   CHECK_FALSE(surface.dirty());
 
   surface.pixels()[1] = Pixel{255, 255, 255, 255};
   REQUIRE(surface.dirty());
+  REQUIRE(surface.content_dirty());
   surface.draw(screen);
   REQUIRE_FALSE(surface.dirty());
 
@@ -231,8 +275,95 @@ TEST_CASE("App submits the fixed 320x180 image through Kitty once",
   app.run_with(std::make_unique<KittyDriver>(), 2);
 
   CHECK(tfsupport::total_transmits(app.wire) == 1);
+  CHECK(tfsupport::placements_of(app.wire, 272) == 1);
+  CHECK(app.surface.submission_count() == 1);
+  CHECK_FALSE(app.surface.content_dirty());
   CHECK(app.wire.find("s=320,v=180") != std::string::npos);
   CHECK(app.wire.find("c=4,r=2") != std::string::npos);
+}
+
+TEST_CASE("300 clean PixelSurface frames retain one upload and placement",
+          "[pixelsurface][app][kitty][persistent]") {
+  SurfaceApp app;
+  app.surface.image().fill({0, 0, 320, 180}, Pixel{30, 80, 160, 255});
+  app.run_with(std::make_unique<KittyDriver>(), 300);
+
+  CHECK(tfsupport::transmits_of(app.wire, 272) == 1);
+  CHECK(tfsupport::frame_updates_of(app.wire, 272) == 0);
+  CHECK(tfsupport::placements_of(app.wire, 272) == 1);
+  CHECK(tfsupport::data_deletes_of(app.wire, 272) == 0);
+  CHECK(tfsupport::placement_deletes_of(app.wire, 272) == 0);
+  CHECK(app.surface.submission_count() == 1);
+}
+
+TEST_CASE("clean Unicode-placeholder frames do not repaint the retained grid",
+          "[pixelsurface][app][kitty][persistent][unicode]") {
+  SurfaceApp app;
+  app.surface.image().fill({0, 0, 320, 180}, Pixel{30, 80, 160, 255});
+  auto driver = std::make_unique<KittyDriver>();
+  driver->set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  app.run_with(std::move(driver), 30);
+
+  CHECK(tfsupport::transmits_of(app.wire, 272) == 1);
+  CHECK(tfsupport::placements_of(app.wire, 272) == 1);
+  // One 4x2 grid. Re-emitting it on each clean frame would count 240.
+  CHECK(tfsupport::count_of(app.wire, "\xF4\x8E\xBB\xAE") == 8);
+  CHECK(app.surface.submission_count() == 1);
+}
+
+TEST_CASE("one invalidation after 300 clean frames replaces one root frame",
+          "[pixelsurface][app][kitty][persistent]") {
+  SurfaceApp app;
+  app.surface.image().fill({0, 0, 320, 180}, Pixel{30, 80, 160, 255});
+  app.invalidate_on_frame = 300;
+  app.run_with(std::make_unique<KittyDriver>(), 302);
+
+  CHECK(tfsupport::transmits_of(app.wire, 272) == 1);
+  CHECK(tfsupport::frame_updates_of(app.wire, 272) == 1);
+  CHECK(tfsupport::placements_of(app.wire, 272) == 1);
+  CHECK(tfsupport::data_deletes_of(app.wire, 272) == 0);
+  CHECK(app.surface.submission_count() == 2);
+  CHECK_FALSE(app.surface.content_dirty());
+}
+
+TEST_CASE("moving a clean PixelSurface changes placement without payload",
+          "[pixelsurface][app][kitty][persistent][placement]") {
+  SurfaceApp app;
+  app.surface.image().fill({0, 0, 320, 180}, Pixel{30, 80, 160, 255});
+  app.move_on_frame = 100;
+  app.run_with(std::make_unique<KittyDriver>(), 200);
+
+  CHECK(tfsupport::total_data_transmits(app.wire) == 1);
+  CHECK(tfsupport::placements_of(app.wire, 272) == 2);
+  CHECK(tfsupport::placement_deletes_of(app.wire, 272) == 1);
+  CHECK(app.surface.submission_count() == 1);
+}
+
+TEST_CASE("reset recreates resident content instead of refusing its extent",
+          "[pixelsurface][app][kitty][persistent][reset]") {
+  SurfaceApp app;
+  app.surface.image().fill({0, 0, 320, 180}, Pixel{30, 80, 160, 255});
+  app.reset_on_frame = 2;
+  app.run_with(std::make_unique<KittyDriver>(), 4);
+
+  CHECK(tfsupport::transmits_of(app.wire, 272) == 2);
+  CHECK(tfsupport::frame_updates_of(app.wire, 272) == 0);
+  CHECK(tfsupport::data_deletes_of(app.wire, 272) == 1);
+  CHECK(app.errors == 0);
+  CHECK(app.surface.submission_count() == 2);
+  CHECK(app.surface.extent() == Extent{160, 90});
+}
+
+TEST_CASE("omitting a persistent region on a normal frame releases its data",
+          "[pixelsurface][app][kitty][persistent][lifetime]") {
+  SurfaceApp app;
+  app.surface.image().fill({0, 0, 320, 180}, Pixel{30, 80, 160, 255});
+  app.stop_submitting_on_frame = 2;
+  app.run_with(std::make_unique<KittyDriver>(), 4);
+
+  CHECK(tfsupport::transmits_of(app.wire, 272) == 1);
+  CHECK(tfsupport::data_deletes_of(app.wire, 272) == 1);
+  CHECK(app.surface.submission_count() == 1);
 }
 
 TEST_CASE("App sends PixelSurface to ANSI and keeps ASCII on Baseline",
@@ -251,6 +382,22 @@ TEST_CASE("App sends PixelSurface to ANSI and keeps ASCII on Baseline",
   CHECK(baseline.wire.find("\xE2\x96\x80") == std::string::npos);
 }
 
+TEST_CASE("clean ANSI surfaces redraw only for placement invalidation",
+          "[pixelsurface][app][ansi][persistent]") {
+  SurfaceApp stable;
+  stable.surface.image().fill({0, 0, 320, 180}, Pixel{220, 40, 80, 255});
+  stable.run_with(std::make_unique<AnsiRgbDriver>(), 30);
+  CHECK(tfsupport::count_of(stable.wire, "\xE2\x96\x80") == 8);
+  CHECK(stable.surface.submission_count() == 1);
+
+  SurfaceApp resized;
+  resized.surface.image().fill({0, 0, 320, 180}, Pixel{220, 40, 80, 255});
+  resized.resize_on_frame = 1;
+  resized.run_with(std::make_unique<AnsiRgbDriver>(), 4);
+  CHECK(tfsupport::count_of(resized.wire, "\xE2\x96\x80") == 16);
+  CHECK(resized.surface.submission_count() == 1);
+}
+
 TEST_CASE("App reports a PixelSurface fit refusal on the next frame",
           "[pixelsurface][app][failure][fit]") {
   SurfaceApp app;
@@ -260,10 +407,12 @@ TEST_CASE("App reports a PixelSurface fit refusal on the next frame",
   CHECK(tfsupport::total_transmits(app.wire) == 0);
   REQUIRE(app.errors == 2);
   CHECK(app.last_severity == Severity::Warning);
-  CHECK(app.last_error.find("needs 320x180 pixels") != std::string::npos);
+  CHECK(app.last_error.find("Exact placement needs") != std::string::npos);
+  CHECK(app.surface.submission_count() == 0);
+  CHECK(app.surface.content_dirty());
 }
 
-TEST_CASE("PixelSurface suspension follows the existing region lifecycle",
+TEST_CASE("PixelSurface suspension retains data and retires only placement",
           "[pixelsurface][app][kitty][overlay]") {
   SurfaceApp app;
   const Pixel* storage = std::as_const(app.surface).pixels().data();
@@ -273,6 +422,44 @@ TEST_CASE("PixelSurface suspension follows the existing region lifecycle",
   app.run_with(std::make_unique<KittyDriver>(), 3);
 
   CHECK(std::as_const(app.surface).pixels().data() == storage);
-  CHECK(tfsupport::total_transmits(app.wire) == 2);
-  CHECK(tfsupport::data_deletes_of(app.wire, 1) == 1);
+  CHECK(tfsupport::transmits_of(app.wire, 272) == 1);
+  CHECK(tfsupport::data_deletes_of(app.wire, 272) == 0);
+  CHECK(tfsupport::placement_deletes_of(app.wire, 272) == 1);
+  CHECK(tfsupport::placements_of(app.wire, 272) == 2);
+  CHECK(app.surface.submission_count() == 1);
+}
+
+TEST_CASE("a refused frame keeps PixelSurface dirty and retries its payload",
+          "[pixelsurface][app][kitty][persistent][failure]") {
+  SurfaceApp app;
+  FailingOnceSink sink;
+  app.output_override = &sink;
+  app.surface.image().fill({0, 0, 320, 180}, Pixel{40, 100, 180, 255});
+  app.run_with(std::make_unique<KittyDriver>(), 2);
+
+  REQUIRE(sink.writes == 3);  // two frames, then shutdown
+  CHECK(app.errors == 1);
+  CHECK(app.content_dirty_on_second_frame);
+  CHECK(tfsupport::transmits_of(sink.accepted, 272) == 1);
+  CHECK(tfsupport::placements_of(sink.accepted, 272) == 1);
+  CHECK(app.surface.submission_count() == 1);
+  CHECK_FALSE(app.surface.content_dirty());
+}
+
+TEST_CASE("a refused clean frame does not manufacture new pixel content",
+          "[pixelsurface][app][kitty][persistent][failure]") {
+  SurfaceApp app;
+  FailingOnceSink sink;
+  sink.fail_on = 2;
+  app.output_override = &sink;
+  app.surface.image().fill({0, 0, 320, 180}, Pixel{40, 100, 180, 255});
+  app.run_with(std::make_unique<KittyDriver>(), 3);
+
+  REQUIRE(sink.writes == 4);  // three frames, then shutdown
+  CHECK(app.errors == 1);
+  CHECK(tfsupport::transmits_of(sink.accepted, 272) == 1);
+  CHECK(tfsupport::frame_updates_of(sink.accepted, 272) == 0);
+  CHECK(tfsupport::placements_of(sink.accepted, 272) == 1);
+  CHECK(app.surface.submission_count() == 1);
+  CHECK_FALSE(app.surface.content_dirty());
 }

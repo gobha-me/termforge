@@ -37,6 +37,9 @@ completed items.
   graphics alongside cell fallback
 - PixelSurface (#195) — persistent fixed-resolution RGBA canvas with an ASCII
   Baseline and App-managed Kitty/ANSI enhancement
+- Mutable resident frames + dirty submission (#196/#197) — stable Kitty image
+  id/root-frame edits, placement-only moves, accepted-write acknowledgement,
+  and clean-frame suppression on both enhanced tiers
 
 ---
 

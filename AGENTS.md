@@ -88,8 +88,12 @@ file is the tactical version.
   changes its destination; `reset` is the explicit storage-resize boundary.
   Its ASCII draw is the information-complete Baseline, while App carries the
   widget's `pixel_fit` into the enhanced draw and turns a driver refusal into
-  an `ErrorEvent`. It remains an ordinary per-frame region until #196/#197 add
-  stable replacement and producer-directed dirty submission.
+  an `ErrorEvent`. Since #197 it is a Persistent region: mutable access and
+  `invalidate` mark content dirty, App pins/replaces Kitty content and skips
+  clean ANSI rasterization, movement is placement-only, and the producer is
+  acknowledged only after the frame's sink write is accepted. Persistent
+  region identity is `(Widget*, pixel_regions vector index)`, never its Rect;
+  keep the vector order stable while a region lives.
 - **A pre-encoded payload is shipped verbatim** (#163). `EncodedImage` carries
   opaque bytes the *terminal* decodes; the library never encodes, decodes,
   inspects or resamples them — that is the application's asset pipeline's job,

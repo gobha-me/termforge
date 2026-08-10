@@ -42,6 +42,19 @@ namespace termforge {
 // will the drivers (#83). It arrives here via the core/types.hpp include
 // above, so every consumer of this header keeps compiling unchanged.
 
+// How App should treat the content behind one declared pixel region. Immediate
+// preserves the original contract: draw_pixels() is called and draw_image() is
+// issued every visible frame. Persistent gives App permission to retain the
+// content between frames and ask for a new buffer only when content_dirty is
+// true. The region's vector index, not its destination Rect, is its identity so
+// a persistent image can move without becoming new content.
+enum class PixelRegionMode { Immediate, Persistent };
+
+struct PixelRegionState {
+  PixelRegionMode mode{PixelRegionMode::Immediate};
+  bool content_dirty{true};
+};
+
 class Widget {
  public:
   virtual ~Widget() = default;
@@ -128,6 +141,21 @@ class Widget {
       -> const Image* {
     return nullptr;
   }
+
+  // Submission policy for one declared region (#197). Non-pure so existing
+  // out-of-tree widgets keep their immediate-mode behaviour on recompilation.
+  // A Persistent widget must keep pixel_regions() ordering stable while a
+  // region lives; App keys retained content by (Widget*, vector index), which
+  // is what lets a destination move without retransmitting its pixels.
+  [[nodiscard]] virtual auto pixel_region_state(Rect /*region*/) const noexcept
+      -> PixelRegionState {
+    return {};
+  }
+
+  // Called only after a dirty Persistent region's complete frame write was
+  // accepted by the configured ByteSink. A driver refusal or sink rejection
+  // does not acknowledge the frame, so the producer can retry it unchanged.
+  virtual auto pixel_region_submitted(Rect /*region*/) noexcept -> void {}
 
   // Placement policy for one declared pixel region. Stretch preserves the
   // historical widget contract: generated content is rasterized for, or

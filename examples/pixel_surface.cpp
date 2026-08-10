@@ -5,9 +5,10 @@
 // same owned Image through App's normal pixel-region window. Terminal resizes
 // change the destination cell rect, never the logical framebuffer.
 //
-// This is deliberately not a game engine and not yet the stable resident
-// replacement path from #196: changed frames are ordinary region submissions.
-// Space pauses the producer; ESC quits.
+// App retains the first accepted frame, replaces it only after PixelSurface's
+// producer dirty bit is set, and moves/resizes the placement without treating
+// geometry as content. Space pauses the producer (and therefore all content
+// uploads); ESC quits.
 
 #include "termforge/widgets/pixel_surface.hpp"
 
@@ -49,8 +50,10 @@ class PixelSurfaceDemo final : public App {
     screen.clear();
     screen.write_text(
         0, 0,
-        std::format(" PixelSurface 320x180 | {} | Space pause | ESC quit ",
-                    m_paused ? "paused" : "running"),
+        std::format(" PixelSurface 320x180 | {} | uploads {} | Space pause | "
+                    "ESC quit ",
+                    m_paused ? "paused" : "running",
+                    m_surface.submission_count()),
         Rgb{0xF0, 0xF0, 0xF0}, Rgb{0x20, 0x40, 0x80});
 
     const int w = std::max(0, screen.cols() - 2);

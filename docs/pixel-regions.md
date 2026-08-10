@@ -53,13 +53,11 @@ Kitty native graphics or ANSI truecolour raster.
 │  2. renderer->present(screen) ─ diff + emit │
 │  3. for each pixel region:                  │
 │       if enhanced image tier:               │
-│         ext = driver->preferred_pixel_      │
-│                 extent(region)              │
-│         img = widget->draw_pixels(region,   │
-│                 ext)          ─ borrowed    │
-│         fit = widget->pixel_fit(region)     │
-│         driver->draw_image(region, *img,    │
-│                 fit)                       │
+│         state = widget->pixel_region_state  │
+│         if immediate or content dirty:      │
+│           img = widget->draw_pixels(...)    │
+│         submit or retain content + place    │
+│         acknowledge accepted dirty content │
 └─────────────────────────────────────────────┘
 ```
 
@@ -89,6 +87,17 @@ class Widget {
     return nullptr;
   }
 
+  // Immediate is the backward-compatible default. Persistent content is
+  // retained by App and requests draw_pixels only while dirty.
+  virtual auto pixel_region_state(Rect region) const noexcept
+      -> PixelRegionState {
+    return {};
+  }
+
+  // Called after a dirty Persistent submission's complete frame write was
+  // accepted. A driver refusal or sink rejection is not acknowledged.
+  virtual auto pixel_region_submitted(Rect region) noexcept -> void {}
+
   // How the returned image maps into this region. Existing widgets inherit
   // Stretch; shipped/pre-rendered pixel grids may opt into Exact.
   virtual auto pixel_fit(Rect region) const noexcept -> PlacementFit {
@@ -116,10 +125,40 @@ called every frame.
 
 Image-draw failures are queued back through App's normal `ErrorEvent` path.
 They arrive on the next frame because the driver draw happens after that
-frame's input pump. A region submission is a new draw request each frame, so a
-persistent refusal produces one event per request rather than being silently
-coalesced. App does not erase an Exact-fit refusal after it has blanked the
-corresponding cell region.
+frame's input pump. An Immediate region makes a new request each frame. A dirty
+Persistent region remains dirty after either a driver refusal or a rejected
+`ByteSink` write, so the next visible frame retries rather than silently
+acknowledging content the terminal never accepted. App does not erase an
+Exact-fit refusal after it has blanked the corresponding cell region.
+
+### Immediate and Persistent submission (#197)
+
+`PixelRegionMode::Immediate` preserves the original extension contract:
+`draw_pixels` and `draw_image` run for every visible region on every frame. It
+is the default, so an existing out-of-tree widget recompiles without changing
+its cadence.
+
+`PixelRegionMode::Persistent` separates content from placement. App keys a
+retained region by `(Widget*, pixel_regions() vector index)`, not by `Rect`, so
+moving or resizing the destination does not turn unchanged pixels into a new
+frame. A widget using this mode must keep its region ordering stable for the
+life of each region. App asks for the borrowed buffer only for the initial
+frame, after `content_dirty`, or when recovery requires recreation.
+
+On Kitty, App pins the initial image, uses `replace_pinned` for accepted-size
+content changes, and refreshes the existing placement without re-hashing the
+buffer. A changed logical extent explicitly unpins and repins because pinned
+handle extent is immutable. On ANSI truecolour there is no resident image
+store, so clean stable frames emit nothing; dirty content, movement, and a
+full repaint still rasterize through `draw_image`.
+
+Omitting a persistent region outside a modal overlay ends its lifetime and
+returns its pin budget. A modal overlay instead suspends only the placement:
+the image data remains resident and is placed again when the overlay closes.
+The producer acknowledgement runs after the frame's one sink write succeeds,
+never merely because bytes were queued. A persistent widget must therefore
+remain alive through that frame's render/write boundary, just as its borrowed
+image must remain valid for the complete pixel pass.
 
 ### PixelSurface: a persistent software framebuffer (#195)
 
@@ -153,12 +192,21 @@ composites straight alpha over the standard cell background, and maps the
 result through the ASCII luminance ramp. Under `Exact`, one image pixel maps to
 one cell and the immediate-mode widget blanks the unused part of its rect.
 
-This surface is deliberately an ordinary pixel region, not yet a mutable
-resident-image handle. A visible unchanged surface still submits every App
-frame as a region keepalive; Kitty's content hash makes that zero wire bytes,
-but the driver still examines the buffer. Omitting the submission retires the
-region, and resuming retransmits it. Stable same-ID replacement is #196 and
-producer-directed dirty submission is #197.
+The surface uses Persistent submission. Mutable `image()` or `pixels()` access,
+`reset()`, and explicit `invalidate()` mark pixel content dirty independently
+of the cell widget's ordinary `dirty()` hint. App clears that content flag only
+through `pixel_region_submitted`, after the complete frame write is accepted.
+`submission_count()` exposes the accepted content-upload/replacement count for
+diagnostics; placement-only moves and clean keepalives do not increment it.
+
+On Kitty, one unchanged surface is uploaded and placed once even across an
+arbitrarily long run. A content mutation edits root frame 1 under the same
+image id (#196), while a move changes only the placement. Unicode placeholder
+mode still emits the placeholder grid when placement must be restored, but a
+clean stable frame emits no repeated grid. On ANSI, the same dirty signal skips
+half-block rasterization until content, placement, or the full-screen repaint
+state changes. Omitting the submission retires the region; an overlay suspends
+and later restores it without retransmitting the resident image.
 
 ### Why This Works
 
