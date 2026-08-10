@@ -148,6 +148,44 @@ survived into the next showing unless the app kept ticking a dialog that was no
 longer pushed. The hook fires **before** `on_show()`, and resets only visual
 state: never text, a value, a selection or a scroll offset.
 
+## Choice dialogs
+
+`ChoiceDialog` is the Layer-3 composition for one-of, many-of and optional
+free-form questions. It owns the existing `RadioGroup`/`Checkbox`, `TextInput`
+and button controls rather than introducing a second form-control model:
+
+```cpp
+ChoiceDialog choice{"Rendering", "Choose up to two:", ChoiceMode::Multiple};
+choice.set_choices({
+    {"Kitty", "Native terminal graphics."},
+    {"ANSI", "Portable truecolor half-blocks."},
+});
+choice.set_other_enabled(true);
+choice.set_other_placeholder("Another preference");
+choice.set_selection_limits(1, 2);
+choice.on_close([this] { pop_overlay(); });
+choice.on_result([](std::optional<ChoiceResult> result) {
+  if (!result) return;  // cancellation
+  // result->selected_indices addresses the configured choices by index.
+  // result->other is engaged only when the Other row was selected.
+});
+```
+
+Cancellation is `std::nullopt`; a submitted empty multiple-choice result is an
+engaged `ChoiceResult` with no indices. Single mode always requires one row.
+Multiple mode defaults to zero-or-more and may set a minimum and maximum; an
+invalid submit stays open and paints the validation message inside the panel.
+Selecting Other reveals and focuses its field, and submitting a selected but
+empty Other answer is likewise rejected.
+
+Choice labels and descriptions are sanitized when configured and results use
+indices, so duplicate labels remain distinct and applications retain ownership
+of stable ids. Replacing the list preserves selections whose indices still
+exist and drops stale ones. A re-shown dialog preserves selection and Other
+text; call the setters before pushing it when a new question needs new defaults.
+Descriptions share one compact detail row for the currently selected/focused
+choice, while the choice list scrolls to keep keyboard focus visible.
+
 ## Interaction with pixel regions
 
 This is the one place the two mechanisms genuinely fight (see
