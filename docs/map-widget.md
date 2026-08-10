@@ -1,15 +1,14 @@
 # MapWidget: tile-based 2D map rendering
 
-**Status:** Proposed — design only, no implementation. Answers the five
-questions posed in #64, and closes ROADMAP 3.6's "deferred — needs design
-doc" note.
+**Status:** Implemented — glyph tier in #86, persistent atlas-backed sprite
+tier in #64. The original design and its rejected alternatives remain here
+because they explain the public contract.
 
-The short version: **v1 is glyph-only, and that is a finding, not a
-compromise.** The sprite path everyone assumes this widget is for cannot be
-built today — not because the work is large, but because the pixel-region
-contract cannot express it. See "Why the pixel tier is deferred" below. The
-design here is shaped so the sprite tier slots in later without breaking a
-single call site.
+The short version: every tile still requires a glyph representation. A
+`TileSet` may additionally own one RGBA atlas and give each `TileDef` a source
+rectangle. When every non-empty tile in the visible window has a valid sprite,
+MapWidget composites one persistent viewport image for Kitty and ANSI; any
+incomplete window keeps the complete glyph Baseline instead.
 
 ## The problem
 
@@ -38,7 +37,7 @@ That forces three decisions no existing widget has had to make:
 three. It rasterizes a function, so there is no authored art, no camera, and
 one layer.
 
-## Why the pixel tier is deferred
+## Why the pixel tier was deferred
 
 This is the part that should change the reader's plan, so it comes before
 the design rather than after it.
@@ -86,9 +85,10 @@ tier was waiting for now exists. Everything below describing the gate is
 kept as the record of why v1 shipped glyph-only; it is no longer a
 blocker.
 
-**Therefore: v1 ships the glyph tier only, and unblocks ROADMAP 4.2
-(`game.cpp`) immediately.** The sprite tier is designed for below, gated on
-#16 and #63, and reachable without an API break.
+That is why v1 shipped glyph-only. With #63, #83, #84, and #197 now landed,
+the sprite tier uses cell destinations, borrowed owned buffers, source-over
+composition, and accepted-write persistence without changing existing call
+sites.
 
 ## Rejected alternatives
 
@@ -112,8 +112,8 @@ addable later without touching app code.
 possible widget: no layer storage, no compositing. Rejected because it makes
 every consumer write the same painter's-algorithm loop — the exact argument
 #63 makes about hand-rolled alpha blending — and because it discards the
-per-layer revision counters that make the raster cache in "Dirty tracking"
-possible. The app would re-flatten every frame to hand us a grid we then
+content generation that makes the raster cache in "Dirty tracking" possible.
+The app would re-flatten every frame to hand us a grid we then
 re-rasterize.
 
 **D. MapWidget owns a scroll offset in cells, like ListWidget.** Reuse the
@@ -121,6 +121,14 @@ existing viewport idiom. Rejected: a map camera is in *tile* units and
 clamps against *map* bounds, neither of which is a cell count when tiles are
 larger than 1×1. Reusing the name without the semantics would be worse than
 a distinct one. (The unrelated cell-viewport unification is #35's job.)
+
+**E. Upload the atlas once and place every visible tile in the terminal.**
+This can reduce tty bytes dramatically, but makes Kitty's placement/z-order
+rules the compositor, cannot express arbitrary per-pixel lighting, and may
+replace one viewport upload with hundreds of terminal-side placements. The
+sprite tier therefore composes one viewport image in the widget. Issue #88
+retains terminal-atlas placement as a benchmark-driven alternative rather
+than silently baking it into this API.
 
 ## The design
 
@@ -131,23 +139,23 @@ type is the enforcement mechanism for alternative A's rejection:
 
 ```cpp
 struct TileDef {
-  std::string glyph;              // UTF-8 grapheme — REQUIRED, may be " "
+  std::string glyph;              // cell Baseline — REQUIRED
   Rgb fg{theme::kFg};
   Rgb bg{theme::kBg};
-  // Sprite tier (see "Future work"); absent in v1.
-  // std::optional<Image> sprite;
+  std::optional<Rect> sprite;     // source rectangle in TileSet's atlas
 };
 
 class TileSet {
  public:
   auto define(int id, TileDef def) -> void;
+  auto set_atlas(Image atlas, Extent tile_pixels) -> void;
   [[nodiscard]] auto get(int id) const -> const TileDef&;  // kEmpty if unknown
   [[nodiscard]] auto size() const noexcept -> std::size_t;
 };
 ```
 
-`glyph` is a plain member, not an `optional`. When the sprite tier arrives
-it arrives as an *additional* optional field, so **a sprite cannot be
+`glyph` is a plain member, not an `optional`. The sprite is an *additional*
+optional field, so **a sprite cannot be
 authored without a cell representation existing beside it** — which answers
 #64's "who owns the sprite↔cell mapping" question by construction rather
 than by documentation. The `TileSet` owns it, and the compiler enforces it.
@@ -177,8 +185,8 @@ auto set_tile_size(int cells_w, int cells_h) -> void;  // default {1, 1}
 Non-square is not merely allowed, it is the expected case. A terminal cell
 is roughly 1:2 (w:h), so a tile that *looks* square wants `{2, 1}`. Stating
 the size in cells keeps every layout number in the same currency as the rest
-of the library, and means the sprite tier later changes fidelity without
-changing layout.
+of the library, and lets the sprite tier change fidelity without changing
+layout.
 
 **Clipping** happens in the widget, in tile units, before any drawing: the
 visible tile range is derived from the camera and `rect() / tile_size`, and
@@ -237,7 +245,7 @@ for each visible cell, the topmost visible layer with a non-`kEmpty` id
 wins, outright. There is no blending, because two glyphs cannot blend.
 
 This is the point where the two tiers genuinely diverge, and the doc states
-it rather than hiding it: **the sprite tier will composite with source-over
+it rather than hiding it: **the sprite tier composites with source-over
 alpha (#63's `Image::blend`), the glyph tier with last-writer-wins.** A
 translucent fog overlay is a real alpha blend on kitty and a distinct
 authored glyph (`░`, or a dimmed bg) on cells. That asymmetry is inherent —
@@ -247,15 +255,11 @@ or faking it on cells.
 
 ### Dirty tracking
 
-#64 flags this as "the one place the widget may need to deviate" from the
-immediate-mode contract. **It does not need to deviate, and the reason is
-worth recording**, because the same reasoning applies to every future pixel
-consumer.
-
-The cost #64 is worried about is retransmitting a full-viewport image every
-frame. That cost is eliminated one layer down: `KittyDriver` hashes each
-region's content and only re-transmits when the hash changes, keyed by
-`region_key(x, y, w, h)`. An unchanged map costs a hash, not a transmit.
+#64 flags retransmitting a full viewport every frame. The first design relied
+on KittyDriver's content hash to suppress that cost. #187 proved that a local
+dedup claim was not a system-level lifetime guarantee, and #197 supplied the
+right contract: MapWidget declares one `PixelRegionMode::Persistent` region
+and reports content dirty independently from Widget's cell dirty hint.
 
 **That sentence was false when it was written, and it is worth saying so.** The
 dedup is a property of the *slot*, and until #187 the collection deleted every
@@ -265,18 +269,17 @@ system, which is the failure mode a doc citing a line number invites. Verified
 now by `test/47frameshape`, which asserts one upload across 24 frames by
 replaying `App`'s call order rather than the driver's.
 
-What is *not* deduplicated is the **rasterization** — building the `Image`
-every frame. That is widget-local, so the widget memoizes it locally:
+Rasterization is widget-local and memoized:
 
-- each layer carries a revision counter, bumped by `set_tile`/`clear_layer`;
-- the cached raster is keyed on `(camera, tile_size, rect, per-layer
-  revisions, tileset revision)`;
+- every visual mutator bumps a content generation;
+- the cached raster is keyed on that generation and the whole-tile viewport;
 - `draw_pixels` returns the cache when the key is unchanged.
 
 `draw_pixels()` is non-`const` by design (`widget.hpp:69`), so mutating a
-cache inside it is sanctioned, not a workaround. The immediate-mode contract
-is untouched: `draw_pixels` is still called every frame and still returns a
-complete image for the region.
+cache inside it is sanctioned, not a workaround. App does not call it at all
+on a clean persistent frame. The content bit clears only after the frame's sink
+write is accepted, so a refusal retries the same cached raster without losing
+or rebuilding it.
 
 The glyph tier needs no cache at all — `draw()` writes cells, and
 `Renderer::present` already diffs them.
@@ -297,31 +300,26 @@ region needs one buffer per region. `WaveformWidget` is the worked example.
 
 ## Interaction with pixel regions
 
-In v1, `MapWidget` overrides neither `pixel_regions()` nor `draw_pixels()`;
-it inherits the base no-ops and is a pure cell widget. Consequently:
+`MapWidget::draw()` always authors the glyph Baseline. On an enhanced tier,
+`pixel_regions()` returns the whole-tile portion of `rect()` only when every
+visible non-empty tile has a valid atlas source rectangle. Consequently:
 
-- `App::collect_pixel_regions` never selects it, so its cells are never
-  wiped to `Cell{}` (`src/lib/core/app.cpp:496-511`) — the failure mode
-  where a widget's cell fallback is destroyed by its own successful pixel
-  path cannot occur.
-- It composes with overlays without the `render_pixel_regions` suppression
-  rule (`src/lib/core/app.cpp:488-494`) mattering.
-- The map is drawn by `Renderer::present`, i.e. **below** any pixel region
-  another widget emits, since images land after the cell diff.
-
-When the sprite tier lands, `pixel_regions()` returns `{rect()}` and
-`draw_pixels` returns the composed raster — and the cell path in `draw()`
-stays exactly as written, because the App is what chooses between them. That
-is the payoff for rejecting alternative B.
+- App clears the corresponding glyph cells and draws the composed raster after
+  the cell diff on Kitty and ANSI.
+- FallbackDriver never enters the enhanced pass, so the authored glyphs remain.
+- A missing, wrong-sized, or out-of-atlas source disables the pixel region for
+  that complete window; no individual logical tile silently disappears.
+- Trailing partial cells stay outside the pixel region and retain the widget's
+  normal background treatment.
+- Moving the widget changes placement only; changing the map, camera, atlas,
+  layers, tile size, or whole-tile viewport marks persistent content dirty.
 
 ## The honest tradeoffs
 
-**The headline feature is absent in v1.** A widget called "MapWidget" that
-does not draw sprites will read as unfinished to anyone who skimmed #64. The
-mitigation is this document: the sprite tier is blocked on a contract change
-(#16) and a compositing primitive (#63), and shipping the glyph tier now is
-what unblocks ROADMAP 4.2 rather than stacking three designs before any
-pixel moves.
+**Sprite completeness is window-wide.** One glyph-only or invalid non-empty
+tile selects the glyph Baseline for the whole visible map. That is deliberate:
+a mixed enhanced frame cannot render the mandatory glyphs into an RGBA atlas,
+and silently dropping only those tiles would create a hole in the game state.
 
 **Trailing partial tiles are dead space.** With 2×1 tiles, an odd-width rect
 wastes a column. Apps that care must size their rect to a multiple of the
@@ -347,12 +345,9 @@ a cursor on a tile grid is the canonical case.
 
 ## Future work
 
-- **Sprite tier** — **unblocked.** Both gates are lifted: `draw_image(Rect
-  cells, ...)` + `preferred_pixel_extent()` landed in #83, `Image::sub`/
-  `blit`/`blend`/`fill` in #63. Adds `TileDef::sprite`, an atlas +
-  sub-rect authoring path, and the `pixel_regions()`/`draw_pixels()`
-  overrides. Note the buffer must be a member, one per declared region —
-  see the lifetime contract in `docs/pixel-regions.md`.
+- ~~**Sprite tier**~~ — done in #64. `TileDef::sprite` names a rectangle in
+  TileSet's owned atlas; MapWidget alpha-composites one persistent viewport
+  buffer and keeps the required glyph representation as its complete Baseline.
 - ~~**Non-owning `draw_pixels` return**~~ — done in #84. `draw_pixels`
   returns a borrowed `const Image*`, so the memoized rasterizer this doc
   designs is now expressible: cache on a generation counter, return the

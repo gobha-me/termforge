@@ -51,6 +51,7 @@
 #include "termforge/drivers/ansi_rgb_driver.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
 #include "termforge/drivers/kitty_driver.hpp"
+#include "termforge/widgets/map_widget.hpp"
 #include "termforge/widgets/widget.hpp"
 
 using namespace termforge;
@@ -285,6 +286,23 @@ class WriteCounter final : public ByteSink {
   }
 };
 
+class FailingMapSink final : public ByteSink {
+ public:
+  auto write(std::span<const char> bytes)
+      -> std::expected<void, ErrorEvent> override {
+    ++writes;
+    if (writes == 1) {
+      return std::unexpected{
+          ErrorEvent{Severity::Warning, "sink", "map frame refused"}};
+    }
+    accepted.append(bytes.data(), bytes.size());
+    return {};
+  }
+
+  int writes{0};
+  std::string accepted;
+};
+
 // A sink that counts the frame's writes. The redirect happens
 // in the first on_render because that is the earliest App hook after the
 // harness has wired a driver and before anything has been flushed.
@@ -323,6 +341,72 @@ class CountedApp final : public App {
   bool m_graphics;
   bool m_image_frame;
   PlateWidget m_plate;
+  std::chrono::steady_clock::time_point m_now{};
+};
+
+// #64's production shape: a layered map composites one atlas-backed viewport,
+// retains it through clean frames, then changes content and placement on
+// separate frames. This belongs here rather than test/29mapwidget because the
+// assertion is about App's actual collect/flush/acknowledge cadence.
+class MapSpriteApp final : public App {
+ public:
+  MapSpriteApp() {
+    std::vector<Pixel> pixels(8, Pixel{220, 30, 30, 255});
+    for (int y = 0; y < 2; ++y)
+      for (int x = 2; x < 4; ++x)
+        pixels[static_cast<std::size_t>(y) * 4 + x] =
+            Pixel{30, 60, 220, 255};
+
+    TileSet tiles;
+    tiles.set_atlas(Image{4, 2, std::move(pixels)}, Extent{2, 2});
+    tiles.define(1, TileDef{"RR", Rgb{220, 30, 30}, {}, Rect{0, 0, 2, 2}});
+    tiles.define(2, TileDef{"BB", Rgb{30, 60, 220}, {}, Rect{2, 0, 2, 2}});
+    map.set_tileset(std::move(tiles));
+    map.set_map_size(2, 1);
+    map.set_tile_size(2, 1);
+    map.set_tile(0, 0, 0, 1);
+    map.set_tile(0, 1, 0, 2);
+  }
+
+  MapWidget map;
+  int mutate_on_frame{-1};
+  int move_on_frame{-1};
+  ByteSink* output_override{nullptr};
+  bool content_dirty_on_second_frame{false};
+
+  auto on_render(Screen& screen) -> void override {
+    if (output_override != nullptr) driver().set_output(output_override);
+    if (m_frame == 1)
+      content_dirty_on_second_frame =
+          map.pixel_region_state(map.rect()).content_dirty;
+    if (m_frame == mutate_on_frame) map.set_tile(0, 0, 0, 2);
+    if (m_frame == move_on_frame) m_x = 3;
+    map.set_geometry({m_x, 1, 4, 1});
+    map.draw(screen);
+    render_pixel_regions(map);
+    ++m_frame;
+  }
+
+  auto run_with(std::unique_ptr<TerminalDriver> selected, int frames) -> void {
+    test_run_frames(frames, 12, 5, &wire, std::move(selected));
+  }
+
+  std::string wire;
+
+ protected:
+  [[nodiscard]] auto now_steady() const
+      -> std::chrono::steady_clock::time_point override {
+    return m_now;
+  }
+  auto wait_readable(int timeout_ms) -> bool override {
+    m_now += std::chrono::milliseconds(timeout_ms);
+    return false;
+  }
+  auto read_available(char*, int) -> int override { return 0; }
+
+ private:
+  int m_frame{0};
+  int m_x{0};
   std::chrono::steady_clock::time_point m_now{};
 };
 
@@ -834,4 +918,53 @@ TEST_CASE("app pixels: the meter reads the whole frame, not a partial write",
   // The second frame is unchanged, so its whole single write is empty. This is
   // a meaningful zero, captured before the separate shutdown write.
   CHECK(app.meter().total() == 0);
+}
+
+TEST_CASE("app pixels: MapWidget retains one raster through 300 clean frames",
+          "[apppixels][mapwidget][kitty][persistent]") {
+  MapSpriteApp app;
+  app.mutate_on_frame = 300;
+  app.move_on_frame = 301;
+  app.run_with(std::make_unique<KittyDriver>(), 303);
+
+  CHECK(transmits_of(app.wire, 272) == 1);
+  CHECK(frame_updates_of(app.wire, 272) == 1);
+  CHECK(placements_of(app.wire, 272) == 2);
+  CHECK(placement_deletes_of(app.wire, 272) == 1);
+  CHECK(data_deletes_of(app.wire, 272) == 0);
+  CHECK(app.map.rasterization_count() == 2);
+  CHECK(app.map.submission_count() == 2);
+  CHECK_FALSE(app.map.pixel_region_state(app.map.rect()).content_dirty);
+}
+
+TEST_CASE("app pixels: MapWidget sprites reach ANSI and glyphs remain Baseline",
+          "[apppixels][mapwidget][ansi][fallback]") {
+  MapSpriteApp ansi;
+  ansi.run_with(std::make_unique<AnsiRgbDriver>(), 2);
+  CHECK(ansi.wire.find("38;2;220;30;30") != std::string::npos);
+  CHECK(ansi.wire.find("38;2;30;60;220") != std::string::npos);
+  CHECK(ansi.map.rasterization_count() == 1);
+  CHECK(ansi.map.submission_count() == 1);
+
+  MapSpriteApp baseline;
+  baseline.run_with(std::make_unique<FallbackDriver>(), 2);
+  CHECK(baseline.wire.find("\x1b[2;1HR") != std::string::npos);
+  CHECK(baseline.wire.find("\x1b[2;3HB") != std::string::npos);
+  CHECK(baseline.map.rasterization_count() == 0);
+  CHECK(baseline.map.submission_count() == 0);
+}
+
+TEST_CASE("app pixels: MapWidget retries an unacknowledged raster without rebuilding it",
+          "[apppixels][mapwidget][kitty][persistent][sink]") {
+  MapSpriteApp app;
+  FailingMapSink sink;
+  app.output_override = &sink;
+  app.run_with(std::make_unique<KittyDriver>(), 2);
+
+  REQUIRE(sink.writes == 3);  // two frames plus explicit shutdown
+  CHECK(app.content_dirty_on_second_frame);
+  CHECK(app.map.rasterization_count() == 1);
+  CHECK(app.map.submission_count() == 1);
+  CHECK_FALSE(app.map.pixel_region_state(app.map.rect()).content_dirty);
+  CHECK(total_data_transmits(sink.accepted) == 1);
 }
