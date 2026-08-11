@@ -4,11 +4,18 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
+#include <chrono>
+#include <expected>
 #include <filesystem>
+#include <format>
 #include <fstream>
+#include <memory>
+#include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <unistd.h>
@@ -17,7 +24,12 @@
 #include "forge_top.hpp"
 #include "panels.hpp"
 #include "proc_reader.hpp"
+#include "support/apc.hpp"
+#include "termforge/core/byte_sink.hpp"
 #include "termforge/core/screen.hpp"
+#include "termforge/drivers/ansi_rgb_driver.hpp"
+#include "termforge/drivers/fallback_driver.hpp"
+#include "termforge/drivers/kitty_driver.hpp"
 
 using namespace termforge;
 using namespace termforge::forge_top;
@@ -62,6 +74,113 @@ auto count(std::string_view text, std::string_view needle) -> int {
     ++result;
   return result;
 }
+
+auto action_count(std::string_view wire, std::string_view action) -> int {
+  int result = 0;
+  for (const auto &apc : tfsupport::apcs(wire))
+    if (tfsupport::key_value(apc, "a") == action)
+      ++result;
+  return result;
+}
+
+auto transmit_extents(std::string_view wire)
+    -> std::vector<std::pair<std::string, std::string>> {
+  std::vector<std::pair<std::string, std::string>> result;
+  for (const auto &apc : tfsupport::apcs(wire))
+    if (tfsupport::key_value(apc, "a") == "t")
+      result.emplace_back(tfsupport::key_value(apc, "s"),
+                          tfsupport::key_value(apc, "v"));
+  return result;
+}
+
+class SegmentSink final : public ByteSink {
+public:
+  auto write(std::span<const char> bytes)
+      -> std::expected<void, ErrorEvent> override {
+    attempts.emplace_back(bytes.begin(), bytes.end());
+    if (fail_write > 0 &&
+        attempts.size() == static_cast<std::size_t>(fail_write)) {
+      return std::unexpected{
+          ErrorEvent{Severity::Warning, "sink", "waveform frame refused"}};
+    }
+    accepted.insert(accepted.end(), bytes.begin(), bytes.end());
+    return {};
+  }
+
+  int fail_write{0};
+  std::vector<std::string> attempts;
+  std::string accepted;
+};
+
+class CpuPanelApp final : public App {
+public:
+  CpuPanelApp() {
+    samples.reserve(20);
+    for (int i = 0; i < 20; ++i) {
+      samples.push_back(
+          CpuSample{std::format("cpu{}", i), static_cast<float>(i + 1) / 24});
+    }
+    panel.set_samples(samples);
+  }
+
+  auto on_render(Screen &screen) -> void override {
+    driver().set_output(&sink);
+    for (const int update : update_frames)
+      if (update == frame) {
+        for (auto &sample : samples)
+          sample.usage = sample.usage > 0.75F ? sample.usage - 0.4F
+                                             : sample.usage + 0.2F;
+        panel.set_samples(samples);
+      }
+    for (const auto &[at, size] : resize_frames)
+      if (at == frame)
+        resize_results.push_back(set_size(size).has_value());
+
+    screen.clear();
+    panel.set_geometry({0, 0, screen.cols(), screen.rows()});
+    panel.draw(screen);
+    render_pixel_regions(panel);
+    ++frame;
+  }
+
+  auto run(std::unique_ptr<TerminalDriver> selected, int frames) -> void {
+    test_run_frames(frames, 120, 40, nullptr, std::move(selected));
+  }
+
+  [[nodiscard]] auto all_regions_clean() -> bool {
+    const auto regions = panel.pixel_regions();
+    return regions.size() == 20 &&
+           std::ranges::all_of(regions, [&](Rect region) {
+             const auto state = panel.pixel_region_state(region);
+             return state.mode == PixelRegionMode::Persistent &&
+                    !state.content_dirty;
+           });
+  }
+
+  CpuPanel panel;
+  SegmentSink sink;
+  std::vector<CpuSample> samples;
+  std::vector<int> update_frames;
+  std::vector<std::pair<int, App::Size>> resize_frames;
+  std::vector<bool> resize_results;
+  std::vector<FrameBytes> observed_frames;
+
+protected:
+  [[nodiscard]] auto now_steady() const
+      -> std::chrono::steady_clock::time_point override {
+    return now;
+  }
+  auto wait_readable(int timeout_ms) -> bool override {
+    observed_frames.push_back(driver().last_frame_bytes());
+    now += std::chrono::milliseconds(timeout_ms);
+    return false;
+  }
+  auto read_available(char *, int) -> int override { return 0; }
+
+private:
+  int frame{0};
+  std::chrono::steady_clock::time_point now{};
+};
 
 } // namespace
 
@@ -253,4 +372,103 @@ TEST_CASE("forge-top compact layout retains the 20-region Kitty workload",
   std::string wire;
   app.run_headless(1, 70, 22, &wire, DriverChoice::Kitty);
   REQUIRE(count(wire, "a=t") >= 20);
+}
+
+TEST_CASE("forge-top waveforms retain 20 Kitty images across clean frames",
+          "[forge-top][drivers][persistent]") {
+  CpuPanelApp app;
+  app.update_frames = {4};
+  app.run(std::make_unique<KittyDriver>(), 8);
+
+  REQUIRE(app.sink.attempts.size() == 9); // eight frames plus shutdown
+  CHECK(action_count(app.sink.attempts[0], "t") == 20);
+  for (int frame : {1, 2, 3}) {
+    CHECK(action_count(app.sink.attempts[static_cast<std::size_t>(frame)],
+                       "t") == 0);
+    CHECK(action_count(app.sink.attempts[static_cast<std::size_t>(frame)],
+                       "f") == 0);
+  }
+  CHECK(action_count(app.sink.attempts[4], "f") == 20);
+  for (int frame : {5, 6, 7})
+    CHECK(action_count(app.sink.attempts[static_cast<std::size_t>(frame)],
+                       "f") == 0);
+  CHECK(app.all_regions_clean());
+}
+
+TEST_CASE("forge-top waveforms leave clean ANSI frames without image traffic",
+          "[forge-top][drivers][persistent]") {
+  CpuPanelApp app;
+  app.update_frames = {4};
+  app.run(std::make_unique<AnsiRgbDriver>(), 8);
+
+  REQUIRE(app.observed_frames.size() == 8);
+  CHECK(app.observed_frames[0].total() > 0);
+  CHECK(app.sink.attempts[0].find("\xE2\x96\x80") != std::string::npos);
+  for (int frame : {1, 2, 3})
+    CHECK(app.observed_frames[static_cast<std::size_t>(frame)].total() == 0);
+  CHECK(app.observed_frames[4].total() > 0);
+  CHECK(app.sink.attempts[4].find("\xE2\x96\x80") != std::string::npos);
+  for (int frame : {5, 6, 7})
+    CHECK(app.observed_frames[static_cast<std::size_t>(frame)].total() == 0);
+  CHECK(app.all_regions_clean());
+}
+
+TEST_CASE("forge-top waveform rejection retries before acknowledgement",
+          "[forge-top][drivers][persistent][failure]") {
+  CpuPanelApp app;
+  app.sink.fail_write = 1;
+  app.run(std::make_unique<KittyDriver>(), 2);
+
+  REQUIRE(app.sink.attempts.size() == 3); // two frames plus shutdown
+  CHECK(action_count(app.sink.attempts[0], "t") == 20);
+  CHECK(action_count(app.sink.attempts[1], "t") == 20);
+  CHECK(action_count(app.sink.accepted, "t") == 20);
+  CHECK(app.all_regions_clean());
+}
+
+TEST_CASE("forge-top ANSI repaint rejection retries the clean raster",
+          "[forge-top][drivers][persistent][failure][resize]") {
+  CpuPanelApp app;
+  app.sink.fail_write = 3;
+  app.resize_frames = {{1, App::Size{120, 40, 1200, 1000}}};
+  app.run(std::make_unique<AnsiRgbDriver>(), 4);
+
+  REQUIRE(app.sink.attempts.size() == 4);
+  CHECK(app.sink.attempts[2].find("\xE2\x96\x80") != std::string::npos);
+  CHECK(app.sink.attempts[3].find("\xE2\x96\x80") != std::string::npos);
+  CHECK(app.all_regions_clean());
+}
+
+TEST_CASE("forge-top waveforms recreate at round-trip preferred extents",
+          "[forge-top][drivers][persistent][resize]") {
+  CpuPanelApp app;
+  app.resize_frames = {
+      {2, App::Size{120, 40, 1200, 1000}},
+      {4, App::Size{120, 40, 960, 640}},
+  };
+  app.run(std::make_unique<KittyDriver>(), 7);
+
+  REQUIRE(app.resize_results == std::vector<bool>{true, true});
+  REQUIRE(app.sink.attempts.size() == 8); // seven frames plus shutdown
+  const auto initial = transmit_extents(app.sink.attempts[0]);
+  const auto enlarged = transmit_extents(app.sink.attempts[3]);
+  const auto restored = transmit_extents(app.sink.attempts[5]);
+  REQUIRE(initial.size() == 20);
+  REQUIRE(enlarged.size() == 20);
+  REQUIRE(restored.size() == 20);
+  CHECK(enlarged.front() != initial.front());
+  CHECK(restored.front() == initial.front());
+  CHECK(action_count(app.sink.attempts[6], "t") == 0);
+  CHECK(action_count(app.sink.attempts[6], "f") == 0);
+  CHECK(app.all_regions_clean());
+}
+
+TEST_CASE("forge-top fallback keeps the authored waveform cells",
+          "[forge-top][drivers][fallback]") {
+  CpuPanelApp app;
+  app.run(std::make_unique<FallbackDriver>(), 1);
+
+  REQUIRE_FALSE(app.sink.attempts.empty());
+  CHECK(app.sink.attempts.front().find("\xE2\x96\x88") != std::string::npos);
+  CHECK(app.sink.attempts.front().find("\033_G") == std::string::npos);
 }

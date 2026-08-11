@@ -6,7 +6,41 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-11, latest)
 
-**Latest release: v0.17.0 — forge-top dogfooding harness.** #16 replaces the
+**Latest release: v0.17.1 — persistent WaveformWidget regions.** #229 moves
+`WaveformWidget` onto the accepted-submission Persistent pixel contract, and
+forge-top's `CpuPanel` forwards that state for each child graph. The 20-core
+view now uploads once, emits one root-frame edit per changed waveform at the
+one-second sample boundary, and sends no image transmit/edit bytes during the
+intervening 33 ms frames. ANSI likewise emits no clean-frame raster traffic;
+Fallback keeps the authored half-block cell graph as its complete Baseline.
+
+App re-asks a Persistent producer for its buffer when destination dimensions
+or the driver's preferred pixel extent may have changed. A generated raster
+whose extent changed is recreated and acknowledged at the new size, while a
+fixed-grid producer or position-only move stays placement-only. Refused Kitty
+payloads and in-band ANSI repaints remain unacknowledged and retry on the next
+accepted frame; the ANSI arm keys off per-region wire state because its image
+bytes deliberately belong to the meter's `cells` remainder.
+
+`test/53forgetop` drives the real App order with 20 regions and pins the initial
+uploads, clean window, sample edits, Kitty and ANSI sink refusals, round-trip
+preferred-extent resize and Fallback cells. The round trip makes stale accepted
+extent bookkeeping observable: returning to the original size must recreate
+from the intermediate one rather than compare against an old value and go
+vacuous. `test/10waveform` separately pins that cell drawing and rasterization
+do not acknowledge enhanced content.
+
+**Verification:** GCC 14.2 and Clang 20.1.8 Release `-Werror` builds pass all
+55 suites; GCC ASan+UBSan passes 55/55 with leak detection. Both compilers pass
+the subdirectory, installed-package and plain-vendored consumer paths. Hosted
+PR CI is green across all eight jobs: GCC 13/14, Clang 19/20, Fedora GCC,
+ASan+UBSan and both consumer matrices. This release adds no terminal protocol
+form; it suppresses redundant traffic through the already verified persistent
+image lifecycle, so no new live-emulator gate applies.
+
+## Previous release: v0.17.0
+
+**v0.17.0 — forge-top dogfooding harness.** #16 replaces the
 generic chat binary with a btop-style system monitor backed by `/proc`. It
 shows per-core WaveformWidget regions, RAM/swap ProgressBars, a UTF-8-filtered
 and sortable process TableWidget, and a centered process graph backed by a

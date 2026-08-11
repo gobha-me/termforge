@@ -40,6 +40,9 @@ class WaveformWidget final : public Widget {
   // ── pixel regions (kitty path) ───────────────────────────────────────
   auto pixel_regions() -> std::vector<Rect> override;
   auto draw_pixels(Rect region, Extent pixels) -> const Image* override;
+  [[nodiscard]] auto pixel_region_state(Rect region) const noexcept
+      -> PixelRegionState override;
+  auto pixel_region_submitted(Rect region) noexcept -> void override;
 
   [[nodiscard]] auto sample_count() const noexcept -> std::size_t {
     return m_samples.size();
@@ -76,6 +79,7 @@ class WaveformWidget final : public Widget {
   Extent m_raster_extent{};
   std::uint64_t m_raster_gen{0};
   bool m_raster_valid{false};
+  bool m_content_dirty{true};
 };
 
 }  // namespace termforge

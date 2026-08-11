@@ -697,8 +697,16 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
     const Extent px = m_driver->preferred_pixel_extent(region);
     bool needs_image = state.mode == PixelRegionMode::Immediate;
     if (retained != nullptr) {
+      // A generated raster may depend on the destination's cell extent and on
+      // the driver's current pixels-per-cell answer. Ask again at those two
+      // boundaries; fixed-grid producers simply return the same-sized image,
+      // which leaves their content resident and changes placement only.
+      const bool destination_extent_changed =
+          retained->content_ready &&
+          (retained->rect.w != region.w || retained->rect.h != region.h);
       needs_image = !retained->content_ready || state.content_dirty ||
-                    retained->recreate;
+                    retained->recreate || destination_extent_changed ||
+                    m_pixel_force_repaint;
       // A non-resident enhanced tier (currently ANSI) needs the source again
       // when placement must be repainted; App never borrows it across frames.
       if (m_driver->max_pinned_images() == 0 &&
@@ -774,11 +782,20 @@ auto App::flush_pixel_regions() -> void {
     if (state_it == m_persistent_pixels.end()) continue;
     auto& state = *state_it;
 
+    const Extent next_extent =
+        pr.image != nullptr
+            ? Extent{pr.image->width(), pr.image->height()}
+            : state.extent;
+    const bool extent_changed =
+        state.content_ready && pr.image != nullptr &&
+        state.extent != next_extent;
+
     if (m_driver->max_pinned_images() == 0) {
       const bool placement_changed = !state.visible || state.rect != pr.rect ||
                                      state.fit != pr.fit ||
                                      m_pixel_force_repaint;
-      const bool submit_content = !state.content_ready || pr.content_dirty;
+      const bool submit_content = !state.content_ready || pr.content_dirty ||
+                                  state.recreate || extent_changed;
       if (submit_content || placement_changed) {
         // collect_pixel_regions asks for the image when either predicate can
         // reach here; keep the guard defensive because a null borrowed view is
@@ -803,11 +820,7 @@ auto App::flush_pixel_regions() -> void {
     }
 
     const bool submit_content = !state.content_ready || pr.content_dirty ||
-                                state.recreate;
-    const Extent next_extent =
-        pr.image != nullptr
-            ? Extent{pr.image->width(), pr.image->height()}
-            : state.extent;
+                                state.recreate || extent_changed;
     if (!m_driver->supports_placement_fit(pr.fit)) {
       m_input.push_error(ErrorEvent{
           Severity::Warning, "app",
@@ -828,9 +841,6 @@ auto App::flush_pixel_regions() -> void {
         continue;
       }
     }
-    const bool extent_changed =
-        state.content_ready && pr.image != nullptr && state.extent != next_extent;
-
     if ((state.recreate || extent_changed) && state.pin) {
       if (auto released = m_driver->unpin_image(state.pin); !released) {
         m_input.push_error(std::move(released.error()));
@@ -954,9 +964,18 @@ auto App::finish_pixel_frame(bool output_accepted) -> void {
       // that accepted content dirty again. The per-frame meter is the exact
       // write-side answer, including for a legacy retain that delegated to a
       // placement draw.
-      if (state.touched_wire && image_wire) {
+      // On a resident tier, a clean retain can touch driver bookkeeping while
+      // emitting no bytes, so the frame meter distinguishes it from a refused
+      // image operation. A non-resident tier has no retain operation: when its
+      // region says it touched wire, draw_image appended its in-band cell
+      // raster and a refusal must retry it even though that traffic belongs to
+      // the meter's cells bucket by construction.
+      const bool refused_region_wire =
+          state.touched_wire &&
+          (m_driver->max_pinned_images() == 0 || image_wire);
+      if (refused_region_wire) {
         state.visible = false;
-        if (state.pin) state.recreate = true;
+        state.recreate = true;
       }
       state.pending_content = false;
       state.pending_visible = false;
