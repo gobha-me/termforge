@@ -15,6 +15,7 @@ auto WaveformWidget::push(float value) -> void {
   if (static_cast<int>(m_samples.size()) > m_capacity)
     m_samples.pop_front();
   ++m_gen;
+  m_content_dirty = true;
   mark_dirty();
 }
 
@@ -27,12 +28,14 @@ auto WaveformWidget::set_range(float min, float max) -> void {
   m_min = min;
   m_max = max;
   ++m_gen;
+  m_content_dirty = true;
   mark_dirty();
 }
 
 auto WaveformWidget::auto_range() -> void {
   m_auto_range = true;
   ++m_gen;
+  m_content_dirty = true;
   mark_dirty();
 }
 
@@ -188,6 +191,16 @@ auto WaveformWidget::draw_pixels(Rect region, Extent pixels) -> const Image* {
   m_raster_gen = m_gen;
   m_raster_valid = true;
   return &m_raster;
+}
+
+auto WaveformWidget::pixel_region_state(Rect /*region*/) const noexcept
+    -> PixelRegionState {
+  return PixelRegionState{.mode = PixelRegionMode::Persistent,
+                          .content_dirty = m_content_dirty};
+}
+
+auto WaveformWidget::pixel_region_submitted(Rect /*region*/) noexcept -> void {
+  m_content_dirty = false;
 }
 
 }  // namespace termforge

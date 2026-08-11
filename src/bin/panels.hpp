@@ -27,6 +27,9 @@ public:
   auto draw(Screen &screen) -> void override;
   auto pixel_regions() -> std::vector<Rect> override;
   auto draw_pixels(Rect region, Extent preferred) -> const Image * override;
+  [[nodiscard]] auto pixel_region_state(Rect region) const noexcept
+      -> PixelRegionState override;
+  auto pixel_region_submitted(Rect region) noexcept -> void override;
 
 private:
   Frame m_frame{"CPU cores"};

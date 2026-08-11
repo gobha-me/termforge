@@ -146,6 +146,22 @@ auto CpuPanel::draw_pixels(Rect region, Extent preferred) -> const Image * {
   return nullptr;
 }
 
+auto CpuPanel::pixel_region_state(Rect region) const noexcept
+    -> PixelRegionState {
+  for (const auto &wave : m_waves)
+    if (wave->rect() == region)
+      return wave->pixel_region_state(region);
+  return {};
+}
+
+auto CpuPanel::pixel_region_submitted(Rect region) noexcept -> void {
+  for (auto &wave : m_waves)
+    if (wave->rect() == region) {
+      wave->pixel_region_submitted(region);
+      return;
+    }
+}
+
 MemoryPanel::MemoryPanel() {
   m_frame.set_style(BorderStyle::Rounded);
   m_memory.set_colors(Rgb{0x00, 0xD4, 0xFF}, Rgb{0x20, 0x28, 0x38}, theme::kFg);

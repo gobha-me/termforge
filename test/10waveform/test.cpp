@@ -13,6 +13,7 @@
 using termforge::Extent;
 using termforge::Image;
 using termforge::Pixel;
+using termforge::PixelRegionMode;
 using termforge::Rgb;
 using termforge::Screen;
 using termforge::WaveformWidget;
@@ -233,4 +234,32 @@ TEST_CASE("WaveformWidget: the raster is cached and reused, not rebuilt",
   // So does a resolution change, even with the same data.
   const Image* resized = w.draw_pixels({0, 0, 16, 4}, Extent{128, 64});
   REQUIRE(resized->width() == 128);
+}
+
+TEST_CASE("WaveformWidget: enhanced content stays dirty until submission",
+          "[waveform][persistent][failure]") {
+  WaveformWidget w{16};
+  w.set_geometry({0, 0, 8, 2});
+  w.set_range(0.0f, 1.0f);
+  w.push(0.25f);
+
+  REQUIRE(w.pixel_region_state(w.rect()).mode == PixelRegionMode::Persistent);
+  REQUIRE(w.pixel_region_state(w.rect()).content_dirty);
+
+  Screen screen{8, 2};
+  w.draw(screen);
+  CHECK_FALSE(w.dirty());
+  CHECK(w.pixel_region_state(w.rect()).content_dirty);
+
+  REQUIRE(w.draw_pixels(w.rect(), Extent{64, 32}) != nullptr);
+  CHECK(w.pixel_region_state(w.rect()).content_dirty);
+
+  w.pixel_region_submitted(w.rect());
+  CHECK_FALSE(w.pixel_region_state(w.rect()).content_dirty);
+
+  w.push(0.75f);
+  CHECK(w.pixel_region_state(w.rect()).content_dirty);
+  w.pixel_region_submitted(w.rect());
+  w.auto_range();
+  CHECK(w.pixel_region_state(w.rect()).content_dirty);
 }
