@@ -6,7 +6,52 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-11, latest)
 
-**Latest release: v0.17.2 — forge-top executable identity.** #228 builds the
+**Latest release: v0.18.0 — top-compatible forge-top.** Companion issues #230
+and #231 make the monitor familiar to procps-ng `top` users without flattening
+forge-top into a clone. The `/proc` source now supplies uptime, load averages,
+task states, aggregate CPU, effective user, process state, `%MEM`, cumulative
+`TIME+`, and NUL-decoded full command lines. Ancillary user/command failures
+retain the process with an explicit fallback, while missing summary inputs and
+invalid page/tick discovery surface a `Warning`; raw command bytes stay raw in
+the reader and are sanitized only at the renderer-facing table boundary.
+
+The summary can switch aggregate/per-core CPU and independently hide overview,
+CPU, and memory sections. Memory lines use one consistent unit, the current
+sampling delay is always visible, and the process table responsively retains
+`PID %CPU %MEM COMMAND` before adding `USER S TIME+ RES`. Sort field and
+direction are visible and deterministic. Switching CPU modes explicitly dirties
+the replacement Persistent regions so App's `(Widget*, region-index)` identity
+cannot leave aggregate content displayed in a restored core slot.
+
+`q`, `h`/`?`/F1, `P`/`M`/`N`/`T`, `R`, `d`/`s`, `1`, `l`/`t`/`m`, `c`, and
+Space now match top's non-mutating first compatibility tier. Text inputs and
+open menus keep first refusal; dialogs capture before the app; release/repeat
+events do not duplicate global actions. Enter deliberately remains
+process-detail, with Space as manual refresh, and the on-screen help names that
+divergence. Signal/renice keys remain out of scope pending an authorization and
+error design.
+
+`test/53forgetop` now has 26 cases and 5,235 assertions covering `/proc`
+fixtures and disappearance/fallback paths, long `TIME+`, responsive columns,
+renderer sanitization, stable selection/focus, modal routing, delay cadence,
+summary formatting, all three rendering tiers, and persistent CPU-mode
+replacement. **Verification:** GCC 14.2 and Clang 20.1.8 Release builds pass
+57/57 CTest targets; GCC ASan passes 57/57 with leak detection. The
+subdirectory, installed-package, and plain-vendored consumer paths pass. This
+matches the first hosted PR matrix: GCC 13/14, Clang 19/20, Fedora GCC,
+ASan+UBSan, and both consumer jobs are green. This changes no terminal protocol
+form, so no live-emulator gate applies.
+
+**How it got picked:** #225 still requires a real Kitty session, which this
+headless environment cannot supply. #230 and #231 are a coupled, fully offline
+dogfooding improvement and were the next actionable pair after v0.17.2.
+
+**Next:** run #225's direct Kitty acceptance capture when a human terminal is
+available; otherwise re-read the open issue queue after this release.
+
+## Previous release: v0.17.2
+
+**v0.17.2 — forge-top executable identity.** #228 builds the
 system monitor as `build/src/bin/forge-top`, matching its namespace and UI,
 instead of presenting it as a generic `termforge` framework CLI. Help and all
 diagnostic prefixes use `forge-top`; the README commands and `termforge_BIN`
