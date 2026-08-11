@@ -61,8 +61,7 @@ target_compile_features(${PROJECT_NAME}_lib PUBLIC cxx_std_23)
 # termforge::termforge_lib, a *different* spelling than the ALIAS above, so
 # find_package consumers and add_subdirectory consumers would disagree. With
 # EXPORT_NAME lib both paths give termforge::lib.
-# OUTPUT_NAME so the installed archive is libtermforge.a, not libtermforge_lib.a
-# (no clash with the src/bin executable, which is not installed).
+# OUTPUT_NAME so the installed archive is libtermforge.a, not libtermforge_lib.a.
 set_target_properties(${PROJECT_NAME}_lib PROPERTIES
   EXPORT_NAME lib
   OUTPUT_NAME ${PROJECT_NAME}

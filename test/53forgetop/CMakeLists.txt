@@ -20,3 +20,20 @@ target_link_libraries(53forgetop-test
   PRIVATE Catch2::Catch2
   PRIVATE ${PROJECT_NAME}::lib
 )
+
+# Keep the built program's identity observable at the executable boundary.
+# This target is optional when a consumer enables tests but disables the bin.
+if (TARGET forge-top)
+  add_test(NAME forge-top-help
+    COMMAND $<TARGET_FILE:forge-top> --help
+  )
+  set_tests_properties(forge-top-help PROPERTIES
+    PASS_REGULAR_EXPRESSION "^Usage: forge-top"
+  )
+
+  add_test(NAME forge-top-invalid-option
+    COMMAND ${CMAKE_COMMAND}
+      -DPROGRAM=$<TARGET_FILE:forge-top>
+      -P ${CMAKE_CURRENT_LIST_DIR}/assert_cli.cmake
+  )
+endif ()

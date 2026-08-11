@@ -6,7 +6,31 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-11, latest)
 
-**Latest release: v0.17.1 — persistent WaveformWidget regions.** #229 moves
+**Latest release: v0.17.2 — forge-top executable identity.** #228 builds the
+system monitor as `build/src/bin/forge-top`, matching its namespace and UI,
+instead of presenting it as a generic `termforge` framework CLI. Help and all
+diagnostic prefixes use `forge-top`; the README commands and `termforge_BIN`
+description name the produced program. There is deliberately no compatibility
+alias and no new installation rule: the binary first appeared in the v0.17.0
+prerelease and remains a top-level dogfooding application.
+
+The project, package, headers, `termforge::lib` target, namespace and
+`termforge_{TESTS,EXAMPLES,BIN,INSTALL}` options are unchanged. Executable-level
+CTest cases run `forge-top --help`, pin invalid-option status/text, and reject a
+stale sibling `termforge` monitor. The consumer acceptance guard now recognizes
+`forge-top` too, so an accidentally enabled binary under `add_subdirectory`
+cannot hide behind the rename.
+
+**Verification:** GCC 14.2 and Clang 20.1.8 Release `-Werror` builds pass all
+57 tests; GCC ASan+UBSan passes 57/57 with leak detection. Both compilers pass
+the subdirectory, installed-package and plain-vendored consumer paths. Forced
+Fallback, ANSI and Kitty fake-data sessions each complete setup, rendering,
+Escape and alt-screen teardown through a pseudo-TTY. This changes no terminal
+protocol form, so no live-emulator gate applies.
+
+## Previous release: v0.17.1
+
+**v0.17.1 — persistent WaveformWidget regions.** #229 moves
 `WaveformWidget` onto the accepted-submission Persistent pixel contract, and
 forge-top's `CpuPanel` forwards that state for each child graph. The 20-core
 view now uploads once, emits one root-frame edit per changed waveform at the

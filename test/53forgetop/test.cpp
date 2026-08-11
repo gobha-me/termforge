@@ -186,6 +186,8 @@ private:
 
 TEST_CASE("forge-top CLI selects fake data and one forced tier",
           "[forge-top]") {
+  REQUIRE(std::string_view{usage()}.starts_with("Usage: forge-top "));
+
   std::array<char, 1> a0{'x'};
   std::array<char, 7> a1{'-', '-', 'f', 'a', 'k', 'e', '\0'};
   std::array<char, 15> a2{'-', '-', 'd', 'r', 'i', 'v', 'e', 'r',

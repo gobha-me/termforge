@@ -33,7 +33,8 @@ njobs() { command -v nproc >/dev/null 2>&1 && nproc || echo 2; }
 assert_lib_only() {
   local tree=$1 stray
   stray=$(find "${tree}" -type f -perm -u+x \
-            \( -name 'termforge_example_*' -o -name '*-test' -o -name 'termforge' \) 2>/dev/null || true)
+            \( -name 'termforge_example_*' -o -name '*-test' \
+               -o -name 'forge-top' -o -name 'termforge' \) 2>/dev/null || true)
   if [ -n "${stray}" ]; then
     echo "FAIL: consumer build produced non-library termforge targets:" >&2
     printf '%s\n' "${stray}" >&2

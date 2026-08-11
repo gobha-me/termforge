@@ -73,7 +73,7 @@ endif ()
 # options build the library and nothing else.
 option(${PROJECT_NAME}_TESTS    "Build the termforge test suite"    ${PROJECT_IS_TOP_LEVEL})
 option(${PROJECT_NAME}_EXAMPLES "Build the termforge examples"      ${PROJECT_IS_TOP_LEVEL})
-option(${PROJECT_NAME}_BIN      "Build the termforge demo binary"   ${PROJECT_IS_TOP_LEVEL})
+option(${PROJECT_NAME}_BIN      "Build the forge-top system monitor" ${PROJECT_IS_TOP_LEVEL})
 option(${PROJECT_NAME}_INSTALL  "Generate termforge install rules"  ${PROJECT_IS_TOP_LEVEL})
 
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/src/lib)
@@ -168,5 +168,5 @@ if (${PROJECT_NAME}_INSTALL)
   )
 endif ()
 
-# src/bin is deliberately not installed: `termforge` is far too generic a name
-# for ${prefix}/bin, and it is a demo, not a tool.
+# src/bin is deliberately not installed. forge-top's installation policy is
+# separate from building the framework library and its consumer package.
