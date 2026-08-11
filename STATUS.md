@@ -31,7 +31,8 @@ the subdirectory, installed-package and plain-vendored consumer paths. Forced
 Fallback, ANSI and Kitty sessions each complete setup/render/teardown through
 a pseudo-TTY, and Kitty 0.32.2 visual checks cover all three rendered tiers,
 including keyboard selection and the persistent detail popup. Hosted PR CI is
-the remaining release gate.
+green across all eight jobs: GCC 13/14, Clang 19/20, Fedora GCC, ASan+UBSan and
+both consumer matrices.
 
 ## Previous release: v0.16.0
 
