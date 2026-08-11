@@ -12,6 +12,7 @@
 #include <format>
 #include <fstream>
 #include <memory>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -55,16 +56,59 @@ struct TempProc {
     out << contents;
   }
 
+  auto write_binary(std::string_view relative, std::string_view contents)
+      -> void {
+    const auto path = root / relative;
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream out{path, std::ios::binary};
+    REQUIRE(out.good());
+    out.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+  }
+
   std::filesystem::path root;
 };
 
 auto process_stat(int pid, std::string_view name, int utime, int stime,
-                  int rss_pages) -> std::string {
+                  int rss_pages, char state = 'S') -> std::string {
   return std::to_string(pid) + " (" + std::string{name} +
-         ") S 1 1 1 0 0 0 0 0 0 0 " + std::to_string(utime) + " " +
+         ") " + state + " 1 1 1 0 0 0 0 0 0 0 " + std::to_string(utime) + " " +
          std::to_string(stime) + " 0 0 20 0 1 0 10 4096 " +
          std::to_string(rss_pages) + "\n";
 }
+
+auto process_row(int pid, std::string name, float cpu, std::uint64_t rss,
+                 std::string user = "user", char state = 'S',
+                 float memory = 1.0F, double time = 1.0,
+                 std::string command = {}) -> ProcessRow {
+  if (command.empty())
+    command = name;
+  return {pid, std::move(name), cpu, rss, std::move(user), state, memory, time,
+          std::move(command)};
+}
+
+auto screen_row(const Screen &screen, int y) -> std::string {
+  std::string text;
+  for (int x = 0; x < screen.cols(); ++x)
+    text += screen.at(x, y).text;
+  return text;
+}
+
+class CountingReader final : public SystemReader {
+public:
+  auto sample() -> std::expected<SystemSnapshot, ErrorEvent> override {
+    ++calls;
+    SystemSnapshot snapshot;
+    snapshot.aggregate_cpu = {"cpu", 0.5F};
+    snapshot.cpus = {{"cpu0", 0.5F}};
+    snapshot.memory.total_bytes = 1024;
+    snapshot.memory.available_bytes = 512;
+    snapshot.processes = {process_row(7, "counter", 2.0F, 64)};
+    snapshot.tasks = {1, 1, 0, 0, 0};
+    return snapshot;
+  }
+
+  int calls{};
+};
 
 auto count(std::string_view text, std::string_view needle) -> int {
   int result = 0;
@@ -218,8 +262,16 @@ TEST_CASE("forge-top fake reader is deterministic and exercises 20 regions",
   REQUIRE(second.has_value());
   REQUIRE(first->cpus.size() == 20);
   REQUIRE(first->processes.size() == 48);
+  REQUIRE(first->aggregate_cpu.name == "cpu");
+  REQUIRE(first->uptime_seconds == 3.0 * 24.0 * 60.0 * 60.0);
+  REQUIRE(first->tasks.total == 48);
+  REQUIRE(first->tasks.running > 0);
+  REQUIRE(first->tasks.zombie > 0);
+  REQUIRE_FALSE(first->processes.front().user.empty());
+  REQUIRE_FALSE(first->processes.front().command.empty());
   REQUIRE(first->processes.front().pid == second->processes.front().pid);
   REQUIRE(first->cpus.front().usage != second->cpus.front().usage);
+  REQUIRE(first->aggregate_cpu.usage != second->aggregate_cpu.usage);
 }
 
 TEST_CASE("forge-top /proc reader computes deltas and tolerates a vanished PID",
@@ -230,7 +282,12 @@ TEST_CASE("forge-top /proc reader computes deltas and tolerates a vanished PID",
                      "cpu1 50 0 50 400 0 0 0 0\n");
   proc.write("meminfo", "MemTotal: 1000 kB\nMemAvailable: 600 kB\n"
                         "SwapTotal: 200 kB\nSwapFree: 150 kB\n");
+  proc.write("uptime", "12345.00 100.00\n");
+  proc.write("loadavg", "1.25 0.75 0.50 1/10 101\n");
   proc.write("101/stat", process_stat(101, "name with spaces", 10, 5, 7));
+  proc.write("101/status", "Name:\tname\nUid:\t0\t0\t0\t0\n");
+  proc.write_binary("101/cmdline",
+                    std::string_view{"tool\0--flag\0value\0", 18});
   proc.write("202/stat", process_stat(202, "short-lived", 2, 1, 3));
 
   auto reader = make_proc_reader(proc.root);
@@ -238,8 +295,12 @@ TEST_CASE("forge-top /proc reader computes deltas and tolerates a vanished PID",
   REQUIRE(first.has_value());
   REQUIRE(first->cpus.size() == 2);
   REQUIRE(first->processes.size() == 2);
-  REQUIRE(first->processes.front().cpu_percent == 0.0F);
+  REQUIRE(std::ranges::all_of(first->processes, [](const ProcessRow &row) {
+    return row.cpu_percent == 0.0F;
+  }));
   REQUIRE(first->memory.total_bytes == 1000 * 1024);
+  REQUIRE(first->uptime_seconds == 12345.0);
+  REQUIRE(first->load_average[0] == 1.25);
 
   proc.write("stat", "cpu 150 0 150 900 0 0 0 0\n"
                      "cpu0 75 0 75 450 0 0 0 0\n"
@@ -252,6 +313,11 @@ TEST_CASE("forge-top /proc reader computes deltas and tolerates a vanished PID",
   REQUIRE(second->processes.front().pid == 101);
   REQUIRE(second->processes.front().name == "name with spaces");
   REQUIRE(second->processes.front().cpu_percent == 10.0F);
+  REQUIRE(second->processes.front().state == 'S');
+  REQUIRE(second->processes.front().user == "root");
+  REQUIRE(second->processes.front().command == "tool --flag value");
+  REQUIRE(second->processes.front().cpu_seconds == 0.25);
+  REQUIRE(second->aggregate_cpu.usage == 0.5F);
 }
 
 TEST_CASE("forge-top /proc reader rejects malformed root data",
@@ -266,21 +332,108 @@ TEST_CASE("forge-top /proc reader rejects malformed root data",
   REQUIRE(result.error().source == "forge-top");
 }
 
+TEST_CASE("forge-top /proc reader pins top fields and ancillary failures",
+          "[forge-top][failure]") {
+  TempProc proc;
+  proc.write("stat", "cpu 20 0 10 70 0 0 0 0\n"
+                     "cpu0 20 0 10 70 0 0 0 0\n");
+  proc.write("meminfo", "MemTotal: 0 kB\nMemAvailable: 0 kB\n"
+                        "SwapTotal: 0 kB\nSwapFree: 0 kB\n");
+  proc.write("uptime", "90061.50 0.0\n");
+  proc.write("loadavg", "3.00 2.00 1.00 1/4 404\n");
+
+  proc.write("101/stat", process_stat(101, "name (with) parens", 12, 3, 7, 'R'));
+  proc.write("101/status",
+             "Name:\tname\nUid:\t4294967294\t4294967294\t4294967294\t4294967294\n");
+  const std::string controlled{"tool\0--bad\0\x1b[31mred\0", 21};
+  proc.write_binary("101/cmdline", controlled);
+  proc.write("202/stat", process_stat(202, "empty", 2, 1, 3, 'Z'));
+  proc.write("202/cmdline", "");
+  proc.write("303/stat", process_stat(303, "unreadable", 2, 1, 3, 'T'));
+  proc.write("404/stat", process_stat(404, "disk sleep", 2, 1, 3, 'D'));
+
+  auto reader = make_proc_reader(
+      proc.root, ProcReaderConfig{.page_size = 4096, .clock_ticks = 100});
+  const auto result = reader->sample();
+  REQUIRE(result.has_value());
+  REQUIRE(result->uptime_seconds == 90061.5);
+  REQUIRE((result->load_average == std::array<double, 3>{3.0, 2.0, 1.0}));
+  REQUIRE(result->tasks.total == 4);
+  REQUIRE(result->tasks.running == 1);
+  REQUIRE(result->tasks.sleeping == 1);
+  REQUIRE(result->tasks.stopped == 1);
+  REQUIRE(result->tasks.zombie == 1);
+
+  const auto find_pid = [&](int pid) -> const ProcessRow & {
+    const auto it = std::ranges::find(result->processes, pid, &ProcessRow::pid);
+    REQUIRE(it != result->processes.end());
+    return *it;
+  };
+  const auto &rich = find_pid(101);
+  REQUIRE(rich.name == "name (with) parens");
+  REQUIRE(rich.state == 'R');
+  REQUIRE(rich.user == "4294967294");
+  REQUIRE(rich.memory_percent == 0.0F);
+  REQUIRE(rich.cpu_seconds == 0.15);
+  REQUIRE(rich.command == "tool --bad \x1b[31mred");
+  REQUIRE(find_pid(202).command == "[empty]");
+  REQUIRE(find_pid(303).command == "[unreadable]");
+
+  auto bad_ticks = make_proc_reader(
+      proc.root, ProcReaderConfig{.page_size = 4096, .clock_ticks = 0});
+  const auto failed = bad_ticks->sample();
+  REQUIRE_FALSE(failed.has_value());
+  REQUIRE(failed.error().severity == Severity::Warning);
+  REQUIRE(failed.error().message.find("clock ticks") != std::string::npos);
+}
+
+TEST_CASE("forge-top TIME+ scales long-running processes", "[forge-top]") {
+  REQUIRE(format_cpu_time(0.01) == "0:00.01");
+  REQUIRE(format_cpu_time(3723.45) == "62:03.45");
+  REQUIRE(format_cpu_time(60'000.0) == "16:40:00");
+}
+
+TEST_CASE("forge-top summary presents load tasks and one unit per memory line",
+          "[forge-top]") {
+  Screen screen{100, 8};
+  OverviewPanel overview;
+  overview.set_geometry({0, 0, 100, 4});
+  overview.set_snapshot(90061.0, {3.0, 2.0, 1.0}, {9, 1, 5, 2, 1});
+  overview.draw(screen);
+  CHECK(screen_row(screen, 1).find("up 1d 01:01 · load 3.00 2.00 1.00") !=
+        std::string::npos);
+  CHECK(screen_row(screen, 2).find(
+            "Tasks 9 total · 1 running · 5 sleeping · 2 stopped · 1 zombie") !=
+        std::string::npos);
+
+  MemoryPanel memory;
+  memory.set_geometry({0, 4, 100, 4});
+  memory.set_memory({8ULL * 1024 * 1024 * 1024, 3ULL * 1024 * 1024 * 1024,
+                     2ULL * 1024 * 1024 * 1024, 1ULL * 1024 * 1024 * 1024});
+  memory.draw(screen);
+  CHECK(screen_row(screen, 5).find(
+            "RAM 5.0 used / 8.0 total · 3.0 available GiB") !=
+        std::string::npos);
+  CHECK(screen_row(screen, 6).find(
+            "Swap 1.0 used / 2.0 total · 1.0 free GiB") !=
+        std::string::npos);
+}
+
 TEST_CASE("forge-top process view filters, sorts and preserves PID selection",
           "[forge-top]") {
   ProcessPanel panel;
   panel.set_geometry({0, 0, 80, 14});
   Screen screen{80, 14};
-  panel.set_processes({{10, "alpha", 4.0F, 400},
-                       {20, "beta", 80.0F, 200},
-                       {30, "gamma", 20.0F, 900}});
+  panel.set_processes({process_row(10, "alpha", 4.0F, 400),
+                       process_row(20, "beta", 80.0F, 200),
+                       process_row(30, "gamma", 20.0F, 900)});
   panel.draw(screen);
   REQUIRE(panel.visible_rows().front().pid == 20); // CPU descending
 
   panel.table().set_selected(1); // PID 30
-  panel.set_processes({{30, "gamma", 21.0F, 900},
-                       {20, "beta", 79.0F, 200},
-                       {10, "alpha", 5.0F, 400}});
+  panel.set_processes({process_row(30, "gamma", 21.0F, 900),
+                       process_row(20, "beta", 79.0F, 200),
+                       process_row(10, "alpha", 5.0F, 400)});
   REQUIRE(
       panel.visible_rows()[static_cast<std::size_t>(panel.table().selected())]
           .pid == 30);
@@ -289,9 +442,9 @@ TEST_CASE("forge-top process view filters, sorts and preserves PID selection",
   REQUIRE(panel.visible_rows().size() == 1);
   REQUIRE(panel.visible_rows().front().pid == 10);
   panel.set_filter("");
-  panel.choose_sort(ProcessSort::Pid);
+  panel.set_sort(ProcessSort::Pid);
   REQUIRE(panel.visible_rows().front().pid == 10);
-  panel.choose_sort(ProcessSort::Pid);
+  panel.reverse_sort();
   REQUIRE(panel.visible_rows().front().pid == 30);
 
   bool activated = false;
@@ -302,19 +455,111 @@ TEST_CASE("forge-top process view filters, sorts and preserves PID selection",
   REQUIRE(activated);
 
   panel.draw(screen);
-  const bool before = panel.descending();
   const Rect table = panel.table().rect();
   REQUIRE(panel.handle_header_click(
       MouseEvent{table.x + panel.table().gutter_cols() + 1, table.y, 0, true}));
   REQUIRE(panel.sort_key() == ProcessSort::Pid);
-  REQUIRE(panel.descending() != before);
+  REQUIRE_FALSE(panel.descending());
+}
+
+TEST_CASE("forge-top process columns elide by priority and sanitize COMMAND",
+          "[forge-top][failure]") {
+  const auto row = process_row(42, "worker", 75.0F, 64 * 1024 * 1024,
+                               "alice", 'R', 12.5F, 3723.45,
+                               "worker --token \x1b[31munsafe");
+
+  ProcessPanel wide;
+  wide.set_geometry({0, 0, 120, 8});
+  wide.set_processes({row});
+  wide.set_command_line(true);
+  Screen wide_screen{120, 8};
+  wide.draw(wide_screen);
+  const std::string wide_header = screen_row(wide_screen, 2);
+  CHECK(wide_header.find("PID") != std::string::npos);
+  CHECK(wide_header.find("USER") != std::string::npos);
+  CHECK(wide_header.find("S") != std::string::npos);
+  CHECK(wide_header.find("%CPU") != std::string::npos);
+  CHECK(wide_header.find("%MEM") != std::string::npos);
+  CHECK(wide_header.find("TIME+") != std::string::npos);
+  CHECK(wide_header.find("RES") != std::string::npos);
+  CHECK(wide_header.find("COMMAND") != std::string::npos);
+  const std::string wide_data = screen_row(wide_screen, 3);
+  CHECK(wide_data.find("worker --token unsafe") != std::string::npos);
+  CHECK(wide_data.find("[31m") == std::string::npos);
+  CHECK(wide_data.find('\x1b') == std::string::npos);
+
+  ProcessPanel narrow;
+  narrow.set_geometry({0, 0, 31, 8});
+  narrow.set_processes({row});
+  Screen narrow_screen{31, 8};
+  narrow.draw(narrow_screen);
+  const std::string narrow_header = screen_row(narrow_screen, 2);
+  CHECK(narrow_header.find("PID") != std::string::npos);
+  CHECK(narrow_header.find("%CPU") != std::string::npos);
+  CHECK(narrow_header.find("%MEM") != std::string::npos);
+  CHECK(narrow_header.find("COMMAND") != std::string::npos);
+  CHECK(narrow_header.find("USER") == std::string::npos);
+  CHECK(narrow_header.find("TIME+") == std::string::npos);
+  CHECK(narrow_header.find("RES") == std::string::npos);
+}
+
+TEST_CASE("forge-top sort selection is deterministic and R alone reverses",
+          "[forge-top]") {
+  ProcessPanel panel;
+  panel.set_processes({process_row(10, "a", 2.0F, 400, "u", 'S', 2.0F, 5.0),
+                       process_row(20, "b", 1.0F, 200, "u", 'R', 1.0F, 9.0)});
+  panel.set_sort(ProcessSort::Pid);
+  REQUIRE_FALSE(panel.descending());
+  panel.reverse_sort();
+  REQUIRE(panel.descending());
+  panel.set_sort(ProcessSort::Pid);
+  REQUIRE_FALSE(panel.descending());
+  panel.set_sort(ProcessSort::Time);
+  REQUIRE(panel.descending());
+  REQUIRE(panel.visible_rows().front().pid == 20);
+}
+
+TEST_CASE("forge-top CPU mode changes invalidate the replacement regions",
+          "[forge-top][persistent]") {
+  CpuPanel panel;
+  const std::array samples{CpuSample{"cpu0", 0.25F},
+                           CpuSample{"cpu1", 0.75F}};
+  panel.set_samples(samples);
+  panel.set_aggregate_sample({"cpu", 0.5F});
+  panel.set_geometry({0, 0, 60, 10});
+  Screen screen{60, 10};
+  panel.draw(screen);
+
+  const auto cores = panel.pixel_regions();
+  REQUIRE(cores.size() == 2);
+  for (const Rect region : cores)
+    panel.pixel_region_submitted(region);
+  REQUIRE(std::ranges::none_of(cores, [&](Rect region) {
+    return panel.pixel_region_state(region).content_dirty;
+  }));
+
+  panel.set_per_cpu(false);
+  panel.draw(screen);
+  const auto aggregate = panel.pixel_regions();
+  REQUIRE(aggregate.size() == 1);
+  REQUIRE(panel.pixel_region_state(aggregate.front()).content_dirty);
+  panel.pixel_region_submitted(aggregate.front());
+  REQUIRE_FALSE(panel.pixel_region_state(aggregate.front()).content_dirty);
+
+  panel.set_per_cpu(true);
+  panel.draw(screen);
+  const auto restored = panel.pixel_regions();
+  REQUIRE(restored.size() == 2);
+  CHECK(std::ranges::all_of(restored, [&](Rect region) {
+    return panel.pixel_region_state(region).content_dirty;
+  }));
 }
 
 TEST_CASE("forge-top detail graph acknowledges persistent content",
           "[forge-top]") {
   DetailPopup detail;
   const std::array<float, 4> history{5.0F, 40.0F, 90.0F, 20.0F};
-  detail.set_process({42, "renderer", 20.0F, 4096}, history);
+  detail.set_process(process_row(42, "renderer", 20.0F, 4096), history);
   Screen screen{80, 24};
   detail.draw(screen);
   const auto regions = detail.pixel_regions();
@@ -325,6 +570,137 @@ TEST_CASE("forge-top detail graph acknowledges persistent content",
   REQUIRE(detail.draw_pixels(regions.front(), {320, 128}) != nullptr);
   detail.pixel_region_submitted(regions.front());
   REQUIRE_FALSE(detail.pixel_region_state(regions.front()).content_dirty);
+}
+
+TEST_CASE("forge-top global keys defer to filter and open menu",
+          "[forge-top][input]") {
+  ForgeTopApp filter_app{make_fake_reader()};
+  std::string filter_wire;
+  filter_app.run_headless(1, 80, 20, &filter_wire, DriverChoice::Fallback);
+  filter_app.test_pump(
+      {"\t\tq?hPMNTRds1ltmc "}); // table -> menu -> filter, then type
+  REQUIRE(filter_app.process_panel_for_test().sort_key() == ProcessSort::Cpu);
+  REQUIRE(filter_app.process_panel_for_test().filter().text() ==
+          "q?hPMNTRds1ltmc ");
+  REQUIRE(filter_app.running());
+  REQUIRE(filter_app.cpu_per_cpu_for_test());
+  REQUIRE((filter_app.section_state_for_test() ==
+           std::array<bool, 4>{true, true, true, true}));
+
+  ForgeTopApp menu_app{make_fake_reader()};
+  menu_app.test_pump({"\t\r"}); // focus menu and open its dropdown
+  menu_app.test_pump({"q"});     // close menu, do not quit
+  menu_app.test_pump({"N"});
+  REQUIRE(menu_app.process_panel_for_test().sort_key() == ProcessSort::Pid);
+}
+
+TEST_CASE("forge-top top keys compose sections without losing selection",
+          "[forge-top][input]") {
+  ForgeTopApp app{make_fake_reader()};
+  app.process_panel_for_test().table().set_selected(3);
+  const int selected = app.process_panel_for_test().table().selected();
+  app.test_pump({"ltm1c"});
+  REQUIRE((app.section_state_for_test() ==
+           std::array<bool, 4>{false, false, false, true}));
+  REQUIRE_FALSE(app.cpu_per_cpu_for_test());
+  REQUIRE(app.process_panel_for_test().command_line());
+  REQUIRE(app.process_panel_for_test().table().selected() == selected);
+
+  app.test_pump({"M"});
+  REQUIRE(app.process_panel_for_test().sort_key() == ProcessSort::Memory);
+  REQUIRE(app.process_panel_for_test().descending());
+  app.test_pump({"R"});
+  REQUIRE_FALSE(app.process_panel_for_test().descending());
+  app.test_pump({"M"});
+  REQUIRE(app.process_panel_for_test().descending());
+  app.test_pump({"T"});
+  REQUIRE(app.process_panel_for_test().sort_key() == ProcessSort::Time);
+  app.test_pump({"P"});
+  REQUIRE(app.process_panel_for_test().sort_key() == ProcessSort::Cpu);
+  app.test_pump({"N"});
+  REQUIRE(app.process_panel_for_test().sort_key() == ProcessSort::Pid);
+}
+
+TEST_CASE("forge-top sampling delay validates and controls sample cadence",
+          "[forge-top][input][failure]") {
+  auto reader = std::make_unique<CountingReader>();
+  auto *counting = reader.get();
+  ForgeTopApp app{std::move(reader)};
+  REQUIRE(counting->calls == 1); // constructor's initial sample
+
+  app.test_pump({"d"});
+  app.test_pump({"\x7f", "0.25\r"});
+  REQUIRE(app.sample_delay_for_test() == std::chrono::duration<double>{0.25});
+  app.on_tick(std::chrono::duration<double>{0.24});
+  REQUIRE(counting->calls == 1);
+  app.on_tick(std::chrono::duration<double>{0.01});
+  REQUIRE(counting->calls == 2);
+  app.test_pump({" "});
+  REQUIRE(counting->calls == 3);
+  app.on_tick(std::chrono::duration<double>{0.24});
+  REQUIRE(counting->calls == 3); // manual refresh reset the accumulator
+
+  app.test_pump({"s"});
+  app.test_pump({"\x7f\x7f\x7f\x7f-1\r"});
+  REQUIRE(app.sample_delay_for_test() == std::chrono::duration<double>{0.25});
+
+  auto zero_reader = std::make_unique<CountingReader>();
+  auto *zero_counting = zero_reader.get();
+  ForgeTopApp zero_app{std::move(zero_reader)};
+  zero_app.test_pump({"d"});
+  zero_app.test_pump({"\x7f" "0\r"});
+  REQUIRE(zero_app.sample_delay_for_test() ==
+          std::chrono::duration<double>{0.0});
+  zero_app.on_tick(std::chrono::duration<double>::zero());
+  REQUIRE(zero_counting->calls == 2); // zero means once per rendered frame
+}
+
+TEST_CASE("forge-top popups close before q quits and global releases do nothing",
+          "[forge-top][input][failure]") {
+  ForgeTopApp help{make_fake_reader()};
+  std::string wire;
+  help.run_headless(1, 100, 28, &wire, DriverChoice::Fallback);
+  REQUIRE(help.running());
+  help.test_pump({"h"});
+  help.test_pump({"q"});
+  REQUIRE(help.running());
+  help.test_pump({"q"});
+  REQUIRE_FALSE(help.running());
+
+  ForgeTopApp question_help{make_fake_reader()};
+  std::string question_wire;
+  question_help.run_headless(1, 100, 28, &question_wire,
+                             DriverChoice::Fallback);
+  question_help.test_pump({"?"});
+  question_help.test_pump({"q"});
+  REQUIRE(question_help.running());
+
+  ForgeTopApp f1_help{make_fake_reader()};
+  std::string f1_wire;
+  f1_help.run_headless(1, 100, 28, &f1_wire, DriverChoice::Fallback);
+  f1_help.on_event(KeyEvent{Key::F1});
+  f1_help.test_pump({"q"});
+  REQUIRE(f1_help.running());
+
+  ForgeTopApp detail{make_fake_reader()};
+  std::string detail_wire;
+  detail.run_headless(1, 100, 28, &detail_wire, DriverChoice::Fallback);
+  REQUIRE(detail.show_first_process_for_test());
+  detail.test_pump({"q"});
+  REQUIRE(detail.running());
+  detail.test_pump({"q"});
+  REQUIRE_FALSE(detail.running());
+
+  ForgeTopApp actions{make_fake_reader()};
+  std::string actions_wire;
+  actions.run_headless(1, 80, 20, &actions_wire, DriverChoice::Fallback);
+  actions.on_event(KeyEvent{Key::Char, U'q', false, false, false,
+                            KeyAction::Repeat});
+  actions.on_event(KeyEvent{Key::Char, U'q', false, false, false,
+                            KeyAction::Release});
+  REQUIRE(actions.running());
+  actions.on_event(KeyEvent{Key::Char, U'q'});
+  REQUIRE_FALSE(actions.running());
 }
 
 TEST_CASE("forge-top runs the real frame shape on every forced tier",

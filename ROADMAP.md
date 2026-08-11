@@ -27,7 +27,10 @@ completed items.
 >
 > **2026-08-11 — dogfooding harness.** **#16 (`forge-top`)** is landed in
 > v0.17.0. The default binary now reads `/proc`, has deterministic fake data,
-> and exercises Kitty, ANSI and fallback through one forced-tier CLI.
+> and exercises Kitty, ANSI and fallback through one forced-tier CLI. **#230
+> and #231** then add the top-compatible hotkeys, sampling control, summary
+> hierarchy and responsive process fields while retaining forge-top's panels
+> and persistent graphics.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
@@ -44,7 +47,8 @@ completed items.
 - Mutable resident frames + dirty submission (#196/#197) — stable Kitty image
   id/root-frame edits, placement-only moves, accepted-write acknowledgement,
   and clean-frame suppression on both enhanced tiers
-- forge-top (#16) — live `/proc` monitor and deterministic all-tier harness
+- forge-top (#16, #230, #231) — live `/proc` monitor, deterministic all-tier
+  harness, and top-compatible controls and information hierarchy
 
 ---
 
@@ -126,6 +130,10 @@ completed items.
 - [x] **4.8 — forge-top binary** ✅
   `/proc` CPU/memory/process data, deterministic fake source, sortable process
   table, persistent detail graph and forced Kitty/ANSI/fallback tiers (#16).
+  The top-compatibility pass adds uptime/load/task summaries, responsive
+  `PID USER S %CPU %MEM TIME+ RES COMMAND` fields, aggregate/per-core views,
+  sampling-delay control and the first non-mutating top hotkey tier (#230,
+  #231).
 
 ---
 
