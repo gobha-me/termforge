@@ -16,9 +16,9 @@ for tests.
 
 ## Status
 
-Core framework, KittyDriver, the widget system, and mouse routing are all
-landed and tested (520 test cases across 25 suites, gcc 13/14 + clang 19/20
-green in CI, ASan/UBSan clean).
+Core framework, KittyDriver, the widget system, mouse routing, and the
+`forge-top` dogfooding application are landed and tested across 55 suites;
+GCC 13/14 + Clang 19/20 are green in CI and ASan/UBSan is clean.
 
 Landed and verified:
 - **Core** — value types (`Cell`/`Image`, `Capabilities`, `Event`/`ErrorEvent`
@@ -78,6 +78,10 @@ Landed and verified:
   `tick_widgets(dt, {…})`, or a `std::vector<Widget*>` when they live in a
   container — so a ProgressBar's pulse and a Button's press flash are measured
   in seconds too. See `examples/motion.cpp`.
+- **`forge-top`** — the default binary is a live `/proc` monitor with per-core
+  waveforms, memory bars, a sortable/filterable process table, and a persistent
+  pixel process graph. `--fake` supplies deterministic data and
+  `--driver=kitty|ansi|fallback` forces each rendering tier.
 
 Deferred per the roadmap: `SixelDriver` (Epic 5), the broader benchmark/SIMD
 workloads, framebuffer driver.
@@ -160,7 +164,7 @@ history yields version `0.0.0.1`; packagers can pin it with
 |---|---|---|
 | `termforge_TESTS` | ON at top level, else OFF | Catch2 test suite (also honours `BUILD_TESTING`) |
 | `termforge_EXAMPLES` | ON at top level, else OFF | the `examples/` demos |
-| `termforge_BIN` | ON at top level, else OFF | the `termforge` chat demo binary |
+| `termforge_BIN` | ON at top level, else OFF | the `termforge` system-monitor binary |
 | `termforge_INSTALL` | ON at top level, else OFF | generate `install()`/`export()` rules |
 
 Both consumption paths are exercised in CI by `tools/consume/run.sh`, on GCC
@@ -168,9 +172,9 @@ and Clang.
 
 ## Demos
 
-- `src/bin` — a chat-scrollback demo (live TextBox + input line) that runs on
-  the real interactive loop. Under a non-TTY it exits cleanly with "stdout is
-  not a tty" — the failure path working as designed.
+- `src/bin` — `forge-top`, a live `/proc` system monitor and permanent
+  all-driver dogfooding harness. Under a non-TTY it exits cleanly with
+  "stdout is not a tty" — the failure path working as designed.
 - `examples/` — focused demos per subsystem: `game` (a deterministic 320×180
   workload with headless benchmark and real-Kitty capture modes),
   `pixel_surface` (the persistent framebuffer primitive), `dashboard`
@@ -182,8 +186,18 @@ The game workload can be measured without a TTY or captured on a real Kitty
 terminal. See [docs/performance.md](docs/performance.md) for commands, metric
 definitions, and the current baseline.
 
-A btop-style system monitor (`forge-top`) is planned as a permanent
-dogfooding harness for all driver tiers (see ROADMAP / issue #16).
+Run the monitor against deterministic data or force a rendering tier:
+
+```bash
+./build/src/bin/termforge --fake
+./build/src/bin/termforge --fake --driver=kitty
+./build/src/bin/termforge --fake --driver=ansi
+./build/src/bin/termforge --fake --driver=fallback
+```
+
+Tab moves focus, arrows navigate the process table and menus, Enter opens a
+process graph, table headers sort, and Escape closes a popup or exits. The old
+chat-scrollback program remains available as `termforge_example_chat`.
 
 ## Design notes
 

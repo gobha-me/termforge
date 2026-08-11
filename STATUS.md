@@ -4,9 +4,39 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-10, latest)
+## Where we are (2026-08-11, latest)
 
-**Latest release: v0.16.0 — composable choice dialogs.** #219 adds a
+**Latest release: v0.17.0 — forge-top dogfooding harness.** #16 replaces the
+generic chat binary with a btop-style system monitor backed by `/proc`. It
+shows per-core WaveformWidget regions, RAM/swap ProgressBars, a UTF-8-filtered
+and sortable process TableWidget, and a centered process graph backed by a
+persistent PixelSurface. The useful chat demo remains in `examples/chat.cpp`.
+
+`--fake` provides a deterministic 20-core/48-process workload, while
+`--driver=kitty|ansi|fallback` pushes the exact selection capabilities before
+`App::run()`. The same application therefore exercises the native Kitty path,
+ANSI half-block enhancement and the authored cell Baseline without branching
+its layout on driver type. Sampling happens once per second in `on_tick`; a
+failed root sample leaves the last good view intact, and `/proc` process exit
+races are skipped individually.
+
+`test/53forgetop` covers CLI failures, fake progression, fixture-backed `/proc`
+deltas and malformed input, filtering/sorting/selection, persistent detail
+acknowledgement, tiny layouts, more than sixteen Kitty CPU regions, and the
+real App frame shape on all three tiers.
+
+**Verification:** GCC 14.2 and Clang 20.1.8 Release `-Werror` builds pass all
+55 suites, and GCC ASan passes 55/55 with leak detection. Both compilers pass
+the subdirectory, installed-package and plain-vendored consumer paths. Forced
+Fallback, ANSI and Kitty sessions each complete setup/render/teardown through
+a pseudo-TTY, and Kitty 0.32.2 visual checks cover all three rendered tiers,
+including keyboard selection and the persistent detail popup. Hosted PR CI is
+green across all eight jobs: GCC 13/14, Clang 19/20, Fedora GCC, ASan+UBSan and
+both consumer matrices.
+
+## Previous release: v0.16.0
+
+**v0.16.0 — composable choice dialogs.** #219 adds a
 stdlib-only `ChoiceDialog` composition for single- and multiple-choice forms,
 including optional free-text Other input, selection bounds, distinct submit
 and cancel results, sanitized presentation text, and a bounded scrolling
