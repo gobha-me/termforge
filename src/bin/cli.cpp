@@ -7,7 +7,7 @@
 namespace termforge::forge_top {
 
 auto usage() -> const char * {
-  return "Usage: termforge [--fake] [--driver=kitty|ansi|fallback]\n"
+  return "Usage: forge-top [--fake] [--driver=kitty|ansi|fallback]\n"
          "\n"
          "A live /proc system monitor and all-tier TermForge demo.\n"
          "  --fake       deterministic data (screenshots and smoke tests)\n"
@@ -54,7 +54,7 @@ auto parse_options(int argc, char **argv)
 auto run_cli(int argc, char **argv) -> int {
   const auto options = parse_options(argc, argv);
   if (!options) {
-    std::fprintf(stderr, "termforge: %s\n%s", options.error().c_str(), usage());
+    std::fprintf(stderr, "forge-top: %s\n%s", options.error().c_str(), usage());
     return 2;
   }
   if (options->help) {
@@ -65,12 +65,12 @@ auto run_cli(int argc, char **argv) -> int {
   try {
     ForgeTopApp app{options->fake ? make_fake_reader() : make_proc_reader()};
     if (auto forced = app.force_driver(options->driver); !forced) {
-      std::fprintf(stderr, "termforge: %s\n", forced.error().message.c_str());
+      std::fprintf(stderr, "forge-top: %s\n", forced.error().message.c_str());
       return 1;
     }
     return app.run();
   } catch (const std::exception &error) {
-    std::fprintf(stderr, "termforge: %s\n", error.what());
+    std::fprintf(stderr, "forge-top: %s\n", error.what());
     return 1;
   }
 }

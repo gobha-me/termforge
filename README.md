@@ -164,7 +164,7 @@ history yields version `0.0.0.1`; packagers can pin it with
 |---|---|---|
 | `termforge_TESTS` | ON at top level, else OFF | Catch2 test suite (also honours `BUILD_TESTING`) |
 | `termforge_EXAMPLES` | ON at top level, else OFF | the `examples/` demos |
-| `termforge_BIN` | ON at top level, else OFF | the `termforge` system-monitor binary |
+| `termforge_BIN` | ON at top level, else OFF | the `forge-top` system-monitor binary |
 | `termforge_INSTALL` | ON at top level, else OFF | generate `install()`/`export()` rules |
 
 Both consumption paths are exercised in CI by `tools/consume/run.sh`, on GCC
@@ -189,10 +189,10 @@ definitions, and the current baseline.
 Run the monitor against deterministic data or force a rendering tier:
 
 ```bash
-./build/src/bin/termforge --fake
-./build/src/bin/termforge --fake --driver=kitty
-./build/src/bin/termforge --fake --driver=ansi
-./build/src/bin/termforge --fake --driver=fallback
+./build/src/bin/forge-top --fake
+./build/src/bin/forge-top --fake --driver=kitty
+./build/src/bin/forge-top --fake --driver=ansi
+./build/src/bin/forge-top --fake --driver=fallback
 ```
 
 Tab moves focus, arrows navigate the process table and menus, Enter opens a
