@@ -17,7 +17,7 @@ for tests.
 ## Status
 
 Core framework, KittyDriver, the widget system, mouse routing, and the
-`forge-top` dogfooding application are landed and tested across 55 suites;
+`forge-top` dogfooding application are landed and tested across 57 suites;
 GCC 13/14 + Clang 19/20 are green in CI and ASan/UBSan is clean.
 
 Landed and verified:
@@ -78,9 +78,11 @@ Landed and verified:
   `tick_widgets(dt, {…})`, or a `std::vector<Widget*>` when they live in a
   container — so a ProgressBar's pulse and a Button's press flash are measured
   in seconds too. See `examples/motion.cpp`.
-- **`forge-top`** — the default binary is a live `/proc` monitor with per-core
-  waveforms, memory bars, a sortable/filterable process table, and a persistent
-  pixel process graph. `--fake` supplies deterministic data and
+- **`forge-top`** — the default binary is a live `/proc` monitor with top-shaped
+  uptime/load/task summaries, aggregate or per-core waveforms, consistently
+  scaled memory bars, and a responsive sortable/filterable process table with
+  `PID USER S %CPU %MEM TIME+ RES COMMAND`. A persistent pixel process graph
+  remains one Enter away. `--fake` supplies deterministic data and
   `--driver=kitty|ansi|fallback` forces each rendering tier.
 
 Deferred per the roadmap: `SixelDriver` (Epic 5), the broader benchmark/SIMD
@@ -195,9 +197,15 @@ Run the monitor against deterministic data or force a rendering tier:
 ./build/src/bin/forge-top --fake --driver=fallback
 ```
 
-Tab moves focus, arrows navigate the process table and menus, Enter opens a
-process graph, table headers sort, and Escape closes a popup or exits. The old
-chat-scrollback program remains available as `termforge_example_chat`.
+The monitor accepts the familiar top keys: `P/M/N/T` choose the sort field,
+`R` reverses it, `d` or `s` changes the sampling delay, `1` switches aggregate
+and per-CPU views, `l/t/m` toggle summary sections, `c` switches command name
+and full command line, Space samples immediately, and `q` quits. `h`, `?`, or
+F1 opens the complete on-screen key guide. Tab moves focus; arrows, Page
+Up/Down, and Home/End navigate the table and menus. Enter deliberately opens a
+process graph instead of refreshing, table headers sort, and Escape closes a
+popup or exits. The old chat-scrollback program remains available as
+`termforge_example_chat`.
 
 ## Design notes
 

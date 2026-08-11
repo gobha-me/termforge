@@ -20,6 +20,11 @@ public:
           {std::format("cpu{}", core),
            static_cast<float>(0.12 + 0.78 * (std::sin(phase) * 0.5 + 0.5))});
     }
+    snapshot.aggregate_cpu = {
+        "cpu", static_cast<float>(0.18 + 0.62 *
+                                  (std::sin(m_step * 0.19) * 0.5 + 0.5))};
+    snapshot.uptime_seconds = 3.0 * 24.0 * 60.0 * 60.0 + m_step;
+    snapshot.load_average = {1.25 + m_step * 0.01, 1.10, 0.95};
 
     constexpr std::uint64_t gib = 1024ULL * 1024ULL * 1024ULL;
     snapshot.memory.total_bytes = 32 * gib;
@@ -33,10 +38,24 @@ public:
       const int pid = 1000 + i;
       const float cpu = static_cast<float>(
           (std::sin(m_step * 0.23 + i * 0.61) * 0.5 + 0.5) * 96.0);
+      const auto rss =
+          static_cast<std::uint64_t>(24 + (i * 37 + m_step * 3) % 900) *
+          1024ULL * 1024ULL;
+      const char state = i % 17 == 0 ? 'Z' : (i % 5 == 0 ? 'R' : 'S');
       snapshot.processes.push_back(
-          {pid, std::format("worker-{:02}", i), cpu,
-           static_cast<std::uint64_t>(24 + (i * 37 + m_step * 3) % 900) *
-               1024ULL * 1024ULL});
+          {pid, std::format("worker-{:02}", i), cpu, rss,
+           std::format("user{}", i % 4), state,
+           static_cast<float>(static_cast<long double>(rss) * 100.0L /
+                              snapshot.memory.total_bytes),
+           12.34 + i * 67.0 + m_step * 0.1,
+           std::format("worker-{:02} --slot {} --fake", i, i)});
+      ++snapshot.tasks.total;
+      if (state == 'R')
+        ++snapshot.tasks.running;
+      else if (state == 'Z')
+        ++snapshot.tasks.zombie;
+      else
+        ++snapshot.tasks.sleeping;
     }
     ++m_step;
     return snapshot;
