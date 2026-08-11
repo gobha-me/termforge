@@ -24,6 +24,10 @@ completed items.
 > Both are now landed — #21 in v0.2.1, **#22 in v0.6.0**, which added the third
 > and fourth `MarkGlyphs` fields (`arrow_left`/`arrow_right`) on that same enum
 > rather than a new family, following #85's precedent for overflow indicators.
+>
+> **2026-08-11 — dogfooding harness.** **#16 (`forge-top`)** is landed in
+> v0.17.0. The default binary now reads `/proc`, has deterministic fake data,
+> and exercises Kitty, ANSI and fallback through one forced-tier CLI.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
@@ -40,6 +44,7 @@ completed items.
 - Mutable resident frames + dirty submission (#196/#197) — stable Kitty image
   id/root-frame edits, placement-only moves, accepted-write acknowledgement,
   and clean-frame suppression on both enhanced tiers
+- forge-top (#16) — live `/proc` monitor and deterministic all-tier harness
 
 ---
 
@@ -118,6 +123,10 @@ completed items.
   display cadence, an ASCII Baseline, headless App-path measurement and a
   real-Kitty 60-second capture mode (#198 step 6 / #88 workload slice).
 
+- [x] **4.8 — forge-top binary** ✅
+  `/proc` CPU/memory/process data, deterministic fake source, sortable process
+  table, persistent detail graph and forced Kitty/ANSI/fallback tiers (#16).
+
 ---
 
 ## Epic 5: SixelDriver
@@ -190,6 +199,6 @@ completed items.
 6. ~~Epic 6.6 (Kitty waveform bug)~~ **FIXED** (verify in real kitty)
 7. **Audit fix wave (issues #3–#16)** — in progress 2026-07-24; #3/#4/#5/#9/#14 landed, kitty placement GC (#6/#7), probe hardening (#8), terminal robustness (#13, v0.0.2), display-width + wide cells (#10, v0.0.3), dirty/clear contract (#11, v0.0.4) landed; widget bundle (#12) next
 8. ~~Epic 3.6 (MapWidget)~~ **DONE** (glyph tier #86; sprite tier #64)
-9. **forge-top demo (issue #16)** — btop-style dogfooding harness, all tiers
+9. ~~**forge-top demo (issue #16)**~~ **DONE** — btop-style dogfooding harness
 10. **Epic 5 (Sixel)** — kitty + half-blocks bracket the matrix
 11. **Epic 6.2-6.5 (Polish)** — as time allows
