@@ -30,8 +30,9 @@ targets; GCC ASan+UBSan with leak detection passes 59/59, and the focused GCC
 TSan posting suite passes. Both compilers pass the subdirectory,
 installed-package, and plain-vendored consumer paths. Four direct mutations —
 real-time waits, bypassing the installed clock, dropping tick remainder, and
-allowing mid-frame replacement — each fail the focused suite. Hosted CI
-evidence will be recorded before release.
+allowing mid-frame replacement — each fail the focused suite. PR #237's hosted
+matrix passes all nine jobs: GCC 13/14, Clang 19/20, Fedora GCC, ASan+UBSan,
+TSan, and both GCC 14 / Clang 20 consumer jobs.
 
 **How it got picked:** #225 remains the lone pending local-memory task but needs
 a human-controlled direct Kitty session. #119 is the roadmap's explicit next
