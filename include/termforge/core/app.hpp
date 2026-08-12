@@ -37,8 +37,10 @@
 #include <cmath>
 #include <concepts>
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <expected>
+#include <iosfwd>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -441,6 +443,33 @@ class App {
     if (m_loop_active) return;
     m_clock = clock;
   }
+
+  // Record and replay the raw input stream through the production loop
+  // (#120). A trace stores the exact chunks read from the terminal, their
+  // synthetic-clock offsets and frame points, effective resizes, and posted
+  // events. Playback therefore feeds Input again; it never serializes decoded
+  // terminal events and cannot accidentally bypass the parser whose failures
+  // the artifact exists to reproduce.
+  //
+  // The streams are BORROWED. start_recording() may be called only while the
+  // loop is stopped, and the stream must outlive that run or an earlier
+  // stop_recording(). The header is deferred until setup has resolved the
+  // capabilities and initial size. A clean run finalizes automatically;
+  // stop_recording() during a run creates a playable prefix that ends after
+  // the current frame. A refused stream write becomes a Warning event and
+  // disables that recording rather than changing App's output path.
+  //
+  // play() parses and validates the complete trace before starting. It applies
+  // the recorded capability push and initial size, uses an internal
+  // SyntheticClock, ignores live terminal input, and restores the caller's
+  // previous clock/capability/size/input state afterwards. An explicitly
+  // pushed incompatible capability set is refused before setup or output.
+  // The producing TermForge version is provenance; the trace schema, not the
+  // library version, is the compatibility gate so regression artifacts remain
+  // useful after an upgrade.
+  auto start_recording(std::ostream& out) -> void;
+  auto stop_recording() -> void;
+  auto play(std::istream& in) -> std::expected<void, ErrorEvent>;
 
   // The single input funnel — every event the loop produces goes through
   // here, and it decides who sees it:
@@ -897,6 +926,10 @@ class App {
   virtual auto read_available(char* out, int max) -> int;
 
  private:
+  enum class TracePoint { FrameStart, InputPump, Posted, Wait, End };
+  struct RecordingState;
+  struct PlaybackState;
+
   // The one loop each. Both public spellings funnel here, so the null contract
   // and the iteration order are written once (#123). Private rather than
   // protected: a subclass reaches them through the two forwarders above, and
@@ -977,6 +1010,20 @@ class App {
   // any input that arrives. Dispatch happens at the top of the next frame,
   // which is what keeps the frame rate independent of input activity.
   auto wait_frame(std::chrono::steady_clock::time_point frame_start) -> void;
+  auto begin_recording_run() -> void;
+  auto finish_recording(bool clean) -> void;
+  auto fail_recording(ErrorEvent error) -> void;
+  auto record_payload(std::uint8_t kind, TracePoint point,
+                      std::vector<std::uint8_t> payload) -> void;
+  auto record_frame(std::chrono::steady_clock::time_point frame_start) -> void;
+  auto record_input(std::string_view bytes) -> void;
+  auto record_resize(Size size) -> void;
+  auto record_posted(const Event& event) -> void;
+  auto playback_begin_frame() -> void;
+  auto playback_apply_resizes() -> void;
+  auto playback_feed(TracePoint point) -> int;
+  auto playback_dispatch_posted() -> void;
+  auto playback_finish_frame() -> void;
 
   Terminal m_term;
   // What the startup probe found. A member rather than a setup() local (#60):
@@ -987,6 +1034,11 @@ class App {
   std::unique_ptr<Screen> m_screen;
   std::unique_ptr<Renderer> m_renderer;
   Input m_input;
+  std::unique_ptr<RecordingState> m_recording;
+  std::unique_ptr<PlaybackState> m_playback;
+  std::uint64_t m_frame_index{0};
+  TracePoint m_trace_point{TracePoint::FrameStart};
+  bool m_frame_active{false};
 
   // #28: the queue is the cross-thread state; the pipe only wakes poll(). One
   // byte per post is deliberately best-effort because a full nonblocking pipe

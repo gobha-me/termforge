@@ -9,6 +9,7 @@ add_library(${PROJECT_NAME}_lib STATIC
   core/image_loader.cpp
   core/image.cpp
   detail/base64.cpp
+  detail/trace.cpp
   widgets/text_box.cpp
   widgets/table_widget.cpp
   widgets/list_widget.cpp
@@ -52,6 +53,7 @@ target_include_directories(${PROJECT_NAME}_lib
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_BINARY_DIR}/generated/include
 )
 
 target_compile_features(${PROJECT_NAME}_lib PUBLIC cxx_std_23)

@@ -17,7 +17,7 @@ for tests.
 ## Status
 
 Core framework, KittyDriver, the widget system, mouse routing, and the
-`forge-top` dogfooding application are landed and tested across 59 CTest targets;
+`forge-top` dogfooding application are landed and tested across 60 CTest targets;
 GCC 13/14 + Clang 19/20 are green in CI, ASan/UBSan is clean, and the
 cross-thread event path has a focused TSan gate.
 
@@ -82,6 +82,10 @@ Landed and verified:
   waits without sleeping; combine it with a fixed tick rate and a disabled
   stall clamp for exact, wall-time-free application tests. The protected
   clock/readiness/input seams remain available for custom scripted sources.
+  `start_recording` / `stop_recording` capture raw input chunks, resize and
+  posted-event timing; `play` feeds the artifact back through the production
+  decoder and frame loop under recorded capabilities. See
+  [docs/input-traces.md](docs/input-traces.md).
   Widgets get the same hook — `Widget::on_tick(dt)`, forwarded by the app with
   `tick_widgets(dt, {…})`, or a `std::vector<Widget*>` when they live in a
   container — so a ProgressBar's pulse and a Button's press flash are measured

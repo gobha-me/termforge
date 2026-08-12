@@ -10,6 +10,7 @@
 // work.
 
 #include <chrono>
+#include <sstream>
 
 #include <termforge/core/app.hpp>
 #include <termforge/core/screen.hpp>
@@ -58,6 +59,11 @@ auto main() -> int {
   scripted.set_tick_hz(10);
   scripted.set_max_tick_dt(std::chrono::duration<double>::zero());
   scripted.set_clock(nullptr);
+  std::ostringstream recorded;
+  scripted.start_recording(recorded);
+  scripted.stop_recording();
+  std::istringstream invalid_trace;
+  (void)scripted.play(invalid_trace);  // compile/link the installed API
 
   termforge::Screen screen(20, 3);  // core/screen.cpp
 

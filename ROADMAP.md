@@ -53,6 +53,13 @@ completed items.
 > synthetic budget instead of sleeping. Fixed-timestep applications can now
 > run exact production-loop tests without reimplementing the three source
 > overrides. **#120** is the next deterministic-loop layer, with #150 after it.
+>
+> **2026-08-12 — deterministic raw-input traces.** **#120** records exact read
+> chunks, production frame points, resizes and posted-event snapshots in a
+> bounded versioned artifact. Playback reapplies the recorded size/capabilities,
+> advances synthetic time and feeds `Input` through the ordinary App cadence.
+> Malformed escapes remain decoder fixtures, and byte-identical rendering makes
+> timing load-bearing. **#150** is the next offline loop-layer issue.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
@@ -77,6 +84,8 @@ completed items.
   bounded-readiness and nonblocking-input seams, proven through consumed headers
 - First-class synthetic time (#119) — base-owned borrowed clock selection,
   zero-wall-time frame waits, and exact fixed-timestep testing
+- Raw-input traces (#120) — portable record/playback artifacts through the real
+  decoder, resize/post boundaries, synthetic time and production frame loop
 
 ---
 
@@ -238,7 +247,7 @@ completed items.
 9. ~~**forge-top demo (issue #16)**~~ **DONE** — btop-style dogfooding harness
 10. ~~**Supported App loop-source API (#118)**~~ **DONE** — deterministic
     consumer overrides compile through installed headers
-11. **Deterministic loop chain** — ~~synthetic clock (#119)~~ **DONE**; next
-    raw event-stream playback (#120), then opt-in demand rendering (#150)
+11. **Deterministic loop chain** — ~~synthetic clock (#119)~~ and ~~raw-input
+    playback (#120)~~ **DONE**; next opt-in demand rendering (#150)
 12. **Epic 5 (Sixel)** — kitty + half-blocks bracket the matrix
 13. **Epic 6.2-6.5 (Polish)** — as time allows
