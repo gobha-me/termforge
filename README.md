@@ -17,7 +17,7 @@ for tests.
 ## Status
 
 Core framework, KittyDriver, the widget system, mouse routing, and the
-`forge-top` dogfooding application are landed and tested across 58 suites;
+`forge-top` dogfooding application are landed and tested across 59 CTest targets;
 GCC 13/14 + Clang 19/20 are green in CI, ASan/UBSan is clean, and the
 cross-thread event path has a focused TSan gate.
 
@@ -78,6 +78,10 @@ Landed and verified:
   same speed at any frame budget. Variable `dt` by default; `set_tick_hz(n)`
   switches to a fixed timestep for deterministic, replayable physics, and the
   `set_max_tick_dt` clamp keeps a stall from teleporting objects through walls.
+  A borrowed `SyntheticClock` installed with `App::set_clock` advances frame
+  waits without sleeping; combine it with a fixed tick rate and a disabled
+  stall clamp for exact, wall-time-free application tests. The protected
+  clock/readiness/input seams remain available for custom scripted sources.
   Widgets get the same hook — `Widget::on_tick(dt)`, forwarded by the app with
   `tick_widgets(dt, {…})`, or a `std::vector<Widget*>` when they live in a
   container — so a ProgressBar's pulse and a Button's press flash are measured

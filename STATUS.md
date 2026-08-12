@@ -6,7 +6,44 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-12, latest)
 
-**Latest release: v0.20.0 — supported App loop-source seams.** #118 promotes
+**Pending release: v0.21.0 — first-class synthetic App time.** #119 adds a
+public `SyntheticClock` and base-owned `App::set_clock` selection over #118's
+lower-level virtual source seams. The clock is borrowed for the configured run,
+may be installed or cleared only while the loop is stopped, and cannot be
+replaced from inside a live frame. `nullptr` restores the real steady clock.
+
+With a synthetic clock installed, the default `now_steady()` reads it. A frame
+wait still checks readiness and drains available input, but every check uses a
+zero timeout and an idle remainder advances the synthetic clock instead of
+sleeping. Input absorbed during that wait retains the shipped next-frame
+dispatch order. `set_tick_hz(n)` plus `set_max_tick_dt(0)` therefore gives an
+exact production-loop tick sequence without wall time or a hand-written clock
+and readiness subclass.
+
+The focused suite pins monotonic advance, exact 10 Hz delivery, accumulator
+remainder carry, real-clock restoration, zero-time readiness calls, scripted
+input order, the live-loop replacement guard, and 15 seconds of simulated frame
+waits completing under a one-second wall ceiling. The consumed-header fixture
+compiles the new concrete type and setter through every supported consumption
+path. GCC 14.2 and Clang 20.1.8 Release `-Werror` builds pass 59/59 CTest
+targets; GCC ASan+UBSan with leak detection passes 59/59, and the focused GCC
+TSan posting suite passes. Both compilers pass the subdirectory,
+installed-package, and plain-vendored consumer paths. Four direct mutations —
+real-time waits, bypassing the installed clock, dropping tick remainder, and
+allowing mid-frame replacement — each fail the focused suite. PR #237's hosted
+matrix passes all nine jobs: GCC 13/14, Clang 19/20, Fedora GCC, ASan+UBSan,
+TSan, and both GCC 14 / Clang 20 consumer jobs.
+
+**How it got picked:** #225 remains the lone pending local-memory task but needs
+a human-controlled direct Kitty session. #119 is the roadmap's explicit next
+offline step after v0.20.0 and unblocks #120 and #150.
+
+**Next:** run #225's direct Kitty acceptance capture when that environment is
+available; otherwise implement #120's raw-input record/playback trace.
+
+## Previous release: v0.20.0
+
+**v0.20.0 — supported App loop-source seams.** #118 promotes
 `App`'s clock, readiness and input seams — `now_steady()`,
 `wait_readable(int)` and `read_available(char*, int)` — from private test
 machinery to one documented protected API. An out-of-tree application can now

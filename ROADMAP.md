@@ -46,6 +46,13 @@ completed items.
 > installed headers, and a private-access mutation fails that fixture. **#119**
 > is the next layer: a common base-owned synthetic clock over this lower-level
 > seam; #120 and #150 follow it.
+>
+> **2026-08-12 — first-class synthetic time.** **#119** layers a concrete,
+> caller-owned `SyntheticClock` over #118. `App::set_clock` borrows it while the
+> loop is stopped; frame waits poll sources at zero timeout and advance the
+> synthetic budget instead of sleeping. Fixed-timestep applications can now
+> run exact production-loop tests without reimplementing the three source
+> overrides. **#120** is the next deterministic-loop layer, with #150 after it.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
@@ -68,6 +75,8 @@ completed items.
   lossless queueing beyond wake-pipe capacity, and loop-thread delivery
 - Supported loop-source overrides (#118) — protected monotonic clock,
   bounded-readiness and nonblocking-input seams, proven through consumed headers
+- First-class synthetic time (#119) — base-owned borrowed clock selection,
+  zero-wall-time frame waits, and exact fixed-timestep testing
 
 ---
 
@@ -229,7 +238,7 @@ completed items.
 9. ~~**forge-top demo (issue #16)**~~ **DONE** — btop-style dogfooding harness
 10. ~~**Supported App loop-source API (#118)**~~ **DONE** — deterministic
     consumer overrides compile through installed headers
-11. **Deterministic loop chain (#119, #120, #150)** — synthetic clock, raw
-    event-stream playback and opt-in demand rendering
+11. **Deterministic loop chain** — ~~synthetic clock (#119)~~ **DONE**; next
+    raw event-stream playback (#120), then opt-in demand rendering (#150)
 12. **Epic 5 (Sixel)** — kitty + half-blocks bracket the matrix
 13. **Epic 6.2-6.5 (Polish)** — as time allows

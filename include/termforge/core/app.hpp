@@ -34,6 +34,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <concepts>
 #include <cstddef>
 #include <deque>
@@ -105,6 +106,40 @@ struct OverlayOptions {
   // Off by default: a modal that vanishes on a stray click is a data-loss
   // bug in a confirm dialog. Motion and wheel never dismiss — only a press.
   bool dismiss_on_click_outside{false};
+};
+
+// A caller-controlled monotonic clock for deterministic App runs (#119).
+// It starts at steady_clock's epoch and advances only when the caller or an
+// App frame wait advances it. Non-positive and non-finite advances are no-ops,
+// and a finite advance beyond steady_clock's range saturates at time_point::max:
+// a clock handed to App must never move backwards or invoke undefined numeric
+// conversion, because frame deadlines and fixed timestep accumulation both
+// depend on that invariant.
+//
+// The clock is deliberately not synchronized. App and every operation except
+// post(Event) are single-threaded; drive this from the same thread as the run.
+class SyntheticClock {
+ public:
+  auto advance(std::chrono::duration<double> elapsed) noexcept -> void {
+    if (elapsed <= std::chrono::duration<double>::zero() ||
+        !std::isfinite(elapsed.count()))
+      return;
+    const auto remaining = std::chrono::steady_clock::time_point::max() - m_now;
+    if (elapsed >= std::chrono::duration<double>{remaining}) {
+      m_now = std::chrono::steady_clock::time_point::max();
+      return;
+    }
+    m_now +=
+        std::chrono::duration_cast<std::chrono::steady_clock::duration>(elapsed);
+  }
+
+  [[nodiscard]] auto now() const noexcept
+      -> std::chrono::steady_clock::time_point {
+    return m_now;
+  }
+
+ private:
+  std::chrono::steady_clock::time_point m_now{};
 };
 
 class App {
@@ -386,6 +421,25 @@ class App {
   // True while an overlay is capturing input.
   [[nodiscard]] auto modal() const noexcept -> bool {
     return !m_overlays.empty();
+  }
+
+  // Borrow a caller-owned clock for deterministic runs. While installed, the
+  // default now_steady() reads it and frame waits advance it by their remaining
+  // budget instead of sleeping. Input/readiness is still polled with a zero
+  // timeout, so scripted bytes and posted events keep their ordinary frame
+  // order without consuming wall time.
+  //
+  // The clock must outlive every run that uses it. Set or clear it only while
+  // the loop is stopped; an attempted mid-run change is ignored so one frame
+  // cannot start on one timeline and finish on another. nullptr restores the
+  // real steady clock. Custom #118 clock/readiness overrides remain the lower-
+  // level alternative and should not be combined with this common fixture.
+  //
+  // Together with set_tick_hz(n) and set_max_tick_dt(0), this gives an exactly
+  // reproducible tick sequence without the real-time stall clamp.
+  auto set_clock(SyntheticClock* clock) noexcept -> void {
+    if (m_loop_active) return;
+    m_clock = clock;
   }
 
   // The single input funnel — every event the loop produces goes through
@@ -1008,6 +1062,10 @@ class App {
   // back after present. Empty whenever no backdrop was applied this frame.
   std::vector<Cell> m_backdrop_backup;
   bool m_running{false};
+  // Unlike m_running, this answers whether run_loop/test_run_frames is on the
+  // stack right now. The bounded test hook deliberately leaves running() true
+  // when no quit occurred, so configuration guards cannot reuse that state.
+  bool m_loop_active{false};
   bool m_in_screen{false};
   // on_stop() is owed exactly once per completed on_start() (#97). Set right
   // after the call, cleared right before the matching on_stop() -- so the
@@ -1025,6 +1083,9 @@ class App {
   // "nobody has said" is a real state, and every value that could stand in for
   // it is one set_size refuses.
   std::optional<Size> m_pushed_size;
+  // Borrowed deterministic time source, or nullptr for std::steady_clock.
+  // Never changed by a live loop; see set_clock().
+  SyntheticClock* m_clock{nullptr};
   int m_frame_ms{33};  // ~30fps: the loop's default frame budget
   // How long an incomplete escape sequence gets to finish arriving before a
   // lone ESC is committed as a genuine Escape keypress. A frame holding one

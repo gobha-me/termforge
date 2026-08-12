@@ -4,9 +4,10 @@
 // advertises, and calls into two different library TUs (core/screen.cpp and
 // widgets/label.cpp) so that a broken include path fails to compile and a
 // broken export fails to link. It also compiles a consumer-owned App subclass
-// against the three protected loop-source seams (#118). Exits non-zero if the
-// drawn cell is blank, which would mean we linked something that does not
-// actually work.
+// against the three protected loop-source seams (#118) and the concrete
+// synthetic-clock API layered over them (#119). Exits non-zero if the drawn
+// cell is blank, which would mean we linked something that does not actually
+// work.
 
 #include <chrono>
 
@@ -50,6 +51,14 @@ class ScriptedApp final : public termforge::App {
 }  // namespace
 
 auto main() -> int {
+  termforge::SyntheticClock clock;
+  clock.advance(std::chrono::duration<double>{0.25});
+  ScriptedApp scripted;
+  scripted.set_clock(&clock);
+  scripted.set_tick_hz(10);
+  scripted.set_max_tick_dt(std::chrono::duration<double>::zero());
+  scripted.set_clock(nullptr);
+
   termforge::Screen screen(20, 3);  // core/screen.cpp
 
   termforge::Label label{"consumed"};
