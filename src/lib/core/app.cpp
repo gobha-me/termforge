@@ -282,6 +282,7 @@ auto App::run_loop() -> int {
   // that satisfies on_start()'s contract. A throw is a startup failure: the
   // loop never begins, m_app_started stays false so no on_stop() is owed,
   // and the catch restores the terminal before the exception propagates.
+  m_loop_active = true;
   try {
     on_start();
     m_app_started = true;
@@ -290,11 +291,13 @@ auto App::run_loop() -> int {
     stop_app();
     shutdown_driver();  // #148: sink still alive here; teardown's ~App path is not
     teardown();
+    m_loop_active = false;
     throw;
   }
   stop_app();
   shutdown_driver();  // #148: route driver teardown through the live sink
   teardown();
+  m_loop_active = false;
   return 0;
 }
 
@@ -414,7 +417,7 @@ auto App::tick_step(std::chrono::steady_clock::time_point frame_start) -> void {
 // ── loop seams (overridden in tests to fake the clock and the fd) ──────────
 
 auto App::now_steady() const -> std::chrono::steady_clock::time_point {
-  return std::chrono::steady_clock::now();
+  return m_clock ? m_clock->now() : std::chrono::steady_clock::now();
 }
 
 auto App::wait_readable(int timeout_ms) -> bool {
@@ -497,8 +500,17 @@ auto App::wait_frame(std::chrono::steady_clock::time_point frame_start) -> void 
     const auto left =
         std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now_steady());
     if (left.count() <= 0) break;
-    if (!wait_for_sources(static_cast<int>(left.count())))
-      break;  // budget spent
+    // A synthetic run preserves the source checks but never lends a real fd
+    // its simulated timeout. If nothing is ready now, advancing the borrowed
+    // clock spends the entire remaining budget deterministically. If bytes are
+    // ready, drain them exactly as the real wait does and poll again at zero;
+    // this is what keeps a scripted source from spinning or consuming wall
+    // time while retaining the ordinary absorb-now/dispatch-next-frame order.
+    const int timeout_ms = m_clock ? 0 : static_cast<int>(left.count());
+    if (!wait_for_sources(timeout_ms)) {
+      if (m_clock) m_clock->advance(left);
+      break;  // real or simulated budget spent
+    }
     // Readable but empty means EOF/hangup: stop, or we'd spin on a dead fd
     // for the rest of the budget.
     const int input_bytes = drain_input();
@@ -546,13 +558,20 @@ auto App::test_run_frames(int frames, int cols, int rows, std::string* sink,
                           std::unique_ptr<TerminalDriver> driver) -> void {
   test_wire_headless(cols, rows, sink, std::move(driver));
   m_running = true;
-  for (int i = 0; i < frames && m_running; ++i) frame_step();
+  m_loop_active = true;
+  try {
+    for (int i = 0; i < frames && m_running; ++i) frame_step();
+  } catch (...) {
+    m_loop_active = false;
+    throw;
+  }
   // #148: this seam drives frame_step directly, without run_loop -- so the
   // driver's end-of-session handoff runs here too, while the caller's sink
   // string is still in scope. It emits kitty's d=A and then detaches; bytes
   // already accepted by the sink remain available to the test. A suite that
   // parses the stream accounts for that trailing cleanup write.
   shutdown_driver();
+  m_loop_active = false;
 }
 
 auto App::test_run_guarded(int cols, int rows, std::string* sink) -> int {
