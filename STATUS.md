@@ -4,9 +4,45 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-11, latest)
+## Where we are (2026-08-12, latest)
 
-**Latest release: v0.18.0 — top-compatible forge-top.** Companion issues #230
+**Latest release: v0.19.0 — cross-thread App event posting.** #28 adds
+`App::post(Event)` as the framework's sole thread-safe App entry point. Any
+producer can queue an ordinary `Event`; App wakes its terminal wait and delivers
+one stable snapshot through the normal `on_event` path on the loop thread.
+Within a frame, terminal input is delivered first, the posted snapshot second,
+and ticks third. A post after that snapshot waits for the next frame, so it
+cannot interrupt a tick or render. Widgets and every other App operation remain
+single-threaded.
+
+The event queue is the source of truth and the nonblocking self-pipe is only a
+wake signal. Pipe saturation therefore cannot drop events, and mutex-acquisition
+order gives each producer FIFO delivery. The pipe follows setup/teardown while
+the queue deliberately spans runs, so posts before, after, or between runs are
+retained; the exception path closes and later recreates the wake channel too.
+The production-loop suite covers terminal/post/tick ordering, a post during
+render, six concurrent producers, a 100,000-event saturation burst, normal and
+exceptional teardown, and repeated runs. CI adds a focused GCC TSan job beside
+the existing compiler and sanitizer matrix.
+
+**Local verification:** GCC 14.2 and Clang 20.1.8 Release `-Werror` builds pass
+58/58 tests; GCC ASan+UBSan passes 58/58 with leak detection, and the focused
+GCC TSan suite passes. Both compilers pass the subdirectory, installed-package,
+and plain-vendored consumer paths. Hosted PR CI is green across all nine jobs:
+GCC 13/14, Clang 19/20, Fedora GCC, ASan+UBSan, TSan, and both consumer jobs.
+This changes no terminal protocol form, so no live-emulator gate applies.
+
+**How it got picked:** #225 still requires a real Kitty session, which this
+headless environment cannot supply. #28 was the next fully offline issue and is
+the event-injection prerequisite for remote/streaming consumer work.
+
+**Next:** run #225's direct Kitty acceptance capture when a human terminal is
+available; otherwise continue the remote-session chain through #118, #119, and
+#150. Dirty-driven idle pacing remains the optional follow-on named by #28.
+
+## Previous release: v0.18.0
+
+**v0.18.0 — top-compatible forge-top.** Companion issues #230
 and #231 make the monitor familiar to procps-ng `top` users without flattening
 forge-top into a clone. The `/proc` source now supplies uptime, load averages,
 task states, aggregate CPU, effective user, process state, `%MEM`, cumulative

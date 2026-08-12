@@ -2,15 +2,21 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <format>
 #include <initializer_list>
+#include <mutex>
 #include <span>
+#include <utility>
 #include <variant>
 
+#include <fcntl.h>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
@@ -47,7 +53,105 @@ App::App() = default;
 
 App::~App() { teardown(); }
 
+auto App::post(Event event) -> void {
+  std::lock_guard lock{m_post_mutex};
+  // Allocate before signalling. If allocation throws, no wake claims an event
+  // exists; if it succeeds, the queue remains authoritative even when the
+  // best-effort byte cannot be added because the pipe is already full.
+  m_posted.push_back(std::move(event));
+  signal_posted_locked();
+}
+
+auto App::open_post_pipe() -> std::expected<void, ErrorEvent> {
+  {
+    std::lock_guard lock{m_post_mutex};
+    if (m_post_read >= 0 && m_post_write >= 0) return {};
+  }
+
+  int fds[2]{-1, -1};
+  if (::pipe(fds) != 0) {
+    const int error = errno;
+    return std::unexpected{ErrorEvent{
+        Severity::Error, "app",
+        std::format("post wake pipe: {}", std::strerror(error))}};
+  }
+
+  auto fail = [&](const char* operation) -> std::expected<void, ErrorEvent> {
+    const int error = errno;
+    ::close(fds[0]);
+    ::close(fds[1]);
+    return std::unexpected{ErrorEvent{
+        Severity::Error, "app",
+        std::format("post wake pipe {}: {}", operation, std::strerror(error))}};
+  };
+
+  for (const int fd : fds) {
+    const int status = ::fcntl(fd, F_GETFL);
+    if (status < 0 || ::fcntl(fd, F_SETFL, status | O_NONBLOCK) != 0)
+      return fail("nonblocking setup");
+    const int descriptor = ::fcntl(fd, F_GETFD);
+    if (descriptor < 0 || ::fcntl(fd, F_SETFD, descriptor | FD_CLOEXEC) != 0)
+      return fail("close-on-exec setup");
+  }
+
+  {
+    std::lock_guard lock{m_post_mutex};
+    m_post_read = fds[0];
+    m_post_write = fds[1];
+    if (!m_posted.empty()) signal_posted_locked();
+  }
+  return {};
+}
+
+auto App::close_post_pipe() noexcept -> void {
+  std::lock_guard lock{m_post_mutex};
+  if (m_post_read >= 0) ::close(m_post_read);
+  if (m_post_write >= 0) ::close(m_post_write);
+  m_post_read = -1;
+  m_post_write = -1;
+  m_post_woke = false;
+}
+
+auto App::signal_posted_locked() noexcept -> void {
+  if (m_post_write < 0) return;
+  constexpr char byte{'p'};
+  while (true) {
+    const ssize_t written = ::write(m_post_write, &byte, 1);
+    if (written == 1) return;
+    if (written < 0 && errno == EINTR) continue;
+    // EAGAIN means the pipe is already readable. Any other failure cannot be
+    // repaired from this void cross-thread API, but the queued event remains
+    // available at the next frame boundary rather than being dropped.
+    return;
+  }
+}
+
+auto App::drain_post_pipe_locked() noexcept -> void {
+  if (m_post_read < 0) return;
+  char bytes[256];
+  while (true) {
+    const ssize_t count = ::read(m_post_read, bytes, sizeof(bytes));
+    if (count > 0) continue;
+    if (count < 0 && errno == EINTR) continue;
+    return;  // dry, closed, or otherwise unusable
+  }
+}
+
+auto App::pump_posted() -> void {
+  std::deque<Event> ready;
+  {
+    // Swap one frame's snapshot and empty the signalling pipe under the same
+    // lock post() uses. A producer arriving after this point writes a fresh
+    // byte and its event belongs to the next frame by construction.
+    std::lock_guard lock{m_post_mutex};
+    ready.swap(m_posted);
+    drain_post_pipe_locked();
+  }
+  for (auto& event : ready) dispatch_event(event);
+}
+
 auto App::setup() -> std::expected<void, ErrorEvent> {
+  if (auto r = open_post_pipe(); !r) return r;
   if (auto r = m_term.enter_raw(); !r) return r;
   // Probe once, then select the driver from that single result. A probe
   // failure isn't fatal: degrade to the fallback driver on empty caps.
@@ -109,6 +213,7 @@ auto App::teardown() -> void {
   // is never going to run.
   App* expected = this;
   g_active.compare_exchange_strong(expected, nullptr, std::memory_order_relaxed);
+  close_post_pipe();
 }
 
 auto App::shutdown_driver() -> void {
@@ -216,6 +321,7 @@ auto App::frame_step() -> void {
     dispatch_event(ResizeEvent{size.cols, size.rows});
   }
   pump_input();
+  pump_posted();
   // After the resize dispatch and the input pump, before the draw: a tick may
   // bound motion by screen().cols()/rows(), and the tick following a keypress
   // must be the tick that acts on it. Drawing then shows the state the tick
@@ -311,7 +417,47 @@ auto App::now_steady() const -> std::chrono::steady_clock::time_point {
   return std::chrono::steady_clock::now();
 }
 
-auto App::wait_readable(int timeout_ms) -> bool { return m_term.wait_readable(timeout_ms); }
+auto App::wait_readable(int timeout_ms) -> bool {
+  return m_term.wait_readable(timeout_ms);
+}
+
+auto App::wait_for_sources(int timeout_ms) -> bool {
+  if (timeout_ms < 0) timeout_ms = 0;
+
+  int post_fd = -1;
+  {
+    std::lock_guard lock{m_post_mutex};
+    post_fd = m_post_read;
+  }
+  if (post_fd < 0) return wait_readable(timeout_ms);
+
+  // Poll the terminal and the self-pipe in one wait. Deadline handling mirrors
+  // Terminal::wait_readable: SIGWINCH or another signal resumes only the
+  // remaining budget instead of stretching or abandoning the frame.
+  using Clock = std::chrono::steady_clock;
+  const auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms);
+  while (true) {
+    pollfd fds[2]{{m_term.io().in, POLLIN, 0}, {post_fd, POLLIN, 0}};
+    const int result = ::poll(fds, 2, timeout_ms);
+    if (result > 0) {
+      const bool post_ready =
+          (fds[1].revents & (POLLIN | POLLHUP | POLLERR)) != 0;
+      if (post_ready) {
+        std::lock_guard lock{m_post_mutex};
+        drain_post_pipe_locked();
+        m_post_woke = true;
+      }
+      return post_ready ||
+             (fds[0].revents & (POLLIN | POLLHUP | POLLERR)) != 0;
+    }
+    if (result == 0) return false;
+    if (errno != EINTR) return false;
+    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - Clock::now());
+    if (left.count() <= 0) return false;
+    timeout_ms = static_cast<int>(left.count());
+  }
+}
 
 auto App::read_available(char* out, int max) -> int { return m_term.read_input(out, max); }
 
@@ -351,10 +497,13 @@ auto App::wait_frame(std::chrono::steady_clock::time_point frame_start) -> void 
     const auto left =
         std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now_steady());
     if (left.count() <= 0) break;
-    if (!wait_readable(static_cast<int>(left.count()))) break;  // budget spent
+    if (!wait_for_sources(static_cast<int>(left.count())))
+      break;  // budget spent
     // Readable but empty means EOF/hangup: stop, or we'd spin on a dead fd
     // for the rest of the budget.
-    if (drain_input() == 0) break;
+    const int input_bytes = drain_input();
+    if (std::exchange(m_post_woke, false)) break;
+    if (input_bytes == 0) break;
   }
 }
 

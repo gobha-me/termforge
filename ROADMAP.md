@@ -31,6 +31,13 @@ completed items.
 > and #231** then add the top-compatible hotkeys, sampling control, summary
 > hierarchy and responsive process fields while retaining forge-top's panels
 > and persistent graphics.
+>
+> **2026-08-12 — cross-thread event injection.** **#28** adds the sole
+> thread-safe `App` entry point: `post(Event)` queues onto the loop thread and
+> wakes its terminal wait through a nonblocking self-pipe. Delivery is ordered
+> after terminal input and before the tick, and a focused TSan job exercises
+> concurrent producers, render-time wakes, pipe saturation and lifecycle
+> recovery. Idle dirty-driven pacing remains an optional follow-on.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
@@ -49,6 +56,8 @@ completed items.
   and clean-frame suppression on both enhanced tiers
 - forge-top (#16, #230, #231) — live `/proc` monitor, deterministic all-tier
   harness, and top-compatible controls and information hierarchy
+- Cross-thread event injection (#28) — `App::post(Event)`, per-producer FIFO,
+  lossless queueing beyond wake-pipe capacity, and loop-thread delivery
 
 ---
 

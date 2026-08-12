@@ -17,8 +17,9 @@ for tests.
 ## Status
 
 Core framework, KittyDriver, the widget system, mouse routing, and the
-`forge-top` dogfooding application are landed and tested across 57 suites;
-GCC 13/14 + Clang 19/20 are green in CI and ASan/UBSan is clean.
+`forge-top` dogfooding application are landed and tested across 58 suites;
+GCC 13/14 + Clang 19/20 are green in CI, ASan/UBSan is clean, and the
+cross-thread event path has a focused TSan gate.
 
 Landed and verified:
 - **Core** — value types (`Cell`/`Image`, `Capabilities`, `Event`/`ErrorEvent`
@@ -27,7 +28,10 @@ Landed and verified:
   kitty CSI-u key reports with press/repeat/release — see
   [docs/keyboard-protocol.md](docs/keyboard-protocol.md)),
   `App` (event loop, SIGWINCH resize, pixel-region plumbing, guarded teardown
-  on every exit path including an exception).
+  on every exit path including an exception, and thread-safe `post(Event)`
+  delivery onto the loop thread). Terminal input, one posted-event snapshot,
+  and ticks have a documented order; widgets and every other App API remain
+  single-threaded.
 - `Terminal` — raw-mode RAII (termios restore on destruction, or explicitly via
   `leave_raw()` where no destructor is guaranteed to run), capability
   probing (Kitty query + DA1, Sixel attribute, truecolor env), driver
