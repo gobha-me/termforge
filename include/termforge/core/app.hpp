@@ -817,6 +817,31 @@ class App {
   auto tick_widgets(std::chrono::duration<double> dt,
                     std::initializer_list<Widget*> widgets) -> void;
 
+  // ── stable loop-source seam (#118) ──
+  // These three protected virtuals are the complete supported boundary
+  // between App's deterministic frame loop and its nondeterministic clock and
+  // input sources. A consumer may override them to drive the production loop
+  // from a scripted clock/input log; they are not public half-loop operations
+  // for callers to invoke directly. The defaults use std::steady_clock and
+  // the configured Terminal.
+  //
+  // now_steady() must never move backwards. App clamps a negative tick delta
+  // defensively, but frame deadlines and fixed-timestep accumulation require
+  // a monotonic source for deterministic behavior.
+  [[nodiscard]] virtual auto now_steady() const
+      -> std::chrono::steady_clock::time_point;
+
+  // Wait for at most timeout_ms milliseconds for the input source to become
+  // readable. App supplies a nonnegative, frame-budget-bounded timeout. Return
+  // true when read_available() should be attempted (including EOF/hangup), or
+  // false when the wait expires or the source cannot be read.
+  virtual auto wait_readable(int timeout_ms) -> bool;
+
+  // Copy up to max immediately available bytes into out without blocking.
+  // Return the byte count, or a nonpositive value when no bytes are available
+  // or the source has ended. App drains repeatedly until that boundary.
+  virtual auto read_available(char* out, int max) -> int;
+
  private:
   // The one loop each. Both public spellings funnel here, so the null contract
   // and the iteration order are written once (#123). Private rather than
@@ -883,15 +908,6 @@ class App {
   // Measure this frame's delta, clamp it, and deliver it to on_tick — once
   // with the measured dt, or N times with the fixed dt under set_tick_hz.
   auto tick_step(std::chrono::steady_clock::time_point frame_start) -> void;
-
-  // ── loop seams ──
-  // The loop touches the clock and the fd only through these three, so a test
-  // can subclass App, override them, and drive run()'s body over a fake clock
-  // and fake input with no tty and no real sleeping. Defaults are the real
-  // steady_clock and the real Terminal.
-  [[nodiscard]] virtual auto now_steady() const -> std::chrono::steady_clock::time_point;
-  virtual auto wait_readable(int timeout_ms) -> bool;
-  virtual auto read_available(char* out, int max) -> int;
 
   // Non-virtual production wrapper around the terminal-readiness seam above.
   // Once setup has opened the post pipe, an override cannot accidentally
