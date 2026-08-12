@@ -36,7 +36,9 @@ and trace suites pass. Both compilers pass the subdirectory, installed-package
 and plain-vendored consumer paths. Two direct mutations—discarding recorded
 frame time and accepting an incompatible capability push—each fail the focused
 suite. Clang also caught and pinned the one-byte codec path against an invalid
-full-width shift that GCC accepted.
+full-width shift that GCC accepted. PR #239's hosted matrix passes all nine
+jobs: GCC 13/14, Clang 19/20, Fedora GCC, ASan+UBSan, TSan, and both GCC 14 /
+Clang 20 consumer jobs.
 
 **How it got picked:** #225 still needs a human-controlled direct Kitty session.
 #120 was the roadmap's explicit next offline layer after the newly shipped #118
