@@ -28,7 +28,8 @@ the existing compiler and sanitizer matrix.
 **Local verification:** GCC 14.2 and Clang 20.1.8 Release `-Werror` builds pass
 58/58 tests; GCC ASan+UBSan passes 58/58 with leak detection, and the focused
 GCC TSan suite passes. Both compilers pass the subdirectory, installed-package,
-and plain-vendored consumer paths. Hosted PR CI is recorded after it completes.
+and plain-vendored consumer paths. Hosted PR CI is green across all nine jobs:
+GCC 13/14, Clang 19/20, Fedora GCC, ASan+UBSan, TSan, and both consumer jobs.
 This changes no terminal protocol form, so no live-emulator gate applies.
 
 **How it got picked:** #225 still requires a real Kitty session, which this
