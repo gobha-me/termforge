@@ -1,0 +1,477 @@
+// Raw-input record/playback (#120).
+//
+// This suite drives App::run(), not a replay of frame_step. Recording uses a
+// scripted source over a real injected fd; playback uses App's trace source.
+// Both therefore traverse setup, the Input decoder, resize/post ordering,
+// fixed ticks, rendering, the frame sink, shutdown and teardown.
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <algorithm>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <format>
+#include <ranges>
+#include <sstream>
+#include <streambuf>
+#include <string>
+#include <string_view>
+#include <unistd.h>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include "detail/trace.hpp"
+#include "termforge/core/app.hpp"
+#include "termforge/core/screen.hpp"
+#include "termforge/core/types.hpp"
+
+using namespace std::chrono_literals;
+using namespace termforge;
+
+namespace {
+
+class QuietPipe {
+ public:
+  QuietPipe() { m_ok = ::pipe(m_fd) == 0; }
+  ~QuietPipe() {
+    for (const int fd : m_fd)
+      if (fd >= 0) ::close(fd);
+  }
+
+  QuietPipe(const QuietPipe&) = delete;
+  auto operator=(const QuietPipe&) -> QuietPipe& = delete;
+
+  [[nodiscard]] auto ok() const noexcept -> bool { return m_ok; }
+  [[nodiscard]] auto read_fd() const noexcept -> int { return m_fd[0]; }
+
+ private:
+  int m_fd[2]{-1, -1};
+  bool m_ok{false};
+};
+
+struct Chunk {
+  std::chrono::nanoseconds at{};
+  std::string bytes;
+};
+
+class TraceProbe final : public App {
+ public:
+  TraceProbe() {
+    set_frame_ms(100);
+    set_tick_hz(10);
+    set_max_tick_dt(std::chrono::duration<double>::zero());
+  }
+
+  auto configure_io(int fd) -> bool {
+    return terminal().set_io(TerminalIo{fd, -1}).has_value();
+  }
+
+  auto push_caps(Capabilities caps) -> bool {
+    return terminal().set_capabilities(caps).has_value();
+  }
+
+  auto use_script(SyntheticClock& clock, std::vector<Chunk> chunks) -> void {
+    m_scripted = true;
+    m_script_clock = &clock;
+    m_chunks = std::move(chunks);
+    set_clock(&clock);
+  }
+
+  auto on_start() -> void override {
+    driver().set_output(&wire);
+    if (stop_prefix_on_start) {
+      stop_recording();
+      quit();
+    }
+  }
+
+  auto on_event(const Event& event) -> void override {
+    if (const auto* key = std::get_if<KeyEvent>(&event)) {
+      if (key->key == Key::Right) {
+        position += 10;
+        events += 'R';
+      } else if (key->key == Key::Char) {
+        events += static_cast<char>(key->ch);
+        if (key->ch == U'q' && !ignore_quit) quit();
+      }
+      return;
+    }
+    if (const auto* mouse = std::get_if<MouseEvent>(&event)) {
+      position += mouse->x + mouse->y;
+      events += 'M';
+      return;
+    }
+    if (const auto* paste = std::get_if<PasteEvent>(&event)) {
+      position += static_cast<int>(paste->text.size());
+      events += 'P';
+      return;
+    }
+    if (const auto* resize = std::get_if<ResizeEvent>(&event)) {
+      last_cols = resize->cols;
+      events += 'S';
+      return;
+    }
+    if (std::holds_alternative<ErrorEvent>(event)) events += 'E';
+  }
+
+  auto on_tick(std::chrono::duration<double>) -> void override {
+    ++ticks;
+    position += 1;
+    if (inject_resize && ticks == 2) {
+      REQUIRE(set_size(Size{24, 6, 240, 120}).has_value());
+    }
+  }
+
+  auto on_render(Screen& screen) -> void override {
+    screen.clear();
+    screen.write_text(0, 0,
+                      std::format("f={} t={} p={} w={}", renders, ticks,
+                                  position, last_cols),
+                      Rgb{255, 255, 255}, Rgb{});
+    ++renders;
+    if (stop_prefix_on_first_render && renders == 1) {
+      stop_recording();
+      quit();
+    }
+    if (renders > 20) quit();  // a broken end record fails, never hangs CTest
+  }
+
+  std::string wire;
+  std::string events;
+  int ticks{0};
+  int renders{0};
+  int position{0};
+  int last_cols{0};
+  bool inject_resize{false};
+  bool stop_prefix_on_first_render{false};
+  bool stop_prefix_on_start{false};
+  bool ignore_quit{false};
+
+ protected:
+  [[nodiscard]] auto now_steady() const
+      -> std::chrono::steady_clock::time_point override {
+    return m_scripted ? m_script_clock->now() : App::now_steady();
+  }
+
+  auto read_available(char* out, int max) -> int override {
+    if (!m_scripted) return App::read_available(out, max);
+    if (m_next_chunk >= m_chunks.size()) return 0;
+    const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        m_script_clock->now().time_since_epoch());
+    const auto& chunk = m_chunks[m_next_chunk];
+    if (chunk.at > now) return 0;
+    const int count = std::min(max, static_cast<int>(chunk.bytes.size()));
+    std::memcpy(out, chunk.bytes.data(), static_cast<std::size_t>(count));
+    if (count == static_cast<int>(chunk.bytes.size())) {
+      ++m_next_chunk;
+    } else {
+      m_chunks[m_next_chunk].bytes.erase(0, static_cast<std::size_t>(count));
+    }
+    return count;
+  }
+
+ private:
+  bool m_scripted{false};
+  SyntheticClock* m_script_clock{nullptr};
+  std::vector<Chunk> m_chunks;
+  std::size_t m_next_chunk{0};
+};
+
+struct Artifact {
+  std::string trace;
+  std::string wire;
+  std::string events;
+  int ticks{0};
+  int renders{0};
+};
+
+class RefusingBuffer final : public std::streambuf {
+ public:
+  explicit RefusingBuffer(std::size_t accepted) : m_left(accepted) {}
+
+ protected:
+  auto xsputn(const char*, std::streamsize count) -> std::streamsize override {
+    const auto written =
+        std::min<std::size_t>(m_left, static_cast<std::size_t>(count));
+    m_left -= written;
+    return static_cast<std::streamsize>(written);
+  }
+
+  auto overflow(int ch) -> int override {
+    if (ch == traits_type::eof() || m_left == 0) return traits_type::eof();
+    --m_left;
+    return ch;
+  }
+
+ private:
+  std::size_t m_left;
+};
+
+auto make_artifact(bool prefix = false) -> Artifact {
+  QuietPipe pipe;
+  REQUIRE(pipe.ok());
+  TraceProbe app;
+  REQUIRE(app.configure_io(pipe.read_fd()));
+  REQUIRE(app.push_caps(Capabilities{}));
+  REQUIRE(app.set_size(App::Size{20, 5, 160, 80}).has_value());
+  app.inject_resize = !prefix;
+  app.stop_prefix_on_first_render = prefix;
+
+  SyntheticClock clock;
+  if (!prefix) {
+    app.use_script(clock,
+                   {{50ms, "\033[<0;3;2M"},
+                    {150ms, "\033["},
+                    {150ms, "C"},
+                    {250ms, "\033[999"},
+                    {250ms, "x"},
+                    {350ms, "q"}});
+    app.post(PasteEvent{"posted"});
+  } else {
+    app.use_script(clock, {});
+  }
+
+  std::ostringstream trace{std::ios::binary};
+  app.start_recording(trace);
+  REQUIRE(app.run() == 0);
+  return Artifact{trace.str(), app.wire, app.events, app.ticks, app.renders};
+}
+
+auto play_bytes(std::string bytes) -> std::pair<std::string, ErrorEvent> {
+  QuietPipe pipe;
+  REQUIRE(pipe.ok());
+  TraceProbe app;
+  REQUIRE(app.configure_io(pipe.read_fd()));
+  std::istringstream trace{std::move(bytes), std::ios::binary};
+  auto result = app.play(trace);
+  REQUIRE_FALSE(result.has_value());
+  return {app.wire, std::move(result.error())};
+}
+
+}  // namespace
+
+TEST_CASE("raw chunks, external pushes and timing replay byte-identically",
+          "[trace][order][timing]") {
+  const Artifact artifact = make_artifact();
+
+  QuietPipe pipe;
+  REQUIRE(pipe.ok());
+  TraceProbe played;
+  REQUIRE(played.configure_io(pipe.read_fd()));
+  std::istringstream input{artifact.trace, std::ios::binary};
+  REQUIRE(played.play(input).has_value());
+
+  REQUIRE(played.wire == artifact.wire);
+  REQUIRE(played.events == artifact.events);
+  REQUIRE(played.ticks == artifact.ticks);
+  REQUIRE(played.renders == artifact.renders);
+  REQUIRE(played.events.find('M') != std::string::npos);
+  REQUIRE(played.events.find('R') != std::string::npos);
+  REQUIRE(played.events.find('P') != std::string::npos);
+  REQUIRE(std::count(played.events.begin(), played.events.end(), 'S') == 2);
+
+  // The raw split is the artifact, not the already-decoded Right event. A
+  // decoder regression can therefore be reproduced instead of bypassed.
+  std::istringstream inspect{artifact.trace, std::ios::binary};
+  auto decoded = detail::read_trace(inspect);
+  REQUIRE(decoded.has_value());
+  std::vector<std::string> chunks;
+  for (const auto& record : decoded->records) {
+    if (record.kind == detail::TraceKind::Input) {
+      chunks.emplace_back(reinterpret_cast<const char*>(record.payload.data()),
+                          record.payload.size());
+    }
+  }
+  REQUIRE(std::ranges::find(chunks, "\033[") != chunks.end());
+  REQUIRE(std::ranges::find(chunks, "C") != chunks.end());
+  REQUIRE(std::ranges::find(chunks, "\033[999") != chunks.end());
+  REQUIRE(std::ranges::find(chunks, "x") != chunks.end());
+
+  // Timing is load-bearing: the first mouse arrives after frame zero, rather
+  // than being dispatched before its first tick/render. Replaying every chunk
+  // immediately changes the already-pinned byte stream above.
+  const auto first_input = std::ranges::find_if(
+      decoded->records,
+      [](const detail::TraceRecord& r) { return r.kind == detail::TraceKind::Input; });
+  REQUIRE(first_input != decoded->records.end());
+  REQUIRE(first_input->frame > 0);
+  REQUIRE(first_input->offset_ns > 0);
+}
+
+TEST_CASE("a stopped recording is a playable one-frame prefix", "[trace][lifecycle]") {
+  const Artifact artifact = make_artifact(true);
+  QuietPipe pipe;
+  REQUIRE(pipe.ok());
+  TraceProbe played;
+  REQUIRE(played.configure_io(pipe.read_fd()));
+  std::istringstream input{artifact.trace, std::ios::binary};
+  REQUIRE(played.play(input).has_value());
+  REQUIRE(played.renders == 1);
+  REQUIRE(played.wire == artifact.wire);
+}
+
+TEST_CASE("a prefix stopped during on_start replays without fabricating a frame",
+          "[trace][lifecycle]") {
+  QuietPipe recording_pipe;
+  REQUIRE(recording_pipe.ok());
+  TraceProbe recorded;
+  REQUIRE(recorded.configure_io(recording_pipe.read_fd()));
+  REQUIRE(recorded.push_caps(Capabilities{}));
+  REQUIRE(recorded.set_size(App::Size{20, 5}).has_value());
+  recorded.stop_prefix_on_start = true;
+  std::ostringstream trace{std::ios::binary};
+  recorded.start_recording(trace);
+  REQUIRE(recorded.run() == 0);
+  REQUIRE(recorded.renders == 0);
+
+  QuietPipe playback_pipe;
+  REQUIRE(playback_pipe.ok());
+  TraceProbe played;
+  REQUIRE(played.configure_io(playback_pipe.read_fd()));
+  std::istringstream input{trace.str(), std::ios::binary};
+  REQUIRE(played.play(input).has_value());
+  REQUIRE(played.renders == 0);
+  REQUIRE(played.wire.empty());
+}
+
+TEST_CASE("clean playback reports control-flow divergence", "[trace][failure][timing]") {
+  const Artifact artifact = make_artifact();
+  QuietPipe pipe;
+  REQUIRE(pipe.ok());
+  TraceProbe played;
+  REQUIRE(played.configure_io(pipe.read_fd()));
+  played.ignore_quit = true;
+  std::istringstream input{artifact.trace, std::ios::binary};
+  const auto result = played.play(input);
+  REQUIRE_FALSE(result.has_value());
+  REQUIRE(result.error().message.find("did not stop") != std::string::npos);
+}
+
+TEST_CASE("an explicit incompatible capability push is refused before output",
+          "[trace][failure][capabilities]") {
+  const Artifact artifact = make_artifact();
+  QuietPipe pipe;
+  REQUIRE(pipe.ok());
+  TraceProbe played;
+  REQUIRE(played.configure_io(pipe.read_fd()));
+  Capabilities incompatible;
+  incompatible.truecolor = true;
+  incompatible.color_levels = 24;
+  REQUIRE(played.push_caps(incompatible));
+  std::istringstream input{artifact.trace, std::ios::binary};
+  const auto result = played.play(input);
+  REQUIRE_FALSE(result.has_value());
+  REQUIRE(result.error().severity == Severity::Warning);
+  REQUIRE(result.error().source == "trace");
+  REQUIRE(played.wire.empty());
+  REQUIRE(played.capabilities().truecolor == false);
+}
+
+TEST_CASE("playback restores the caller's pushed size and compatible caps",
+          "[trace][lifecycle]") {
+  const Artifact artifact = make_artifact();
+  QuietPipe pipe;
+  REQUIRE(pipe.ok());
+  TraceProbe played;
+  REQUIRE(played.configure_io(pipe.read_fd()));
+  REQUIRE(played.push_caps(Capabilities{}));
+  REQUIRE(played.set_size(App::Size{31, 9, 310, 180}).has_value());
+  std::istringstream input{artifact.trace, std::ios::binary};
+  REQUIRE(played.play(input).has_value());
+  REQUIRE(played.has_pushed_size());
+  REQUIRE(played.current_size() == App::Size{31, 9, 310, 180});
+}
+
+TEST_CASE("malformed traces are rejected before the App starts", "[trace][failure]") {
+  const Artifact artifact = make_artifact();
+
+  SECTION("truncated payload") {
+    std::string broken = artifact.trace;
+    broken.pop_back();
+    const auto [wire, error] = play_bytes(std::move(broken));
+    REQUIRE(wire.empty());
+    REQUIRE(error.source == "trace");
+  }
+
+  SECTION("unknown schema") {
+    std::string broken = artifact.trace;
+    REQUIRE(broken.size() > 9);
+    broken[8] = 2;
+    const auto [wire, error] = play_bytes(std::move(broken));
+    REQUIRE(wire.empty());
+    REQUIRE(error.message.find("schema") != std::string::npos);
+  }
+
+  SECTION("invalid initial size") {
+    std::string broken = artifact.trace;
+    REQUIRE(broken.size() > 39);
+    std::fill(broken.begin() + 36, broken.begin() + 40, '\0');
+    const auto [wire, error] = play_bytes(std::move(broken));
+    REQUIRE(wire.empty());
+    REQUIRE(error.message.find("size") != std::string::npos);
+  }
+
+  SECTION("unknown record kind") {
+    std::string broken = artifact.trace;
+    REQUIRE(broken.size() > 52);
+    broken[52] = static_cast<char>(0x7F);
+    const auto [wire, error] = play_bytes(std::move(broken));
+    REQUIRE(wire.empty());
+    REQUIRE(error.message.find("record") != std::string::npos);
+  }
+}
+
+TEST_CASE("a refused recording stream becomes a Warning event", "[trace][failure]") {
+  QuietPipe pipe;
+  REQUIRE(pipe.ok());
+  TraceProbe app;
+  REQUIRE(app.configure_io(pipe.read_fd()));
+  REQUIRE(app.push_caps(Capabilities{}));
+  REQUIRE(app.set_size(App::Size{20, 5}).has_value());
+  SyntheticClock clock;
+  app.use_script(clock, {{0ns, "q"}});
+  std::ostringstream refused;
+  refused.setstate(std::ios::badbit);
+  app.start_recording(refused);
+  REQUIRE(app.run() == 0);
+  REQUIRE(app.events.find('E') != std::string::npos);
+}
+
+TEST_CASE("a mid-run recording write refusal is delivered in-band",
+          "[trace][failure]") {
+  QuietPipe pipe;
+  REQUIRE(pipe.ok());
+  TraceProbe app;
+  REQUIRE(app.configure_io(pipe.read_fd()));
+  REQUIRE(app.push_caps(Capabilities{}));
+  REQUIRE(app.set_size(App::Size{20, 5}).has_value());
+  SyntheticClock clock;
+  app.use_script(clock, {{0ns, "q"}});
+  RefusingBuffer buffer{60};  // header succeeds; the first record is partial
+  std::ostream refused{&buffer};
+  app.start_recording(refused);
+  REQUIRE(app.run() == 0);
+  REQUIRE(app.events.find('E') != std::string::npos);
+}
+
+TEST_CASE("an end-record write refusal is delivered before shutdown",
+          "[trace][failure][lifecycle]") {
+  QuietPipe pipe;
+  REQUIRE(pipe.ok());
+  TraceProbe app;
+  REQUIRE(app.configure_io(pipe.read_fd()));
+  REQUIRE(app.push_caps(Capabilities{}));
+  REQUIRE(app.set_size(App::Size{20, 5}).has_value());
+  SyntheticClock clock;
+  app.use_script(clock, {{0ns, "q"}});
+  // Header (52), frame (24), initial resize (40), and input (25) fit. Only
+  // the 25-byte end record is refused, after the final input pump has run.
+  RefusingBuffer buffer{141};
+  std::ostream refused{&buffer};
+  app.start_recording(refused);
+  REQUIRE(app.run() == 0);
+  REQUIRE(app.events.find('E') != std::string::npos);
+}

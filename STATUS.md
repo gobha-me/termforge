@@ -6,40 +6,50 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-12, latest)
 
-**Pending release: v0.21.0 — first-class synthetic App time.** #119 adds a
-public `SyntheticClock` and base-owned `App::set_clock` selection over #118's
-lower-level virtual source seams. The clock is borrowed for the configured run,
-may be installed or cleared only while the loop is stopped, and cannot be
-replaced from inside a live frame. `nullptr` restores the real steady clock.
+**Pending release: v0.22.0 — deterministic raw-input traces.** #120 adds
+`App::start_recording`, `stop_recording` and `play`. A trace captures exact raw
+read chunks, frame-start and chunk timestamps, effective resizes, posted-event
+snapshots, initial size and terminal capabilities. Playback applies those facts
+temporarily, advances an internal `SyntheticClock`, and feeds the bytes back
+through the real `Input` decoder and production frame loop. Malformed escape
+sequences therefore remain reproducible rather than being replaced by decoded
+events that bypass the failure site.
 
-With a synthetic clock installed, the default `now_steady()` reads it. A frame
-wait still checks readiness and drains available input, but every check uses a
-zero timeout and an idle remainder advances the synthetic clock instead of
-sleeping. Input absorbed during that wait retains the shipped next-frame
-dispatch order. `set_tick_hz(n)` plus `set_max_tick_dt(0)` therefore gives an
-exact production-loop tick sequence without wall time or a hand-written clock
-and readiness subclass.
+The binary format is explicit little endian and schema-versioned; no C++ object
+layout is serialized. Payload and whole-trace bounds prevent hostile lengths
+from turning into unbounded allocations. The producing TermForge version is
+provenance, not a rejection gate, so a bug artifact remains playable by the
+release containing its fix. A caller-pushed incompatible capability set,
+corrupt/truncated data, invalid record order or size, and an unknown schema are
+all refused before setup or output with a `Warning`.
 
-The focused suite pins monotonic advance, exact 10 Hz delivery, accumulator
-remainder carry, real-clock restoration, zero-time readiness calls, scripted
-input order, the live-loop replacement guard, and 15 seconds of simulated frame
-waits completing under a one-second wall ceiling. The consumed-header fixture
-compiles the new concrete type and setter through every supported consumption
-path. GCC 14.2 and Clang 20.1.8 Release `-Werror` builds pass 59/59 CTest
-targets; GCC ASan+UBSan with leak detection passes 59/59, and the focused GCC
-TSan posting suite passes. Both compilers pass the subdirectory,
-installed-package, and plain-vendored consumer paths. Four direct mutations —
-real-time waits, bypassing the installed clock, dropping tick remainder, and
-allowing mid-frame replacement — each fail the focused suite. PR #237's hosted
-matrix passes all nine jobs: GCC 13/14, Clang 19/20, Fedora GCC, ASan+UBSan,
-TSan, and both GCC 14 / Clang 20 consumer jobs.
+`test/56trace` drives the real setup/decoder/resize/post/tick/render/flush path.
+It requires byte-identical output and event/tick order across keyboard, mouse,
+split and malformed escapes, a resize and a posted event; verifies raw chunk
+boundaries and delayed input; covers prefix completion, state restoration,
+capability refusal, corrupt headers/records and recording-stream refusal. The
+out-of-tree consumer fixture compiles and links all three stream APIs.
 
-**How it got picked:** #225 remains the lone pending local-memory task but needs
-a human-controlled direct Kitty session. #119 is the roadmap's explicit next
-offline step after v0.20.0 and unblocks #120 and #150.
+GCC 14.2 and Clang 20.1.8 Release `-Werror` builds pass 60/60 CTest targets.
+GCC ASan+UBSan with leak detection passes 60/60; the focused GCC TSan posting
+and trace suites pass. Both compilers pass the subdirectory, installed-package
+and plain-vendored consumer paths. Two direct mutations—discarding recorded
+frame time and accepting an incompatible capability push—each fail the focused
+suite. Clang also caught and pinned the one-byte codec path against an invalid
+full-width shift that GCC accepted.
+
+**How it got picked:** #225 still needs a human-controlled direct Kitty session.
+#120 was the roadmap's explicit next offline layer after the newly shipped #118
+and #119 loop-source/synthetic-clock prerequisites.
 
 **Next:** run #225's direct Kitty acceptance capture when that environment is
-available; otherwise implement #120's raw-input record/playback trace.
+available; otherwise take #150's opt-in demand-driven rendering design.
+
+## Previous release: v0.21.0
+
+**v0.21.0 — first-class synthetic App time.** #119 adds public
+`SyntheticClock` and base-owned `App::set_clock`; the nine-job PR and post-merge
+matrices passed. See release v0.21.0 for the complete validation record.
 
 ## Previous release: v0.20.0
 

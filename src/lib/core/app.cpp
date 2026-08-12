@@ -10,10 +10,14 @@
 #include <cstring>
 #include <format>
 #include <initializer_list>
+#include <istream>
 #include <mutex>
+#include <ostream>
 #include <span>
+#include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include <fcntl.h>
 #include <poll.h>
@@ -21,6 +25,7 @@
 #include <unistd.h>
 
 #include "detail/keyboard.hpp"
+#include "detail/trace.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
 
 namespace termforge {
@@ -47,11 +52,460 @@ void on_winch(int) {
   const Capabilities caps = driver.capabilities();
   return caps.kitty_graphics || caps.truecolor;
 }
+
+[[nodiscard]] auto same_capabilities(const Capabilities& a,
+                                     const Capabilities& b) -> bool {
+  return a.kitty_graphics == b.kitty_graphics && a.sixel == b.sixel &&
+         a.truecolor == b.truecolor && a.color_levels == b.color_levels &&
+         a.kitty_keyboard == b.kitty_keyboard &&
+         a.sync_updates == b.sync_updates;
+}
+
+auto trace_warning(std::string message) -> ErrorEvent {
+  return ErrorEvent{Severity::Warning, "trace", std::move(message)};
+}
 }  // namespace
+
+struct App::RecordingState {
+  std::ostream* out{nullptr};
+  std::chrono::steady_clock::time_point started{};
+  bool header_written{false};
+};
+
+struct App::PlaybackState {
+  detail::Trace trace;
+  std::size_t next{0};
+  SyntheticClock clock;
+  std::optional<ErrorEvent> failure;
+};
 
 App::App() = default;
 
 App::~App() { teardown(); }
+
+auto App::start_recording(std::ostream& out) -> void {
+  if (m_loop_active) {
+    m_input.push_error(trace_warning("start_recording: the App loop is active"));
+    return;
+  }
+  if (m_playback) {
+    m_input.push_error(trace_warning("start_recording: playback is active"));
+    return;
+  }
+  if (m_recording) {
+    m_input.push_error(trace_warning("start_recording: a recording is already active"));
+    return;
+  }
+  if (!out.good()) {
+    m_input.push_error(trace_warning("start_recording: output stream is not writable"));
+    return;
+  }
+  m_recording = std::make_unique<RecordingState>();
+  m_recording->out = &out;
+}
+
+auto App::stop_recording() -> void { finish_recording(false); }
+
+auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
+  if (m_loop_active) {
+    return std::unexpected{trace_warning("play: the App loop is active")};
+  }
+  if (m_recording) {
+    return std::unexpected{trace_warning("play: stop the active recording first")};
+  }
+  auto parsed = detail::read_trace(in);
+  if (!parsed) return std::unexpected{std::move(parsed.error())};
+
+  // Validate every payload and every production phase before changing the
+  // caller's Terminal or App. A corrupt record at the end of a long file must
+  // not produce a partial replay before it is discovered.
+  std::uint64_t expected_frame{0};
+  bool saw_end{false};
+  detail::TracePhase last_phase{detail::TracePhase::FrameStart};
+  for (std::size_t i = 0; i < parsed->records.size(); ++i) {
+    const auto& record = parsed->records[i];
+    switch (record.kind) {
+      case detail::TraceKind::Frame:
+        if (record.phase != detail::TracePhase::FrameStart ||
+            !record.payload.empty() || record.frame != expected_frame++) {
+          return std::unexpected{trace_warning("play: frame record order is invalid")};
+        }
+        last_phase = detail::TracePhase::FrameStart;
+        break;
+      case detail::TraceKind::Input:
+        if ((record.phase != detail::TracePhase::InputPump &&
+             record.phase != detail::TracePhase::Wait) ||
+            record.frame >= expected_frame) {
+          return std::unexpected{trace_warning("play: input record phase is invalid")};
+        }
+        if (record.phase < last_phase) {
+          return std::unexpected{trace_warning("play: record phases are out of order")};
+        }
+        last_phase = record.phase;
+        break;
+      case detail::TraceKind::Resize:
+        if (record.phase != detail::TracePhase::FrameStart ||
+            record.frame >= expected_frame) {
+          return std::unexpected{trace_warning("play: resize record phase is invalid")};
+        }
+        if (record.phase < last_phase) {
+          return std::unexpected{trace_warning("play: record phases are out of order")};
+        }
+        last_phase = record.phase;
+        if (auto size = detail::decode_size(record); !size)
+          return std::unexpected{std::move(size.error())};
+        break;
+      case detail::TraceKind::Posted:
+        if (record.phase != detail::TracePhase::Posted ||
+            record.frame >= expected_frame) {
+          return std::unexpected{trace_warning("play: posted-event phase is invalid")};
+        }
+        if (record.phase < last_phase) {
+          return std::unexpected{trace_warning("play: record phases are out of order")};
+        }
+        last_phase = record.phase;
+        if (auto event = detail::decode_event(record); !event)
+          return std::unexpected{std::move(event.error())};
+        break;
+      case detail::TraceKind::End:
+        if (i + 1 != parsed->records.size() ||
+            record.phase != detail::TracePhase::End ||
+            record.frame != expected_frame) {
+          return std::unexpected{trace_warning("play: end record is invalid")};
+        }
+        if (auto end = detail::decode_end(record); !end)
+          return std::unexpected{std::move(end.error())};
+        saw_end = true;
+        break;
+    }
+  }
+  if (!saw_end) return std::unexpected{trace_warning("play: trace has no end record")};
+
+  auto playback = std::make_unique<PlaybackState>();
+  playback->trace = std::move(*parsed);
+
+  const auto prior_caps = m_term.pushed_capabilities();
+  if (prior_caps &&
+      !same_capabilities(*prior_caps, playback->trace.header.capabilities)) {
+    return std::unexpected{
+        trace_warning("play: recorded capabilities conflict with the caller's push")};
+  }
+  const bool pushed_caps = !prior_caps.has_value();
+  if (pushed_caps) {
+    if (auto applied = m_term.set_capabilities(playback->trace.header.capabilities);
+        !applied)
+      return std::unexpected{std::move(applied.error())};
+  }
+
+  const auto prior_size = m_pushed_size;
+  const bool prior_resize = m_resize_pending.load();
+  SyntheticClock* const prior_clock = m_clock;
+  Input prior_input = std::move(m_input);
+  const bool prior_esc_waited = m_esc_waited;
+  const bool prior_got_bytes = m_got_bytes;
+  const Capabilities prior_observed_caps = m_caps;
+  const std::uint64_t prior_frame_index = m_frame_index;
+  const TracePoint prior_trace_point = m_trace_point;
+  const bool prior_frame_active = m_frame_active;
+
+  const auto& initial = playback->trace.header.initial_size;
+  m_pushed_size = Size{initial.cols, initial.rows, initial.px_w, initial.px_h};
+  // The recorded FrameStart resize record, not applying the header, owns the
+  // first ResizeEvent. set_size() would arm a duplicate on every playback.
+  m_resize_pending.store(false);
+  m_input = Input{};
+  m_esc_waited = false;
+  m_got_bytes = false;
+  m_playback = std::move(playback);
+  m_clock = &m_playback->clock;
+
+  auto restore = [&] {
+    m_clock = prior_clock;
+    m_pushed_size = prior_size;
+    m_resize_pending.store(prior_resize);
+    m_input = std::move(prior_input);
+    m_esc_waited = prior_esc_waited;
+    m_got_bytes = prior_got_bytes;
+    m_caps = prior_observed_caps;
+    m_frame_index = prior_frame_index;
+    m_trace_point = prior_trace_point;
+    m_frame_active = prior_frame_active;
+    m_playback.reset();
+    if (pushed_caps) m_term.clear_capabilities();
+  };
+
+  try {
+    const int result = run();
+    std::optional<ErrorEvent> playback_error;
+    if (m_playback) {
+      playback_error = std::move(m_playback->failure);
+      if (!playback_error &&
+          m_playback->next != m_playback->trace.records.size()) {
+        playback_error = trace_warning("play: application ended before the trace");
+      }
+    }
+    restore();
+    if (playback_error) return std::unexpected{std::move(*playback_error)};
+    if (result != 0) {
+      return std::unexpected{
+          ErrorEvent{Severity::Error, "trace", "play: App setup failed"}};
+    }
+  } catch (...) {
+    restore();
+    throw;
+  }
+  return {};
+}
+
+auto App::begin_recording_run() -> void {
+  if (!m_recording || m_recording->header_written) return;
+  m_recording->started = now_steady();
+  const auto size = current_size();
+  detail::TraceHeader header;
+  header.capabilities = m_caps;
+  header.initial_size = {size.cols, size.rows, size.px_w, size.px_h};
+  if (auto written = detail::write_trace_header(*m_recording->out, header); !written) {
+    fail_recording(std::move(written.error()));
+    return;
+  }
+  m_recording->header_written = true;
+}
+
+auto App::finish_recording(bool clean) -> void {
+  if (!m_recording) return;
+  if (!m_recording->header_written) {
+    m_recording.reset();
+    return;
+  }
+  detail::TraceRecord end;
+  end.kind = detail::TraceKind::End;
+  end.phase = detail::TracePhase::End;
+  end.frame = m_frame_index + (m_frame_active ? 1U : 0U);
+  const auto elapsed = now_steady() - m_recording->started;
+  end.offset_ns = elapsed > std::chrono::steady_clock::duration::zero()
+                      ? static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed)
+                                .count())
+                      : 0;
+  end.payload = detail::encode_end(clean ? detail::TraceEnd::Clean
+                                         : detail::TraceEnd::Prefix);
+  if (auto written = detail::write_trace_record(*m_recording->out, end); !written) {
+    auto error = std::move(written.error());
+    m_recording.reset();
+    // A clean end is written after the last input pump, so queueing this one
+    // would strand it until some later run. Finalization remains inside the
+    // run_loop() exception guard specifically so the ordinary event callback
+    // can report the refusal without weakening terminal restoration.
+    if (clean && m_loop_active && !m_frame_active) {
+      dispatch_event(error);
+    } else {
+      m_input.push_error(std::move(error));
+    }
+    return;
+  }
+  m_recording.reset();
+}
+
+auto App::fail_recording(ErrorEvent error) -> void {
+  m_recording.reset();
+  m_input.push_error(std::move(error));
+}
+
+auto App::record_payload(std::uint8_t kind, TracePoint point,
+                         std::vector<std::uint8_t> payload) -> void {
+  if (!m_recording || !m_recording->header_written) return;
+  auto phase = detail::TracePhase::FrameStart;
+  switch (point) {
+    case TracePoint::FrameStart: phase = detail::TracePhase::FrameStart; break;
+    case TracePoint::InputPump: phase = detail::TracePhase::InputPump; break;
+    case TracePoint::Posted: phase = detail::TracePhase::Posted; break;
+    case TracePoint::Wait: phase = detail::TracePhase::Wait; break;
+    case TracePoint::End: phase = detail::TracePhase::End; break;
+  }
+  const auto elapsed = now_steady() - m_recording->started;
+  detail::TraceRecord record{static_cast<detail::TraceKind>(kind), phase,
+                             elapsed > std::chrono::steady_clock::duration::zero()
+                                 ? static_cast<std::uint64_t>(
+                                       std::chrono::duration_cast<
+                                           std::chrono::nanoseconds>(elapsed)
+                                           .count())
+                                 : 0,
+                             m_frame_index, std::move(payload)};
+  if (auto written = detail::write_trace_record(*m_recording->out, record); !written)
+    fail_recording(std::move(written.error()));
+}
+
+auto App::record_frame(std::chrono::steady_clock::time_point frame_start) -> void {
+  if (!m_recording || !m_recording->header_written) return;
+  const auto elapsed = frame_start - m_recording->started;
+  detail::TraceRecord record{detail::TraceKind::Frame,
+                             detail::TracePhase::FrameStart,
+                             elapsed > std::chrono::steady_clock::duration::zero()
+                                 ? static_cast<std::uint64_t>(
+                                       std::chrono::duration_cast<
+                                           std::chrono::nanoseconds>(elapsed)
+                                           .count())
+                                 : 0,
+                             m_frame_index,
+                             {}};
+  if (auto written = detail::write_trace_record(*m_recording->out, record); !written)
+    fail_recording(std::move(written.error()));
+}
+
+auto App::record_input(std::string_view bytes) -> void {
+  record_payload(static_cast<std::uint8_t>(detail::TraceKind::Input), m_trace_point,
+                 std::vector<std::uint8_t>{bytes.begin(), bytes.end()});
+}
+
+auto App::record_resize(Size size) -> void {
+  record_payload(static_cast<std::uint8_t>(detail::TraceKind::Resize),
+                 TracePoint::FrameStart,
+                 detail::encode_size({size.cols, size.rows, size.px_w, size.px_h}));
+}
+
+auto App::record_posted(const Event& event) -> void {
+  record_payload(static_cast<std::uint8_t>(detail::TraceKind::Posted),
+                 TracePoint::Posted, detail::encode_event(event));
+}
+
+auto App::playback_begin_frame() -> void {
+  if (!m_playback || m_playback->failure) return;
+  if (m_playback->next >= m_playback->trace.records.size()) {
+    m_playback->failure = trace_warning("play: trace ended before a frame marker");
+    quit();
+    return;
+  }
+  const auto& record = m_playback->trace.records[m_playback->next];
+  if (record.kind != detail::TraceKind::Frame || record.frame != m_frame_index) {
+    m_playback->failure = trace_warning("play: expected frame marker is missing");
+    quit();
+    return;
+  }
+  const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          m_playback->clock.now().time_since_epoch())
+                          .count();
+  if (record.offset_ns > static_cast<std::uint64_t>(now_ns)) {
+    m_playback->clock.advance(std::chrono::nanoseconds{
+        record.offset_ns - static_cast<std::uint64_t>(now_ns)});
+  }
+  ++m_playback->next;
+}
+
+auto App::playback_apply_resizes() -> void {
+  if (!m_playback || m_playback->failure) return;
+  while (m_playback->next < m_playback->trace.records.size()) {
+    const auto& record = m_playback->trace.records[m_playback->next];
+    if (record.kind != detail::TraceKind::Resize ||
+        record.frame != m_frame_index) {
+      break;
+    }
+    const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            m_playback->clock.now().time_since_epoch())
+                            .count();
+    if (record.offset_ns > static_cast<std::uint64_t>(now_ns)) {
+      m_playback->clock.advance(std::chrono::nanoseconds{
+          record.offset_ns - static_cast<std::uint64_t>(now_ns)});
+    }
+    auto decoded = detail::decode_size(record);
+    if (!decoded) {
+      m_playback->failure = std::move(decoded.error());
+      quit();
+      return;
+    }
+    m_pushed_size = Size{decoded->cols, decoded->rows, decoded->px_w,
+                         decoded->px_h};
+    m_resize_pending.store(true);
+    ++m_playback->next;
+  }
+}
+
+auto App::playback_feed(TracePoint point) -> int {
+  if (!m_playback || m_playback->failure) return 0;
+  const detail::TracePhase wanted = point == TracePoint::Wait
+                                        ? detail::TracePhase::Wait
+                                        : detail::TracePhase::InputPump;
+  int total{0};
+  while (m_playback->next < m_playback->trace.records.size()) {
+    const auto& record = m_playback->trace.records[m_playback->next];
+    if (record.kind != detail::TraceKind::Input || record.phase != wanted ||
+        record.frame != m_frame_index) {
+      break;
+    }
+    const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            m_playback->clock.now().time_since_epoch())
+                            .count();
+    if (record.offset_ns > static_cast<std::uint64_t>(now_ns)) {
+      m_playback->clock.advance(std::chrono::nanoseconds{
+          record.offset_ns - static_cast<std::uint64_t>(now_ns)});
+    }
+    const auto* chars = reinterpret_cast<const char*>(record.payload.data());
+    m_input.feed(std::string_view{chars, record.payload.size()});
+    if (record.payload.size() >
+        static_cast<std::size_t>(std::numeric_limits<int>::max() - total)) {
+      total = std::numeric_limits<int>::max();
+    } else {
+      total += static_cast<int>(record.payload.size());
+    }
+    ++m_playback->next;
+  }
+  if (total > 0) m_got_bytes = true;
+  return total;
+}
+
+auto App::playback_dispatch_posted() -> void {
+  if (!m_playback || m_playback->failure) return;
+  while (m_playback->next < m_playback->trace.records.size()) {
+    const auto& record = m_playback->trace.records[m_playback->next];
+    if (record.kind != detail::TraceKind::Posted ||
+        record.frame != m_frame_index) {
+      break;
+    }
+    const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            m_playback->clock.now().time_since_epoch())
+                            .count();
+    if (record.offset_ns > static_cast<std::uint64_t>(now_ns)) {
+      m_playback->clock.advance(std::chrono::nanoseconds{
+          record.offset_ns - static_cast<std::uint64_t>(now_ns)});
+    }
+    auto event = detail::decode_event(record);
+    if (!event) {
+      m_playback->failure = std::move(event.error());
+      quit();
+      return;
+    }
+    ++m_playback->next;
+    dispatch_event(*event);
+  }
+}
+
+auto App::playback_finish_frame() -> void {
+  if (!m_playback || m_playback->failure) return;
+  if (m_playback->next >= m_playback->trace.records.size()) {
+    m_playback->failure = trace_warning("play: trace ended without an end record");
+    quit();
+    return;
+  }
+  const auto& record = m_playback->trace.records[m_playback->next];
+  if (record.kind == detail::TraceKind::End && record.frame == m_frame_index) {
+    auto end = detail::decode_end(record);
+    if (!end) {
+      m_playback->failure = std::move(end.error());
+      quit();
+      return;
+    }
+    ++m_playback->next;
+    if (*end == detail::TraceEnd::Clean && m_running) {
+      m_playback->failure =
+          trace_warning("play: application did not stop at the recorded frame");
+    }
+    quit();
+    return;
+  }
+  if (!m_running) {
+    m_playback->failure =
+        trace_warning("play: application stopped before the recorded end");
+  }
+}
 
 auto App::post(Event event) -> void {
   std::lock_guard lock{m_post_mutex};
@@ -138,6 +592,10 @@ auto App::drain_post_pipe_locked() noexcept -> void {
 }
 
 auto App::pump_posted() -> void {
+  if (m_playback) {
+    playback_dispatch_posted();
+    return;
+  }
   std::deque<Event> ready;
   {
     // Swap one frame's snapshot and empty the signalling pipe under the same
@@ -147,7 +605,10 @@ auto App::pump_posted() -> void {
     ready.swap(m_posted);
     drain_post_pipe_locked();
   }
-  for (auto& event : ready) dispatch_event(event);
+  for (auto& event : ready) {
+    record_posted(event);
+    dispatch_event(event);
+  }
 }
 
 auto App::setup() -> std::expected<void, ErrorEvent> {
@@ -256,6 +717,10 @@ auto App::run() -> int {
   // make "how fast did the terminal answer" a gameplay variable.
   m_last_tick.reset();
   m_tick_accum = std::chrono::duration<double>::zero();
+  m_frame_index = 0;
+  m_frame_active = false;
+  m_trace_point = TracePoint::FrameStart;
+  begin_recording_run();
   return run_loop();
 }
 
@@ -286,8 +751,19 @@ auto App::run_loop() -> int {
   try {
     on_start();
     m_app_started = true;
+    if (m_playback && m_playback->next < m_playback->trace.records.size()) {
+      const auto& next = m_playback->trace.records[m_playback->next];
+      if (next.kind == detail::TraceKind::End &&
+          next.frame == m_frame_index) {
+        playback_finish_frame();
+      }
+    }
     while (m_running) frame_step();
+    finish_recording(true);
   } catch (...) {
+    // No end record: an exception-aborted artifact is intentionally rejected
+    // as truncated instead of being advertised as a complete replay.
+    m_recording.reset();
     stop_app();
     shutdown_driver();  // #148: sink still alive here; teardown's ~App path is not
     teardown();
@@ -302,7 +778,16 @@ auto App::run_loop() -> int {
 }
 
 auto App::frame_step() -> void {
-  const auto frame_start = now_steady();
+  m_frame_active = true;
+  m_trace_point = TracePoint::FrameStart;
+  playback_begin_frame();
+  // Playback is an isolated source, not a fourth custom virtual override. A
+  // consumer may already override now_steady() for its ordinary tests; the
+  // trace's clock must still be the production loop's timestamp during play.
+  const auto frame_start =
+      m_playback ? m_playback->clock.now() : now_steady();
+  record_frame(frame_start);
+  playback_apply_resizes();
   m_pixel_force_repaint = false;
   if (m_resize_pending) {
     // Clear *before* measuring: a SIGWINCH landing between the ioctl and
@@ -311,6 +796,7 @@ auto App::frame_step() -> void {
     // next iteration instead.
     m_resize_pending.store(false);
     const auto size = current_size();
+    record_resize(size);
     m_screen->resize(size.cols, size.rows);
     m_renderer->invalidate();
     // A full cell repaint includes the blank cells under persistent images.
@@ -323,7 +809,9 @@ auto App::frame_step() -> void {
     push_cell_pixel_size(size);
     dispatch_event(ResizeEvent{size.cols, size.rows});
   }
+  m_trace_point = TracePoint::InputPump;
   pump_input();
+  m_trace_point = TracePoint::Posted;
   pump_posted();
   // After the resize dispatch and the input pump, before the draw: a tick may
   // bound motion by screen().cols()/rows(), and the tick following a keypress
@@ -363,7 +851,12 @@ auto App::frame_step() -> void {
   auto output_error = m_driver->take_output_error();
   finish_pixel_frame(!output_error.has_value());
   if (output_error) m_input.push_error(std::move(*output_error));
+  m_trace_point = TracePoint::Wait;
   wait_frame(frame_start);
+  ++m_frame_index;
+  m_trace_point = TracePoint::End;
+  m_frame_active = false;
+  playback_finish_frame();
 }
 
 auto App::set_tick_hz(int hz) -> void {
@@ -465,6 +958,7 @@ auto App::wait_for_sources(int timeout_ms) -> bool {
 auto App::read_available(char* out, int max) -> int { return m_term.read_input(out, max); }
 
 auto App::drain_input() -> int {
+  if (m_playback) return playback_feed(m_trace_point);
   // Reads are non-blocking (VMIN=0/VTIME=0, set once in setup), so this
   // empties whatever the tty has buffered and stops the instant it's dry.
   char buf[256];
@@ -472,7 +966,9 @@ auto App::drain_input() -> int {
   while (true) {
     const int n = read_available(buf, sizeof(buf));
     if (n <= 0) break;
-    m_input.feed(std::string_view{buf, static_cast<std::size_t>(n)});
+    const std::string_view bytes{buf, static_cast<std::size_t>(n)};
+    record_input(bytes);
+    m_input.feed(bytes);
     total += n;
   }
   if (total > 0) m_got_bytes = true;
@@ -495,6 +991,13 @@ auto App::wait_frame(std::chrono::steady_clock::time_point frame_start) -> void 
     const auto grace = frame_start + std::chrono::milliseconds(kEscGraceMs);
     if (grace > deadline) deadline = grace;
     m_esc_waited = true;
+  }
+  if (m_playback) {
+    (void)playback_feed(TracePoint::Wait);
+    // The next Frame record carries the observed boundary. Advancing to the
+    // configured deadline here would erase real render overruns and poll's
+    // millisecond truncation -- precisely the timing the trace is preserving.
+    return;
   }
   while (true) {
     const auto left =
