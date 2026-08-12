@@ -36,9 +36,11 @@
 #include <chrono>
 #include <concepts>
 #include <cstddef>
+#include <deque>
 #include <expected>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <ranges>
 #include <span>
@@ -126,6 +128,22 @@ class App {
 
   // Signal the loop to exit after the current frame.
   auto quit() -> void { m_running = false; }
+
+  // Queue an Event from any thread and wake the loop. This is the ONLY App
+  // operation that is safe to call off the loop thread; widgets and every
+  // other App method remain single-threaded. Delivery is serialized with
+  // terminal input at one deterministic frame point: terminal input first,
+  // then one snapshot of posted events, then on_tick(). An event posted after
+  // that snapshot waits for the next frame and can never interrupt a tick or
+  // render in progress.
+  //
+  // The queue, not the wake byte, is the source of truth. Posts are retained
+  // in mutex-acquisition FIFO order even when the nonblocking wake pipe is
+  // full. Posting before run(), after a completed run(), or between repeated
+  // runs is legal; those events remain queued until the next frame consumes
+  // them. As with any member call, the App itself must remain alive for the
+  // duration of post().
+  auto post(Event event) -> void;
 
   // Whether the loop is still running \u2014 true until quit() is called, false
   // after. Lets a test observe that a quit happened without inferring it
@@ -822,6 +840,11 @@ class App {
   // calls this on both exits, before teardown(). noexcept because it must
   // not add a third exception to a path already handling one.
   auto stop_app() noexcept -> void;
+  auto open_post_pipe() -> std::expected<void, ErrorEvent>;
+  auto close_post_pipe() noexcept -> void;
+  auto signal_posted_locked() noexcept -> void;
+  auto drain_post_pipe_locked() noexcept -> void;
+  auto pump_posted() -> void;
   auto setup() -> std::expected<void, ErrorEvent>;
   // The exact inverse of setup(): leave the alt-screen, restore cooked mode,
   // return SIGWINCH to its default, and deregister from the resize handler.
@@ -870,6 +893,12 @@ class App {
   virtual auto wait_readable(int timeout_ms) -> bool;
   virtual auto read_available(char* out, int max) -> int;
 
+  // Non-virtual production wrapper around the terminal-readiness seam above.
+  // Once setup has opened the post pipe, an override cannot accidentally
+  // bypass App::post's wake source; headless tests with no pipe retain their
+  // fake wait_readable clock.
+  auto wait_for_sources(int timeout_ms) -> bool;
+
   // Drain everything currently readable into m_input. Returns the byte count;
   // 0 means the fd had nothing (or hung up), which is the signal to stop
   // waiting on it. Never blocks: the reads are zero-timeout by construction.
@@ -888,6 +917,19 @@ class App {
   std::unique_ptr<Screen> m_screen;
   std::unique_ptr<Renderer> m_renderer;
   Input m_input;
+
+  // #28: the queue is the cross-thread state; the pipe only wakes poll(). One
+  // byte per post is deliberately best-effort because a full nonblocking pipe
+  // is already readable. Both descriptors are App-owned and live exactly from
+  // setup to teardown, while queued events may span runs.
+  std::mutex m_post_mutex;
+  std::deque<Event> m_posted;
+  int m_post_read{-1};
+  int m_post_write{-1};
+  // Set only by the loop thread when wait_for_sources observes the wake fd.
+  // wait_frame consumes it after draining simultaneous terminal input, so
+  // a post ends the current budget wait without racing onto the current frame.
+  bool m_post_woke{false};
 
   // Pixel regions collected during on_render, issued in the frame's image
   // window (flush_pixel_regions), after the cell diff in one flush.

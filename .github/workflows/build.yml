@@ -108,6 +108,36 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
 
+  tsan:
+    # #28 is the library's first supported cross-thread API. Build the whole
+    # library instrumented, then run the focused production-loop suite that
+    # posts concurrently while App drains on its loop thread.
+    name: TSan (App::post, GCC, Ubuntu latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GCC
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-14
+
+      - name: Configure (TSan)
+        run: >
+          cmake -B build
+          -DCMAKE_CXX_COMPILER=g++-14
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/thread.cmake
+          -Dtermforge_EXAMPLES=OFF
+          -Dtermforge_BIN=OFF
+
+      - name: Build focused suite
+        run: cmake --build build --target 54post-test -j$(nproc)
+
+      - name: Test concurrent posting
+        run: ctest --test-dir build -R '^54post-test$' --output-on-failure
+
   consume:
     # Issue #27's acceptance criteria: a minimal external project builds
     # against termforge both ways, on GCC and Clang, building only the library.
