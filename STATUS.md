@@ -6,7 +6,39 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-12, latest)
 
-**Latest release: v0.19.0 — cross-thread App event posting.** #28 adds
+**Latest release: v0.20.0 — supported App loop-source seams.** #118 promotes
+`App`'s clock, readiness and input seams — `now_steady()`,
+`wait_readable(int)` and `read_available(char*, int)` — from private test
+machinery to one documented protected API. An out-of-tree application can now
+subclass `App` and drive the production frame loop over a monotonic scripted
+clock and nonblocking input source without depending on an implementation
+detail. The real `steady_clock`/`Terminal` defaults and every byte of runtime
+behavior are unchanged.
+
+The consumer acceptance fixture overrides all three functions and also makes
+qualified calls to their base defaults. That second half is load-bearing:
+C++ permits overriding a private virtual, so an override-only compile case
+would have stayed green if the API promotion were reverted. The explicit
+mutation back to `private` fails both the add-subdirectory and installed-header
+consumer builds on all three base calls.
+
+**Local verification:** GCC 14.2 and Clang 20.1.8 Release `-Werror` builds pass
+58/58 tests; GCC ASan+UBSan passes 58/58 with leak detection, and the focused
+GCC TSan suite passes. Both compilers pass the subdirectory, installed-package,
+and plain-vendored consumer paths. This changes no terminal protocol form, so
+no live-emulator gate applies.
+
+**How it got picked:** #225 still requires a real Kitty session, which this
+headless environment cannot supply. #118 was the first fully offline dependency
+in the deterministic/remote-session chain and unblocks #119 and #120.
+
+**Next:** run #225's direct Kitty acceptance capture when a human terminal is
+available; otherwise implement #119's base-owned synthetic clock, then continue
+through #120 and #150.
+
+## Previous release: v0.19.0
+
+**v0.19.0 — cross-thread App event posting.** #28 adds
 `App::post(Event)` as the framework's sole thread-safe App entry point. Any
 producer can queue an ordinary `Event`; App wakes its terminal wait and delivers
 one stable snapshot through the normal `on_event` path on the loop thread.

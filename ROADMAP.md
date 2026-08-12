@@ -38,6 +38,14 @@ completed items.
 > after terminal input and before the tick, and a focused TSan job exercises
 > concurrent producers, render-time wakes, pipe saturation and lifecycle
 > recovery. Idle dirty-driven pacing remains an optional follow-on.
+>
+> **2026-08-12 — supported deterministic loop sources.** **#118** promotes
+> `App`'s clock, readiness and nonblocking-read virtuals to one documented
+> protected API while retaining their real Terminal-backed defaults. The
+> out-of-tree consumer fixture proves both overriding and derived access through
+> installed headers, and a private-access mutation fails that fixture. **#119**
+> is the next layer: a common base-owned synthetic clock over this lower-level
+> seam; #120 and #150 follow it.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
@@ -58,6 +66,8 @@ completed items.
   harness, and top-compatible controls and information hierarchy
 - Cross-thread event injection (#28) — `App::post(Event)`, per-producer FIFO,
   lossless queueing beyond wake-pipe capacity, and loop-thread delivery
+- Supported loop-source overrides (#118) — protected monotonic clock,
+  bounded-readiness and nonblocking-input seams, proven through consumed headers
 
 ---
 
@@ -217,5 +227,9 @@ completed items.
 7. **Audit fix wave (issues #3–#16)** — in progress 2026-07-24; #3/#4/#5/#9/#14 landed, kitty placement GC (#6/#7), probe hardening (#8), terminal robustness (#13, v0.0.2), display-width + wide cells (#10, v0.0.3), dirty/clear contract (#11, v0.0.4) landed; widget bundle (#12) next
 8. ~~Epic 3.6 (MapWidget)~~ **DONE** (glyph tier #86; sprite tier #64)
 9. ~~**forge-top demo (issue #16)**~~ **DONE** — btop-style dogfooding harness
-10. **Epic 5 (Sixel)** — kitty + half-blocks bracket the matrix
-11. **Epic 6.2-6.5 (Polish)** — as time allows
+10. ~~**Supported App loop-source API (#118)**~~ **DONE** — deterministic
+    consumer overrides compile through installed headers
+11. **Deterministic loop chain (#119, #120, #150)** — synthetic clock, raw
+    event-stream playback and opt-in demand rendering
+12. **Epic 5 (Sixel)** — kitty + half-blocks bracket the matrix
+13. **Epic 6.2-6.5 (Polish)** — as time allows
