@@ -30,7 +30,9 @@ completed items.
 > and exercises Kitty, ANSI and fallback through one forced-tier CLI. **#230
 > and #231** then add the top-compatible hotkeys, sampling control, summary
 > hierarchy and responsive process fields while retaining forge-top's panels
-> and persistent graphics.
+> and persistent graphics. **#238** reserves style-matched divider cells
+> between neighboring per-core graphs, including partial grids and the ASCII
+> tier, without letting persistent pixel destinations cover the grid.
 >
 > **2026-08-12 — cross-thread event injection.** **#28** adds the sole
 > thread-safe `App` entry point: `post(Event)` queues onto the loop thread and
@@ -87,6 +89,8 @@ completed items.
   and clean-frame suppression on both enhanced tiers
 - forge-top (#16, #230, #231) — live `/proc` monitor, deterministic all-tier
   harness, and top-compatible controls and information hierarchy
+- forge-top CPU grid (#238) — separator-aware per-core layout with
+  Unicode/ASCII dividers outside every pixel-region destination
 - Cross-thread event injection (#28) — `App::post(Event)`, per-producer FIFO,
   lossless queueing beyond wake-pipe capacity, and loop-thread delivery
 - Supported loop-source overrides (#118) — protected monotonic clock,

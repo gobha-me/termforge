@@ -63,9 +63,9 @@ Landed and verified:
   moves on). See `examples/forms.cpp`.
 - **Glyph families** — `widgets/glyphs.hpp` is the single place line and mark
   glyphs are chosen: five border families (`Single`/`Double`/`Rounded`/
-  `Heavy`/`Ascii`) and the matching form-control marks, so an app on the
-  bare-TTY tier switches every frame *and* every control to 7-bit ASCII with
-  one enum.
+  `Heavy`/`Ascii`), matching interior-grid lines, and form-control marks, so an
+  app on the bare-TTY tier switches every frame, divider, and control to 7-bit
+  ASCII with one enum.
 - **Modal dialogs** — an overlay stack in `App` that draws last and captures
   all input, plus `MessageDialog` / `ConfirmDialog` / `PromptDialog` that size
   and center themselves, `ChoiceDialog` for single/multiple choice with an
@@ -97,8 +97,9 @@ Landed and verified:
   container — so a ProgressBar's pulse and a Button's press flash are measured
   in seconds too. See `examples/motion.cpp`.
 - **`forge-top`** — the default binary is a live `/proc` monitor with top-shaped
-  uptime/load/task summaries, aggregate or per-core waveforms, consistently
-  scaled memory bars, and a responsive sortable/filterable process table with
+  uptime/load/task summaries, aggregate or per-core waveforms with responsive
+  style-matched grid dividers, consistently scaled memory bars, and a
+  responsive sortable/filterable process table with
   `PID USER S %CPU %MEM TIME+ RES COMMAND`. A persistent pixel process graph
   remains one Enter away. `--fake` supplies deterministic data and
   `--driver=kitty|ansi|fallback` forces each rendering tier.

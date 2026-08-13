@@ -6,7 +6,45 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-13, latest)
 
-**Pending release: v0.23.0 — demand-driven App rendering.** #150 adds the
+**Pending release: v0.24.0 — forge-top per-CPU grid dividers.** #238 reserves
+one-cell row and column gutters between neighboring per-core graphs and draws
+them from a new `GridGlyphs` family keyed by the panel's existing
+`BorderStyle`. Unicode weights follow the surrounding frame, Rounded uses the
+light junction family, and the ASCII tier stays strictly 7-bit. Aggregate mode
+retains its full inner width and height without an internal divider.
+
+The responsive layout accounts for gutters before distributing odd remainder
+cells, keeps label and waveform rectangles inside each tile, and stops a
+partial final row at its last real graph. Pixel-region destinations are the
+waveform interiors only, so Kitty/ANSI image placement cannot cover a divider.
+The panel clears its interior before relayout, preventing grid remnants when a
+view switches to aggregate mode.
+
+`test/53forgetop` pins the exact row-major regions and screen cells for an odd,
+multi-row, multi-column, partially filled grid; Unicode and ASCII junctions;
+label containment; divider exclusion from every pixel rectangle; and the
+unchanged aggregate extent. `test/12primitives` sweeps every grid glyph for
+one-column width and the ASCII family for 7-bit bytes. Direct mutations that
+expand waveforms into their separator gutter or draw a trailing partial-row
+separator fail the focused layout suite.
+
+GCC 14.2 and Clang 20.1.8 Release `-Werror` builds pass 61/61 CTest targets.
+GCC ASan+UBSan with leak detection passes 61/61. Both compilers pass the
+subdirectory and installed-package consumer paths, and the plain-vendored
+guard passes. This changes no terminal protocol form, so no live-emulator gate
+applies.
+
+**How it got picked:** #225 remains the priority when a human-controlled,
+unproxied Kitty session is available. This environment cannot satisfy that
+acceptance gate; #238 was the newest concrete, dependency-free forge-top gap
+and was fully observable offline.
+
+**Next:** run #225's direct Kitty acceptance capture when that environment is
+available; otherwise refresh the open issue queue after this release.
+
+## Previous release: v0.23.0
+
+**v0.23.0 — demand-driven App rendering.** #150 adds the
 opt-in `RenderMode::Demand` policy, `App::set_render_mode`,
 `App::render_mode`, and loop-thread-only `App::request_render`. Continuous
 rendering remains the compatibility default. A demand run paints its initial
