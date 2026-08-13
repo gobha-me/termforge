@@ -11,11 +11,11 @@
 #include <algorithm>
 #include <climits>
 #include <cstdint>
-#include <cstring>
 #include <utility>
 #include <vector>
 
 #include "detail/blend.hpp"
+#include "detail/simd.hpp"
 #include "termforge/core/types.hpp"
 
 namespace termforge {
@@ -149,10 +149,8 @@ auto Image::blit(const Image& src, Rect src_rect, int dx, int dy) -> void {
     const auto drow = static_cast<std::size_t>(p.dy + y) *
                       static_cast<std::size_t>(m_width) +
                       static_cast<std::size_t>(p.dx);
-    // Pixel is trivially copyable and both rows are guaranteed to exist by the
-    // constructor's size invariant.
-    std::memcpy(m_pixels.data() + drow, src.pixels().data() + srow,
-                static_cast<std::size_t>(p.w) * sizeof(Pixel));
+    detail::copy_pixels(src.pixels().subspan(srow, p.w),
+                        pixels().subspan(drow, p.w));
   }
 }
 
@@ -174,9 +172,8 @@ auto Image::blend(const Image& src, Rect src_rect, int dx, int dy) -> void {
     const auto drow = static_cast<std::size_t>(p.dy + y) *
                       static_cast<std::size_t>(m_width) +
                       static_cast<std::size_t>(p.dx);
-    const Pixel* sp = src.pixels().data() + srow;
-    Pixel* dp = m_pixels.data() + drow;
-    for (int x = 0; x < p.w; ++x) dp[x] = detail::blend_pixel(sp[x], dp[x]);
+    detail::blend_pixels(src.pixels().subspan(srow, p.w),
+                         pixels().subspan(drow, p.w));
   }
 }
 
@@ -188,7 +185,7 @@ auto Image::fill(Rect r, Pixel p) -> void {
     const auto row = static_cast<std::size_t>(v.y + y) *
                      static_cast<std::size_t>(m_width) +
                      static_cast<std::size_t>(v.x);
-    std::fill_n(m_pixels.begin() + static_cast<std::ptrdiff_t>(row), v.w, p);
+    detail::fill_pixels(pixels().subspan(row, v.w), p);
   }
 }
 

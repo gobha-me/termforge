@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <stdexcept>
 
+#include "simd.hpp"
+
 namespace termforge::detail {
 
 namespace {
@@ -21,19 +23,13 @@ auto base64_encode(std::span<const std::byte> data) -> std::string {
     throw std::length_error{"base64 output exceeds string capacity"};
   out.resize(triples * 4 + tail_chars);
 
-  std::size_t src = 0;
-  std::size_t dst = 0;
-  for (std::size_t group = 0; group < triples; ++group) {
-    const auto b0 = static_cast<std::uint8_t>(data[src]);
-    const auto b1 = static_cast<std::uint8_t>(data[src + 1]);
-    const auto b2 = static_cast<std::uint8_t>(data[src + 2]);
-    out[dst] = kAlphabet[b0 >> 2];
-    out[dst + 1] = kAlphabet[((b0 & 0x03) << 4) | (b1 >> 4)];
-    out[dst + 2] = kAlphabet[((b1 & 0x0F) << 2) | (b2 >> 6)];
-    out[dst + 3] = kAlphabet[b2 & 0x3F];
-    src += 3;
-    dst += 4;
-  }
+  const std::size_t body_bytes = triples * 3;
+  const std::size_t body_chars = triples * 4;
+  base64_blocks(data.first(body_bytes),
+                std::span<char>{out}.first(body_chars));
+
+  const std::size_t src = body_bytes;
+  const std::size_t dst = body_chars;
 
   if (tail == 1) {
     const auto b0 = static_cast<std::uint8_t>(data[src]);

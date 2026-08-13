@@ -104,7 +104,7 @@ Landed and verified:
   remains one Enter away. `--fake` supplies deterministic data and
   `--driver=kitty|ansi|fallback` forces each rendering tier.
 
-Deferred per the roadmap: `SixelDriver` (Epic 5), the broader benchmark/SIMD
+Deferred per the roadmap: `SixelDriver` (Epic 5), the broader benchmark
 workloads, framebuffer driver.
 
 ## Why
