@@ -34,17 +34,17 @@ CTest targets. GCC ASan with leak detection passes the ordinary 62-target
 suite. GCC and Clang pass the subdirectory, installed-package and plain-vendored
 consumer paths. PR #243's hosted matrix passes all ten jobs: benchmark smoke,
 GCC 13/14, Clang 19/20, Fedora GCC, ASan+UBSan, TSan, and the GCC 14 / Clang 20
-consumer jobs. The terminal-grid proof is complete offline; because emitted CUP
-traffic changes, merge still requires a direct Kitty and non-Kitty visual check
-under the project's terminal-protocol rule.
+consumer jobs. The terminal-grid proof is complete offline, and the requested
+direct Kitty plus non-Kitty visual checks passed: forced Kitty, ANSI and
+fallback rendering stayed aligned through resize/view changes, including the
+wide- and combining-text cursor cases. Emulator versions were not captured.
 
 **How it got picked:** #225 still requires a human-controlled direct Kitty
 TTY. #88's landed W3/kernel harness explicitly established #89 as the next
 offline dependency before #90 SIMD.
 
-**Next:** satisfy #89's real-terminal gate and release v0.26.0; then take #90
-for the next kernel layer. #88 retains W2/W4/W5 and #225 retains the direct
-Kitty capture.
+**Next:** release v0.26.0, then take #90 for the next kernel layer. #88 retains
+W2/W4/W5 and #225 retains the direct Kitty capture.
 
 ## Previous release: v0.25.0
 
