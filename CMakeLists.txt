@@ -75,6 +75,7 @@ option(${PROJECT_NAME}_TESTS    "Build the termforge test suite"    ${PROJECT_IS
 option(${PROJECT_NAME}_EXAMPLES "Build the termforge examples"      ${PROJECT_IS_TOP_LEVEL})
 option(${PROJECT_NAME}_BIN      "Build the forge-top system monitor" ${PROJECT_IS_TOP_LEVEL})
 option(${PROJECT_NAME}_INSTALL  "Generate termforge install rules"  ${PROJECT_IS_TOP_LEVEL})
+option(${PROJECT_NAME}_BENCH    "Build Release-only performance harness" OFF)
 
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/src/lib)
 
@@ -99,6 +100,14 @@ if (${PROJECT_NAME}_TESTS)
 
     add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/test)
   endif ()
+endif ()
+
+if (${PROJECT_NAME}_BENCH)
+  if (NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+    message(FATAL_ERROR
+      "${PROJECT_NAME}_BENCH requires -DCMAKE_BUILD_TYPE=Release")
+  endif ()
+  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/bench)
 endif ()
 
 if (${PROJECT_NAME}_EXAMPLES)

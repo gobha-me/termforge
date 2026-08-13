@@ -6,7 +6,40 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-13, latest)
 
-**Pending release: v0.24.0 — forge-top per-CPU grid dividers.** #238 reserves
+**Pending release: v0.25.0 — benchmark harness and cell-churn baseline.** The
+first offline slice of #88 adds a default-off, Release-only `termforge_bench`
+target. It measures the existing hash/base64/image/text/driver kernels and W3's
+production `Screen` → `Renderer::present` → `flush` cell cadence, with
+calibrated median/p95 samples, emitted-byte counts, checksums, table output and
+schema-versioned JSON. CI validates only a smoke artifact and never gates on
+runner timing.
+
+W3 sweeps five grids through 400×120, three content classes and four dirty
+fractions. On the GCC 14.2 reference host every combination stays inside both
+16.6 and 33.3 ms; the slowest is 100% combining-grapheme churn at 6.138 ms
+median / 6.190 ms p95. The 640×384 RGBA payload hash takes 1.041 ms median,
+close to the 0.965 ms scalar blend and ahead of SIMD in the dependency order.
+This supplies #89's scalar oracle; #88 remains open for W2/W4/W5.
+
+The payload hash moved from KittyDriver's anonymous namespace into private
+`src/lib/detail` so the harness observes the production function. No installed
+API, terminal protocol, default build, install, or consumer dependency changes.
+
+GCC 14.2 and Clang 20.1.8 Release `-Werror` builds pass all 62 benchmark-enabled
+CTest targets. GCC ASan+UBSan with leak detection passes the ordinary 61-target
+suite. GCC and Clang pass the subdirectory, installed-package and plain-vendored
+consumer paths; a Debug benchmark configuration is refused as designed.
+
+**How it got picked:** #225 still requires a human-controlled direct Kitty
+TTY. #238 had already shipped as v0.24.0, and #88's owner-authored residual
+order names the offline harness/W3 baseline before #89.
+
+**Next:** run #225 when a direct Kitty session is available; otherwise take
+#89 against these baselines.
+
+## Previous release: v0.24.0
+
+**v0.24.0 — forge-top per-CPU grid dividers.** #238 reserves
 one-cell row and column gutters between neighboring per-core graphs and draws
 them from a new `GridGlyphs` family keyed by the panel's existing
 `BorderStyle`. Unicode weights follow the surrounding frame, Rounded uses the

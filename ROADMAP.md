@@ -71,6 +71,13 @@ completed items.
 > remains the compatibility default, while input/post/resize/overlay changes
 > and explicit `request_render()` coalesce into one demand frame. RTT pacing
 > was deliberately rejected: latency is not congestion or sink capacity.
+>
+> **2026-08-13 — measurable performance baseline.** The first offline slice of
+> **#88** adds a default-off, Release-only benchmark harness with deterministic
+> kernel measurements and the W3 cell-churn matrix. Results are table or
+> schema-versioned JSON evidence, never timing gates. The 400×120 ASCII, CJK,
+> and combining workloads establish the scalar baseline for #89; W2/W4/W5
+> remain on #88, and direct Kitty evidence remains #225.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
@@ -101,6 +108,8 @@ completed items.
   decoder, resize/post boundaries, synthetic time and production frame loop
 - Demand-driven rendering (#150) — opt-in source-woken idle, coalesced
   invalidation and zero draw/flush work once the application settles
+- Performance baseline (#88 slice) — Release-only kernel and W3 cell-churn
+  evidence with JSON artifacts and no host-speed CI assertions
 
 ---
 
@@ -214,8 +223,9 @@ completed items.
   files previously never applied the sanitizer flags).
   Files: `.github/workflows/build.yml`
 
-- [ ] **6.2 — SIMD waveform rasterization**
-  AVX2 multiversioning, runtime dispatch. Benchmark before/after.
+- [ ] **6.2 — SIMD kernel layer**
+  AVX2 multiversioning and runtime dispatch after #89's scalar work, measured
+  against #88's harness rather than a timing assertion.
 
 - [ ] **6.3 — KittyDriver animation**
   #196 provides client-driven root-frame replacement under one pinned image id
@@ -265,4 +275,6 @@ completed items.
 11. ~~**Deterministic loop chain** — synthetic clock (#119), raw-input
     playback (#120), and opt-in demand rendering (#150)~~ **DONE**
 12. **Epic 5 (Sixel)** — kitty + half-blocks bracket the matrix
-13. **Epic 6.2-6.5 (Polish)** — as time allows
+13. **#89 scalar frame-time bundle** — measure against the landed #88 W3 and
+    kernel baseline before adding SIMD
+14. **Epic 6.2-6.5 (Polish)** — as time allows

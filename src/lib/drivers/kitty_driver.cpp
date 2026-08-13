@@ -10,6 +10,7 @@
 
 #include "detail/base64.hpp"
 #include "detail/encoded.hpp"
+#include "detail/payload_hash.hpp"
 #include "detail/placement.hpp"
 #include "detail/sgr_attrs.hpp"
 #include "termforge/core/screen.hpp"
@@ -151,36 +152,6 @@ auto region_key(int x, int y, int w, int h) -> std::uint64_t {
     return static_cast<std::uint64_t>(static_cast<std::uint16_t>(v));
   };
   return (u16(x) << 48) | (u16(y) << 32) | (u16(w) << 16) | u16(h);
-}
-
-// FNV-1a hash of everything that decides whether a slot's terminal-side
-// image is still the one we want: the declared extent, the wire format, and
-// the payload bytes.
-//
-// The extent matters because a 4x1 and a 1x4 can share a byte stream and
-// still need distinct uploads (the transmitted s=/v= differ). The FORMAT
-// matters for the same reason and is less obvious (#163): the same bytes sent
-// as f=32 and as f=100 are two different images, and a hash blind to that
-// would skip the second upload and leave the first one on screen.
-//
-// Never returns 0 -- that is the slot's "nothing transmitted yet" sentinel,
-// which set_placement_mode also writes to force a retransmit.
-auto payload_hash(std::span<const std::byte> payload, Extent px,
-                  int format_code) -> std::uint64_t {
-  std::uint64_t hash = 14695981039346656037ULL;
-  for (const std::uint32_t field : {static_cast<std::uint32_t>(px.w),
-                                    static_cast<std::uint32_t>(px.h),
-                                    static_cast<std::uint32_t>(format_code)}) {
-    for (int shift = 0; shift < 32; shift += 8) {
-      hash ^= (field >> shift) & 0xFF;
-      hash *= 1099511628211ULL;
-    }
-  }
-  for (const std::byte b : payload) {
-    hash ^= static_cast<std::uint64_t>(std::to_integer<unsigned char>(b));
-    hash *= 1099511628211ULL;
-  }
-  return hash == 0 ? 1 : hash;
 }
 
 // Both ordinary image transmission and root-frame replacement have identical
@@ -613,7 +584,8 @@ auto KittyDriver::pin_payload(std::span<const std::byte> payload,
   m_pinned.emplace(id, PinnedEntry{.px = px,
                                    .format_code = format_code,
                                    .content_hash =
-                                       payload_hash(payload, px, format_code),
+                                       detail::payload_hash(payload, px,
+                                                            format_code),
                                    .serial = serial});
   return PinnedImage{id, instance_token(), serial};
 }
@@ -665,7 +637,8 @@ auto KittyDriver::replace_payload(std::uint32_t id, PinnedEntry& entry,
                     entry.format_code, format_code)}};
   }
 
-  const std::uint64_t hash = payload_hash(payload, px, format_code);
+  const std::uint64_t hash =
+      detail::payload_hash(payload, px, format_code);
   if (entry.content_hash == hash) return {};
 
   const std::size_t before = m_buf.size();
@@ -985,7 +958,7 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
 
   auto& slot = region_slot(dest);
   bool content_changed = false;
-  if (const auto hash = payload_hash(payload, px, format_code);
+  if (const auto hash = detail::payload_hash(payload, px, format_code);
       hash != slot.content_hash) {
     const std::size_t before = m_buf.size();
     transmit(payload, format_code, px, slot.image_id);
