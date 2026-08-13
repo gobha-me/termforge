@@ -85,6 +85,9 @@ class AnsiRgbDriver final : public TerminalDriver {
   // none emitted yet. Tracked so a run breaks (and resets) on an attr change
   // exactly like a color change  a leaked SGR 1 is a visible bug.
   int m_cur_attrs{-1};
+  bool m_cursor_known{false};
+  int m_cursor_x{0};
+  int m_cursor_y{0};
 };
 
 }  // namespace termforge

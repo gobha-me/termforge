@@ -6,39 +6,58 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-13, latest)
 
-**Pending release: v0.25.0 — benchmark harness and cell-churn baseline.** The
-first offline slice of #88 adds a default-off, Release-only `termforge_bench`
-target. It measures the existing hash/base64/image/text/driver kernels and W3's
-production `Screen` → `Renderer::present` → `flush` cell cadence, with
-calibrated median/p95 samples, emitted-byte counts, checksums, table output and
-schema-versioned JSON. CI validates only a smoke artifact and never gates on
-runner timing.
+**Pending release: v0.26.0 — non-SIMD frame-time bundle.** #89 removes the
+portable scalar costs identified before SIMD: `Renderer::present` performs one
+shadow copy; already-safe text borrows its input; ASCII width exits before the
+interval tables; payload hashing uses eight independent chains; base64 writes
+directly with peeled tails; Kitty borrows transmission chunks; and all three
+drivers use shared decimal, RGB-SGR and cursor-aware CUP assembly.
 
-W3 sweeps five grids through 400×120, three content classes and four dirty
-fractions. On the GCC 14.2 reference host every combination stays inside both
-16.6 and 33.3 ms; the slowest is 100% combining-grapheme churn at 6.138 ms
-median / 6.190 ms p95. The 640×384 RGBA payload hash takes 1.041 ms median,
-close to the 0.965 ms scalar blend and ahead of SIMD in the dependency order.
-This supplies #89's scalar oracle; #88 remains open for W2/W4/W5.
+The same-host #88 harness measures median improvements of 74.8% for the
+640×384 payload hash, 55.2% for base64, 71.7% for ANSI half-block assembly,
+and 60.7-80.9% for fully changed 400×120 CJK/combining/ASCII frames. Static
+400×120 ASCII improves 26.7%. The headless game workload's average frame work
+falls from 0.784 to 0.419 ms and its submission pipeline from 0.722 to 0.354
+ms. These remain evidence, not timing gates.
 
-The payload hash moved from KittyDriver's anonymous namespace into private
-`src/lib/detail` so the harness observes the production function. No installed
-API, terminal protocol, default build, install, or consumer dependency changes.
+Cursor coalescing deliberately shortens changed-cell frames. A terminal-grid
+oracle pins the final contents for Kitty, ANSI and fallback; cursor assertions
+cover wide and combining glyphs, discontinuities, images and flush resets.
+Exhaustive base64
+lengths use an independent bit-stream oracle; all two-byte strings prove that
+the safe-text prescan agrees exactly with the canonical sanitizer; hash tests
+cover metadata, tails, every payload byte, determinism and the zero sentinel.
+Four direct mutations of those paths each fail their focused suite.
 
-GCC 14.2 and Clang 20.1.8 Release `-Werror` builds pass all 62 benchmark-enabled
-CTest targets. GCC ASan+UBSan with leak detection passes the ordinary 61-target
+GCC 14.2 and Clang 20.1.8 Release `-Werror` builds pass all 63 benchmark-enabled
+CTest targets. GCC ASan with leak detection passes the ordinary 62-target
 suite. GCC and Clang pass the subdirectory, installed-package and plain-vendored
-consumer paths; a Debug benchmark configuration is refused as designed. PR
-#242's hosted matrix passes all ten jobs: the benchmark smoke artifact, GCC
-13/14, Clang 19/20, Fedora GCC, ASan+UBSan, TSan, and both GCC 14 / Clang 20
-consumer jobs.
+consumer paths. PR #243's hosted matrix passes all ten jobs: benchmark smoke,
+GCC 13/14, Clang 19/20, Fedora GCC, ASan+UBSan, TSan, and the GCC 14 / Clang 20
+consumer jobs. The terminal-grid proof is complete offline, and the requested
+direct Kitty plus non-Kitty visual checks passed: forced Kitty, ANSI and
+fallback rendering stayed aligned through resize/view changes, including the
+wide- and combining-text cursor cases. Emulator versions were not captured.
 
 **How it got picked:** #225 still requires a human-controlled direct Kitty
-TTY. #238 had already shipped as v0.24.0, and #88's owner-authored residual
-order names the offline harness/W3 baseline before #89.
+TTY. #88's landed W3/kernel harness explicitly established #89 as the next
+offline dependency before #90 SIMD.
 
-**Next:** run #225 when a direct Kitty session is available; otherwise take
-#89 against these baselines.
+**Next:** release v0.26.0, then take #90 for the next kernel layer. #88 retains
+W2/W4/W5 and #225 retains the direct Kitty capture.
+
+## Previous release: v0.25.0
+
+**v0.25.0 — benchmark harness and cell-churn baseline.** The first offline
+slice of #88 adds a default-off, Release-only `termforge_bench` target with
+kernel and W3 production-cadence measurements, schema-versioned JSON and a
+non-timing CI smoke artifact. On the GCC 14.2 reference host all swept W3
+workloads through 400×120 stay inside both frame budgets; this supplies #89's
+scalar oracle while #88 retains W2/W4/W5.
+
+PR #242's hosted matrix passed all ten jobs and the release shipped on
+2026-08-13. The payload hash moved into private `src/lib/detail` so the harness
+observes production code without adding an installed API or dependency.
 
 ## Previous release: v0.24.0
 

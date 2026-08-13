@@ -405,6 +405,9 @@ class KittyDriver final : public TerminalDriver {
   // Active SGR attributes (#62) as the Attr bitmask's underlying value, -1 =
   // none emitted yet (see AnsiRgbDriver  text rendering is identical here).
   int m_cur_attrs{-1};
+  bool m_cursor_known{false};
+  int m_cursor_x{0};
+  int m_cursor_y{0};
   // SGR state the terminal has at the START of m_buf. A prepended placeholder
   // cleanup resets rendition while painting spaces, then restores this exact
   // state so the already-built frame remains valid even when its first text

@@ -125,6 +125,9 @@ inline constexpr std::array<WidthInterval, 16> kWide{{
   // and the "\0" continuation cell must not be re-measured as width 1).
   if (cp == 0) return 0;
   if (cp < 0x20 || (cp >= 0x7F && cp < 0xA0)) return 0;
+  // The first combining interval begins at U+0300 and the first wide interval
+  // later still. Printable ASCII and Latin/Greek therefore need no searches.
+  if (cp < 0x300) return 1;
   if (width_in_table(cp, kCombining.data(), kCombining.size())) return 0;
   if (width_in_table(cp, kWide.data(), kWide.size())) return 2;
   return 1;

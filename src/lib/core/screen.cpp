@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "detail/utf8.hpp"
+#include "detail/sanitize.hpp"
 #include "detail/width.hpp"
 #include "termforge/core/text.hpp"
 
@@ -71,8 +72,15 @@ auto Screen::write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
   // column 0 that does not exist. at() sinks the write, but `written` would
   // come back 1 for a screen with no columns.
   if (m_cols <= 0 || y < 0 || y >= m_rows || x >= m_cols) return 0;
-  const std::string clean = sanitize(text);
-  const std::string_view sv{clean};
+  // Borrow already-safe text. The predicate lives beside the canonical
+  // sanitizer and only answers true when Strip is the identity; every other
+  // byte shape still takes the allocation-owning sanitizer path.
+  std::string clean;
+  std::string_view sv = text;
+  if (!detail::is_strip_sanitized(text)) {
+    clean = sanitize(text);
+    sv = clean;
+  }
   int cx = x;  // MAY BE NEGATIVE: see the left-edge paragraph below
   int written = 0;
   // Place one grapheme per cell, advancing the column cursor by the glyph's

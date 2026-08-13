@@ -12,10 +12,32 @@ using termforge::detail::base64_encode;
 
 namespace {
 
+constexpr std::string_view kAlphabet =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
 auto to_bytes(const std::string& s) -> std::vector<std::byte> {
   std::vector<std::byte> out(s.size());
   for (std::size_t i = 0; i < s.size(); ++i)
     out[i] = static_cast<std::byte>(s[i]);
+  return out;
+}
+
+// Independent bit-stream oracle: deliberately not the production encoder's
+// three-byte grouping, indexed output, or tail branches.
+auto reference_base64(const std::vector<std::byte>& bytes) -> std::string {
+  std::string out;
+  unsigned bits = 0;
+  int available = 0;
+  for (const std::byte byte : bytes) {
+    bits = (bits << 8) | std::to_integer<unsigned char>(byte);
+    available += 8;
+    while (available >= 6) {
+      available -= 6;
+      out += kAlphabet[(bits >> available) & 0x3F];
+    }
+  }
+  if (available != 0) out += kAlphabet[(bits << (6 - available)) & 0x3F];
+  while (out.size() % 4 != 0) out += '=';
   return out;
 }
 
@@ -107,5 +129,17 @@ TEST_CASE("base64: encoded size formula", "[base64]") {
     const auto r = base64_encode(data);
     const auto expected = ((n + 2) / 3) * 4;
     REQUIRE(r.size() == expected);
+  }
+}
+
+TEST_CASE("base64: direct-write kernel matches an independent oracle at every tail",
+          "[base64][failure]") {
+  std::vector<std::byte> data;
+  data.reserve(8192);
+  for (std::size_t n = 0; n <= 8192; ++n) {
+    if (n != 0)
+      data.push_back(static_cast<std::byte>((n * 73U + (n >> 3U)) & 0xFFU));
+    INFO("length " << n);
+    REQUIRE(base64_encode(data) == reference_base64(data));
   }
 }

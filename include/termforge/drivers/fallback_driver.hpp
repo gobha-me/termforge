@@ -65,6 +65,9 @@ class FallbackDriver final : public TerminalDriver {
   // The sink lives on TerminalDriver since #178; m_buf stays per-driver
   // because hoisting the frame buffer is #148's business, not this one's.
   std::string m_buf;
+  bool m_cursor_known{false};
+  int m_cursor_x{0};
+  int m_cursor_y{0};
 };
 
 }  // namespace termforge

@@ -512,10 +512,11 @@ TEST_CASE("app pixels: the DEFAULT tier keeps cells and reaches no pixel",
   REQUIRE_FALSE(app.caps().kitty_graphics);
   REQUIRE_FALSE(app.caps().truecolor);
   CHECK(app.plate.pixel_calls == 0);
-  CHECK(app.wire().find("\033[1;1HQ") != std::string::npos);
-  CHECK(app.wire().find("\033[1;2HZ") != std::string::npos);
-  CHECK(app.wire().find("\033[1;3HJ") != std::string::npos);
-  CHECK(app.wire().find("\033[1;4HV") != std::string::npos);
+  // Observe the terminal grid, not one particular cursor spelling: #89 may
+  // omit redundant CUPs inside this adjacent run without changing a cell.
+  tfsupport::TerminalGrid grid{20, 8};
+  grid.feed(app.wire());
+  CHECK(grid.row_text(0).substr(0, 4) == "QZJV");
   CHECK(app.wire().find("\xE2\x96\x80") == std::string::npos);
   CHECK(total_transmits(app.wire()) == 0);
   CHECK(ids_named(app.wire()).empty());
@@ -810,10 +811,9 @@ TEST_CASE("app pixels: on_pixels stays outside the Baseline capability scope",
   REQUIRE_FALSE(app.caps().truecolor);
   CHECK(app.pixel_calls == 0);
   CHECK(app.plate.pixel_calls == 0);
-  CHECK(app.wire().find("\033[1;1HQ") != std::string::npos);
-  CHECK(app.wire().find("\033[1;2HZ") != std::string::npos);
-  CHECK(app.wire().find("\033[1;3HJ") != std::string::npos);
-  CHECK(app.wire().find("\033[1;4HV") != std::string::npos);
+  tfsupport::TerminalGrid grid{20, 8};
+  grid.feed(app.wire());
+  CHECK(grid.row_text(0).substr(0, 4) == "QZJV");
   CHECK(app.wire().find("\033_G") == std::string::npos);
 }
 
@@ -948,8 +948,10 @@ TEST_CASE("app pixels: MapWidget sprites reach ANSI and glyphs remain Baseline",
 
   MapSpriteApp baseline;
   baseline.run_with(std::make_unique<FallbackDriver>(), 2);
-  CHECK(baseline.wire.find("\x1b[2;1HR") != std::string::npos);
-  CHECK(baseline.wire.find("\x1b[2;3HB") != std::string::npos);
+  tfsupport::TerminalGrid grid{20, 8};
+  grid.feed(baseline.wire);
+  CHECK(grid.at(0, 1).text == "R");
+  CHECK(grid.at(2, 1).text == "B");
   CHECK(baseline.map.rasterization_count() == 0);
   CHECK(baseline.map.submission_count() == 0);
 }

@@ -31,6 +31,8 @@ TEST_CASE("char_width: Latin and ASCII are one column", "[width]") {
   REQUIRE(char_width(U' ') == 1);
   REQUIRE(char_width(U'~') == 1);
   REQUIRE(char_width(0x00E9) == 1);  // é
+  REQUIRE(char_width(0x02FF) == 1);  // fast-path upper boundary
+  REQUIRE(char_width(0x0300) == 0);  // first combining interval
 }
 
 TEST_CASE("char_width: CJK, fullwidth and emoji are two columns", "[width]") {
