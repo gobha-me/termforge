@@ -6,8 +6,47 @@ the deterministic properties belong in tests, while real-time numbers name the
 machine that produced them.
 
 This document begins with the game-readiness slice of issue #88. The broader
-kernel, paint, cell-churn, many-region and cross-terminal throughput sweeps
-remain open there.
+paint, many-region and cross-terminal throughput sweeps remain open there.
+
+## Reproducible kernel and cell-churn harness
+
+The default-off `termforge_BENCH` target is Release-only. Its output is a human
+table or schema-versioned JSON containing compiler/host metadata, calibrated
+sample batches, median/p95 durations, byte counts, and checksums. CI runs only
+`--smoke`, validates the JSON, and uploads it; no runner-dependent time is a
+pass/fail threshold.
+
+```bash
+cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -Dtermforge_BENCH=ON
+cmake --build build-bench -j4 --target termforge_bench
+./build-bench/bench/termforge_bench --format json --output benchmark.json
+```
+
+The kernel suite covers Kitty payload hashing and base64, Image fill/blit/blend,
+text sanitization and width, Cell comparison, ANSI half-block assembly, and
+Fallback luminance assembly. W3 drives the production cell cadence—mutate a
+`Screen`, `Renderer::present`, then the one frame `flush()`—through a counting
+sink at 80×24, 120×40, 200×50, 300×80, and 400×120. It crosses ASCII, CJK-wide,
+and combining graphemes with 0/10/50/100% dirty anchors.
+
+Reference run on 2026-08-13: GCC 14.2, Linux 6.12.74, x86-64 container host,
+nine calibrated samples after two warmups.
+
+| kernel (640×384 RGBA where applicable) | median | p95 | throughput |
+| --- | ---: | ---: | ---: |
+| payload hash | 1.041 ms | 1.086 ms | 900.4 MiB/s |
+| base64 | 1.338 ms | 2.489 ms | 700.6 MiB/s |
+| source-over blend | 0.965 ms | 0.986 ms | 971.2 MiB/s |
+| ANSI half-block assembly (80×24 cells) | 0.486 ms | 0.494 ms | 73,933 bytes/frame |
+| Fallback luminance (80×24 cells) | 0.008 ms | 0.009 ms | 2,079 bytes/frame |
+
+Every W3 combination passed the largest swept 400×120 size within both the
+16.6 ms and 33.3 ms budgets; no failing wall was reached. The slowest case was
+100% combining-grapheme churn at 6.138 ms median / 6.190 ms p95 and 567,600
+emitted bytes. At the same size, 100% ASCII churn was 5.234 ms and CJK-wide was
+3.195 ms. These measurements point
+to the serial payload hash and scalar frame-time work in #89 before #90 SIMD;
+they do not establish terminal throughput, which remains W5.
 
 ## 320x180 game workload
 

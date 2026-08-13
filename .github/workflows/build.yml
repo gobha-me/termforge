@@ -72,6 +72,45 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  benchmark-smoke:
+    # #88 performance numbers are artifacts, never CI thresholds. This job
+    # proves the Release-only harness stays buildable and its JSON stays
+    # machine-readable without making runner speed a pass/fail condition.
+    name: Benchmark smoke (GCC 14 Release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GCC 14
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-14
+
+      - name: Configure
+        run: >
+          cmake -B build
+          -DCMAKE_CXX_COMPILER=g++-14
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_FLAGS="-Werror"
+          -Dtermforge_BENCH=ON
+          -Dtermforge_BIN=OFF
+          -Dtermforge_EXAMPLES=OFF
+
+      - name: Build harness
+        run: cmake --build build --target termforge_bench -j$(nproc)
+
+      - name: Validate CLI and JSON
+        run: ctest --test-dir build -R '^benchmark-smoke$' --output-on-failure
+
+      - name: Record smoke evidence
+        run: ./build/bench/termforge_bench --smoke --format json --output benchmark-smoke.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: termforge-benchmark-smoke-gcc14
+          path: benchmark-smoke.json
+
   asan-ubsan:
     name: ASan + UBSan (GCC, Ubuntu latest)
     runs-on: ubuntu-latest

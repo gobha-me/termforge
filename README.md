@@ -135,6 +135,20 @@ cmake -B build-clang -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/clang.cmake \
 Sanitizer builds route through toolchain files (they actually apply the
 flags): `cmake/toolchain/address.cmake`, `cmake/toolchain/thread.cmake`.
 
+Performance evidence is a separate, Release-only developer target. It emits a
+human table or schema-versioned JSON and never fails on a timing threshold:
+
+```bash
+cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -Dtermforge_BENCH=ON
+cmake --build build-bench -j4 --target termforge_bench
+./build-bench/bench/termforge_bench --format json --output benchmark.json
+```
+
+Use `--suite kernels|w3|all`, `--samples N`, `--warmup N`, or `--smoke` to
+select the run. The W3 sweep records cell-rendering walls at 16.6 and 33.3 ms;
+results describe the named host/compiler and are not portable guarantees. See
+[docs/performance.md](docs/performance.md).
+
 ## Using TermForge in your project
 
 TermForge is stdlib-only — there are no transitive dependencies to satisfy.
@@ -187,6 +201,7 @@ history yields version `0.0.0.1`; packagers can pin it with
 | `termforge_EXAMPLES` | ON at top level, else OFF | the `examples/` demos |
 | `termforge_BIN` | ON at top level, else OFF | the `forge-top` system-monitor binary |
 | `termforge_INSTALL` | ON at top level, else OFF | generate `install()`/`export()` rules |
+| `termforge_BENCH` | OFF | Release-only performance evidence harness |
 
 Both consumption paths are exercised in CI by `tools/consume/run.sh`, on GCC
 and Clang.
