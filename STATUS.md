@@ -32,9 +32,11 @@ Four direct mutations of those paths each fail their focused suite.
 GCC 14.2 and Clang 20.1.8 Release `-Werror` builds pass all 63 benchmark-enabled
 CTest targets. GCC ASan with leak detection passes the ordinary 62-target
 suite. GCC and Clang pass the subdirectory, installed-package and plain-vendored
-consumer paths. The terminal-grid proof is complete offline; because emitted
-CUP traffic changes, merge still requires a direct Kitty and non-Kitty visual
-check under the project's terminal-protocol rule.
+consumer paths. PR #243's hosted matrix passes all ten jobs: benchmark smoke,
+GCC 13/14, Clang 19/20, Fedora GCC, ASan+UBSan, TSan, and the GCC 14 / Clang 20
+consumer jobs. The terminal-grid proof is complete offline; because emitted CUP
+traffic changes, merge still requires a direct Kitty and non-Kitty visual check
+under the project's terminal-protocol rule.
 
 **How it got picked:** #225 still requires a human-controlled direct Kitty
 TTY. #88's landed W3/kernel harness explicitly established #89 as the next
