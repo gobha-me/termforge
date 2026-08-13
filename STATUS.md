@@ -35,8 +35,9 @@ post/trace/demand suites pass. Both compilers pass the subdirectory and
 installed-package consumer paths, and the plain-vendored guard passes. Three
 direct mutations—restoring unconditional rendering, discarding an explicit
 request, and absorbing demand input for the full frame budget—each fail the
-focused suite. Hosted PR CI is pending. This changes no terminal protocol form,
-so no live-emulator gate applies.
+focused suite. PR #240's hosted matrix passes all nine jobs: GCC 13/14, Clang
+19/20, Fedora GCC, ASan+UBSan, TSan, and both GCC 14 / Clang 20 consumer jobs.
+This changes no terminal protocol form, so no live-emulator gate applies.
 
 **How it got picked:** #225 still needs a human-controlled direct Kitty
 session. The project memory and roadmap explicitly named #150 as the next
