@@ -28,7 +28,10 @@ API, terminal protocol, default build, install, or consumer dependency changes.
 GCC 14.2 and Clang 20.1.8 Release `-Werror` builds pass all 62 benchmark-enabled
 CTest targets. GCC ASan+UBSan with leak detection passes the ordinary 61-target
 suite. GCC and Clang pass the subdirectory, installed-package and plain-vendored
-consumer paths; a Debug benchmark configuration is refused as designed.
+consumer paths; a Debug benchmark configuration is refused as designed. PR
+#242's hosted matrix passes all ten jobs: the benchmark smoke artifact, GCC
+13/14, Clang 19/20, Fedora GCC, ASan+UBSan, TSan, and both GCC 14 / Clang 20
+consumer jobs.
 
 **How it got picked:** #225 still requires a human-controlled direct Kitty
 TTY. #238 had already shipped as v0.24.0, and #88's owner-authored residual
