@@ -65,6 +65,7 @@
 #include <string>
 #include <vector>
 
+#include "termforge/widgets/detail/dropdown.hpp"
 #include "termforge/widgets/detail/strip.hpp"
 #include "termforge/widgets/glyphs.hpp"
 #include "termforge/widgets/widget.hpp"
@@ -181,6 +182,11 @@ class MenuBar final : public Widget {
   // is the only closed->open transition there is, and only ever read while
   // open -- so nothing on the closing side has to remember to clear it.
   int m_scroll{0};
+  // Last painted open-list geometry (#96). Hover/press/hit_test for the list
+  // read this, not live dropdown_rect() + m_scroll, so a set_geometry between
+  // frames cannot commit against pixels the user never saw. Cleared on close
+  // and on content mutation; invalid until the first open draw.
+  detail::DropdownPaintSnapshot m_paint;
   int m_screen_rows{0};  // memoized from draw(); 0 = no frame yet (unclamped)
 
   // #76: the affordance that survives a driver which drops colour.

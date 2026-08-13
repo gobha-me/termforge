@@ -31,6 +31,11 @@ auto Select::add_option(std::string option) -> void {
   // empty box's m_line.empty() doubled as the staleness marker, so draw()
   // recomposed anyway; with the int as the sole sentinel the cache would
   // serve the stale empty value forever.
+  //
+  // Unlike set_options/clear, this does not close an open list -- but the
+  // painted rows are no longer the content under them (#96), so the hit
+  // snapshot must not survive until the next draw.
+  m_paint.clear();
   invalidate_line();
   mark_dirty();
 }
@@ -72,7 +77,11 @@ auto Select::dropdown_rect() const -> Rect {
 }
 
 auto Select::hit_test(int px, int py) const -> bool {
-  return rect().contains(px, py) || dropdown_rect().contains(px, py);
+  // The open list claims the LAST PAINTED rows (#96), not live
+  // dropdown_rect(): a set_geometry between frames must not steal clicks for
+  // geometry the screen has not shown, and must still deliver clicks on the
+  // pixels that are still there.
+  return rect().contains(px, py) || m_paint.contains(px, py);
 }
 
 auto Select::open_dropdown() -> void {
@@ -94,6 +103,7 @@ auto Select::close_dropdown() -> void {
   // (set_options, clear, set_selected, commit, focus loss), so the next open
   // never inherits a stale offset.
   m_scroll = 0;
+  m_paint.clear();  // no painted list to hit (#96)
   mark_dirty();
 }
 
@@ -126,6 +136,9 @@ auto Select::draw(Screen& screen) -> void {
   const Rect r = rect();
   m_screen_rows = screen.rows();  // dropdown_rect() clamps to this (#48/3)
   if (r.w <= 0 || r.h <= 0) {
+    // Nothing to paint, including no open list -- drop any prior hit snapshot
+    // so clicks cannot land on rows that are no longer on screen (#96).
+    m_paint.clear();
     clear_dirty();
     return;
   }
@@ -200,17 +213,28 @@ auto Select::draw(Screen& screen) -> void {
       /*scroll=*/m_scroll, /*label_pad=*/1, m_dropdown_fg, m_dropdown_bg,
       m_highlight_fg, m_highlight_bg, g,
       [this](int i) -> const std::string& { return m_list.at(i); });
+  // Memoize what was just painted (#96). Hover/press/hit_test read this until
+  // the next open draw (or until close / content mutation clears it).
+  m_paint.record(ddr, m_scroll);
 
   clear_dirty();
 }
 
 auto Select::handle_mouse(const MouseEvent& m) -> bool {
-  const Rect dr = dropdown_rect();
+  // #96: the open list is hit against the last paint, not live dropdown_rect()
+  // + m_scroll. Before the first open draw, or after a content mutation that
+  // cleared the snapshot, there is no dropdown hit target -- decline rather
+  // than commit against geometry the user has not seen.
+  const Rect dr = m_paint.valid ? m_paint.rect : Rect{0, 0, 0, 0};
+  const int paint_scroll = m_paint.valid ? m_paint.scroll : 0;
 
   // Wheel FIRST, then hover -- the #38 ordering trap both widgets now share
   // via detail/dropdown.hpp (#42 item 2). A stray scroll must not pick a form
   // value; consumed while open so it cannot reach the widget behind, even at an
-  // end stop where nothing moves.
+  // end stop where nothing moves. Visible height comes from the paint: a
+  // set_geometry that has not been drawn must not resize the scroll window.
+  // m_scroll is updated for the NEXT draw; m_paint.scroll stays until then so
+  // a press before the redraw still resolves the pixels on screen.
   const auto wheeled = detail::dropdown_wheel(m, dropdown_open(), *this,
                                               m_scroll, m_highlight,
                                               m_list.count(), dr.h);
@@ -221,7 +245,7 @@ auto Select::handle_mouse(const MouseEvent& m) -> bool {
   // Hover over the open list moves the highlight (MenuBar's behavior).
   if (!m.pressed) {
     int row = m_highlight;
-    if (detail::dropdown_hover_row(m, dropdown_open(), dr, m_scroll,
+    if (detail::dropdown_hover_row(m, dropdown_open(), dr, paint_scroll,
                                    m_list.count(), m_highlight, row)) {
       if (row != m_highlight) {
         m_highlight = row;
@@ -248,12 +272,12 @@ auto Select::handle_mouse(const MouseEvent& m) -> bool {
     return true;
   }
 
-  if (dropdown_open() && dr.contains(m.x, m.y)) {
-    // Through the shared mapper, not m.y - dr.y: the press path and the draw
-    // loop must resolve a screen row to the same option at any offset, and two
-    // hand-copies of that arithmetic is how #10's hit-span drift happened.
-    // -1 (a painted but empty tail row) commits nothing but stays consumed.
-    const int item = detail::dropdown_item_at(dr, m_scroll, m_list.count(), m.y);
+  if (dropdown_open() && m_paint.contains(m.x, m.y)) {
+    // Through the painted snapshot (#96) and the shared mapper (#10/#85): the
+    // press path resolves the row the user is looking at, not the row live
+    // geometry is about to show. -1 (empty tail) commits nothing but stays
+    // consumed.
+    const int item = m_paint.item_at(m_list.count(), m.y);
     if (item >= 0) commit(item);
     return true;
   }

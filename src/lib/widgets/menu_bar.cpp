@@ -43,17 +43,22 @@ auto MenuBar::set_menus(std::vector<Menu> menus) -> void {
   m_menus = std::move(menus);
   m_active = 0;
   m_selected = -1;  // closed: dropdown_open() derives from m_selected (#56/7)
+  m_paint.clear();  // content replaced; any prior paint is not this list (#96)
   mark_dirty();
 }
 
 auto MenuBar::add_menu(Menu menu) -> void {
   sanitize_menu(menu);
   m_menus.push_back(std::move(menu));
+  // Does not close an open dropdown, but the bar's content changed -- the
+  // painted hit snapshot must not outlive the content it describes (#96).
+  m_paint.clear();
   mark_dirty();
 }
 
 auto MenuBar::close_dropdown() -> void {
   m_selected = -1;  // the ONLY open/closed fact: dropdown_open() == >= 0
+  m_paint.clear();  // no painted list to hit (#96)
   mark_dirty();
 }
 
@@ -118,8 +123,11 @@ auto MenuBar::dropdown_rect(const TitleLayout* layout) const -> Rect {
 }
 
 auto MenuBar::hit_test(int px, int py) const -> bool {
-  return rect().contains(px, py) ||
-         (dropdown_open() && dropdown_rect().contains(px, py));
+  // The open list claims the LAST PAINTED rows (#96), not live
+  // dropdown_rect(): a set_geometry between frames must not steal clicks for
+  // geometry the screen has not shown, and must still deliver clicks on the
+  // pixels that are still there.
+  return rect().contains(px, py) || m_paint.contains(px, py);
 }
 
 auto MenuBar::open_menu(int index) -> void {
@@ -139,6 +147,7 @@ auto MenuBar::draw(Screen& screen) -> void {
   const Rect r = rect();
   m_screen_rows = screen.rows();  // dropdown_rect() clamps to this (#48/3, #53)
   if (r.w <= 0 || r.h <= 0) {
+    m_paint.clear();  // nothing on screen to hit (#96)
     clear_dirty();
     return;
   }
@@ -254,19 +263,32 @@ auto MenuBar::draw(Screen& screen) -> void {
         [&](int i) -> const std::string& {
           return menu.items[static_cast<std::size_t>(i)].label;
         });
+    // Memoize what was just painted (#96). Hover/press/hit_test read this until
+    // the next open draw (or until close / content mutation clears it).
+    m_paint.record(ddr, m_scroll);
+  } else {
+    m_paint.clear();
   }
 
   clear_dirty();
 }
 
 auto MenuBar::handle_mouse(const MouseEvent& m) -> bool {
-  const Rect dr = dropdown_rect();
+  // #96: the open list is hit against the last paint, not live dropdown_rect()
+  // + m_scroll. Before the first open draw, or after a content mutation that
+  // cleared the snapshot, there is no dropdown hit target -- decline rather
+  // than fire against geometry the user has not seen.
+  const Rect dr = m_paint.valid ? m_paint.rect : Rect{0, 0, 0, 0};
+  const int paint_scroll = m_paint.valid ? m_paint.scroll : 0;
   const int count = item_count();
 
   // Wheel FIRST, then hover -- the #38 ordering trap, now shared with Select
   // via detail/dropdown.hpp (#42 item 2). Scrolls the open dropdown's window
   // (#85), and is consumed even at an end stop so it cannot reach the widget
-  // behind.
+  // behind. Visible height comes from the paint: a set_geometry that has not
+  // been drawn must not resize the scroll window. m_scroll updates for the
+  // NEXT draw; m_paint.scroll stays until then so a press before the redraw
+  // still resolves the pixels on screen.
   const auto wheeled = detail::dropdown_wheel(m, dropdown_open(), *this,
                                               m_scroll, m_selected, count,
                                               dr.h);
@@ -277,7 +299,7 @@ auto MenuBar::handle_mouse(const MouseEvent& m) -> bool {
   // Hover over the open dropdown moves the selection highlight.
   if (!m.pressed) {
     int row = m_selected;
-    if (detail::dropdown_hover_row(m, dropdown_open(), dr, m_scroll, count,
+    if (detail::dropdown_hover_row(m, dropdown_open(), dr, paint_scroll, count,
                                    m_selected, row)) {
       if (row != m_selected) {
         m_selected = row;
@@ -320,11 +342,11 @@ auto MenuBar::handle_mouse(const MouseEvent& m) -> bool {
   }
 
   // Click on an open dropdown row: activate that item.
-  if (dropdown_open() && dr.contains(m.x, m.y)) {
-    // Through the shared mapper, not m.y - dr.y: press and paint must resolve a
-    // screen row to the same item at any offset, and two hand-copies of that
-    // arithmetic in two widgets is how #10's hit-span drift happened.
-    const int item = detail::dropdown_item_at(dr, m_scroll, count, m.y);
+  if (dropdown_open() && m_paint.contains(m.x, m.y)) {
+    // Through the painted snapshot (#96) and the shared mapper (#10/#85): the
+    // press resolves the row the user is looking at. -1 commits nothing but
+    // stays consumed.
+    const int item = m_paint.item_at(count, m.y);
     const auto& menu = m_menus[static_cast<std::size_t>(m_active)];
     if (item >= 0) {
       // Detach the action before closing — the action may mutate the menus.

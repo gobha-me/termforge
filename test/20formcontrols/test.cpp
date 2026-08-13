@@ -1443,47 +1443,75 @@ TEST_CASE("Select: a box on the LAST screen row reaches nothing, by design "
 }
 
 TEST_CASE("Select: a relayout between frames cannot desync click from paint "
-          "(#85, #10)", "[form][select][mouse][failure]") {
+          "(#85, #10, #96)", "[form][select][mouse][failure]") {
   // set_geometry() is public, non-virtual, and reachable while the list is
   // open, so an app that relayouts inside an event handler changes the window
-  // height before the widget gets a chance to re-clamp its offset. If the draw
-  // loop clamped a stale offset and the hit-test did not, a press landing in
-  // that gap would commit the option the row is ABOUT to show rather than the
-  // one drawn on it -- #10's hit-span drift, reachable only because #85 made
-  // the row->item map something other than the identity.
-  // Two widgets driven into the identical stale state, because a press both
-  // commits AND closes: `painter` shows what that row draws, `presser` shows
-  // what clicking it takes. Drawing heals the offset, so only the presser may
-  // stay undrawn -- which is exactly the window the bug lived in.
-  const std::vector<std::string> opts{"o0", "o1", "o2", "o3", "o4",
-                                      "o5", "o6", "o7", "o8", "o9"};
-  const auto stage = [&](Select& sel, Screen& s) {
-    sel.set_options(opts);
-    sel.set_geometry({0, 15, 12, 1});  // 4 rows fit: y=16..19
-    REQUIRE(sel.on_event(key(Key::Enter)));
-    sel.draw(s);
-    REQUIRE(sel.on_event(key(Key::End)));  // scrolled to the tail
-    sel.draw(s);
-    // The app moves the control to the top of the screen from an event
-    // handler. The window is 10 rows now and the stored offset is stale --
-    // its valid maximum just became 0.
-    sel.set_geometry({0, 0, 12, 1});
-  };
-  const int item_y = 1;  // first dropdown row under the new geometry
+  // before the widget gets a chance to redraw. #85 closed the out-of-range
+  // half (stale m_scroll past the new window); #96 closes the in-range half:
+  // hover/press resolve against the LAST PAINTED dropdown snapshot, not live
+  // dropdown_rect() + unrevealed scroll. set_geometry must NOT close the list
+  // (forms relayout every frame).
+  //
+  // Issue #96 repro: 12 options on a 12-row screen, End scrolls to show b..l
+  // at y=1..11, then the box moves to y=8 with no intervening draw. Live
+  // geometry would accept y=9..11 through m_scroll==1 and commit b/c/d; the
+  // screen still shows j/k/l there. The press must take the painted item.
+  Screen s{12, 12};
+  Select sel;
+  sel.set_options({"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"});
+  sel.set_geometry({0, 0, 12, 1});  // 11 rows fit: y=1..11
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
+  REQUIRE(sel.on_event(key(Key::End)));
+  sel.draw(s);
+  REQUIRE(row_text(s, 1, 1, 1) == "b");
+  REQUIRE(row_text(s, 9, 1, 1) == "j");
+  REQUIRE(row_text(s, 11, 1, 1) == "l");
 
-  Screen s{20, 20};
-  Select painter;
-  stage(painter, s);
-  painter.draw(s);
-  const std::string drawn = row_text(s, item_y, 1, 2);
+  REQUIRE(sel.dropdown_open());
+  sel.set_geometry({0, 8, 12, 1});  // no draw -- live window would be y=9..11
+  REQUIRE(sel.dropdown_open());    // set_geometry must not close (#96)
 
-  Screen s2{20, 20};
-  Select presser;
-  stage(presser, s2);
-  REQUIRE(presser.on_event(press(3, item_y)));  // no draw in between
+  // New live rows are not yet painted: decline rather than commit unseen
+  // geometry. The painted rows at y=9..11 are still claimed and still resolve
+  // through the memoized scroll (== 1), so they commit j/k/l, never b/c/d.
+  REQUIRE_FALSE(sel.hit_test(3, 8));  // old box row, no longer ours
+  REQUIRE(sel.hit_test(3, 9));        // still painted
+  REQUIRE(sel.on_event(press(3, 9)));
+  REQUIRE(sel.selected_text() == "j");
+}
 
-  REQUIRE(drawn == "o0");                       // the clamped window's top
-  REQUIRE(opts[static_cast<std::size_t>(presser.selected())] == drawn);
+TEST_CASE("Select: an unpainted open list declines dropdown presses (#96)",
+          "[form][select][mouse][failure]") {
+  // Open without a draw: no snapshot yet, so a press where the list WILL
+  // appear must not commit. The closed-box toggle at rect() still works.
+  Select sel;
+  sel.set_options({"a", "b", "c", "d"});
+  sel.set_geometry({0, 0, 12, 1});
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(sel.dropdown_open());
+  REQUIRE_FALSE(sel.hit_test(3, 1));           // no paint yet
+  REQUIRE_FALSE(sel.on_event(press(3, 1)));    // decline
+  REQUIRE(sel.dropdown_open());
+  REQUIRE(sel.selected() == 0);                // untouched
+  REQUIRE(sel.on_event(press(3, 0)));          // box still toggles
+  REQUIRE_FALSE(sel.dropdown_open());
+}
+
+TEST_CASE("Select: content mutation clears the paint snapshot (#96)",
+          "[form][select][mouse][failure]") {
+  Screen s{12, 12};
+  Select sel;
+  sel.set_options({"a", "b", "c", "d", "e", "f"});
+  sel.set_geometry({0, 0, 12, 1});
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
+  REQUIRE(sel.hit_test(3, 2));
+  sel.add_option("g");  // does not close, but invalidates the paint
+  REQUIRE(sel.dropdown_open());
+  REQUIRE_FALSE(sel.hit_test(3, 2));
+  REQUIRE_FALSE(sel.on_event(press(3, 2)));
+  REQUIRE(sel.selected() == 0);
 }
 
 TEST_CASE("Select: a shrinking screen re-clamps a scrolled window (#85)",
