@@ -11,6 +11,7 @@
 #include <format>
 #include <initializer_list>
 #include <istream>
+#include <limits>
 #include <mutex>
 #include <ostream>
 #include <span>
@@ -207,6 +208,7 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
   const std::uint64_t prior_frame_index = m_frame_index;
   const TracePoint prior_trace_point = m_trace_point;
   const bool prior_frame_active = m_frame_active;
+  const bool prior_render_requested = m_render_requested;
 
   const auto& initial = playback->trace.header.initial_size;
   m_pushed_size = Size{initial.cols, initial.rows, initial.px_w, initial.px_h};
@@ -230,6 +232,7 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
     m_frame_index = prior_frame_index;
     m_trace_point = prior_trace_point;
     m_frame_active = prior_frame_active;
+    m_render_requested = prior_render_requested;
     m_playback.reset();
     if (pushed_caps) m_term.clear_capabilities();
   };
@@ -720,6 +723,7 @@ auto App::run() -> int {
   m_frame_index = 0;
   m_frame_active = false;
   m_trace_point = TracePoint::FrameStart;
+  m_render_requested = true;
   begin_recording_run();
   return run_loop();
 }
@@ -818,41 +822,46 @@ auto App::frame_step() -> void {
   // must be the tick that acts on it. Drawing then shows the state the tick
   // just produced rather than one frame of stale state.
   tick_step(frame_start);
-  m_pixel_regions.clear();
-  for (auto& region : m_persistent_pixels) {
-    region.seen = false;
-    region.pending_content = false;
-    region.pending_visible = false;
-    region.touched_wire = false;
+  const bool requested = std::exchange(m_render_requested, false);
+  const bool rendered =
+      m_render_mode == RenderMode::Continuous || requested;
+  if (rendered) {
+    m_pixel_regions.clear();
+    for (auto& region : m_persistent_pixels) {
+      region.seen = false;
+      region.pending_content = false;
+      region.pending_visible = false;
+      region.touched_wire = false;
+    }
+    on_render(*m_screen);
+    render_overlays(*m_screen);
+    m_renderer->present(*m_screen);
+    restore_backdrop(*m_screen);  // the overlay pass leaves no trace behind
+    // #148: the frame's images queue AFTER its cell diff but in the SAME flush.
+    // The order inside the buffer is the one the terminal composites: the cell
+    // diff paints text and blanks first, and the image's placeholder/id grid is
+    // appended last so it is not overwritten by that diff -- collect_pixel_regions
+    // blanked the region's cells so present() emits spaces for them, and those
+    // spaces must precede, not follow, the image cells. queueing images last is
+    // also what makes "remove-then-write" single-buffer rather than a torn pair:
+    // a deletion/re-placement is emitted before the placeholder grid references it.
+    // flush_pixel_regions drives kitty's collection on EVERY RENDERED frame; a
+    // demand-idle frame deliberately does not touch driver state at all.
+    flush_pixel_regions();
+    m_renderer->flush();  // #148: ONE write carries the whole rendered frame
+    // #178: a sink that refused this frame's bytes surfaces as an ErrorEvent
+    // rather than a silently dropped frame. flush() is `-> void` and pure, so
+    // the driver latches the refusal and this is where it is read -- after the
+    // frame's SINGLE write above, so a frame carrying pixel regions is drained
+    // exactly once rather than once per write it used to split into. Queued
+    // through the same channel setup() uses for degradations, so it drains on
+    // the next frame's pump and dispatch_event routes it past the overlay stack.
+    auto output_error = m_driver->take_output_error();
+    finish_pixel_frame(!output_error.has_value());
+    if (output_error) m_input.push_error(std::move(*output_error));
   }
-  on_render(*m_screen);
-  render_overlays(*m_screen);
-  m_renderer->present(*m_screen);
-  restore_backdrop(*m_screen);  // the overlay pass leaves no trace behind
-  // #148: the frame's images queue AFTER its cell diff but in the SAME flush.
-  // The order inside the buffer is the one the terminal composites: the cell
-  // diff paints text and blanks first, and the image's placeholder/id grid is
-  // appended last so it is not overwritten by that diff -- collect_pixel_regions
-  // blanked the region's cells so present() emits spaces for them, and those
-  // spaces must precede, not follow, the image cells. queueing images last is
-  // also what makes "remove-then-write" single-buffer rather than a torn pair:
-  // a deletion/re-placement is emitted before the placeholder grid references it.
-  // flush_pixel_regions drives kitty's per-frame collection, so on the graphics
-  // tier it runs on EVERY frame (an image-free frame keeps the cadence exact).
-  flush_pixel_regions();
-  m_renderer->flush();  // #148: ONE write carries the whole frame
-  // #178: a sink that refused this frame's bytes surfaces as an ErrorEvent
-  // rather than a silently dropped frame. flush() is `-> void` and pure, so
-  // the driver latches the refusal and this is where it is read -- after the
-  // frame's SINGLE write above, so a frame carrying pixel regions is drained
-  // exactly once rather than once per write it used to split into. Queued
-  // through the same channel setup() uses for degradations, so it drains on
-  // the next frame's pump and dispatch_event routes it past the overlay stack.
-  auto output_error = m_driver->take_output_error();
-  finish_pixel_frame(!output_error.has_value());
-  if (output_error) m_input.push_error(std::move(*output_error));
   m_trace_point = TracePoint::Wait;
-  wait_frame(frame_start);
+  wait_frame(frame_start, rendered);
   ++m_frame_index;
   m_trace_point = TracePoint::End;
   m_frame_active = false;
@@ -918,23 +927,32 @@ auto App::wait_readable(int timeout_ms) -> bool {
 }
 
 auto App::wait_for_sources(int timeout_ms) -> bool {
-  if (timeout_ms < 0) timeout_ms = 0;
+  const bool indefinite = timeout_ms < 0;
 
   int post_fd = -1;
   {
     std::lock_guard lock{m_post_mutex};
     post_fd = m_post_read;
   }
-  if (post_fd < 0) return wait_readable(timeout_ms);
+  // A production run always owns the post pipe, so its indefinite wait reaches
+  // poll() below. Headless frame-step tests intentionally omit setup; use the
+  // largest supported finite timeout there so their protected readiness seam
+  // keeps its nonnegative contract and can model the wake deterministically.
+  if (post_fd < 0) {
+    return wait_readable(indefinite ? std::numeric_limits<int>::max()
+                                    : timeout_ms);
+  }
 
   // Poll the terminal and the self-pipe in one wait. Deadline handling mirrors
   // Terminal::wait_readable: SIGWINCH or another signal resumes only the
   // remaining budget instead of stretching or abandoning the frame.
   using Clock = std::chrono::steady_clock;
-  const auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms);
+  const auto deadline =
+      indefinite ? Clock::time_point::max()
+                 : Clock::now() + std::chrono::milliseconds(timeout_ms);
   while (true) {
     pollfd fds[2]{{m_term.io().in, POLLIN, 0}, {post_fd, POLLIN, 0}};
-    const int result = ::poll(fds, 2, timeout_ms);
+    const int result = ::poll(fds, 2, indefinite ? -1 : timeout_ms);
     if (result > 0) {
       const bool post_ready =
           (fds[1].revents & (POLLIN | POLLHUP | POLLERR)) != 0;
@@ -948,6 +966,12 @@ auto App::wait_for_sources(int timeout_ms) -> bool {
     }
     if (result == 0) return false;
     if (errno != EINTR) return false;
+    // A resize signal is itself a demand-mode source. Continuous frames keep
+    // their historical authoritative budget; demand frames wake promptly or
+    // the newly armed resize could be stranded in an indefinite wait.
+    if (m_render_mode == RenderMode::Demand && m_resize_pending.load())
+      return true;
+    if (indefinite) continue;
     const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
         deadline - Clock::now());
     if (left.count() <= 0) return false;
@@ -975,7 +999,8 @@ auto App::drain_input() -> int {
   return total;
 }
 
-auto App::wait_frame(std::chrono::steady_clock::time_point frame_start) -> void {
+auto App::wait_frame(std::chrono::steady_clock::time_point frame_start,
+                     bool rendered) -> void {
   // The frame's one and only wait. Two rules make the rate hold steady:
   //   * the deadline is absolute, measured from the *start* of the frame, so
   //     rendering time comes out of the budget rather than adding to it;
@@ -983,6 +1008,26 @@ auto App::wait_frame(std::chrono::steady_clock::time_point frame_start) -> void 
   //     the frame early. Those bytes dispatch at the top of the next frame.
   //     (The old loop returned the moment a byte landed, which is why the
   //     frame rate used to depend on whether the user was typing.)
+  // request_resize()/set_size() may be called after this frame's resize point,
+  // without a signal to interrupt poll. Demand mode must hand control straight
+  // to the next frame so the armed resize is consumed rather than sleeping.
+  if (m_render_mode == RenderMode::Demand && m_resize_pending.load()) return;
+
+  const bool demand_idle = m_running && m_render_mode == RenderMode::Demand &&
+                           !rendered && !m_render_requested &&
+                           !m_input.esc_pending();
+  if (demand_idle && !m_playback) {
+    // No timer is armed. A real run blocks in the terminal/post poll; a
+    // headless override sees INT_MAX as the nonnegative spelling of this wait.
+    if (wait_for_sources(-1)) {
+      // Bytes are deliberately only absorbed here. They are decoded and
+      // dispatched at the next frame's ordinary pump, preserving frame order.
+      (void)drain_input();
+      (void)std::exchange(m_post_woke, false);
+    }
+    return;
+  }
+
   auto deadline = frame_start + std::chrono::milliseconds(m_frame_ms);
   // The sanctioned overrun: a half-arrived escape sequence gets kEscGraceMs
   // to finish, even under a tighter budget, or a 16ms frame would chop every
@@ -1018,6 +1063,10 @@ auto App::wait_frame(std::chrono::steady_clock::time_point frame_start) -> void 
     // for the rest of the budget.
     const int input_bytes = drain_input();
     if (std::exchange(m_post_woke, false)) break;
+    // Continuous mode absorbs input without shortening the authoritative frame
+    // budget. Demand mode is latency-oriented once a source has work: end the
+    // wait, then dispatch at the next frame boundary.
+    if (m_render_mode == RenderMode::Demand && input_bytes > 0) break;
     if (input_bytes == 0) break;
   }
 }
@@ -1137,15 +1186,26 @@ auto App::on_event(const Event& ev) -> void {
 
 auto App::push_overlay(Widget& w, OverlayOptions opts) -> void {
   m_overlays.push_back(OverlayEntry{&w, opts});
+  request_render();
 }
 
 auto App::pop_overlay() -> void {
-  if (!m_overlays.empty()) m_overlays.pop_back();
+  if (m_overlays.empty()) return;
+  m_overlays.pop_back();
+  request_render();
 }
 
-auto App::clear_overlays() -> void { m_overlays.clear(); }
+auto App::clear_overlays() -> void {
+  if (m_overlays.empty()) return;
+  m_overlays.clear();
+  request_render();
+}
 
 auto App::dispatch_event(const Event& ev) -> void {
+  // Even an event the application declines is observable input and may have
+  // changed state in a routing callback. Demand mode coalesces this with any
+  // more specific request made below into the current frame's one render.
+  request_render();
   // Resize and error never get captured — the app underneath still owns its
   // layout, and a degradation notice must not be swallowed by a dialog.
   if (std::holds_alternative<ResizeEvent>(ev) ||

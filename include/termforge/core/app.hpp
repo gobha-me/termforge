@@ -102,6 +102,11 @@ concept WidgetRange = std::ranges::contiguous_range<R> &&
 //          modal; the app underneath is not meant to be visible).
 enum class Backdrop { None, Dim, Fill };
 
+// Whether App paints continuously at the configured frame cadence or settles
+// into a source-only wait once no callback asks for another frame. Continuous
+// is the compatibility default; Demand is opt-in (#150).
+enum class RenderMode { Continuous, Demand };
+
 struct OverlayOptions {
   Backdrop backdrop{Backdrop::Dim};
   // Opt in to closing the overlay when a press lands outside its hit_test.
@@ -486,6 +491,36 @@ class App {
   // must NOT fall through, or App::on_event's default would quit() on the
   // Escape that was meant to cancel the dialog.
   auto dispatch_event(const Event& ev) -> void;
+
+  // Rendering policy. Continuous preserves the historical loop exactly: one
+  // render per frame at frame_ms(). Demand renders the initial frame, then
+  // coalesces invalidations into one render and sleeps once the first
+  // non-requesting tick proves the application is quiet.
+  //
+  // Input events, posted events, resizes and overlay-stack changes invalidate
+  // automatically. Application state changed from on_tick() or another
+  // loop-thread callback calls request_render(). A request made before the
+  // render point paints that frame; one made from on_render() is retained for
+  // the next frame. Multiple requests coalesce.
+  //
+  // A rendered demand frame still pays one ordinary frame budget and runs the
+  // following tick. An animation continues by requesting a render from every
+  // tick; the first tick that does not request one skips draw/pixel/flush work
+  // and blocks for input, a post or resize. This keeps simulation and drawing
+  // separate without a fixed-rate idle wakeup.
+  //
+  // Like every App operation except post(), both functions are loop-thread
+  // only. An off-thread producer posts an Event; request_render() deliberately
+  // neither locks nor writes the wake pipe.
+  auto set_render_mode(RenderMode mode) noexcept -> void {
+    if (m_render_mode == mode) return;
+    m_render_mode = mode;
+    request_render();
+  }
+  [[nodiscard]] auto render_mode() const noexcept -> RenderMode {
+    return m_render_mode;
+  }
+  auto request_render() noexcept -> void { m_render_requested = true; }
 
   // Frame budget (ms) — authoritative, not a hint. The loop spends exactly
   // this long per frame: it renders, then waits out whatever is left of the
@@ -1009,7 +1044,8 @@ class App {
   // Wait out the rest of this frame's budget, absorbing (but not dispatching)
   // any input that arrives. Dispatch happens at the top of the next frame,
   // which is what keeps the frame rate independent of input activity.
-  auto wait_frame(std::chrono::steady_clock::time_point frame_start) -> void;
+  auto wait_frame(std::chrono::steady_clock::time_point frame_start,
+                  bool rendered) -> void;
   auto begin_recording_run() -> void;
   auto finish_recording(bool clean) -> void;
   auto fail_recording(ErrorEvent error) -> void;
@@ -1138,6 +1174,10 @@ class App {
   // Borrowed deterministic time source, or nullptr for std::steady_clock.
   // Never changed by a live loop; see set_clock().
   SyntheticClock* m_clock{nullptr};
+  RenderMode m_render_mode{RenderMode::Continuous};
+  // Coalesced loop-thread invalidation. Cleared at the render decision point,
+  // so a request made from on_render() belongs to the following frame.
+  bool m_render_requested{true};
   int m_frame_ms{33};  // ~30fps: the loop's default frame budget
   // How long an incomplete escape sequence gets to finish arriving before a
   // lone ESC is committed as a genuine Escape keypress. A frame holding one

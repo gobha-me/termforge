@@ -55,6 +55,9 @@ auto main() -> int {
   termforge::SyntheticClock clock;
   clock.advance(std::chrono::duration<double>{0.25});
   ScriptedApp scripted;
+  scripted.set_render_mode(termforge::RenderMode::Demand);
+  if (scripted.render_mode() != termforge::RenderMode::Demand) return 1;
+  scripted.request_render();
   scripted.set_clock(&clock);
   scripted.set_tick_hz(10);
   scripted.set_max_tick_dt(std::chrono::duration<double>::zero());

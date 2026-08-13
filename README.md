@@ -17,7 +17,7 @@ for tests.
 ## Status
 
 Core framework, KittyDriver, the widget system, mouse routing, and the
-`forge-top` dogfooding application are landed and tested across 60 CTest targets;
+`forge-top` dogfooding application are landed and tested across 61 CTest targets;
 GCC 13/14 + Clang 19/20 are green in CI, ASan/UBSan is clean, and the
 cross-thread event path has a focused TSan gate.
 
@@ -86,6 +86,12 @@ Landed and verified:
   posted-event timing; `play` feeds the artifact back through the production
   decoder and frame loop under recorded capabilities. See
   [docs/input-traces.md](docs/input-traces.md).
+  `RenderMode::Demand` is an opt-in idle policy: input, posts, resizes,
+  overlays, and `request_render()` coalesce into one render, then the loop
+  blocks at zero draw/flush work after the first tick that requests nothing.
+  Continuous rendering remains the default. An animation calls
+  `request_render()` from each `on_tick()` that changed visible state; an
+  off-thread producer keeps using the thread-safe `post(Event)` wake path.
   Widgets get the same hook — `Widget::on_tick(dt)`, forwarded by the app with
   `tick_widgets(dt, {…})`, or a `std::vector<Widget*>` when they live in a
   container — so a ProgressBar's pulse and a Button's press flash are measured

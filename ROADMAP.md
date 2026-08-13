@@ -59,7 +59,16 @@ completed items.
 > bounded versioned artifact. Playback reapplies the recorded size/capabilities,
 > advances synthetic time and feeds `Input` through the ordinary App cadence.
 > Malformed escapes remain decoder fixtures, and byte-identical rendering makes
-> timing load-bearing. **#150** is the next offline loop-layer issue.
+> timing load-bearing. These layers supply the deterministic foundation for
+> #150 below.
+>
+> **2026-08-13 — demand-driven rendering.** **#150** adds opt-in
+> `RenderMode::Demand`. Rendered frames arm one ordinary follow-up tick; the
+> first tick that requests no render skips the complete draw/pixel/flush path
+> and blocks on terminal input, the post self-pipe, or resize. Continuous mode
+> remains the compatibility default, while input/post/resize/overlay changes
+> and explicit `request_render()` coalesce into one demand frame. RTT pacing
+> was deliberately rejected: latency is not congestion or sink capacity.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
@@ -86,6 +95,8 @@ completed items.
   zero-wall-time frame waits, and exact fixed-timestep testing
 - Raw-input traces (#120) — portable record/playback artifacts through the real
   decoder, resize/post boundaries, synthetic time and production frame loop
+- Demand-driven rendering (#150) — opt-in source-woken idle, coalesced
+  invalidation and zero draw/flush work once the application settles
 
 ---
 
@@ -247,7 +258,7 @@ completed items.
 9. ~~**forge-top demo (issue #16)**~~ **DONE** — btop-style dogfooding harness
 10. ~~**Supported App loop-source API (#118)**~~ **DONE** — deterministic
     consumer overrides compile through installed headers
-11. **Deterministic loop chain** — ~~synthetic clock (#119)~~ and ~~raw-input
-    playback (#120)~~ **DONE**; next opt-in demand rendering (#150)
+11. ~~**Deterministic loop chain** — synthetic clock (#119), raw-input
+    playback (#120), and opt-in demand rendering (#150)~~ **DONE**
 12. **Epic 5 (Sixel)** — kitty + half-blocks bracket the matrix
 13. **Epic 6.2-6.5 (Polish)** — as time allows

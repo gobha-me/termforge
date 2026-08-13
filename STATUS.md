@@ -4,9 +4,50 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-12, latest)
+## Where we are (2026-08-13, latest)
 
-**Pending release: v0.22.0 — deterministic raw-input traces.** #120 adds
+**Pending release: v0.23.0 — demand-driven App rendering.** #150 adds the
+opt-in `RenderMode::Demand` policy, `App::set_render_mode`,
+`App::render_mode`, and loop-thread-only `App::request_render`. Continuous
+rendering remains the compatibility default. A demand run paints its initial
+frame, gives every painted frame its ordinary budget and one follow-up tick,
+then skips the complete draw/pixel/flush path and blocks without an idle timer
+when that tick asks for nothing.
+
+Terminal events, posted events, effective resizes, and overlay-stack changes
+invalidate automatically; explicit requests coalesce into the same frame.
+Input wakes a finite demand wait promptly but is still dispatched at the next
+ordinary frame boundary. A post or resize also wakes the source poll, while an
+animation continues by requesting a render from every `on_tick` that changes
+visible state. RTT is deliberately absent: latency is not congestion or sink
+capacity.
+
+`test/57demand` observes both the bounded production frame shape and real
+terminal/self-pipe polling. It pins the continuous default, initial and idle
+flush counts, request coalescing and render-time ordering, event/resize/overlay
+invalidation, quiet quit behavior, post wakeup, terminal-input latency, and
+record/playback equivalence. The installed consumer fixture compiles and links
+the new public API.
+
+GCC 14.2 and Clang 20.1.8 Release `-Werror` builds pass 61/61 CTest targets.
+GCC ASan+UBSan with leak detection passes 61/61; the focused GCC TSan
+post/trace/demand suites pass. Both compilers pass the subdirectory and
+installed-package consumer paths, and the plain-vendored guard passes. Three
+direct mutations—restoring unconditional rendering, discarding an explicit
+request, and absorbing demand input for the full frame budget—each fail the
+focused suite. Hosted PR CI is pending. This changes no terminal protocol form,
+so no live-emulator gate applies.
+
+**How it got picked:** #225 still needs a human-controlled direct Kitty
+session. The project memory and roadmap explicitly named #150 as the next
+offline loop layer after the shipped #28, #118, #119, and #120 prerequisites.
+
+**Next:** run #225's direct Kitty acceptance capture when that environment is
+available; otherwise refresh the open issue queue after this release.
+
+## Previous release: v0.22.0
+
+**v0.22.0 — deterministic raw-input traces.** #120 adds
 `App::start_recording`, `stop_recording` and `play`. A trace captures exact raw
 read chunks, frame-start and chunk timestamps, effective resizes, posted-event
 snapshots, initial size and terminal capabilities. Playback applies those facts
