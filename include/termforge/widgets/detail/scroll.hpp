@@ -1,6 +1,7 @@
 #pragma once
 
-// TermForge -- scroll-window clamping for list-like widgets.
+// TermForge -- scroll-window clamping and screen-row → item mapping for
+// list-like widgets.
 //
 // ListWidget and RadioGroup (and #21's shared scrollbar) all keep the same
 // three-int state -- item count, selected index, scroll offset -- and the
@@ -8,6 +9,11 @@
 // scroll never runs past the content. Before this header existed the clamp
 // was a byte-identical copy in each widget, which is how a geometry-shrink
 // re-clamp fixed in one place failed to reach the other (#41).
+//
+// #95 adds row_item_at: the single screen-row → item mapper those widgets
+// (plus TableWidget's header-inset variant and the dropdowns via the thin
+// dropdown_item_at wrapper) share for draw, hover, press and scrollbar-page
+// paths, so an open-coded `m.y - rect().y` cannot drift from what paint shows.
 //
 // PUBLIC (include/termforge/widgets/detail/), not the library's private
 // src/lib include dir. It lived there until #85, when the dropdown skeleton
@@ -18,6 +24,8 @@
 // kill. Same namespace, same signature, same constexpr; only the path moved.
 
 #include <algorithm>
+
+#include "termforge/core/types.hpp"
 
 namespace termforge::detail {
 
@@ -89,6 +97,36 @@ namespace termforge::detail {
   scroll = std::clamp(scroll, 0, std::max(0, count - visible_rows));
   const int last = std::min(count, scroll + visible_rows) - 1;
   return std::clamp(selected, scroll, last);
+}
+
+// The ONE screen-row → item mapping for every list-like viewport (#95).
+//
+// `dest` is the widget's full destination rect. `header_rows` is the top inset
+// that is NOT content (TableWidget's column headers pass 1; ListWidget,
+// RadioGroup and dropdowns pass 0). `offset` is the first CONTENT item shown
+// in the remaining rows; it is re-clamped here against that content height so
+// draw, hover, press and scrollbar-page paths cannot disagree when a stored
+// offset is stale for the current geometry (the #85 review edge that made
+// dropdown_item_at clamp before mapping).
+//
+// Returns -1 for a y on the header, outside dest's content band, or past the
+// end of the content. Callers treat -1 as "no item here" rather than clamping:
+// a press on a painted-but-empty tail row (or the table header) must select
+// nothing. TableWidget's header click staying inert is therefore this function
+// returning -1 for screen_y in [dest.y, dest.y + header_rows), not a separate
+// special case in the widget.
+[[nodiscard]] constexpr auto row_item_at(Rect dest, int header_rows, int offset,
+                                         int count, int screen_y) noexcept
+    -> int {
+  if (header_rows < 0) header_rows = 0;
+  if (count < 0) count = 0;
+  const int content_h = dest.h - header_rows;
+  if (content_h <= 0) return -1;
+  const int vi = screen_y - dest.y - header_rows;
+  if (vi < 0 || vi >= content_h) return -1;
+  offset = std::clamp(offset, 0, std::max(0, count - content_h));
+  const int item = offset + vi;
+  return (item >= 0 && item < count) ? item : -1;
 }
 
 }  // namespace termforge::detail

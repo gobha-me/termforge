@@ -154,11 +154,14 @@ auto TableWidget::draw(Screen& screen) -> void {
     cx += w + 1;  // 1-space gap between columns
   }
 
-  // Draw data rows (scrollable area: rows 1..h-1).
-  const int visible_rows = r.h - 1;
-  for (int vr = 0; vr < visible_rows; ++vr) {
-    const int row_idx = m_scroll + vr;
-    if (row_idx >= static_cast<int>(m_rows.size())) break;
+  // Draw data rows (scrollable area: rows 1..h-1). #95: each screen y resolves
+  // through row_item_at with header_rows=1 -- the same mapper the press path
+  // uses, so the header inset cannot drift into an open-coded `- 1`.
+  const int row_count = static_cast<int>(m_rows.size());
+  for (int y = r.y + 1; y < r.y + r.h; ++y) {
+    const int row_idx =
+        detail::row_item_at(r, /*header_rows=*/1, m_scroll, row_count, y);
+    if (row_idx < 0) continue;
 
     const auto& row = m_rows[static_cast<std::size_t>(row_idx)];
     const bool is_sel = (row_idx == m_selected);
@@ -170,14 +173,13 @@ auto TableWidget::draw(Screen& screen) -> void {
       const int w = std::min(widths[c], r.x + r.w - cx);
       const std::string& cell =
           c < row.size() ? row[c] : std::string{};
-      render_cell(screen, cx, r.y + 1 + vr, w, cell, m_columns[c].align,
-                  fg, bg);
+      render_cell(screen, cx, y, w, cell, m_columns[c].align, fg, bg);
       cx += w + 1;
     }
     // The marker in the selected row's gutter, with the row's own colours so
     // the highlight is one unbroken band across the full width.
     if (gutter > 0 && is_sel) {
-      screen.write_text(r.x, r.y + 1 + vr, marker(), fg, bg);
+      screen.write_text(r.x, y, marker(), fg, bg);
     }
   }
 
@@ -238,18 +240,21 @@ auto TableWidget::on_event(const Event& ev) -> bool {
       return true;
     }
     if (m->pressed && m->button == 0 && rect().contains(m->x, m->y)) {
-      // Header row: consumed but inert (reserved for future sorting).
-      if (m->y == rect().y) return true;
       // #21: a press on the scrollbar's column page-jumps the VIEW (the wheel
       // direction, not a selection -- a scrollbar click must not select a row
       // by accident, so this runs BEFORE the row mapping).
+      // #95: content-relative row uses the same header_rows=1 inset as
+      // row_item_at; a negative row is the header (consumed, inert -- including
+      // the cell directly above the strip).
+      constexpr int kHeaderRows = 1;
       if (m->x == rect().x + rect().w - 1 && scrollbar_visible()) {
-        const int data_rows = rect().h - 1;
+        const int data_rows = rect().h - kHeaderRows;
         const int page = std::max(1, data_rows);
         const auto [top, thumb_h] =
             detail::thumb_window(data_rows, static_cast<int>(m_rows.size()),
                                  m_scroll, data_rows);
-        const int row = m->y - rect().y - 1;
+        const int row = m->y - rect().y - kHeaderRows;
+        if (row < 0) return true;  // header above the strip: inert
         if (row < top) {
           m_scroll = detail::clamp_offset(
               m_scroll - page, static_cast<int>(m_rows.size()), data_rows);
@@ -262,8 +267,11 @@ auto TableWidget::on_event(const Event& ev) -> bool {
         mark_dirty();
         return true;
       }
-      const int clicked = m_scroll + (m->y - rect().y - 1);
-      if (clicked >= 0 && clicked < static_cast<int>(m_rows.size())) {
+      // Header row maps to -1 (reserved for future sorting); blank tail too.
+      const int clicked =
+          detail::row_item_at(rect(), kHeaderRows, m_scroll,
+                              static_cast<int>(m_rows.size()), m->y);
+      if (clicked >= 0) {
         m_selected = clicked;
         mark_dirty();
         if (m_on_select) {

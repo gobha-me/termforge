@@ -78,11 +78,12 @@ auto RadioGroup::draw(Screen& screen) -> void {
 
   const MarkGlyphs g = mark_glyphs(m_style);
 
-  for (int vr = 0; vr < r.h; ++vr) {
-    const int idx = m_scroll + vr;
-    const int y = r.y + vr;
+  // #95: paint through the same screen-row → item mapper the press path uses.
+  for (int y = r.y; y < r.y + r.h; ++y) {
+    const int idx =
+        detail::row_item_at(r, /*header_rows=*/0, m_scroll, m_list.count(), y);
 
-    if (idx >= m_list.count()) {
+    if (idx < 0) {
       // Own the whole rect: blank the rows past the end (widget.hpp).
       screen.fill_rect(r.x, y, r.w, 1, m_fg, m_bg);
       continue;
@@ -153,9 +154,9 @@ auto RadioGroup::on_event(const Event& ev) -> bool {
     if (m->scroll_up || m->scroll_down) return false;
 
     if (m->pressed && m->button == 0 && rect().contains(m->x, m->y)) {
-      const int clicked = m_scroll + (m->y - rect().y);
-      if (clicked >= 0 && clicked < m_list.count())
-        select(clicked);
+      const int clicked = detail::row_item_at(rect(), /*header_rows=*/0, m_scroll,
+                                             m_list.count(), m->y);
+      if (clicked >= 0) select(clicked);
       // A press on a blank row inside the rect is consumed and inert, so it
       // cannot fall through to whatever is underneath.
       return true;

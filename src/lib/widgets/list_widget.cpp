@@ -84,12 +84,15 @@ auto ListWidget::draw(Screen& screen) -> void {
   // so a list's text does not reflow as it grows past the view.
   const int max_w = r.w - gutter - 1;
 
-  for (int vr = 0; vr < r.h; ++vr) {
-    const int idx = m_scroll + vr;
-    const int y = r.y + vr;
+  // #95: every visible screen row resolves through row_item_at, the same
+  // mapper the press path uses -- so a click cannot land on a row other than
+  // the one painted here.
+  for (int y = r.y; y < r.y + r.h; ++y) {
+    const int idx =
+        detail::row_item_at(r, /*header_rows=*/0, m_scroll, m_list.count(), y);
 
-    if (idx >= m_list.count()) {
-      // Blank remaining rows.
+    if (idx < 0) {
+      // Blank remaining / out-of-content rows.
       screen.fill_rect(r.x, y, r.w, 1, m_fg, m_bg);
       continue;
     }
@@ -193,9 +196,11 @@ auto ListWidget::on_event(const Event& ev) -> bool {
         // Above the thumb pages up, below it pages down; on the thumb the
         // click is inert (the drag the issue leaves as a stretch -- #96's
         // mid-press relayout class is why v1 does click-only).
+        // Content-relative row uses header_rows=0 -- same inset row_item_at
+        // uses for the selection path below (#95).
         const auto [top, thumb_h] =
             detail::thumb_window(rect().h, m_list.count(), m_scroll, rect().h);
-        const int row = m->y - rect().y;
+        const int row = m->y - rect().y;  // header_rows = 0
         if (row < top) {
           m_scroll = detail::clamp_offset(m_scroll - page, m_list.count(),
                                           rect().h);
@@ -208,8 +213,9 @@ auto ListWidget::on_event(const Event& ev) -> bool {
         mark_dirty();
         return true;
       }
-      const int clicked = m_scroll + (m->y - rect().y);
-      if (clicked >= 0 && clicked < m_list.count()) {
+      const int clicked = detail::row_item_at(rect(), /*header_rows=*/0, m_scroll,
+                                             m_list.count(), m->y);
+      if (clicked >= 0) {
         set_selected(clicked);
         if (m_on_select) {
           // Copy the item — see the keyboard path above.

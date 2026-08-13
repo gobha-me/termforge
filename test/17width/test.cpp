@@ -200,3 +200,51 @@ TEST_CASE("clamp_scroll: a selection past the content cannot blank the window",
   REQUIRE(clamp_scroll(0, 5, 3, 2) == 1);  // selected->2, window follows: 1..2
   REQUIRE(clamp_scroll(0, 5, 3, 2) <= 3 - 2);
 }
+
+// ── row_item_at: shared screen-row → item mapper (#95) ───────────────────────
+
+TEST_CASE("row_item_at: header_rows=0 maps like a list/dropdown", "[scroll]") {
+  // dest at (2, 5), h=3, no header: screen y 5/6/7 → items offset+0/1/2.
+  const termforge::Rect dest{2, 5, 10, 3};
+  REQUIRE(row_item_at(dest, 0, /*offset=*/0, /*count=*/10, /*screen_y=*/5) == 0);
+  REQUIRE(row_item_at(dest, 0, 0, 10, 6) == 1);
+  REQUIRE(row_item_at(dest, 0, 0, 10, 7) == 2);
+  REQUIRE(row_item_at(dest, 0, /*offset=*/4, 10, 5) == 4);
+  REQUIRE(row_item_at(dest, 0, 4, 10, 7) == 6);
+  // Outside the content band, or past the end of the items: -1.
+  REQUIRE(row_item_at(dest, 0, 0, 10, 4) == -1);
+  REQUIRE(row_item_at(dest, 0, 0, 10, 8) == -1);
+  REQUIRE(row_item_at(dest, 0, 0, 2, 7) == -1);  // only items 0..1 exist
+}
+
+TEST_CASE("row_item_at: header_rows=1 leaves the header inert", "[scroll]") {
+  // TableWidget shape: one header row, then data. A click on dest.y must NOT
+  // select item 0 -- that is the acceptance mutation for #95 (changing the
+  // inset must fail these tests rather than let one open-coded `-1` drift).
+  const termforge::Rect dest{0, 0, 20, 4};  // header + 3 data rows
+  REQUIRE(row_item_at(dest, 1, 0, 10, /*screen_y=*/0) == -1);  // header
+  REQUIRE(row_item_at(dest, 1, 0, 10, 1) == 0);
+  REQUIRE(row_item_at(dest, 1, 0, 10, 2) == 1);
+  REQUIRE(row_item_at(dest, 1, 0, 10, 3) == 2);
+  REQUIRE(row_item_at(dest, 1, /*offset=*/5, 10, 1) == 5);
+  REQUIRE(row_item_at(dest, 1, 5, 10, 3) == 7);
+  // Same y with header_rows=0 would have selected item 0 -- the two modes
+  // disagree on purpose, and that disagreement is the whole point of the arg.
+  REQUIRE(row_item_at(dest, 0, 0, 10, 0) == 0);
+  REQUIRE(row_item_at(dest, 1, 0, 10, 0) == -1);
+}
+
+TEST_CASE("row_item_at: a stale offset is re-clamped before mapping",
+          "[scroll][failure]") {
+  // The #85 review edge: draw clamped and hit-test trusted a stranded offset.
+  // With count=5 and content_h=3 the max offset is 2; an offset of 99 must map
+  // as if it were 2, not invent items past the content.
+  const termforge::Rect dest{0, 0, 8, 3};
+  REQUIRE(row_item_at(dest, 0, 99, 5, 0) == 2);
+  REQUIRE(row_item_at(dest, 0, 99, 5, 2) == 4);
+  // Table inset: content_h = h - 1 = 2, max offset = 3 for count 5.
+  const termforge::Rect table{0, 0, 8, 3};
+  REQUIRE(row_item_at(table, 1, 99, 5, 0) == -1);  // header still inert
+  REQUIRE(row_item_at(table, 1, 99, 5, 1) == 3);
+  REQUIRE(row_item_at(table, 1, 99, 5, 2) == 4);
+}
