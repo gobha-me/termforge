@@ -39,6 +39,18 @@ file is the tactical version.
   in its UI.
   `Severity` defaults to `Info` on the `ErrorEvent` aggregate, which is a
   default rather than a recommendation — pick deliberately.
+  **Sanctioned exception — `AppRequirements` (#91).** An app may declare a
+  structured floor (`graphics`, `truecolor`, key press/repeat/release, min
+  cell grid, optional known/minimum cell-pixel extent) via `App::require`.
+  Default is empty (degrade as today). Evaluation is a pure function of the
+  declared value plus probe/size/cell-geometry facts, run after driver
+  selection and cell-geometry setup but **before `enter_screen()`**. Startup
+  refusal is `Severity::Error`; raw mode is unwound and the diagnostic lands
+  on the normal screen. A live resize below the floor emits a
+  requirements-transition `ErrorEvent`, latches `requirements_met() == false`,
+  and suppresses enhanced image submission until restored — the framework does
+  **not** invent a modal. Unknown cell geometry fails only when geometry was
+  required.
 - **Every frame is metered, and the meter is per-driver** (#139, #147). A
   driver's `flush()` calls `tally_frame(written)` exactly once with the byte
   count it handed to the sink; image paths call `tally_image_transmit` /

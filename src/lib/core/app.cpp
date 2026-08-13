@@ -644,6 +644,12 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
   m_renderer = std::make_unique<Renderer>(*m_driver);
   push_cell_pixel_size(size);
 
+  // #91: evaluate the app's floor after probe/driver/size/cell geometry are
+  // known, and before the alt-screen. A refusal leaves raw mode entered —
+  // run() (or the caller of test_setup) must tear it down — but never paints
+  // into a buffer the user will not see.
+  if (auto r = check_requirements_startup(size); !r) return r;
+
   m_term.enter_screen();
   m_in_screen = true;
   g_active.store(this, std::memory_order_relaxed);
@@ -811,6 +817,10 @@ auto App::frame_step() -> void {
     // after and the first frame of every resize rasterizes at the old cell
     // geometry, which under kitty is a visibly wrong scale.
     push_cell_pixel_size(size);
+    // #91: re-evaluate the floor on every resize. Crossing it is an event and
+    // a latch that suppresses enhanced submission — not a modal the framework
+    // invents, and not a silent downgrade.
+    update_requirements_on_resize(size);
     dispatch_event(ResizeEvent{size.cols, size.rows});
   }
   m_trace_point = TracePoint::InputPump;
@@ -1399,7 +1409,11 @@ auto App::render_pixel_regions(Widget& widget) -> void {
 }
 
 auto App::collect_pixel_regions(Widget& widget) -> void {
-  if (!m_driver || !enhanced_image_path(*m_driver)) return;
+  // Below the declared floor, keep the authored cell Baseline and do not ask
+  // widgets for enhanced frames (#91). The app observes requirements_met() /
+  // the transition ErrorEvent and decides whether to show its own UI.
+  if (!m_driver || !enhanced_image_path(*m_driver) || !m_requirements_met)
+    return;
 
   const auto regions = widget.pixel_regions();
   for (std::size_t ordinal = 0; ordinal < regions.size(); ++ordinal) {
@@ -1491,7 +1505,8 @@ auto App::flush_pixel_regions() -> void {
   // Keep the application hook on the same capability gate as the region path:
   // Kitty gets native placements, ANSI truecolour gets half-block raster, and
   // Baseline keeps its authored cells (#108).
-  const bool enhanced = m_driver && enhanced_image_path(*m_driver);
+  const bool enhanced =
+      m_driver && enhanced_image_path(*m_driver) && m_requirements_met;
 
   // Ungated: m_pixel_regions can only be non-empty if collect_pixel_regions
   // already passed the same test.
@@ -1830,6 +1845,41 @@ auto App::push_cell_pixel_size(Size size) -> void {
     cell = Extent{size.px_w / size.cols, size.px_h / size.rows};
   }
   m_driver->set_cell_pixel_size(cell);
+}
+
+auto App::requirement_facts_for(Size size) const -> AppRequirementFacts {
+  return make_requirement_facts(m_caps, size.cols, size.rows, size.px_w,
+                                size.px_h);
+}
+
+auto App::check_requirements_startup(Size size)
+    -> std::expected<void, ErrorEvent> {
+  auto result =
+      evaluate_requirements(m_requirements, requirement_facts_for(size),
+                            Severity::Error);
+  m_requirements_met = result.has_value();
+  return result;
+}
+
+auto App::update_requirements_on_resize(Size size) -> void {
+  if (requirements_empty(m_requirements)) {
+    m_requirements_met = true;
+    return;
+  }
+  auto result =
+      evaluate_requirements(m_requirements, requirement_facts_for(size),
+                            Severity::Warning);
+  const bool met = result.has_value();
+  if (met == m_requirements_met) return;
+  m_requirements_met = met;
+  if (met) {
+    m_input.push_error(ErrorEvent{
+        Severity::Info, "requirements",
+        "terminal size restored above the declared AppRequirements floor; "
+        "enhanced submission resumed."});
+  } else {
+    m_input.push_error(std::move(result.error()));
+  }
 }
 
 }  // namespace termforge
