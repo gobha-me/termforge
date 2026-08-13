@@ -11,6 +11,8 @@
 #include "detail/placement.hpp"
 #include "detail/sample.hpp"
 #include "detail/sgr_attrs.hpp"
+#include "detail/terminal_output.hpp"
+#include "detail/width.hpp"
 
 namespace termforge {
 
@@ -29,7 +31,7 @@ void AnsiRgbDriver::draw_text(int x, int y, std::string_view text, Rgb fg,
                               Rgb bg, Attr attrs) {
   // NOTE: `text` must already be sanitized (no C0/C1/ESC) by the renderer;
   // drivers emit bytes verbatim.
-  m_buf += std::format("\033[{};{}H", y + 1, x + 1);
+  detail::append_cursor(m_buf, x, y, m_cursor_known, m_cursor_x, m_cursor_y);
 
   const int attr_id = static_cast<int>(static_cast<std::uint8_t>(attrs));
   if (attr_id != m_cur_attrs) {
@@ -48,14 +50,16 @@ void AnsiRgbDriver::draw_text(int x, int y, std::string_view text, Rgb fg,
   // calls — the renderer visits cells left-to-right, top-to-bottom).
   const int fg_id = rgb_id(fg), bg_id = rgb_id(bg);
   if (fg_id != m_cur_fg) {
-    m_buf += std::format("\033[38;2;{};{};{}m", fg.r, fg.g, fg.b);
+    detail::append_sgr_rgb(m_buf, 38, fg);
     m_cur_fg = fg_id;
   }
   if (bg_id != m_cur_bg) {
-    m_buf += std::format("\033[48;2;{};{};{}m", bg.r, bg.g, bg.b);
+    detail::append_sgr_rgb(m_buf, 48, bg);
     m_cur_bg = bg_id;
   }
   m_buf += text;
+  detail::advance_cursor(m_cursor_known, m_cursor_x,
+                         detail::display_width(text));
 }
 
 auto AnsiRgbDriver::preferred_pixel_extent(Rect cells) const noexcept
@@ -190,7 +194,8 @@ auto AnsiRgbDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
   // px.h - 1 would DUPLICATE a source row, which is the very artifact Exact
   // exists to prevent, so the lower half is transparent black instead.
   for (int row = 0; row < cover_h; row += 2) {
-    m_buf += std::format("\033[{};{}H", cells.y + row / 2 + 1, cells.x + 1);
+    detail::append_cursor(m_buf, cells.x, cells.y + row / 2, m_cursor_known,
+                          m_cursor_x, m_cursor_y);
     const int sy_up = map(row, px.h, dst.h);
     const bool have_lo = row + 1 < cover_h;
     const int sy_lo = have_lo ? map(row + 1, px.h, dst.h) : 0;
@@ -201,15 +206,16 @@ auto AnsiRgbDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
           have_lo ? detail::rgba_at(rgba, px, sx, sy_lo) : Pixel{0, 0, 0, 0};
       const int fg = rgb_id(up), bg = rgb_id(lo);
       if (fg != cur_fg) {
-        m_buf += std::format("\033[38;2;{};{};{}m", up.r, up.g, up.b);
+        detail::append_sgr_rgb(m_buf, 38, Rgb{up.r, up.g, up.b});
         cur_fg = fg;
       }
       if (bg != cur_bg) {
-        m_buf += std::format("\033[48;2;{};{};{}m", lo.r, lo.g, lo.b);
+        detail::append_sgr_rgb(m_buf, 48, Rgb{lo.r, lo.g, lo.b});
         cur_bg = bg;
       }
       m_buf += "\xE2\x96\x80";  // U+2580 UPPER HALF BLOCK
     }
+    detail::advance_cursor(m_cursor_known, m_cursor_x, cover_w);
   }
   m_buf += "\033[0m";
   m_cur_fg = m_cur_bg = m_cur_attrs = -1;  // reset invalidated the SGR state
@@ -226,6 +232,7 @@ void AnsiRgbDriver::flush() {
   // output is pointed and calls tally_frame with exactly that count.
   emit_frame(m_buf);
   m_buf.clear();
+  m_cursor_known = false;
 }
 
 }  // namespace termforge

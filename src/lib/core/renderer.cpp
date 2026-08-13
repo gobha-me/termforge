@@ -39,11 +39,10 @@ auto Renderer::present(const Screen& screen) -> void {
     }
   }
 
-  // Cache the frame for the next diff.
-  m_prev.assign(static_cast<std::size_t>(cols) * rows, Cell{});
-  for (int y = 0; y < rows; ++y)
-    for (int x = 0; x < cols; ++x)
-      m_prev[static_cast<std::size_t>(y) * cols + x] = screen.at(x, y);
+  // Cache the frame for the next diff. Renderer is Screen's private shadow
+  // consumer, so copy the contiguous grid once: the former assign(Cell{}) plus
+  // at()-based overwrite performed two full non-trivial Cell writes here.
+  m_prev = screen.m_cells;
   m_prev_cols = cols;
   m_prev_rows = rows;
 }

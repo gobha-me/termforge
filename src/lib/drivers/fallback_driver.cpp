@@ -9,6 +9,8 @@
 #include "detail/encoded.hpp"
 #include "detail/placement.hpp"
 #include "detail/sample.hpp"
+#include "detail/terminal_output.hpp"
+#include "detail/width.hpp"
 
 namespace termforge {
 
@@ -43,12 +45,14 @@ void FallbackDriver::draw_text(int x, int y, std::string_view text, Rgb /*fg*/,
   // them unreliably, and the floor's promise is that what it draws is what you
   // get. Reaching this driver at all is the tier-degradation event; this driver
   // does not compound it with a per-cell notice.
-  m_buf += std::format("\033[{};{}H", y + 1, x + 1);
+  detail::append_cursor(m_buf, x, y, m_cursor_known, m_cursor_x, m_cursor_y);
   const bool rev = any(attrs & Attr::Reverse);
   const bool bold = any(attrs & Attr::Bold);
   if (rev) m_buf += "\033[7m";
   if (bold) m_buf += "\033[1m";
   m_buf += text;
+  detail::advance_cursor(m_cursor_known, m_cursor_x,
+                         detail::display_width(text));
   if (rev || bold) m_buf += "\033[0m";  // don't leak the attribute past the run
 }
 
@@ -149,12 +153,14 @@ auto FallbackDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
   };
 
   for (int row = 0; row < cover_h; ++row) {
-    m_buf += std::format("\033[{};{}H", cells.y + row + 1, cells.x + 1);
+    detail::append_cursor(m_buf, cells.x, cells.y + row, m_cursor_known,
+                          m_cursor_x, m_cursor_y);
     const int sy = map(row, px.h, cells.h);
     for (int col = 0; col < cover_w; ++col) {
       const int sx = map(col, px.w, cells.w);
       m_buf += luminance_char(detail::rgba_at(rgba, px, sx, sy));
     }
+    detail::advance_cursor(m_cursor_known, m_cursor_x, cover_w);
   }
   return {};
 }
@@ -168,6 +174,7 @@ void FallbackDriver::flush() {
   // output is pointed and calls tally_frame with exactly that count.
   emit_frame(m_buf);
   m_buf.clear();
+  m_cursor_known = false;
 }
 
 }  // namespace termforge

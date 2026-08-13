@@ -13,6 +13,8 @@
 #include "detail/payload_hash.hpp"
 #include "detail/placement.hpp"
 #include "detail/sgr_attrs.hpp"
+#include "detail/terminal_output.hpp"
+#include "detail/width.hpp"
 #include "termforge/core/screen.hpp"
 
 namespace termforge {
@@ -122,7 +124,7 @@ auto KittyDriver::capabilities() const noexcept -> Capabilities {
 void KittyDriver::draw_text(int x, int y, std::string_view text, Rgb fg,
                             Rgb bg, Attr attrs) {
   // Text rendering is identical to AnsiRgbDriver — SGR truecolor.
-  m_buf += std::format("\033[{};{}H", y + 1, x + 1);
+  detail::append_cursor(m_buf, x, y, m_cursor_known, m_cursor_x, m_cursor_y);
   const int attr_id = static_cast<int>(static_cast<std::uint8_t>(attrs));
   if (attr_id != m_cur_attrs) {
     // Attribute run break (#62): reset all SGR, re-enable the new set, and
@@ -134,14 +136,16 @@ void KittyDriver::draw_text(int x, int y, std::string_view text, Rgb fg,
   }
   const int fg_id = rgb_id(fg), bg_id = rgb_id(bg);
   if (fg_id != m_cur_fg) {
-    m_buf += std::format("\033[38;2;{};{};{}m", fg.r, fg.g, fg.b);
+    detail::append_sgr_rgb(m_buf, 38, fg);
     m_cur_fg = fg_id;
   }
   if (bg_id != m_cur_bg) {
-    m_buf += std::format("\033[48;2;{};{};{}m", bg.r, bg.g, bg.b);
+    detail::append_sgr_rgb(m_buf, 48, bg);
     m_cur_bg = bg_id;
   }
   m_buf += text;
+  detail::advance_cursor(m_cursor_known, m_cursor_x,
+                         detail::display_width(text));
 }
 
 namespace {
@@ -169,7 +173,7 @@ auto append_chunked(std::string& out, std::span<const std::byte> payload,
   std::size_t offset = 0;
   bool first = true;
   while (offset < b64.size() || first) {
-    const auto chunk = b64.substr(offset, kChunkSize);
+    const auto chunk = std::string_view{b64}.substr(offset, kChunkSize);
     const bool more = (offset + kChunkSize) < b64.size();
     if (first) {
       first_chunk(chunk, more);
@@ -1031,6 +1035,7 @@ void KittyDriver::flush() {
   // above, or the deletions land in the next frame.
   emit_frame(m_buf);
   m_buf.clear();
+  m_cursor_known = false;
   m_frame_start_fg = m_cur_fg;
   m_frame_start_bg = m_cur_bg;
   m_frame_start_attrs = m_cur_attrs;
@@ -1238,7 +1243,7 @@ auto KittyDriver::transmit(std::span<const std::byte> payload, int format_code,
   // Initial image transmission makes terminal-side ownership real; root-frame
   // replacement below can only operate on an image this path already created.
   m_transmitted = true;
-  append_chunked(m_buf, payload, [&](const std::string& chunk, bool more) {
+  append_chunked(m_buf, payload, [&](std::string_view chunk, bool more) {
       // First chunk: full transmission parameters.
       // a=t (transmit only, no display — display happens via placeholders),
       // t=d (direct), f=<32 RGBA | 100 PNG>, i=<id>, s=W, v=H, m=<more>,
@@ -1258,7 +1263,7 @@ auto KittyDriver::replace_root_frame(std::span<const std::byte> payload,
                                      int format_code, Extent px,
                                      std::uint32_t id) -> void {
   m_transmitted = true;
-  append_chunked(m_buf, payload, [&](const std::string& chunk, bool more) {
+  append_chunked(m_buf, payload, [&](std::string_view chunk, bool more) {
     // a=f transmits animation frame data. r=1 edits the existing root frame
     // and X=1 replaces rather than alpha-blending its full canvas. Unlike a=t
     // under the same image id, this operation leaves placements intact.
@@ -1289,7 +1294,7 @@ auto KittyDriver::place_classic(std::uint32_t image_id,
   const std::string scale =
       fit == PlacementFit::Exact ? std::string{}
                                  : std::format(",c={},r={}", cols, rows);
-  m_buf += std::format("\033[{};{}H", y + 1, x + 1);
+  detail::append_cursor(m_buf, x, y, m_cursor_known, m_cursor_x, m_cursor_y);
   m_buf += std::format("\033_Ga=p,i={},p={}{},C=1,q=2\033\\", image_id,
                        placement_id, scale);
 }
@@ -1316,7 +1321,8 @@ auto KittyDriver::place_unicode(std::uint32_t image_id,
 
   for (int ry = 0; ry < rows; ++ry) {
     // Position cursor at start of this row.
-    m_buf += std::format("\033[{};{}H", y + ry + 1, x + 1);
+    detail::append_cursor(m_buf, x, y + ry, m_cursor_known, m_cursor_x,
+                          m_cursor_y);
 
     // Set SGR foreground to the image ID (24-bit).
     emit_id_as_sgr(image_id);
@@ -1324,6 +1330,7 @@ auto KittyDriver::place_unicode(std::uint32_t image_id,
     for (int cx = 0; cx < cols; ++cx) {
       append_placeholder(m_buf, ry, cx);
     }
+    detail::advance_cursor(m_cursor_known, m_cursor_x, cols);
   }
 
   // Reset SGR to avoid bleeding the ID-as-color into subsequent text.

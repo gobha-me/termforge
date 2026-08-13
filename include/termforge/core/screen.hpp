@@ -15,6 +15,8 @@
 
 namespace termforge {
 
+class Renderer;
+
 // A single terminal cell: one grapheme, fg/bg color, optional image ref.
 struct Cell {
   // The grapheme as UTF-8 bytes (may be multi-byte, may be width-2). Empty =
@@ -81,6 +83,11 @@ class Screen {
   static auto sanitize(std::string_view in) -> std::string;
 
  private:
+  // Renderer owns the shadow copy of this exact grid. Keeping the contiguous
+  // hand-off private avoids exposing Cell's current vector representation as
+  // public API immediately before #92 changes it.
+  friend class Renderer;
+
   int m_cols{0};
   int m_rows{0};
   std::vector<Cell> m_cells;

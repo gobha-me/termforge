@@ -10,6 +10,32 @@
 
 #include "detail/utf8.hpp"
 #include "detail/width.hpp"
+#include "detail/sanitize.hpp"
+
+namespace termforge::detail {
+
+auto is_strip_sanitized(std::string_view text) noexcept -> bool {
+  std::size_t i = 0;
+  while (i < text.size()) {
+    const auto c = static_cast<unsigned char>(text[i]);
+    if (c >= 0x20 && c < 0x7F) {
+      ++i;
+      continue;
+    }
+    if (c < 0xC0) return false;  // C0/DEL, raw C1, stray continuation
+
+    std::size_t len = 0;
+    if (!utf8_validate(text.substr(i), len)) return false;
+    // U+0080..U+009F are C1 controls even in their well-formed UTF-8 shape.
+    if (len == 2 && c == 0xC2 &&
+        static_cast<unsigned char>(text[i + 1]) <= 0x9F)
+      return false;
+    i += len;
+  }
+  return true;
+}
+
+}  // namespace termforge::detail
 
 namespace termforge::text {
 namespace {
