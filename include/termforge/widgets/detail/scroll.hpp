@@ -1,6 +1,7 @@
 #pragma once
 
-// TermForge -- scroll-window clamping for list-like widgets.
+// TermForge -- scroll-window clamping and screen-row → item mapping for
+// list-like widgets.
 //
 // ListWidget and RadioGroup (and #21's shared scrollbar) all keep the same
 // three-int state -- item count, selected index, scroll offset -- and the
@@ -16,8 +17,17 @@
 // the only alternatives were promoting this header or re-deriving the clamp
 // inside the skeleton -- which is exactly the duplication #41 extracted it to
 // kill. Same namespace, same signature, same constexpr; only the path moved.
+//
+// #95: the screen-row → item mapper lives here too. Until then dropdowns had
+// detail::dropdown_item_at while ListWidget / RadioGroup / TableWidget each
+// open-coded `scroll + (py - rect.y)` (Table with an inline `- 1` for its
+// header). Draw, hover and press must resolve a screen row to the same item;
+// putting the arithmetic in one place is what makes that claim hold for the
+// whole family rather than only inside dropdowns.
 
 #include <algorithm>
+
+#include "termforge/core/types.hpp"
 
 namespace termforge::detail {
 
@@ -51,6 +61,29 @@ namespace termforge::detail {
     if (selected >= scroll + visible_rows) scroll = selected - visible_rows + 1;
   }
   return scroll;
+}
+
+// The ONE screen-row → item mapping for every scrollable list-like widget
+// (#95). `header_rows` is the top inset reserved for non-item chrome --
+// TableWidget's column header is 1; ListWidget, RadioGroup and dropdowns pass
+// 0. The content window is then [dr.y + header_rows, dr.y + dr.h).
+//
+// Returns -1 for a y on the header, outside the content window, or past the
+// end of the content; callers treat -1 as "no row here" rather than clamping,
+// because a press on a painted-but-empty tail row (or the header) must commit
+// nothing. `scroll` is re-clamped against the content height so a stale offset
+// after a shrink cannot disagree with what draw would paint.
+[[nodiscard]] constexpr auto row_item_at(Rect dr, int header_rows, int scroll,
+                                         int count, int py) noexcept -> int {
+  if (header_rows < 0) header_rows = 0;
+  if (count < 0) count = 0;
+  const int content_h = dr.h - header_rows;
+  if (content_h <= 0) return -1;
+  const int vi = py - dr.y - header_rows;
+  if (vi < 0 || vi >= content_h) return -1;
+  scroll = std::clamp(scroll, 0, std::max(0, count - content_h));
+  const int item = scroll + vi;
+  return (item >= 0 && item < count) ? item : -1;
 }
 
 // The deliberate INVERSE of clamp_scroll: there, the selection is fixed and the
