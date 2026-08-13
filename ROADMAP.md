@@ -78,6 +78,14 @@ completed items.
 > schema-versioned JSON evidence, never timing gates. The 400×120 ASCII, CJK,
 > and combining workloads establish the scalar baseline for #89; W2/W4/W5
 > remain on #88, and direct Kitty evidence remains #225.
+>
+> **2026-08-13 — scalar frame-time pass.** **#89** removes redundant shadow
+> initialization, allocation on already-safe text, ASCII width searches,
+> serial hash dependencies, base64 tail branches/chunk copies, repeated number
+> formatting and per-cell CUP escapes. The landed #88 harness measures median
+> gains of 55-81% across the principal hash/base64/ANSI/full-churn workloads.
+> Output semantics are pinned through terminal-grid tests; #90 is now the next
+> kernel layer, while #88 retains W2/W4/W5 and #225 retains direct Kitty proof.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
@@ -110,6 +118,8 @@ completed items.
   invalidation and zero draw/flush work once the application settles
 - Performance baseline (#88 slice) — Release-only kernel and W3 cell-churn
   evidence with JSON artifacts and no host-speed CI assertions
+- Scalar frame-time bundle (#89) — portable hash/base64/text/width/shadow-copy
+  fast paths and shared cursor-aware driver output assembly
 
 ---
 
@@ -275,6 +285,6 @@ completed items.
 11. ~~**Deterministic loop chain** — synthetic clock (#119), raw-input
     playback (#120), and opt-in demand rendering (#150)~~ **DONE**
 12. **Epic 5 (Sixel)** — kitty + half-blocks bracket the matrix
-13. **#89 scalar frame-time bundle** — measure against the landed #88 W3 and
-    kernel baseline before adding SIMD
+13. ~~**#89 scalar frame-time bundle**~~ **DONE** — measured against #88's W3
+    and kernel baseline before adding SIMD
 14. **Epic 6.2-6.5 (Polish)** — as time allows

@@ -48,6 +48,43 @@ emitted bytes. At the same size, 100% ASCII churn was 5.234 ms and CJK-wide was
 to the serial payload hash and scalar frame-time work in #89 before #90 SIMD;
 they do not establish terminal throughput, which remains W5.
 
+## Non-SIMD frame-time bundle
+
+Issue #89 removes scalar work before introducing a SIMD layer: the renderer
+copies its shadow buffer once, safe text avoids a temporary allocation, ASCII
+width avoids both interval searches, payload hashing uses eight independent
+lanes, base64 writes into its final buffer, Kitty transmission borrows chunks,
+and the three drivers share decimal/SGR/CUP assembly with cursor tracking.
+The payload hash is private cache state rather than a wire or persistence
+format; changing its implementation does not change the terminal protocol.
+
+Same-host before/after run on 2026-08-13: GCC 14.2, Linux 6.12.74, x86-64
+container host, Release build, nine calibrated samples after two warmups.
+
+| workload | before median / p95 | after median / p95 | median change |
+| --- | ---: | ---: | ---: |
+| payload hash, 640x384 RGBA | 1.040 / 1.042 ms | 0.262 / 0.264 ms | -74.8% |
+| base64, 640x384 RGBA | 1.335 / 1.368 ms | 0.597 / 0.670 ms | -55.2% |
+| ANSI half-block assembly, 80x24 | 0.492 / 0.710 ms | 0.139 / 0.144 ms | -71.7% |
+| Fallback luminance, 80x24 | 0.008 / 0.008 ms | 0.007 / 0.007 ms | -16.0% |
+| 400x120, 0% ASCII churn | 0.417 / 0.423 ms | 0.306 / 0.326 ms | -26.7% |
+| 400x120, 100% ASCII churn | 5.215 / 5.325 ms | 0.996 / 1.140 ms | -80.9% |
+| 400x120, 100% CJK-wide churn | 3.156 / 3.197 ms | 1.241 / 1.271 ms | -60.7% |
+| 400x120, 100% combining churn | 6.199 / 6.249 ms | 1.935 / 1.952 ms | -68.8% |
+
+ANSI image assembly remains byte-identical at 73,933 bytes. Changed-cell W3
+frames are deliberately shorter because an adjacent cell no longer repeats a
+CUP escape: the 400x120 ASCII case falls from 471,840 to 48,852 bytes, CJK
+from 283,800 to 72,852, and combining from 567,600 to 144,612. Offline tests
+interpret those streams into a terminal grid and pair it with cursor assertions
+for wide and combining glyphs, non-adjacent writes, images and flush boundaries.
+
+The 180-frame headless game workload improved from 0.784 to 0.419 ms average
+frame work, while its submission pipeline improved from 0.722 to 0.354 ms.
+Average wire volume remained effectively constant at about 292.4 KiB/frame;
+this is a CPU-side result and does not substitute for direct terminal evidence.
+As with the baseline, these are measurements rather than CI timing gates.
+
 ## 320x180 game workload
 
 `termforge_example_game` owns a fixed 320x180 `PixelSurface`, advances a fixed
