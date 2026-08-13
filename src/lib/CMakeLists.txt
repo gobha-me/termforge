@@ -10,6 +10,8 @@ add_library(${PROJECT_NAME}_lib STATIC
   core/image.cpp
   detail/base64.cpp
   detail/payload_hash.cpp
+  detail/simd.cpp
+  detail/simd_avx2.cpp
   detail/trace.cpp
   widgets/text_box.cpp
   widgets/table_widget.cpp

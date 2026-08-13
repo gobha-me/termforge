@@ -6,45 +6,38 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-13, latest)
 
-**Pending release: v0.26.0 — non-SIMD frame-time bundle.** #89 removes the
-portable scalar costs identified before SIMD: `Renderer::present` performs one
-shadow copy; already-safe text borrows its input; ASCII width exits before the
-interval tables; payload hashing uses eight independent chains; base64 writes
-directly with peeled tails; Kitty borrows transmission chunks; and all three
-drivers use shared decimal, RGB-SGR and cursor-aware CUP assembly.
+**Pending release: v0.27.0 — runtime-dispatched SIMD kernels.** #90 adds a
+private AVX2 tier for base64, image fill, opaque-destination source-over blend
+and contiguous fallback luminance. The scalar implementations remain compiled
+on every architecture and serve as permanent bit-exact oracles; non-x86 and
+non-AVX2 hosts select them silently. Image blit stays on libc `memcpy` because
+the attempted AVX2 loop measured no faster.
 
-The same-host #88 harness measures median improvements of 74.8% for the
-640×384 payload hash, 55.2% for base64, 71.7% for ANSI half-block assembly,
-and 60.7-80.9% for fully changed 400×120 CJK/combining/ASCII frames. Static
-400×120 ASCII improves 26.7%. The headless game workload's average frame work
-falls from 0.784 to 0.419 ms and its submission pipeline from 0.722 to 0.354
-ms. These remain evidence, not timing gates.
+The benchmark's schema 2 records requested and resolved kernel tiers. On the
+GCC 14.2 reference host AVX2 improves base64 51.8%, image fill 38.2%, image
+blend 44.6% and fallback luminance 15.9% over forced scalar. The 320×180
+headless game workload moves from v0.26.0's 0.419 to 0.363 ms average frame
+work and from 0.354 to 0.296 ms submission, with unchanged wire volume and
+lifecycle. Timing remains evidence, never a CI threshold.
 
-Cursor coalescing deliberately shortens changed-cell frames. A terminal-grid
-oracle pins the final contents for Kitty, ANSI and fallback; cursor assertions
-cover wide and combining glyphs, discontinuities, images and flush resets.
-Exhaustive base64
-lengths use an independent bit-stream oracle; all two-byte strings prove that
-the safe-text prescan agrees exactly with the canonical sanitizer; hash tests
-cover metadata, tails, every payload byte, determinism and the zero sentinel.
-Four direct mutations of those paths each fail their focused suite.
+`test/59simd` forces both tiers over unaligned spans, alpha early-outs and every
+vector tail; base64's independent oracle still covers every input length
+through 8192. The public API and terminal bytes are unchanged, so no live
+emulator gate applies.
 
-GCC 14.2 and Clang 20.1.8 Release `-Werror` builds pass all 63 benchmark-enabled
-CTest targets. GCC ASan with leak detection passes the ordinary 62-target
-suite. GCC and Clang pass the subdirectory, installed-package and plain-vendored
-consumer paths. PR #243's hosted matrix passes all ten jobs: benchmark smoke,
-GCC 13/14, Clang 19/20, Fedora GCC, ASan+UBSan, TSan, and the GCC 14 / Clang 20
-consumer jobs. The terminal-grid proof is complete offline, and the requested
-direct Kitty plus non-Kitty visual checks passed: forced Kitty, ANSI and
-fallback rendering stayed aligned through resize/view changes, including the
-wide- and combining-text cursor cases. Emulator versions were not captured.
+**How it got picked:** v0.26.0 completed #89 and the roadmap explicitly named
+#90 as the next offline kernel layer. #225 still requires a human-controlled
+direct Kitty TTY.
 
-**How it got picked:** #225 still requires a human-controlled direct Kitty
-TTY. #88's landed W3/kernel harness explicitly established #89 as the next
-offline dependency before #90 SIMD.
+**Next:** finish validation and release v0.27.0. #88 retains W2/W4/W5 and #225
+retains the direct Kitty capture.
 
-**Next:** release v0.26.0, then take #90 for the next kernel layer. #88 retains
-W2/W4/W5 and #225 retains the direct Kitty capture.
+## Previous release: v0.26.0
+
+**v0.26.0 — non-SIMD frame-time bundle.** #89 removed redundant shadow/text
+work, serial hash dependencies, base64 allocation costs and repeated terminal
+formatting before SIMD. Its hosted matrix and direct Kitty/non-Kitty cursor
+gate passed, and the prerelease shipped on 2026-08-13.
 
 ## Previous release: v0.25.0
 

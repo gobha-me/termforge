@@ -85,6 +85,37 @@ Average wire volume remained effectively constant at about 292.4 KiB/frame;
 this is a CPU-side result and does not substitute for direct terminal evidence.
 As with the baseline, these are measurements rather than CI timing gates.
 
+## SIMD kernel layer
+
+Issue #90 adds a private runtime-dispatched AVX2 tier for base64, image fill,
+opaque-destination source-over blend and contiguous fallback luminance. The
+scalar functions remain compiled on every architecture and are the permanent
+bit-exact oracle. `Image::blit` deliberately remains `memcpy`: a hand-written
+AVX2 copy measured no faster than the libc path. Non-x86 and x86 CPUs without
+AVX2 select scalar silently; the selection changes implementation, not the
+application-visible terminal tier.
+
+The benchmark schema is now version 2 and records both requested and resolved
+kernel tiers. Its `--kernel-tier auto|scalar|avx2` override is private to the
+benchmark/test surface; requesting unsupported AVX2 is an error rather than an
+illegal-instruction risk.
+
+Same-host forced-tier run on 2026-08-13: GCC 14.2, Linux 6.12.74, x86-64
+container host, Release build, nine calibrated samples after two warmups.
+
+| workload | scalar median / p95 | AVX2 median / p95 | median change |
+| --- | ---: | ---: | ---: |
+| base64, 640x384 RGBA | 0.567 / 0.595 ms | 0.274 / 0.290 ms | -51.8% |
+| image fill, 640x384 | 0.039 / 0.039 ms | 0.024 / 0.028 ms | -38.2% |
+| image blit, 640x384 | 0.041 / 0.042 ms | 0.041 / 0.042 ms | unchanged |
+| image blend, 640x384 | 0.989 / 1.054 ms | 0.548 / 0.660 ms | -44.6% |
+| fallback luminance, 80x24 | 0.0030 / 0.0030 ms | 0.0025 / 0.0026 ms | -15.9% |
+
+The auto-dispatched 180-frame 320x180 game workload averaged 0.363 ms of frame
+work and 0.296 ms of submission, down from v0.26.0's 0.419 and 0.354 ms. Wire
+volume remained 292.4 KiB/frame, all five clean frames emitted zero image
+bytes, and the run retained one image id, one placement and no deletes.
+
 ## 320x180 game workload
 
 `termforge_example_game` owns a fixed 320x180 `PixelSurface`, advances a fixed

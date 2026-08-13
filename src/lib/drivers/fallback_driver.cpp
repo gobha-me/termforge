@@ -9,6 +9,7 @@
 #include "detail/encoded.hpp"
 #include "detail/placement.hpp"
 #include "detail/sample.hpp"
+#include "detail/simd.hpp"
 #include "detail/terminal_output.hpp"
 #include "detail/width.hpp"
 
@@ -151,14 +152,25 @@ auto FallbackDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
   const auto map = [exact](int i, int src_dim, int dst_dim) {
     return exact ? i : detail::sample_index(i, src_dim, dst_dim);
   };
+  const bool identity = exact || (px.w == cells.w && px.h == cells.h);
+  std::string glyphs;
+  if (identity) glyphs.resize(static_cast<std::size_t>(cover_w));
 
   for (int row = 0; row < cover_h; ++row) {
     detail::append_cursor(m_buf, cells.x, cells.y + row, m_cursor_known,
                           m_cursor_x, m_cursor_y);
     const int sy = map(row, px.h, cells.h);
-    for (int col = 0; col < cover_w; ++col) {
-      const int sx = map(col, px.w, cells.w);
-      m_buf += luminance_char(detail::rgba_at(rgba, px, sx, sy));
+    if (identity) {
+      const auto pixel = static_cast<std::size_t>(sy) * px.w;
+      detail::luminance_chars(
+          rgba.subspan(pixel * 4, static_cast<std::size_t>(cover_w) * 4),
+          glyphs);
+      m_buf += glyphs;
+    } else {
+      for (int col = 0; col < cover_w; ++col) {
+        const int sx = map(col, px.w, cells.w);
+        m_buf += luminance_char(detail::rgba_at(rgba, px, sx, sy));
+      }
     }
     detail::advance_cursor(m_cursor_known, m_cursor_x, cover_w);
   }

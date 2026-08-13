@@ -86,6 +86,13 @@ completed items.
 > gains of 55-81% across the principal hash/base64/ANSI/full-churn workloads.
 > Output semantics are pinned through terminal-grid tests; #90 is now the next
 > kernel layer, while #88 retains W2/W4/W5 and #225 retains direct Kitty proof.
+>
+> **2026-08-13 — SIMD kernel layer.** **#90** adds cached AVX2 dispatch over a
+> permanently compiled scalar oracle for base64, image fill/blend and fallback
+> luminance. Forced-tier differential tests pin unaligned inputs and every
+> vector tail bit-exactly; unsupported CPUs stay scalar without an event.
+> `memcpy` remains the blit kernel because a private AVX2 loop did not improve
+> it. The #88 harness records 16-52% median gains without timing gates.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
@@ -233,7 +240,7 @@ completed items.
   files previously never applied the sanitizer flags).
   Files: `.github/workflows/build.yml`
 
-- [ ] **6.2 — SIMD kernel layer**
+- [x] **6.2 — SIMD kernel layer** ✅ **DONE**
   AVX2 multiversioning and runtime dispatch after #89's scalar work, measured
   against #88's harness rather than a timing assertion.
 

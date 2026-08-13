@@ -28,6 +28,7 @@
 
 #include "detail/base64.hpp"
 #include "detail/payload_hash.hpp"
+#include "detail/simd.hpp"
 #include "termforge/core/byte_sink.hpp"
 #include "termforge/core/renderer.hpp"
 #include "termforge/core/screen.hpp"
@@ -44,6 +45,7 @@ using Clock = std::chrono::steady_clock;
 
 enum class Suite { Kernels, W3, All };
 enum class Format { Table, Json };
+enum class KernelChoice { Auto, Scalar, Avx2 };
 
 struct Options {
   Suite suite{Suite::All};
@@ -52,6 +54,7 @@ struct Options {
   int samples{9};
   int warmup{2};
   bool smoke{false};
+  KernelChoice kernel_tier{KernelChoice::Auto};
 };
 
 struct Result {
@@ -154,11 +157,17 @@ class CountingSink final : public ByteSink {
       out.smoke = true;
       out.samples = 2;
       out.warmup = 1;
+    } else if (arg == "--kernel-tier") {
+      const auto v = value(arg);
+      if (v == "auto") out.kernel_tier = KernelChoice::Auto;
+      else if (v == "scalar") out.kernel_tier = KernelChoice::Scalar;
+      else if (v == "avx2") out.kernel_tier = KernelChoice::Avx2;
+      else throw std::runtime_error{"--kernel-tier must be auto, scalar, or avx2"};
     } else if (arg == "--help") {
       std::cout
           << "Usage: termforge_bench [--suite kernels|w3|all] "
              "[--format table|json] [--output PATH] [--samples N] "
-             "[--warmup N] [--smoke]\n";
+             "[--warmup N] [--kernel-tier auto|scalar|avx2] [--smoke]\n";
       std::exit(0);
     } else {
       throw std::runtime_error{std::format("unknown argument: {}", arg)};
@@ -477,18 +486,36 @@ struct W3Case {
   return "unknown";
 }
 
+[[nodiscard]] auto requested_tier_name(KernelChoice choice)
+    -> std::string_view {
+  switch (choice) {
+    case KernelChoice::Auto: return "auto";
+    case KernelChoice::Scalar: return "scalar";
+    case KernelChoice::Avx2: return "avx2";
+  }
+  return "unknown";
+}
+
+[[nodiscard]] auto resolved_tier_name() -> std::string_view {
+  return detail::resolved_kernel_tier() == detail::KernelTier::Avx2 ? "avx2"
+                                                                    : "scalar";
+}
+
 [[nodiscard]] auto json_report(const Options& options,
                                const std::vector<Result>& results,
                                const std::vector<Wall>& walls) -> std::string {
   std::string out = std::format(
-      "{{\n  \"schema_version\": 1,\n  \"termforge_version\": \"{}\",\n"
+      "{{\n  \"schema_version\": 2,\n  \"termforge_version\": \"{}\",\n"
       "  \"compiler\": \"{}\",\n  \"host\": \"{}\",\n"
       "  \"build_type\": \"Release\",\n  \"requested_suite\": \"{}\",\n"
+      "  \"requested_kernel_tier\": \"{}\",\n"
+      "  \"resolved_kernel_tier\": \"{}\",\n"
       "  \"samples\": {},\n  \"warmup\": {},\n  \"smoke\": {},\n"
       "  \"results\": [\n",
       json_escape(TERMFORGE_BENCH_VERSION), json_escape(__VERSION__),
-      json_escape(host_name()), suite_name(options.suite), options.samples,
-      options.warmup,
+      json_escape(host_name()), suite_name(options.suite),
+      requested_tier_name(options.kernel_tier), resolved_tier_name(),
+      options.samples, options.warmup,
       options.smoke ? "true" : "false");
   for (std::size_t i = 0; i < results.size(); ++i) {
     const auto& r = results[i];
@@ -521,10 +548,14 @@ struct W3Case {
   return out;
 }
 
-[[nodiscard]] auto table_report(const std::vector<Result>& results,
+[[nodiscard]] auto table_report(const Options& options,
+                                const std::vector<Result>& results,
                                 const std::vector<Wall>& walls) -> std::string {
   std::string out = std::format("TermForge {} performance evidence\n{}\n{}\n\n",
                                 TERMFORGE_BENCH_VERSION, __VERSION__, host_name());
+  out += std::format("kernel tier: {} -> {}\n\n",
+                     requested_tier_name(options.kernel_tier),
+                     resolved_tier_name());
   out += std::format("{:<9} {:<30} {:>10} {:>10} {:>11}\n", "suite", "case",
                      "median ms", "p95 ms", "MiB/s");
   for (const auto& r : results) {
@@ -549,6 +580,14 @@ struct W3Case {
 int main(int argc, char** argv) {
   try {
     const Options options = parse_options(argc, argv);
+    std::optional<detail::KernelTier> override;
+    if (options.kernel_tier == KernelChoice::Scalar)
+      override = detail::KernelTier::Scalar;
+    if (options.kernel_tier == KernelChoice::Avx2)
+      override = detail::KernelTier::Avx2;
+    if (!detail::set_kernel_tier_override(override))
+      throw std::runtime_error{
+          "requested AVX2 kernel tier is unsupported on this host"};
     std::vector<Result> results;
     if (options.suite == Suite::Kernels || options.suite == Suite::All) {
       auto kernels = run_kernels(options);
@@ -563,7 +602,7 @@ int main(int argc, char** argv) {
     const auto walls = derive_walls(results);
     const std::string report = options.format == Format::Json
                                    ? json_report(options, results, walls)
-                                   : table_report(results, walls);
+                                   : table_report(options, results, walls);
     if (options.output) {
       std::ofstream file{*options.output};
       if (!file) throw std::runtime_error{"cannot open output file"};
