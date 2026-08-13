@@ -40,6 +40,11 @@
 // off this same enum — the extension note that used to stand here asked for a
 // table, not a second enum, and that is what it got.
 //
+// forge-top's shared CPU grid (#238) adds GridGlyphs for the three pieces an
+// interior divider needs. It belongs here for the same reason as the frame and
+// scrollbar chrome: one BorderStyle choice must change every line the panel
+// draws, including the ASCII/FallbackDriver tier.
+//
 // ProgressBar's █/─ and WaveformWidget's █/▀/▄ are deliberately still NOT
 // here, and #21 is the decision that keeps them out: those are CONTENT glyphs
 // (a bar chart, a waveform) whose shape is the information, not chrome framing
@@ -93,6 +98,41 @@ struct BorderGlyphs {
   // purpose, so -Wswitch (with CI's -Werror) flags a newly added style here
   // instead of silently aliasing it to Single.
   return {"┌", "┐", "└", "┘", "─", "│", "┤", "├"};
+}
+
+// Shared interior grid lines. Unlike BorderGlyphs these need no corners or
+// tees: a grid separator starts and ends inside its owner's border, and a
+// partially populated final row deliberately stops without drawing chrome for
+// an absent tile. Rounded reuses the light line family because Unicode has no
+// rounded junction glyph, matching border_glyphs()'s existing tee policy.
+struct GridGlyphs {
+  std::string_view horizontal, vertical, junction;
+
+  [[nodiscard]] constexpr auto all() const noexcept
+      -> std::array<std::string_view, 3> {
+    return {horizontal, vertical, junction};
+  }
+};
+
+static_assert(sizeof(GridGlyphs) == 3 * sizeof(std::string_view),
+              "GridGlyphs gained a field: add it to all() and every style");
+
+[[nodiscard]] constexpr auto grid_glyphs(BorderStyle style) noexcept
+    -> GridGlyphs {
+  switch (style) {
+    case BorderStyle::Single:
+    case BorderStyle::Rounded:
+      return {"─", "│", "┼"};
+    case BorderStyle::Double:
+      return {"═", "║", "╬"};
+    case BorderStyle::Heavy:
+      return {"━", "┃", "╋"};
+    case BorderStyle::Ascii:
+      return {"-", "|", "+"};
+  }
+  // Unreachable: every enumerator returns above. No `default:` so a new style
+  // trips -Wswitch under CI's -Werror instead of silently borrowing Single.
+  return {"─", "│", "┼"};
 }
 
 // The one bit the rest of the widget set needs: may this style use characters

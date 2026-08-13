@@ -26,6 +26,7 @@
 #include "panels.hpp"
 #include "proc_reader.hpp"
 #include "support/apc.hpp"
+#include "support/screen.hpp"
 #include "termforge/core/byte_sink.hpp"
 #include "termforge/core/screen.hpp"
 #include "termforge/drivers/ansi_rgb_driver.hpp"
@@ -135,6 +136,21 @@ auto transmit_extents(std::string_view wire)
       result.emplace_back(tfsupport::key_value(apc, "s"),
                           tfsupport::key_value(apc, "v"));
   return result;
+}
+
+auto cpu_samples(int sample_count) -> std::vector<CpuSample> {
+  std::vector<CpuSample> samples;
+  samples.reserve(static_cast<std::size_t>(sample_count));
+  for (int i = 0; i < sample_count; ++i)
+    samples.push_back({std::format("cpu{}", i),
+                       static_cast<float>(i + 1) /
+                           static_cast<float>(sample_count + 1)});
+  return samples;
+}
+
+auto contains(Rect rect, int x, int y) noexcept -> bool {
+  return x >= rect.x && x < rect.x + rect.w && y >= rect.y &&
+         y < rect.y + rect.h;
 }
 
 class SegmentSink final : public ByteSink {
@@ -553,6 +569,80 @@ TEST_CASE("forge-top CPU mode changes invalidate the replacement regions",
   CHECK(std::ranges::all_of(restored, [&](Rect region) {
     return panel.pixel_region_state(region).content_dirty;
   }));
+}
+
+TEST_CASE("forge-top CPU grid reserves dividers in odd partial layouts",
+          "[forge-top][pixels][layout]") {
+  CpuPanel panel;
+  const auto samples = cpu_samples(5);
+  panel.set_samples(samples);
+  panel.set_geometry({0, 0, 32, 11});
+  Screen screen{32, 11};
+  panel.draw(screen);
+
+  // Inner 30x9 content becomes two columns and three rows. One-cell gutters
+  // are excluded from every waveform destination; odd remainders belong to
+  // the leading tracks, so the exact row-major geometry is deterministic.
+  const std::vector<Rect> expected{{1, 2, 15, 2}, {17, 2, 14, 2},
+                                   {1, 6, 15, 1}, {17, 6, 14, 1},
+                                   {1, 9, 15, 1}};
+  const auto regions = panel.pixel_regions();
+  REQUIRE(regions == expected);
+
+  CHECK(screen.at(16, 1).text == "│");
+  CHECK(screen.at(16, 4).text == "┼");
+  CHECK(screen.at(16, 5).text == "│");
+  CHECK(screen.at(15, 7).text == "─");
+  CHECK(screen.at(16, 7).text == "│");
+  CHECK(screen.at(17, 7).text.empty());
+  CHECK(screen.at(16, 8).text.empty());
+  CHECK(tfsupport::row_text(screen, 5, 17, 14).starts_with("cpu3  67%"));
+
+  for (const Rect region : regions) {
+    CHECK_FALSE(contains(region, 16, 1));
+    CHECK_FALSE(contains(region, 16, 4));
+    CHECK_FALSE(contains(region, 15, 7));
+    CHECK_FALSE(contains(region, 16, 7));
+  }
+}
+
+TEST_CASE("forge-top CPU grid follows the ASCII border style",
+          "[forge-top][pixels][layout][fallback]") {
+  CpuPanel panel;
+  const auto samples = cpu_samples(5);
+  panel.set_style(BorderStyle::Ascii);
+  panel.set_samples(samples);
+  panel.set_geometry({0, 0, 32, 11});
+  Screen screen{32, 11};
+  panel.draw(screen);
+
+  CHECK(screen.at(16, 1).text == "|");
+  CHECK(screen.at(16, 4).text == "+");
+  CHECK(screen.at(15, 4).text == "-");
+  CHECK(screen.at(16, 8).text.empty());
+}
+
+TEST_CASE("forge-top aggregate CPU keeps the full graph and clears dividers",
+          "[forge-top][pixels][layout]") {
+  CpuPanel panel;
+  const auto samples = cpu_samples(5);
+  panel.set_samples(samples);
+  panel.set_aggregate_sample({"cpu", 0.5F});
+  panel.set_geometry({0, 0, 32, 11});
+  Screen screen{32, 11};
+
+  panel.draw(screen);
+  REQUIRE(screen.at(16, 4).text == "┼");
+  panel.set_per_cpu(false);
+  panel.draw(screen);
+
+  REQUIRE(panel.pixel_regions() == std::vector<Rect>{{1, 2, 30, 8}});
+  for (int y = 1; y < 10; ++y)
+    for (int x = 1; x < 31; ++x) {
+      CHECK(screen.at(x, y).text != "─");
+      CHECK(screen.at(x, y).text != "│");
+      CHECK(screen.at(x, y).text != "┼");
+    }
 }
 
 TEST_CASE("forge-top detail graph acknowledges persistent content",

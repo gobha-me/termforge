@@ -28,6 +28,8 @@ using termforge::Button;
 using termforge::Event;
 using termforge::FallbackDriver;
 using termforge::Frame;
+using termforge::GridGlyphs;
+using termforge::grid_glyphs;
 using termforge::is_ascii;
 using termforge::Key;
 using termforge::KeyEvent;
@@ -907,6 +909,27 @@ TEST_CASE("border_glyphs: every style is one column wide and Ascii is 7-bit",
   for (const auto glyph :
        {a.tl, a.tr, a.bl, a.br, a.hz, a.vt, a.title_left, a.title_right})
     REQUIRE(all_seven_bit(glyph));
+}
+
+TEST_CASE("grid_glyphs: every style is one column wide and Ascii is 7-bit",
+          "[primitives][glyphs]") {
+  for (const auto style :
+       {BorderStyle::Single, BorderStyle::Double, BorderStyle::Rounded,
+        BorderStyle::Heavy, BorderStyle::Ascii}) {
+    const GridGlyphs g = grid_glyphs(style);
+    for (const auto glyph : g.all()) {
+      REQUIRE(termforge::detail::display_width(glyph) == 1);
+      REQUIRE_FALSE(glyph.empty());
+    }
+  }
+
+  const GridGlyphs ascii = grid_glyphs(BorderStyle::Ascii);
+  for (const auto glyph : ascii.all())
+    REQUIRE(all_seven_bit(glyph));
+  REQUIRE(grid_glyphs(BorderStyle::Single).junction == "┼");
+  REQUIRE(grid_glyphs(BorderStyle::Double).junction == "╬");
+  REQUIRE(grid_glyphs(BorderStyle::Rounded).junction == "┼");
+  REQUIRE(grid_glyphs(BorderStyle::Heavy).junction == "╋");
 }
 
 // ── MenuBar ─────────────────────────────────────────────────────────────────

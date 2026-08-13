@@ -99,6 +99,135 @@ auto sort_name(ProcessSort sort) -> std::string_view {
   return "CPU";
 }
 
+struct GridTrack {
+  int origin{};
+  int extent{};
+};
+
+// Split one axis into content tracks separated by one-cell gutters. Remainder
+// cells go to the leading tracks so an odd-sized panel stays deterministic and
+// the final track still ends exactly at the inner edge.
+auto grid_tracks(int origin, int extent, int count) -> std::vector<GridTrack> {
+  std::vector<GridTrack> tracks;
+  if (extent <= 0 || count <= 0)
+    return tracks;
+
+  tracks.reserve(static_cast<std::size_t>(count));
+  const int content = std::max(0, extent - (count - 1));
+  const int base = content / count;
+  const int remainder = content % count;
+  int at = origin;
+  for (int i = 0; i < count; ++i) {
+    const int size = base + (i < remainder ? 1 : 0);
+    tracks.push_back({at, size});
+    at += size + 1;
+  }
+  return tracks;
+}
+
+struct CpuGrid {
+  int columns{};
+  int rows{};
+  std::vector<Rect> tiles;
+};
+
+auto cpu_grid(Rect inner, int count) -> CpuGrid {
+  CpuGrid result;
+  if (inner.w <= 0 || inner.h <= 0 || count <= 0)
+    return result;
+
+  // A useful tile needs one label row plus one waveform row. Account for the
+  // gutter while retaining the old 9-column compact and 18-column ideal
+  // targets. Height is the hard constraint: add columns when that is what
+  // keeps every graph two rows tall. Width may force a totalized degenerate
+  // layout, which draw() handles by suppressing invalid tiles.
+  const int max_rows = std::max(1, (inner.h + 1) / 3);
+  const int needed_columns = (count + max_rows - 1) / max_rows;
+  const int max_columns = std::clamp((inner.w + 1) / 2, 1, count);
+  const int comfortable_columns =
+      std::clamp((inner.w + 1) / 10, 1, max_columns);
+  const int ideal_columns =
+      std::clamp((inner.w + 1) / 19, 1, comfortable_columns);
+  result.columns =
+      std::min(max_columns, std::max(ideal_columns, needed_columns));
+  result.rows = (count + result.columns - 1) / result.columns;
+
+  const auto x_tracks =
+      grid_tracks(inner.x, inner.w, result.columns);
+  const auto y_tracks = grid_tracks(inner.y, inner.h, result.rows);
+  result.tiles.reserve(static_cast<std::size_t>(count));
+  for (int i = 0; i < count; ++i) {
+    const auto &x = x_tracks[static_cast<std::size_t>(i % result.columns)];
+    const auto &y = y_tracks[static_cast<std::size_t>(i / result.columns)];
+    result.tiles.push_back({x.origin, y.origin, x.extent, y.extent});
+  }
+  return result;
+}
+
+auto valid_cpu_tile(Rect tile) noexcept -> bool {
+  return tile.w >= 1 && tile.h >= 2;
+}
+
+auto populated_columns(const CpuGrid &grid, int row) -> int {
+  int result = 0;
+  for (int col = 0; col < grid.columns; ++col) {
+    const int index = row * grid.columns + col;
+    if (index >= static_cast<int>(grid.tiles.size()) ||
+        !valid_cpu_tile(grid.tiles[static_cast<std::size_t>(index)]))
+      break;
+    ++result;
+  }
+  return result;
+}
+
+auto draw_cpu_grid(Screen &screen, const CpuGrid &grid, BorderStyle style)
+    -> void {
+  const GridGlyphs glyphs = grid_glyphs(style);
+
+  // Vertical separators exist only where two populated tiles are adjacent in
+  // that row. A partial final row therefore has no trailing line advertising
+  // a tile that does not exist.
+  for (int row = 0; row < grid.rows; ++row) {
+    const int populated = populated_columns(grid, row);
+    for (int col = 0; col + 1 < populated; ++col) {
+      const Rect left = grid.tiles[static_cast<std::size_t>(
+          row * grid.columns + col)];
+      const int x = left.x + left.w;
+      for (int y = left.y; y < left.y + left.h; ++y)
+        screen.write_text(x, y, glyphs.vertical, theme::kDim, theme::kBg);
+    }
+  }
+
+  // A row divider spans only the columns populated on both sides. At a
+  // partial final row it ends with that row's last real tile instead of
+  // framing empty space. Vertical lines from the row above terminate through
+  // the gutter; lines that continue below become junctions.
+  for (int row = 0; row + 1 < grid.rows; ++row) {
+    const int upper = populated_columns(grid, row);
+    const int lower = populated_columns(grid, row + 1);
+    if (upper == 0 || lower == 0)
+      continue;
+
+    const Rect upper_first =
+        grid.tiles[static_cast<std::size_t>(row * grid.columns)];
+    const Rect upper_last = grid.tiles[static_cast<std::size_t>(
+        row * grid.columns + std::min(upper, lower) - 1)];
+    const int y = upper_first.y + upper_first.h;
+    const int x_end = upper_last.x + upper_last.w;
+    for (int x = upper_first.x; x < x_end; ++x)
+      screen.write_text(x, y, glyphs.horizontal, theme::kDim, theme::kBg);
+
+    for (int col = 0; col + 1 < upper; ++col) {
+      const Rect left = grid.tiles[static_cast<std::size_t>(
+          row * grid.columns + col)];
+      const int x = left.x + left.w;
+      screen.write_text(x, y,
+                        col + 1 < lower ? glyphs.junction : glyphs.vertical,
+                        theme::kDim, theme::kBg);
+    }
+  }
+}
+
 } // namespace
 
 auto format_cpu_time(double seconds) -> std::string {
@@ -217,6 +346,9 @@ auto CpuPanel::draw(Screen &screen) -> void {
   m_frame.draw(screen);
   const Rect inner = m_frame.content_rect();
   const auto waves = active_waves();
+  if (inner.w > 0 && inner.h > 0)
+    screen.fill_rect(inner.x, inner.y, inner.w, inner.h, theme::kFg,
+                     theme::kBg);
   if (inner.w <= 0 || inner.h <= 0 || waves.empty()) {
     for (auto *wave : waves)
       wave->set_geometry({0, 0, 0, 0});
@@ -225,40 +357,35 @@ auto CpuPanel::draw(Screen &screen) -> void {
   }
 
   const int count = static_cast<int>(waves.size());
-  const int max_rows = std::max(1, inner.h / 2);
-  const int needed_columns = (count + max_rows - 1) / max_rows;
-  const int max_columns = std::clamp(inner.w / 9, 1, count);
-  const int ideal_columns = std::clamp(inner.w / 18, 1, max_columns);
-  const int columns =
-      std::min(max_columns, std::max(ideal_columns, needed_columns));
-  const int rows = (count + columns - 1) / columns;
-  const int tile_w = std::max(1, inner.w / columns);
-  const int tile_h = std::max(2, inner.h / std::max(1, rows));
-  const bool compact_labels = tile_w < 10;
+  const bool divided = m_per_cpu && count > 1;
+  CpuGrid grid;
+  if (divided) {
+    grid = cpu_grid(inner, count);
+    draw_cpu_grid(screen, grid, m_frame.style());
+  } else {
+    grid = {1, 1, {inner}};
+  }
+
   for (int i = 0; i < count; ++i) {
-    const int col = i % columns;
-    const int row = i / columns;
-    const int x = inner.x + col * tile_w;
-    const int y = inner.y + row * tile_h;
-    const int w = col + 1 == columns ? inner.x + inner.w - x : tile_w;
-    const int h = std::min(tile_h, inner.y + inner.h - y);
-    if (w <= 0 || h <= 1 || y >= inner.y + inner.h) {
+    const Rect tile = grid.tiles[static_cast<std::size_t>(i)];
+    if (!valid_cpu_tile(tile)) {
       waves[static_cast<std::size_t>(i)]->set_geometry({0, 0, 0, 0});
       continue;
     }
+    const bool compact_label = tile.w < 10;
     std::string name = m_per_cpu ? m_names[static_cast<std::size_t>(i)]
                                  : m_aggregate_name;
-    if (compact_labels && name.starts_with("cpu"))
+    if (compact_label && name.starts_with("cpu"))
       name = "c" + name.substr(3);
     std::string label = std::format(
         "{} {:3.0f}%", name,
         (m_per_cpu ? m_usage[static_cast<std::size_t>(i)] : m_aggregate_usage) *
             100.0F);
-    if (label.size() > static_cast<std::size_t>(w))
-      label.resize(static_cast<std::size_t>(w));
-    screen.write_text(x, y, label, theme::kDim, theme::kBg);
+    if (label.size() > static_cast<std::size_t>(tile.w))
+      label.resize(static_cast<std::size_t>(tile.w));
+    screen.write_text(tile.x, tile.y, label, theme::kDim, theme::kBg);
     auto *wave = waves[static_cast<std::size_t>(i)];
-    wave->set_geometry({x, y + 1, w, h - 1});
+    wave->set_geometry({tile.x, tile.y + 1, tile.w, tile.h - 1});
     wave->draw(screen);
   }
   clear_dirty();
