@@ -123,7 +123,11 @@ auto count(std::string_view text, std::string_view needle) -> int {
 auto action_count(std::string_view wire, std::string_view action) -> int {
   int result = 0;
   for (const auto &apc : tfsupport::apcs(wire))
-    if (tfsupport::key_value(apc, "a") == action)
+    // Data-operation openers name i=. Since #259 every animation-frame
+    // continuation repeats a=f, so counting action keys alone makes one update
+    // look like one update per 4,096 encoded bytes.
+    if (tfsupport::key_value(apc, "a") == action &&
+        tfsupport::has_key(apc, "i"))
       ++result;
   return result;
 }
