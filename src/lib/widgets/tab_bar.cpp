@@ -87,9 +87,14 @@ auto TabBar::nearest_first_at(int content_col) const -> int {
 }
 
 auto TabBar::hbar_visible() const -> bool {
-  if (!uses_hbar() || m_list.empty()) return false;
+  // A bar must represent a tab-counted move the widget can actually make.
+  // One clipped tab has pixel overflow but no second tab offset, and a
+  // one-cell track is always a full-width thumb with no usable position. Both
+  // are the same degenerate case as the height-one strip's one-column rule:
+  // keys and the wheel remain available, while inert chrome stays absent.
+  if (!uses_hbar() || count() < 2) return false;
   const Rect r = rect();
-  if (r.w <= 0) return false;
+  if (r.w < 2) return false;
   return content_total() > r.w;
 }
 
@@ -320,11 +325,15 @@ auto TabBar::draw(Screen& screen) -> void {
 
   // #131: second-row horizontal track when the rect can host it. Content units
   // are cumulative title columns; the tab-counted offset is mapped through
-  // content_offset so variable-width titles stay honest.
+  // content_offset so variable-width titles stay honest. A whole-tab snap can
+  // put that start past total - visible (the last short tab then leaves blank
+  // cells to its right), so clamp at the thumb_window boundary rather than
+  // feeding the shared helper an out-of-contract viewport triple.
   if (hbar_visible()) {
+    const int total = content_total();
+    const int offset = std::clamp(content_offset(first), 0, total - r.w);
     detail::draw_scrollbar(
-        screen, {r.x, r.y + 1, r.w, 1}, content_total(), content_offset(first),
-        r.w,
+        screen, {r.x, r.y + 1, r.w, 1}, total, offset, r.w,
         scrollbar_glyphs(m_style, ScrollOrientation::Horizontal), theme::kDim,
         m_active_bg, m_bg, ScrollOrientation::Horizontal);
   }
@@ -351,17 +360,20 @@ auto TabBar::handle_mouse(const MouseEvent& m) -> bool {
   if (!rect().contains(m.x, m.y)) return false;
 
   // #131: a click on the second-row track snaps to the nearest tab boundary.
-  // Proportional map from track column to content column, then nearest start.
+  // Map BOTH inclusive cell-index ranges: [0, track_w - 1] onto
+  // [0, total - 1]. Using track_w as the divisor makes the last track cell
+  // fall short of the content endpoint; with one very wide early title that
+  // can make the final tab unreachable from the track at any click position.
   if (m.y == rect().y + 1 && hbar_visible()) {
     const int total = content_total();
     const int track_w = rect().w;
-    int content_col = 0;
-    if (track_w > 0 && total > 0) {
-      content_col = static_cast<int>(
-          (static_cast<long long>(m.x - rect().x) * total + track_w / 2) /
-          track_w);
-      content_col = std::clamp(content_col, 0, total);
-    }
+    const int track_run = track_w - 1;
+    const int content_run = total - 1;
+    int content_col = static_cast<int>(
+        (static_cast<long long>(m.x - rect().x) * content_run +
+         track_run / 2) /
+        track_run);
+    content_col = std::clamp(content_col, 0, content_run);
     const int target = nearest_first_at(content_col);
     if (target != first_visible()) {
       m_first = target;

@@ -205,6 +205,8 @@ class TabBar final : public Widget {
 
   // #131: a second row hosts the shared horizontal scrollbar. Height one keeps
   // the ‹ › indicators — the track never steals the only content row.
+  // hbar_visible additionally rejects a one-cell track and a single clipped
+  // tab: neither has a usable tab-counted scrollbar position.
   [[nodiscard]] auto uses_hbar() const noexcept -> bool {
     return rect().h >= 2;
   }
