@@ -149,3 +149,84 @@ TEST_CASE("scrollbar_glyphs: every style resolves, ascii is the 7-bit one",
     REQUIRE(scrollbar_glyphs(style).thumb == "█");
   }
 }
+
+// ── #131 horizontal orientation ─────────────────────────────────────────────
+
+namespace {
+
+// Read back a horizontal strip row as a string, one glyph per column.
+auto row_strip_text(const Screen& s, int x, int y, int w) -> std::string {
+  std::string out;
+  for (int col = 0; col < w; ++col) out += s.at(x + col, y).text;
+  return out;
+}
+
+}  // namespace
+
+TEST_CASE("thumb_window: content units are axis-free (#131)", "[scrollbar]") {
+  // The same arithmetic feeds rows or columns (or TabBar title-column totals):
+  // track_len is a length, not a row count.
+  REQUIRE(thumb_window(10, 100, 0, 10) == std::pair{0, 1});
+  REQUIRE(thumb_window(10, 100, 90, 10) == std::pair{9, 1});
+  REQUIRE(thumb_window(10, 20, 0, 10) == std::pair{0, 5});
+}
+
+TEST_CASE("draw_scrollbar: horizontal paints along x (#131)", "[scrollbar]") {
+  using termforge::ScrollOrientation;
+  Screen s{10, 2};
+  s.fill_rect(0, 0, 10, 2, termforge::theme::kFg, termforge::theme::kBg);
+  const auto g =
+      scrollbar_glyphs(BorderStyle::Single, ScrollOrientation::Horizontal);
+  // 100 units, 10 visible, offset 0 -> thumb at the leftmost cell only.
+  draw_scrollbar(s, {0, 1, 10, 1}, 100, 0, 10, g, termforge::theme::kDim,
+                 termforge::theme::kFocusBg, termforge::theme::kBg,
+                 ScrollOrientation::Horizontal);
+  REQUIRE(row_strip_text(s, 0, 1, 10) == std::string{"█─────────"});
+  // Bottom offset pins the thumb to the last column.
+  Screen s2{10, 2};
+  s2.fill_rect(0, 0, 10, 2, termforge::theme::kFg, termforge::theme::kBg);
+  draw_scrollbar(s2, {0, 1, 10, 1}, 100, 90, 10, g, termforge::theme::kDim,
+                 termforge::theme::kFocusBg, termforge::theme::kBg,
+                 ScrollOrientation::Horizontal);
+  REQUIRE(row_strip_text(s2, 0, 1, 10) == std::string{"─────────█"});
+}
+
+TEST_CASE("draw_scrollbar: horizontal ASCII glyphs (#131)", "[scrollbar]") {
+  using termforge::ScrollOrientation;
+  Screen s{10, 1};
+  const auto g =
+      scrollbar_glyphs(BorderStyle::Ascii, ScrollOrientation::Horizontal);
+  draw_scrollbar(s, {0, 0, 10, 1}, 100, 45, 10, g, {}, {}, {},
+                 ScrollOrientation::Horizontal);
+  REQUIRE(row_strip_text(s, 0, 0, 10) == "-----#----");
+}
+
+TEST_CASE("draw_scrollbar: horizontal re-paint erases a shorter thumb (#131)",
+          "[scrollbar][failure]") {
+  using termforge::ScrollOrientation;
+  Screen s{5, 1};
+  const auto g =
+      scrollbar_glyphs(BorderStyle::Single, ScrollOrientation::Horizontal);
+  draw_scrollbar(s, {0, 0, 5, 1}, 10, 0, 5, g, {}, {}, {},
+                 ScrollOrientation::Horizontal);  // thumb = 3 cols
+  REQUIRE(row_strip_text(s, 0, 0, 5) == "███──");
+  draw_scrollbar(s, {0, 0, 5, 1}, 100, 0, 5, g, {}, {}, {},
+                 ScrollOrientation::Horizontal);  // thumb = 1 col
+  REQUIRE(row_strip_text(s, 0, 0, 5) == "█────");
+}
+
+TEST_CASE("scrollbar_glyphs: horizontal track is ─ / - (#131)",
+          "[scrollbar]") {
+  using termforge::ScrollOrientation;
+  REQUIRE(scrollbar_glyphs(BorderStyle::Ascii, ScrollOrientation::Horizontal)
+              .track == "-");
+  REQUIRE(scrollbar_glyphs(BorderStyle::Ascii, ScrollOrientation::Horizontal)
+              .thumb == "#");
+  for (const auto style : {BorderStyle::Single, BorderStyle::Double,
+                           BorderStyle::Rounded, BorderStyle::Heavy}) {
+    REQUIRE(scrollbar_glyphs(style, ScrollOrientation::Horizontal).track ==
+            "─");
+    REQUIRE(scrollbar_glyphs(style, ScrollOrientation::Horizontal).thumb ==
+            "█");
+  }
+}

@@ -6,12 +6,54 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-14, latest)
 
-**Pending release: v0.27.1 — bounded game benchmark CLI.** #252 reported that
-the shipped game's headless `--benchmark` command could remain running on the
-reference host even for one frame, while the same binary ran interactively.
-The exact GCC 13.3 Release path completed from fresh builds both locally and on
-that host, so there is no reproducible source-level hang to patch and no basis
-for blaming the SIMD layer.
+**Pending release: v0.28.0 — horizontal scrollbars.** #131 generalizes the
+shared scrollbar glyphs and drawing helper with a source-compatible vertical
+default, then gives a two-row TabBar a horizontal track over cumulative title
+columns. Height-one bars retain their existing indicators, and tab selection,
+keyboard navigation and wheel behaviour stay tab-counted.
+
+Review found two endpoint failures that ordinary-width fixtures did not expose.
+The track now maps both inclusive cell ranges, so its rightmost cell reaches the
+final tab even when the first title dominates the content width. A one-cell
+track and a single clipped tab paint no inert scrollbar, while a last short tab
+clamps the visual thumb input without changing the whole-tab content offset.
+The focused caller tests use non-zero coordinates, pathological title widths
+and both degenerate shapes. Mutating the endpoint divisor or restoring either
+inert-track branch fails those cases.
+
+The current-main integration result passes 64/64 CTest targets with GCC 14.2
+and Clang 20.1.8 Release `-Werror`, plus 64/64 under GCC ASan+UBSan with leak
+detection. GCC and Clang each pass the subdirectory, installed-package and
+plain-vendored consumer paths. This changes widget rendering only, not a
+terminal protocol form, so no live-emulator gate applies.
+
+**How it got picked:** v0.27.2 shipped #248's shared scroll-row foundation.
+#255 was the next fully green open PR named by the handoff; the older remaining
+contributor PRs still need the separate task #166 audit.
+
+**Next:** finish hosted validation and release v0.28.0, then resume task #166.
+
+## Previous release: v0.27.2
+
+**v0.27.2 — shared scroll-row mapping.** #95 moves the one
+screen-row-to-item calculation into `detail::row_item_at`, with an explicit
+header-row inset, and routes ListWidget, RadioGroup, TableWidget and the
+dropdown compatibility wrapper through it. A stale offset is clamped against
+the content window before mapping, while header, outside and painted-empty
+rows remain inert instead of being clamped onto an item.
+
+TableWidget names its one-row header once and shares that value between header
+absorption, scrollbar paging and item hit-testing. The release passed all ten
+hosted jobs and shipped on 2026-08-14.
+
+## Previous release: v0.27.1
+
+**v0.27.1 — bounded game benchmark CLI.** #252 reported that the shipped
+game's headless `--benchmark` command could remain running on the reference
+host even for one frame, while the same binary ran interactively. The exact
+GCC 13.3 Release path completed from fresh builds both locally and on that
+host, so there is no reproducible source-level hang to patch and no basis for
+blaming the SIMD layer.
 
 The missing coverage was real: the suites replayed `App::test_run_frames` but
 never launched the production executable. `game-benchmark-cli` now runs the
@@ -28,13 +70,7 @@ smoke target). GCC ASan+UBSan with leak detection passes 64/64. GCC 14 and
 Clang 20 each pass the subdirectory, installed-package and plain-vendored
 consumer paths. The reporting host's fresh GCC 13 diagnostic completes the
 one-frame command in 1.744 ms. No public API or terminal bytes change, so no
-live-emulator gate applies.
-
-**How it got picked:** project memory named #252 as the next offline task; the
-only other pending task, #225, requires direct unproxied Kitty evidence.
-
-**Next:** finish validation and release v0.27.1. #88 retains W2/W4/W5 and #225
-retains the direct Kitty capture.
+live-emulator gate applies. The prerelease shipped on 2026-08-14.
 
 ## Previous release: v0.27.0
 
