@@ -3,15 +3,39 @@
 #include <algorithm>
 
 #include "detail/wrap.hpp"
+#include "termforge/core/screen.hpp"
 #include "termforge/widgets/detail/scrollbar.hpp"
 #include "termforge/widgets/detail/viewport.hpp"
 #include "termforge/widgets/theme.hpp"
 
 namespace termforge {
+namespace {
+
+// Default style for the plain-string append path — matches the colours draw()
+// historically hard-coded (theme fg, zeroed bg, no attrs).
+[[nodiscard]] auto plain_style() noexcept -> TextStyle {
+  return TextStyle{theme::kFg, Rgb{}, Attr::None};
+}
+
+auto sanitize_spans(StyledText& line) -> void {
+  for (TextSpan& span : line) span.text = Screen::sanitize(span.text);
+}
+
+}  // namespace
 
 auto TextBox::append(std::string line) -> void {
-  m_lines.push_back(std::move(line));
+  // Single-span wrapper over the styled document type (#25).
+  StyledText styled;
+  styled.push_back(TextSpan{Screen::sanitize(line), plain_style()});
+  m_lines.push_back(std::move(styled));
   if (m_follow) m_scroll = 0;  // stay pinned to bottom
+  mark_dirty();
+}
+
+auto TextBox::append(StyledText line) -> void {
+  sanitize_spans(line);
+  m_lines.push_back(std::move(line));
+  if (m_follow) m_scroll = 0;
   mark_dirty();
 }
 
@@ -94,10 +118,9 @@ auto TextBox::content_w() const noexcept -> int {
   return std::max(0, w - (bar_possible ? 1 : 0));
 }
 
-auto TextBox::wrap_into(std::vector<std::string>& out, const std::string& line, int width) -> void {
-  // The wrap itself moved to detail/wrap.hpp when Dialog needed the same
-  // fold for its body text; the behavior is unchanged.
-  detail::wrap_into(out, line, width);
+auto TextBox::wrap_into(std::vector<StyledText>& out, const StyledText& line,
+                        int width) -> void {
+  detail::wrap_styled_into(out, line, width);
 }
 
 auto TextBox::draw(Screen& screen) -> void {
@@ -118,7 +141,7 @@ auto TextBox::draw(Screen& screen) -> void {
   // that exist. (Skipping the wrap here produced total == 0: a blank box
   // with no bar -- erasing the content AND the bar's reason to exist.)
   const int cw = content_w();
-  std::vector<std::string> wrapped;
+  std::vector<StyledText> wrapped;
   wrapped.reserve(m_lines.size());
   for (const auto& l : m_lines) wrap_into(wrapped, l, cw);
 
@@ -137,7 +160,7 @@ auto TextBox::draw(Screen& screen) -> void {
   for (int row = 0; row < r.h; ++row) {
     const int idx = top + row;
     if (idx < bottom && idx < total) {
-      screen.write_text(r.x, r.y + row, wrapped[static_cast<std::size_t>(idx)], fg, {});
+      screen.write_styled(r.x, r.y + row, wrapped[static_cast<std::size_t>(idx)]);
     }
   }
 

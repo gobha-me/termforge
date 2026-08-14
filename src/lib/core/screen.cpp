@@ -189,6 +189,23 @@ auto Screen::write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
   return written;
 }
 
+auto Screen::write_styled(int x, int y, std::span<const TextSpan> spans) -> int {
+  // Advance by write_text's return — the cells actually painted — never by a
+  // re-derived display_width. A span that clips at the right edge leaves the
+  // cursor at the first unpainted column; the next span starts there and
+  // paints nothing past the edge, matching a single run's clipping.
+  int total = 0;
+  int cx = x;
+  for (const TextSpan& span : spans) {
+    if (span.text.empty()) continue;
+    const int n = write_text(cx, y, span.text, span.style.fg, span.style.bg,
+                             span.style.attrs);
+    cx += n;
+    total += n;
+  }
+  return total;
+}
+
 auto Screen::sanitize(std::string_view in) -> std::string {
   // #149: the policy lives in text::sanitize so callers can measure what will
   // paint without a Screen; the write path runs through the same bytes here.

@@ -7,10 +7,12 @@
 // driver. Screen also owns resize handling (SIGWINCH) and the escape
 // sanitization boundary for text.
 
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "termforge/core/styled_text.hpp"
 #include "termforge/core/types.hpp"
 
 namespace termforge {
@@ -75,6 +77,13 @@ class Screen {
   // visible part started.
   auto write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
                   Attr attrs = Attr::None) -> int;
+
+  // Write a sequence of styled spans on one row (#25). Each span is painted
+  // via write_text; the column cursor advances by that call's return (cells
+  // actually painted), so a later span cannot re-derive clipping from a
+  // display_width guess. Empty spans paint nothing and advance nothing.
+  // Returns the total on-screen cells painted across all spans.
+  auto write_styled(int x, int y, std::span<const TextSpan> spans) -> int;
 
   // Sanitize untrusted text: drop C0/C1 control chars and ESC, keep printable
   // + valid UTF-8 continuation bytes. Delegates to text::sanitize(in, Strip)
