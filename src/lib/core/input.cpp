@@ -110,11 +110,11 @@ struct CsiUKey {
 
 // Classify a CSI-u key code. The three-way split matters:
 //
-//   Drop    — a bare modifier press (LeftShift is 57441) arrives on every
-//             shifted keystroke under KeyboardMode::Enhanced, and control
-//             codes below 32 are never legitimate key codes. Emitting
+//   Drop    — locks, PrintScreen/Pause/Menu, media keys, Super/Hyper/Meta
+//             and ISO_LEVEL modifiers, plus control codes below 32. Emitting
 //             Key::Unknown for those would mean an Unknown storm on ordinary
-//             typing, so they produce nothing.
+//             typing, so they produce nothing. Left/Right Shift/Ctrl/Alt are
+//             Named (#209) so hold-to-sprint is expressible under Enhanced.
 //   Unknown — a real key the app could plausibly want but Key cannot name
 //             (Insert, F13+, keypad Begin). Consistent with map_tilde_key,
 //             which already leaves ESC[2~ (Insert) Unknown.
@@ -149,14 +149,22 @@ auto map_csi_u_key(char32_t code) -> CsiUKey {
     case 57413: return {CsiUKind::Text, Key::Char, U'+'};
     case 57415: return {CsiUKind::Text, Key::Char, U'='};
     case 57416: return {CsiUKind::Text, Key::Char, U','};
+    // Bare Shift/Ctrl/Alt (#209). Kitty codes; left/right preserved.
+    // Super/Hyper/Meta (57444–57446, 57450–57452) and ISO_LEVEL stay Dropped.
+    case 57441: return {CsiUKind::Named, Key::LeftShift, 0};
+    case 57442: return {CsiUKind::Named, Key::LeftCtrl, 0};
+    case 57443: return {CsiUKind::Named, Key::LeftAlt, 0};
+    case 57447: return {CsiUKind::Named, Key::RightShift, 0};
+    case 57448: return {CsiUKind::Named, Key::RightCtrl, 0};
+    case 57449: return {CsiUKind::Named, Key::RightAlt, 0};
     default: break;
   }
   if (code >= 57399 && code <= 57408) {  // KP_0 … KP_9
     return {CsiUKind::Text, Key::Char, U'0' + (code - 57399)};
   }
-  // Locks, PrintScreen/Pause/Menu, the media keys, and the modifier keys
-  // themselves. All are physically real and all are unrepresentable *and*
-  // high-frequency, so they are dropped rather than reported as Unknown.
+  // Locks, PrintScreen/Pause/Menu, media keys, and the remaining modifiers
+  // (Super/Hyper/Meta, ISO_LEVEL). Unrepresentable *and* high-frequency, so
+  // dropped rather than reported as Unknown. Shift/Ctrl/Alt are Named above.
   if ((code >= 57358 && code <= 57363) || (code >= 57428 && code <= 57454)) {
     return {CsiUKind::Drop, Key::Unknown, 0};
   }

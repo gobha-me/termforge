@@ -652,17 +652,77 @@ TEST_CASE("Input: legacy-encoded keys carry the event type too",
   }
 }
 
-TEST_CASE("Input: modifier and lock keys report nothing at all",
+TEST_CASE("Input: bare Shift/Ctrl/Alt emit KeyEvents; locks stay silent",
           "[input][keyboard][regression]") {
-  // Under Enhanced a bare Shift press arrives on every shifted keystroke.
-  // Reporting Key::Unknown for it would be an Unknown storm on ordinary
-  // typing, which is worse than the gap.
+  // Enhanced reports LeftShift (57441) as a real key (#209). Super and the
+  // locks stay Dropped — Key::Unknown for those would be an Unknown storm.
   Input in;
-  REQUIRE(in.decode("\033[57441;1:1u").empty());  // LeftShift press
-  REQUIRE(in.decode("\033[57441;1:3u").empty());  // LeftShift release
-  REQUIRE(in.decode("\033[57442u").empty());      // LeftControl
+  auto shift_down = in.decode("\033[57441;1:1u");
+  REQUIRE(shift_down.size() == 1);
+  REQUIRE(first_key(shift_down).key == Key::LeftShift);
+  REQUIRE(first_key(shift_down).action == KeyAction::Press);
+  auto shift_up = in.decode("\033[57441;1:3u");
+  REQUIRE(first_key(shift_up).key == Key::LeftShift);
+  REQUIRE(first_key(shift_up).action == KeyAction::Release);
+  auto ctrl = in.decode("\033[57442u");
+  REQUIRE(first_key(ctrl).key == Key::LeftCtrl);
+  auto alt = in.decode("\033[57443u");
+  REQUIRE(first_key(alt).key == Key::LeftAlt);
+  auto rshift = in.decode("\033[57447u");
+  REQUIRE(first_key(rshift).key == Key::RightShift);
+  auto rctrl = in.decode("\033[57448u");
+  REQUIRE(first_key(rctrl).key == Key::RightCtrl);
+  auto ralt = in.decode("\033[57449u");
+  REQUIRE(first_key(ralt).key == Key::RightAlt);
+  REQUIRE(in.decode("\033[57444u").empty());      // LeftSuper — still Dropped
   REQUIRE(in.decode("\033[57358u").empty());      // CapsLock
   REQUIRE(in.decode("\033[57428u").empty());      // MediaPlay
+}
+
+TEST_CASE("Input: Shift-up arrives before W-up in a boost chord (#209)",
+          "[input][keyboard][modifier]") {
+  // Acceptance for #209: Shift press → W press → Shift release → W release
+  // must expose the Shift-up transition before W-up so sprint can clear while
+  // W remains held. Sequences are kitty Enhanced CSI-u (no Legacy synthesis).
+  Input in;
+  auto seq = in.decode(
+      "\033[57441;2u"      // LeftShift press (mod bit includes shift)
+      "\033[119;2u"        // w press with shift
+      "\033[57441;1:3u"    // LeftShift release
+      "\033[119;1:3u");    // w release
+  REQUIRE(seq.size() == 4);
+  REQUIRE(std::get<KeyEvent>(seq[0]).key == Key::LeftShift);
+  REQUIRE(std::get<KeyEvent>(seq[0]).action == KeyAction::Press);
+  REQUIRE(std::get<KeyEvent>(seq[1]).key == Key::Char);
+  REQUIRE(std::get<KeyEvent>(seq[1]).ch == U'w');
+  REQUIRE(std::get<KeyEvent>(seq[1]).shift);
+  REQUIRE(std::get<KeyEvent>(seq[1]).action == KeyAction::Press);
+  REQUIRE(std::get<KeyEvent>(seq[2]).key == Key::LeftShift);
+  REQUIRE(std::get<KeyEvent>(seq[2]).action == KeyAction::Release);
+  REQUIRE(std::get<KeyEvent>(seq[3]).key == Key::Char);
+  REQUIRE(std::get<KeyEvent>(seq[3]).ch == U'w');
+  REQUIRE(std::get<KeyEvent>(seq[3]).action == KeyAction::Release);
+}
+
+TEST_CASE("Input: tapping Shift while W is held yields one modifier interval (#209)",
+          "[input][keyboard][modifier]") {
+  Input in;
+  auto seq = in.decode(
+      "\033[119u"          // w press
+      "\033[57441;2u"      // LeftShift press
+      "\033[57441;1:3u"    // LeftShift release
+      "\033[119;1:3u");    // w release
+  REQUIRE(seq.size() == 4);
+  int shift_downs = 0, shift_ups = 0;
+  for (const auto& e : seq) {
+    const auto* k = std::get_if<KeyEvent>(&e);
+    REQUIRE(k != nullptr);
+    if (k->key != Key::LeftShift) continue;
+    if (k->action == KeyAction::Press) ++shift_downs;
+    if (k->action == KeyAction::Release) ++shift_ups;
+  }
+  REQUIRE(shift_downs == 1);
+  REQUIRE(shift_ups == 1);
 }
 
 TEST_CASE("Input: a real key with no Key enumerator stays Unknown",
@@ -845,17 +905,28 @@ TEST_CASE("Input: lock bits in the modifier mask are not modifiers",
   REQUIRE(first_key(kp7_rel).action == KeyAction::Release);
 }
 
-TEST_CASE("Input: captured modifier and lock keypresses emit nothing",
+TEST_CASE("Input: captured Shift/Ctrl emit KeyEvents; locks stay silent",
           "[input][keyboard][ground-truth]") {
-  // Verbatim from the capture. These arrive on every shifted keystroke and
-  // on every lock toggle; Key::Unknown for them would be an Unknown storm.
+  // Verbatim from the capture. Shift/Ctrl are named keys (#209); locks stay
+  // Dropped — Key::Unknown for them would be an Unknown storm.
   Input in;
-  for (const char* seq : {"\033[57441;2u",     // shift+LEFT_SHIFT press
-                          "\033[57441;1:3u",   // LEFT_SHIFT release
-                          "\033[57441;130u",   // shift+numlock+LEFT_SHIFT
-                          "\033[57442;5u",     // ctrl+LEFT_CONTROL press
-                          "\033[57442;1:3u",   // LEFT_CONTROL release
-                          "\033[57360u",       // NUM_LOCK press
+  auto shift_press = in.decode("\033[57441;2u");
+  REQUIRE(first_key(shift_press).key == Key::LeftShift);
+  REQUIRE(first_key(shift_press).action == KeyAction::Press);
+  REQUIRE(first_key(shift_press).shift);
+  auto shift_rel = in.decode("\033[57441;1:3u");
+  REQUIRE(first_key(shift_rel).key == Key::LeftShift);
+  REQUIRE(first_key(shift_rel).action == KeyAction::Release);
+  auto shift_num = in.decode("\033[57441;130u");
+  REQUIRE(first_key(shift_num).key == Key::LeftShift);
+  REQUIRE(first_key(shift_num).shift);
+  auto ctrl_press = in.decode("\033[57442;5u");
+  REQUIRE(first_key(ctrl_press).key == Key::LeftCtrl);
+  REQUIRE(first_key(ctrl_press).ctrl);
+  auto ctrl_rel = in.decode("\033[57442;1:3u");
+  REQUIRE(first_key(ctrl_rel).key == Key::LeftCtrl);
+  REQUIRE(first_key(ctrl_rel).action == KeyAction::Release);
+  for (const char* seq : {"\033[57360u",       // NUM_LOCK press
                           "\033[57360;129:3u", // NUM_LOCK release
                           "\033[57358;129u",   // CAPS_LOCK press
                           "\033[57358;193:3u"}) {  // CAPS_LOCK release
