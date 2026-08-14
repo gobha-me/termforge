@@ -245,6 +245,13 @@ template <typename Operation>
   return out;
 }
 
+[[nodiscard]] auto opaque_pixels(int width, int height, int seed = 0)
+    -> std::vector<Pixel> {
+  auto out = pixels(width, height, seed);
+  for (auto& pixel : out) pixel.a = 255;
+  return out;
+}
+
 [[nodiscard]] auto run_kernels(const Options& options) -> std::vector<Result> {
   const int width = options.smoke ? 64 : 640;
   const int height = options.smoke ? 48 : 384;
@@ -310,7 +317,7 @@ template <typename Operation>
   const int driver_cols = options.smoke ? 16 : 80;
   const int driver_rows = options.smoke ? 8 : 24;
   Image driver_image{driver_cols, driver_rows * 2,
-                     pixels(driver_cols, driver_rows * 2, 4)};
+                     opaque_pixels(driver_cols, driver_rows * 2, 4)};
   AnsiRgbDriver ansi;
   FallbackDriver fallback;
   CountingSink ansi_sink;
@@ -330,7 +337,7 @@ template <typename Operation>
   ansi_measurement.output_bytes = ansi_sink.last_bytes();
   out.push_back(std::move(ansi_measurement));
   Image fallback_image{driver_cols, driver_rows,
-                       pixels(driver_cols, driver_rows, 5)};
+                       opaque_pixels(driver_cols, driver_rows, 5)};
   Result fallback_result{.suite = "kernels", .name = "fallback_luminance"};
   fallback_result.input_bytes = std::as_bytes(fallback_image.pixels()).size();
   auto fallback_measurement = measure(options, fallback_result, 1, [&] {

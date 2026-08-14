@@ -481,6 +481,24 @@ onto the scene — is the normal way to build a sprite frame, and is what
 `docs/map-widget.md` commits the sprite tier to. Assuming opacity is silently
 wrong at every antialiased edge, with no diagnostic.
 
+### Per-tier alpha survival (#99)
+
+`Pixel::a` is real data. What each driver does with a translucent payload
+(`any a != 255`):
+
+| tier | what happens | event |
+|---|---|---|
+| Kitty | transmitted as `f=32` RGBA; the terminal composites | none |
+| AnsiRgb | refused before paint — a cell has no alpha and no honest background | `Warning`, no bytes |
+| Fallback | refused before paint — the luminance ramp has no alpha | `Warning`, no bytes |
+
+Callers that want AnsiRgb/Fallback must precompose onto an explicit opaque
+background. App reports an AnsiRgb refusal through its normal `ErrorEvent`
+queue, but the enhanced pass has already blanked that region's cells before
+submission. Ignoring the `Warning` therefore leaves a hole rather than
+silently restoring the widget's Baseline, exactly as the severity contract
+promises.
+
 ## Pre-encoded payloads (#163)
 
 Everything above assumes the library holds pixels. Sometimes it should not.
