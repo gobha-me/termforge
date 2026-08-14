@@ -679,8 +679,8 @@ TEST_CASE("Input: bare Shift/Ctrl/Alt emit KeyEvents; locks stay silent",
   REQUIRE(in.decode("\033[57428u").empty());      // MediaPlay
 }
 
-TEST_CASE("Input: Shift-up arrives before W-up in a boost chord",
-          "[input][keyboard][#209]") {
+TEST_CASE("Input: Shift-up arrives before W-up in a boost chord (#209)",
+          "[input][keyboard][modifier]") {
   // Acceptance for #209: Shift press → W press → Shift release → W release
   // must expose the Shift-up transition before W-up so sprint can clear while
   // W remains held. Sequences are kitty Enhanced CSI-u (no Legacy synthesis).
@@ -704,8 +704,8 @@ TEST_CASE("Input: Shift-up arrives before W-up in a boost chord",
   REQUIRE(std::get<KeyEvent>(seq[3]).action == KeyAction::Release);
 }
 
-TEST_CASE("Input: tapping Shift while W is held yields one modifier interval",
-          "[input][keyboard][#209]") {
+TEST_CASE("Input: tapping Shift while W is held yields one modifier interval (#209)",
+          "[input][keyboard][modifier]") {
   Input in;
   auto seq = in.decode(
       "\033[119u"          // w press
