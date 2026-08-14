@@ -153,9 +153,10 @@ auto RadioGroup::on_event(const Event& ev) -> bool {
     if (m->scroll_up || m->scroll_down) return false;
 
     if (m->pressed && m->button == 0 && rect().contains(m->x, m->y)) {
-      const int clicked = m_scroll + (m->y - rect().y);
-      if (clicked >= 0 && clicked < m_list.count())
-        select(clicked);
+      const int clicked =
+          detail::row_item_at(rect(), /*header_rows=*/0, m_scroll,
+                              m_list.count(), m->y);
+      if (clicked >= 0) select(clicked);
       // A press on a blank row inside the rect is consumed and inert, so it
       // cannot fall through to whatever is underneath.
       return true;
