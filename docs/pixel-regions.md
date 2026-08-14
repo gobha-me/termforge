@@ -893,34 +893,39 @@ sink suites. It is not a promise that every emulator keeps the same pixels
 visible after the same OS-level event, and it does **not** yet include an
 `ImageInvalidatedEvent` (see [What is not signaled yet](#what-is-not-signaled-yet-113)).
 
-Kitty's graphics protocol says clear-screen and main↔alt-screen transitions
-discard terminal-side image data. TermForge enters and leaves the alt screen,
+The [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/#interaction-with-other-terminal-actions)
+requires images in the alternate buffer to be cleared when mode 1049 switches
+from the main buffer into it; the main buffer preserves its images when the
+alternate buffer is entered or left. TermForge enters and leaves the alt screen,
 handles `SIGWINCH`, and can be suspended or reattached underneath the process.
 The table below answers, for each transition, whether the **library** treats
 resident payloads as still valid, what bytes it emits, and what the application
-is expected to do.
+is expected to do. It does not generalize the protocol's one-way alternate-
+buffer rule into a bidirectional invalidation guarantee.
 
 | transition | do transmitted images survive (library view)? | what the library does | what the application does today |
 |---|---|---|---|
 | alt-screen **enter** (`setup` / `enter_screen`) | n/a — session starts empty | no image traffic; pin and region maps are empty | pin / Persistent upload on first enhanced frame |
-| alt-screen **leave** (normal final teardown) | **no** — deleted while the sink is still alive | `shutdown()` → Kitty `a=d,d=A` (delete all); then `leave_screen` | nothing special; handles die with the session. Re-run must re-pin |
+| alt-screen **leave** (normal final teardown) | session ends; handles must not be reused | `shutdown()` emits Kitty `a=d,d=A` through the live sink; then `leave_screen` | nothing special; a later run must re-pin |
 | in-session **grid / cell-geometry resize** (`SIGWINCH`, `request_resize`, `set_size`) | **yes** for resident payloads | `ResizeEvent`; `m_pixel_force_repaint` asks for a placement refresh (Unicode re-emits the placeholder grid; classic is a no-op when the same rect/fit is already live); pin ids and payloads are **not** deleted or retransmitted unless the Persistent region's returned `Image` logical `Extent` changes (that path unpins and re-pins) | handle `ResizeEvent` for layout; keep using existing `PinnedImage` / Persistent regions |
 | **SIGTSTP** suspend / resume (`Ctrl-Z`, job control) | **unknown to the library** — treated as still valid | no `SIGTSTP` handler; pin/region maps and handles are unchanged; no image delete and no invalidation event | no library signal; if the terminal dropped graphics, the app is not told and must discover it itself |
 | detach / reattach (multiplexer / embedding) | **unknown to the library** — treated as still valid | same as suspend: no invalidation hook, no `d=A`, handles stay live | same gap as suspend |
 | process death mid-session | no API recovery | crash / `atexit` leave-sequence restores the tty; it does **not** route Kitty `d=A` through a live App sink | emulator-dependent residue; real-terminal matrix, not a library promise |
 
-### Normal teardown deletes; unmanaged destruction does not
+### Normal teardown requests cleanup; unmanaged destruction does not
 
 `App::run_loop` / `test_run_frames` call `shutdown_driver()` **before**
 `teardown()` leaves the alt screen, while the session sink is still borrowed.
 Kitty's `on_shutdown` appends `a=d,d=A` and emits one metered write when anything
-was transmitted in the session. That is the cleanup path that frees resident
-images the process uploaded.
+was transmitted in the session. Uppercase `A` removes every visible placement
+and frees its image data when no other reference retains it. The offline suite
+pins that request and its borrowed-sink lifetime; it does not claim an emulator
+must free a payload that was transmitted but never placed.
 
 `~KittyDriver` does **not** emit that delete-all: destruction is too late to
 trust a borrowed sink (and would be wrong for a multi-session server). Explicit
 `shutdown()` is required. Headless App seams already call it; a direct driver
-user that skips `shutdown()` leaves terminal-side images behind.
+user that skips `shutdown()` may leave terminal-side images behind.
 
 ### In-session resize keeps payloads, refreshes placements
 

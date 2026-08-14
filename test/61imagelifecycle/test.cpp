@@ -5,13 +5,15 @@
 //
 //   * in-session resize keeps resident payloads (no second a=t) and refreshes
 //     placement;
-//   * normal shutdown deletes everything with a=d,d=A while the sink is alive;
+//   * normal shutdown requests protocol-wide cleanup with a=d,d=A while the
+//     sink is alive;
 //   * per-frame collection retires an undrawn unpinned region with d=I and an
 //     undrawn pinned placement with d=i.
 //
 // They deliberately do NOT assert an ImageInvalidatedEvent: that event does
-// not exist on Event yet. The Event-variant size check below is the pin that
-// keeps Phase 1 from silently claiming the full #113 acceptance shape.
+// not exist on Event yet, and this offline seam cannot model suspend/reattach.
+// The suite header states that limitation instead of freezing the missing API
+// in a test that would fail when the intended event is added.
 //
 // All offline against an in-memory sink / string. No pty.
 
@@ -118,13 +120,6 @@ class ResizeLifecycleApp final : public App {
 
 }  // namespace
 
-TEST_CASE("Event bus has no ImageInvalidatedEvent yet (#113 phase 1)",
-          "[imagelifecycle][events]") {
-  // Five alternatives: Key, Mouse, Paste, Resize, Error. Adding an invalidation
-  // event is the remaining #113 acceptance work; this count must move with it.
-  STATIC_REQUIRE(std::variant_size_v<Event> == 5);
-}
-
 TEST_CASE("in-session resize keeps one resident transmit (#113)",
           "[imagelifecycle][app][kitty][resize]") {
   ResizeLifecycleApp app;
@@ -156,7 +151,7 @@ TEST_CASE("in-session resize re-emits Unicode placeholder grid without "
   app.surface.image().fill({0, 0, 320, 180}, Pixel{30, 80, 160, 255});
   auto driver = std::make_unique<KittyDriver>();
   driver->set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
-  REQUIRE(app.set_size(Size{20, 8, 160, 128}).has_value());
+  REQUIRE(app.set_size(App::Size{20, 8, 160, 128}).has_value());
   REQUIRE(app.test_take_resize());
   app.test_run_frames(4, 20, 8, nullptr, std::move(driver));
 
@@ -173,8 +168,7 @@ TEST_CASE("in-session resize re-emits Unicode placeholder grid without "
   CHECK(app.resize_events == 1);
 }
 
-TEST_CASE("shutdown deletes all transmitted images while the sink is alive "
-          "(#113)",
+TEST_CASE("shutdown emits uppercase delete-all while the sink is alive (#113)",
           "[imagelifecycle][kitty][teardown]") {
   KittyDriver d;
   SegmentSink sink;
