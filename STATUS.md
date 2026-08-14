@@ -4,14 +4,46 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-13, latest)
+## Where we are (2026-08-14, latest)
 
-**Pending release: v0.27.0 — runtime-dispatched SIMD kernels.** #90 adds a
-private AVX2 tier for base64, image fill, opaque-destination source-over blend
-and contiguous fallback luminance. The scalar implementations remain compiled
-on every architecture and serve as permanent bit-exact oracles; non-x86 and
-non-AVX2 hosts select them silently. Image blit stays on libc `memcpy` because
-the attempted AVX2 loop measured no faster.
+**Pending release: v0.27.1 — bounded game benchmark CLI.** #252 reported that
+the shipped game's headless `--benchmark` command could remain running on the
+reference host even for one frame, while the same binary ran interactively.
+The exact GCC 13.3 Release path completed from fresh builds both locally and on
+that host, so there is no reproducible source-level hang to patch and no basis
+for blaming the SIMD layer.
+
+The missing coverage was real: the suites replayed `App::test_run_frames` but
+never launched the production executable. `game-benchmark-cli` now runs the
+actual command for one and 180 frames under an inner ten-second timeout and an
+outer CTest timeout, parses both reports, and pins stable resident-image state,
+clean-frame zero bytes and explicit shutdown. A hanging-process mutation fails
+in ten seconds. `tools/diagnose_game_benchmark.sh` gives a recurrence one
+command: a fresh GCC 13 Release build, bounded one-frame run, process wait
+channel and automatic all-thread backtrace capture.
+
+GCC 13.3 and Clang 20.1 Release `-Werror` builds pass 65/65 and 64/64
+configured CTest targets respectively (the GCC tree also enables the benchmark
+smoke target). GCC ASan+UBSan with leak detection passes 64/64. GCC 14 and
+Clang 20 each pass the subdirectory, installed-package and plain-vendored
+consumer paths. The reporting host's fresh GCC 13 diagnostic completes the
+one-frame command in 1.744 ms. No public API or terminal bytes change, so no
+live-emulator gate applies.
+
+**How it got picked:** project memory named #252 as the next offline task; the
+only other pending task, #225, requires direct unproxied Kitty evidence.
+
+**Next:** finish validation and release v0.27.1. #88 retains W2/W4/W5 and #225
+retains the direct Kitty capture.
+
+## Previous release: v0.27.0
+
+**v0.27.0 — runtime-dispatched SIMD kernels.** #90 adds a private AVX2 tier for
+base64, image fill, opaque-destination source-over blend and contiguous
+fallback luminance. The scalar implementations remain compiled on every
+architecture and serve as permanent bit-exact oracles; non-x86 and non-AVX2
+hosts select them silently. Image blit stays on libc `memcpy` because the
+attempted AVX2 loop measured no faster.
 
 The benchmark's schema 2 records requested and resolved kernel tiers. On the
 GCC 14.2 reference host AVX2 improves base64 51.8%, image fill 38.2%, image
@@ -23,14 +55,7 @@ lifecycle. Timing remains evidence, never a CI threshold.
 `test/59simd` forces both tiers over unaligned spans, alpha early-outs and every
 vector tail; base64's independent oracle still covers every input length
 through 8192. The public API and terminal bytes are unchanged, so no live
-emulator gate applies.
-
-**How it got picked:** v0.26.0 completed #89 and the roadmap explicitly named
-#90 as the next offline kernel layer. #225 still requires a human-controlled
-direct Kitty TTY.
-
-**Next:** finish validation and release v0.27.0. #88 retains W2/W4/W5 and #225
-retains the direct Kitty capture.
+emulator gate applies. The prerelease shipped on 2026-08-13.
 
 ## Previous release: v0.26.0
 
