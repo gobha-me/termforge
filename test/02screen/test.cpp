@@ -1,9 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <climits>
+#include <span>
 
 #include "support/screen.hpp"
 #include "termforge/core/screen.hpp"
+#include "termforge/core/styled_text.hpp"
+#include "termforge/core/types.hpp"
 
 using termforge::Rgb;
 using termforge::Screen;
@@ -387,4 +390,88 @@ TEST_CASE("Screen: resize preserves top-left content", "[screen]") {
   REQUIRE(s.at(2, 3).text == "k");
   s.resize(2, 2);  // shrink clips
   REQUIRE(s.at(2, 3).text.empty());  // now OOB -> blank
+}
+
+TEST_CASE("Screen: write_styled paints per-span styles and empty spans",
+          "[screen][styled]") {
+  using termforge::Attr;
+  using termforge::TextSpan;
+  using termforge::TextStyle;
+
+  const Rgb red{0xFF, 0, 0};
+  const Rgb blue{0, 0, 0xFF};
+  const Rgb bg{};
+  Screen s{10, 1};
+  const TextSpan spans[] = {
+      TextSpan{"ab", TextStyle{red, bg, Attr::Bold}},
+      TextSpan{"", TextStyle{red, bg}},  // empty: paints nothing
+      TextSpan{"cd", TextStyle{blue, bg, Attr::None}},
+  };
+  const int n = s.write_styled(0, 0, spans);
+  REQUIRE(n == 4);
+  REQUIRE(s.at(0, 0).text == "a");
+  REQUIRE(s.at(0, 0).fg == red);
+  REQUIRE(s.at(0, 0).attrs == Attr::Bold);
+  REQUIRE(s.at(1, 0).text == "b");
+  REQUIRE(s.at(2, 0).text == "c");
+  REQUIRE(s.at(2, 0).fg == blue);
+  REQUIRE(s.at(2, 0).attrs == Attr::None);
+  REQUIRE(s.at(3, 0).text == "d");
+}
+
+TEST_CASE("Screen: write_styled keeps later spans past a right-clipped run",
+          "[screen][styled][failure]") {
+  using termforge::TextSpan;
+  using termforge::TextStyle;
+
+  Screen s{5, 1};
+  const Rgb a{1, 0, 0}, b{0, 1, 0};
+  const TextSpan spans[] = {
+      TextSpan{"xyz", TextStyle{a, {}}},  // starts at col 3 -> paints x,y only
+      TextSpan{"Q", TextStyle{b, {}}},    // cursor is already past the edge
+  };
+  REQUIRE(s.write_styled(3, 0, spans) == 2);
+  REQUIRE(s.at(3, 0).text == "x");
+  REQUIRE(s.at(3, 0).fg == a);
+  REQUIRE(s.at(4, 0).text == "y");
+  REQUIRE(s.at(4, 0).fg == a);
+}
+
+TEST_CASE("Screen: write_styled carries the logical cursor past a clipped prefix",
+          "[screen][styled][failure]") {
+  // The first span starts two columns left of the grid. Its visible-cell
+  // return is 1, but its actual cursor ends at column 1; using that return as
+  // the advance relocates the second span to -1 and drops it.
+  using termforge::TextSpan;
+  using termforge::TextStyle;
+
+  Screen s{5, 1};
+  const Rgb a{1, 0, 0}, b{0, 1, 0};
+  const TextSpan spans[] = {
+      TextSpan{"abc", TextStyle{a, {}}},  // a,b clipped; c paints at column 0
+      TextSpan{"XY", TextStyle{b, {}}},   // must begin at logical column 1
+  };
+  REQUIRE(s.write_styled(-2, 0, spans) == 3);
+  REQUIRE(s.at(0, 0).text == "c");
+  REQUIRE(s.at(0, 0).fg == a);
+  REQUIRE(s.at(1, 0).text == "X");
+  REQUIRE(s.at(1, 0).fg == b);
+  REQUIRE(s.at(2, 0).text == "Y");
+  REQUIRE(s.at(2, 0).fg == b);
+}
+
+TEST_CASE("Screen: single-span write_styled matches write_text cell-for-cell",
+          "[screen][styled]") {
+  using termforge::Attr;
+  using termforge::TextSpan;
+  using termforge::TextStyle;
+
+  const Rgb fg{0x12, 0x34, 0x56};
+  const Rgb bg{0x01, 0x02, 0x03};
+  Screen a{8, 1};
+  Screen b{8, 1};
+  a.write_text(0, 0, "hello", fg, bg, Attr::Underline);
+  const TextSpan span{"hello", TextStyle{fg, bg, Attr::Underline}};
+  b.write_styled(0, 0, std::span{&span, 1});
+  for (int x = 0; x < 8; ++x) REQUIRE(a.at(x, 0) == b.at(x, 0));
 }

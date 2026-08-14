@@ -6,32 +6,41 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-14, latest)
 
-**Pending release: v0.28.0 — horizontal scrollbars.** #131 generalizes the
-shared scrollbar glyphs and drawing helper with a source-compatible vertical
-default, then gives a two-row TabBar a horizontal track over cumulative title
-columns. Height-one bars retain their existing indicators, and tab selection,
-keyboard navigation and wheel behaviour stay tab-counted.
+**Pending release: v0.29.0 — styled text spans.** #25 adds the public
+`TextStyle`, `TextSpan` and `StyledText` vocabulary, teaches `Screen` to write
+per-span colours and attributes, and lets `TextBox` retain styled lines. Plain
+text remains source-compatible and delegates through the same sanitization and
+storage path. Renderer wrapping preserves span boundaries while still counting
+display cells rather than bytes.
 
-Review found two endpoint failures that ordinary-width fixtures did not expose.
-The track now maps both inclusive cell ranges, so its rightmost cell reaches the
-final tab even when the first title dominates the content width. A one-cell
-track and a single clipped tab paint no inert scrollbar, while a last short tab
-clamps the visual thumb input without changing the whole-tab content offset.
-The focused caller tests use non-zero coordinates, pathological title widths
-and both degenerate shapes. Mutating the endpoint divisor or restoring either
-inert-track branch fails those cases.
+Review found that the proposed `write_styled` advanced later spans by visible
+cells instead of the logical cursor position. A left-clipped prefix therefore
+overwrote itself at the viewport edge. The shared writer now returns both its
+visible count and next logical x coordinate; a focused two-span case fails when
+the visible-count mutation is restored. Review also replaced invalid raw bytes
+in Screen test comments with valid UTF-8 so Clang 19 and 20 can compile the
+suite, and extended the installed consumer fixture across the new API.
 
 The current-main integration result passes 64/64 CTest targets with GCC 14.2
 and Clang 20.1.8 Release `-Werror`, plus 64/64 under GCC ASan+UBSan with leak
 detection. GCC and Clang each pass the subdirectory, installed-package and
-plain-vendored consumer paths. This changes widget rendering only, not a
-terminal protocol form, so no live-emulator gate applies.
+plain-vendored consumer paths. This changes rendered cells only, not a terminal
+protocol form, so no live-emulator gate applies.
 
-**How it got picked:** v0.27.2 shipped #248's shared scroll-row foundation.
-#255 was the next fully green open PR named by the handoff; the older remaining
-contributor PRs still need the separate task #166 audit.
+**How it got picked:** open PR #254 is the active implementation of priority-1
+issue #25. Its styled-span vocabulary is also the explicit first dependency in
+the #25 -> #24 -> #217 rich-text sequence.
 
-**Next:** finish hosted validation and release v0.28.0, then resume task #166.
+**Next:** finish hosted validation and release v0.29.0, then take #24's markup
+parser on top of the released span model.
+
+## Previous release: v0.28.0
+
+**v0.28.0 — horizontal scrollbars.** #131 generalizes the shared scrollbar
+glyphs and drawing helper with a source-compatible vertical default, then gives
+a two-row TabBar a horizontal track over cumulative title columns. Review fixed
+the inclusive endpoint mapping and suppressed inert degenerate tracks. The
+release passed all ten hosted jobs and shipped on 2026-08-14.
 
 ## Previous release: v0.27.2
 
