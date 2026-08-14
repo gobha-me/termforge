@@ -159,12 +159,16 @@ auto region_key(int x, int y, int w, int h) -> std::uint64_t {
 }
 
 // Both ordinary image transmission and root-frame replacement have identical
-// base64/chunk framing. Only the first APC's control keys differ. Keeping the
-// continuation path here means the protocol's multiple-of-four invariant
-// cannot drift between immutable and mutable resident images.
+// base64/chunk framing, but kitty gives their continuation APCs different
+// action spelling: an ordinary a=t transfer inherits through bare m= chunks,
+// while every animation-frame chunk must repeat a=f (#259). Keeping that
+// distinction explicit here means a new caller cannot silently inherit the
+// wrong continuation wire.
+enum class ChunkTransfer { DirectImage, AnimationFrame };
+
 template <typename FirstChunk>
 auto append_chunked(std::string& out, std::span<const std::byte> payload,
-                    FirstChunk first_chunk) -> void {
+                    ChunkTransfer transfer, FirstChunk first_chunk) -> void {
   const std::string b64 = detail::base64_encode(payload);
   constexpr std::size_t kChunkSize = 4096;
   static_assert(kChunkSize % 4 == 0,
@@ -179,9 +183,17 @@ auto append_chunked(std::string& out, std::span<const std::byte> payload,
       first_chunk(chunk, more);
       first = false;
     } else {
-      // Continuation chunks carry only m= and the payload. Repeating the
-      // opener's f=/s=/v= keys starts a different operation on the terminal.
-      out += std::format("\033_Gm={};{}\033\\", more ? 1 : 0, chunk);
+      switch (transfer) {
+        case ChunkTransfer::DirectImage:
+          // a=t continuation chunks inherit the action and carry only m=.
+          out += std::format("\033_Gm={};{}\033\\", more ? 1 : 0, chunk);
+          break;
+        case ChunkTransfer::AnimationFrame:
+          // Kitty requires the animation action on every frame-data APC.
+          out += std::format("\033_Ga=f,m={};{}\033\\", more ? 1 : 0,
+                             chunk);
+          break;
+      }
     }
     offset += kChunkSize;
   }
@@ -1243,34 +1255,37 @@ auto KittyDriver::transmit(std::span<const std::byte> payload, int format_code,
   // Initial image transmission makes terminal-side ownership real; root-frame
   // replacement below can only operate on an image this path already created.
   m_transmitted = true;
-  append_chunked(m_buf, payload, [&](std::string_view chunk, bool more) {
-      // First chunk: full transmission parameters.
-      // a=t (transmit only, no display — display happens via placeholders),
-      // t=d (direct), f=<32 RGBA | 100 PNG>, i=<id>, s=W, v=H, m=<more>,
-      // q=2 (quiet).
-      //
-      // s=/v= are load-bearing for f=32 and redundant for f=100 (kitty reads
-      // a PNG's geometry out of the datastream). Emitted for both anyway:
-      // kitty ignores them where they do not apply, and one format string
-      // beats two that can drift.
-      m_buf += std::format(
-          "\033_Ga=t,t=d,f={},i={},s={},v={},m={},q=2;{}\033\\",
-          format_code, id, px.w, px.h, more ? 1 : 0, chunk);
-  });
+  append_chunked(m_buf, payload, ChunkTransfer::DirectImage,
+                 [&](std::string_view chunk, bool more) {
+                   // First chunk: full transmission parameters.
+                   // a=t (transmit only, no display — display happens via
+                   // placeholders), t=d (direct), f=<32 RGBA | 100 PNG>,
+                   // i=<id>, s=W, v=H, m=<more>, q=2 (quiet).
+                   //
+                   // s=/v= are load-bearing for f=32 and redundant for f=100
+                   // (kitty reads a PNG's geometry out of the datastream).
+                   // Emitted for both anyway: kitty ignores them where they do
+                   // not apply, and one format string beats two that can drift.
+                   m_buf += std::format(
+                       "\033_Ga=t,t=d,f={},i={},s={},v={},m={},q=2;{}\033\\",
+                       format_code, id, px.w, px.h, more ? 1 : 0, chunk);
+                 });
 }
 
 auto KittyDriver::replace_root_frame(std::span<const std::byte> payload,
                                      int format_code, Extent px,
                                      std::uint32_t id) -> void {
   m_transmitted = true;
-  append_chunked(m_buf, payload, [&](std::string_view chunk, bool more) {
-    // a=f transmits animation frame data. r=1 edits the existing root frame
-    // and X=1 replaces rather than alpha-blending its full canvas. Unlike a=t
-    // under the same image id, this operation leaves placements intact.
-    m_buf += std::format(
-        "\033_Ga=f,t=d,f={},i={},s={},v={},r=1,X=1,m={},q=2;{}\033\\",
-        format_code, id, px.w, px.h, more ? 1 : 0, chunk);
-  });
+  append_chunked(m_buf, payload, ChunkTransfer::AnimationFrame,
+                 [&](std::string_view chunk, bool more) {
+                   // a=f transmits animation frame data. r=1 edits the existing
+                   // root frame and X=1 replaces rather than alpha-blending its
+                   // full canvas. Unlike a=t under the same image id, this
+                   // operation leaves placements intact.
+                   m_buf += std::format(
+                       "\033_Ga=f,t=d,f={},i={},s={},v={},r=1,X=1,m={},q=2;{}\033\\",
+                       format_code, id, px.w, px.h, more ? 1 : 0, chunk);
+                 });
 }
 
 auto KittyDriver::place_classic(std::uint32_t image_id,

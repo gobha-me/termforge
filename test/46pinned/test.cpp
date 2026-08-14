@@ -189,16 +189,28 @@ TEST_CASE("pinned: a chunked root replacement reassembles verbatim",
   const auto pinned = d.pin_image(
       EncodedImage{ImageFormat::Png, first, Extent{320, 180}});
   REQUIRE(pinned.has_value());
+  d.flush();
+  out.clear();
+
   REQUIRE(d.replace_pinned(
                *pinned,
                EncodedImage{ImageFormat::Png, second, Extent{320, 180}})
               .has_value());
   d.flush();
 
-  first.insert(first.end(), second.begin(), second.end());
-  CHECK(tfsupport::reassemble(out) == first);
+  const auto chunks = tfsupport::transmit_chunks(tfsupport::apcs(out));
+  REQUIRE(chunks.size() >= 2);  // 5,000 raw bytes exceed 4,096 encoded bytes.
+  for (const auto& chunk : chunks) {
+    CHECK(tfsupport::key_value(chunk, "a") == "f");
+  }
+
+  CHECK(tfsupport::reassemble(out) == second);
   CHECK(frame_updates_of(out, pinned->id) == 1);
-  CHECK(tfsupport::count_of(out, "\033_Gm=") >= 2);
+  CHECK(total_data_transmits(out) == 1);
+  CHECK(tfsupport::count_of(out, "\033_Ga=f,m=") >= 1);
+  CHECK(tfsupport::count_of(out, "\033_Gm=") == 0);
+  CHECK(d.last_frame_bytes().image_transmit == out.size());
+  CHECK(d.last_frame_bytes().image_edit == 0);
 }
 
 TEST_CASE("pinned: replacement refusal preserves the last queued frame",
