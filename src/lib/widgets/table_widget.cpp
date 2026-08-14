@@ -238,18 +238,21 @@ auto TableWidget::on_event(const Event& ev) -> bool {
       return true;
     }
     if (m->pressed && m->button == 0 && rect().contains(m->x, m->y)) {
-      // Header row: consumed but inert (reserved for future sorting).
-      if (m->y == rect().y) return true;
+      // Header row (header_rows=1): consumed but inert (reserved for future
+      // sorting). Resolved through the same inset row_item_at uses below so
+      // the scrollbar page path cannot disagree about where content starts.
+      constexpr int kHeaderRows = 1;
+      if (m->y < rect().y + kHeaderRows) return true;
       // #21: a press on the scrollbar's column page-jumps the VIEW (the wheel
       // direction, not a selection -- a scrollbar click must not select a row
       // by accident, so this runs BEFORE the row mapping).
       if (m->x == rect().x + rect().w - 1 && scrollbar_visible()) {
-        const int data_rows = rect().h - 1;
+        const int data_rows = rect().h - kHeaderRows;
         const int page = std::max(1, data_rows);
         const auto [top, thumb_h] =
             detail::thumb_window(data_rows, static_cast<int>(m_rows.size()),
                                  m_scroll, data_rows);
-        const int row = m->y - rect().y - 1;
+        const int row = m->y - rect().y - kHeaderRows;
         if (row < top) {
           m_scroll = detail::clamp_offset(
               m_scroll - page, static_cast<int>(m_rows.size()), data_rows);
@@ -262,8 +265,10 @@ auto TableWidget::on_event(const Event& ev) -> bool {
         mark_dirty();
         return true;
       }
-      const int clicked = m_scroll + (m->y - rect().y - 1);
-      if (clicked >= 0 && clicked < static_cast<int>(m_rows.size())) {
+      const int clicked = detail::row_item_at(
+          rect(), kHeaderRows, m_scroll, static_cast<int>(m_rows.size()),
+          m->y);
+      if (clicked >= 0) {
         m_selected = clicked;
         mark_dirty();
         if (m_on_select) {

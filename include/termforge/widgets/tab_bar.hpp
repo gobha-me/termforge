@@ -156,9 +156,9 @@ class TabBar final : public Widget {
   // THE single source of truth for where everything on the strip is. draw() and
   // the hit test both go through this, so a painted column and a clickable
   // column cannot disagree — the same reason MenuBar::dropdown_rect and
-  // detail::dropdown_item_at exist. Returning only the spans would not be
-  // enough: which indicators are up, and in which columns, are three more facts
-  // that the two callers would each re-derive.
+  // detail::row_item_at exist. Returning only the spans would not be enough:
+  // which indicators are up, and in which columns, are three more facts that
+  // the two callers would each re-derive.
   struct StripLayout {
     std::vector<detail::StripSpan> spans;
     bool left_arrow{false};

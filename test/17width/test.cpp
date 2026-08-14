@@ -14,6 +14,7 @@
 // combining/zero-width = 0.
 
 using namespace termforge::detail;
+using termforge::Rect;
 
 // Byte literals for the code points under test.
 namespace {
@@ -199,4 +200,42 @@ TEST_CASE("clamp_scroll: a selection past the content cannot blank the window",
   // painting nothing. The selection is clamped into [0, count) first.
   REQUIRE(clamp_scroll(0, 5, 3, 2) == 1);  // selected->2, window follows: 1..2
   REQUIRE(clamp_scroll(0, 5, 3, 2) <= 3 - 2);
+}
+
+// ── row_item_at (#95) ────────────────────────────────────────────────────────
+
+TEST_CASE("row_item_at: zero header maps screen y through the scroll offset",
+          "[scroll]") {
+  // ListWidget / RadioGroup / dropdown shape: content fills the whole rect.
+  constexpr Rect dr{0, 10, 20, 3};
+  REQUIRE(row_item_at(dr, 0, 0, 10, 10) == 0);
+  REQUIRE(row_item_at(dr, 0, 0, 10, 12) == 2);
+  REQUIRE(row_item_at(dr, 0, 4, 10, 10) == 4);  // scroll 4: first painted is 4
+  REQUIRE(row_item_at(dr, 0, 4, 10, 12) == 6);
+  REQUIRE(row_item_at(dr, 0, 0, 10, 9) == -1);   // above the window
+  REQUIRE(row_item_at(dr, 0, 0, 10, 13) == -1);  // below the window
+  // Painted-but-empty tail: window taller than remaining content.
+  REQUIRE(row_item_at(dr, 0, 0, 2, 12) == -1);
+  // A stale scroll past the max is re-clamped before mapping, so the hit
+  // matches what draw would paint (same contract as dropdown_item_at).
+  REQUIRE(row_item_at(dr, 0, 8, 10, 12) == 9);  // scroll->7, last row -> item 9
+}
+
+TEST_CASE("row_item_at: header_rows skips the table chrome (#95)",
+          "[scroll][failure]") {
+  // TableWidget shape: row 0 of the rect is the column header. The acceptance
+  // mutation for #95 is exactly this inset -- if a caller open-codes `- 1`
+  // while the shared mapper uses a different header_rows, one of these fails
+  // rather than letting the drift hide.
+  constexpr Rect dr{0, 0, 20, 4};  // header + 3 data rows
+  constexpr int header = 1;
+  REQUIRE(row_item_at(dr, header, 0, 6, 0) == -1);  // header: no item
+  REQUIRE(row_item_at(dr, header, 0, 6, 1) == 0);
+  REQUIRE(row_item_at(dr, header, 0, 6, 3) == 2);
+  REQUIRE(row_item_at(dr, header, 2, 6, 1) == 2);  // scrolled: first data is 2
+  REQUIRE(row_item_at(dr, header, 2, 6, 3) == 4);
+  // Mutating the inset must change the answer: header_rows=0 would treat the
+  // chrome row as item 0.
+  REQUIRE(row_item_at(dr, 0, 0, 6, 0) == 0);
+  REQUIRE(row_item_at(dr, header, 0, 6, 0) != row_item_at(dr, 0, 0, 6, 0));
 }
