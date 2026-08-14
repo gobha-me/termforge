@@ -32,15 +32,21 @@
 // active tab is the entire content of the widget. It costs no columns: the pad
 // column already exists (see the layout note).
 //
-// OVERFLOW. More tabs than columns scrolls the strip, with ‹ › indicators
-// (ASCII < >) in the end columns; clicking an indicator scrolls one tab, and so
-// does the wheel. The click affordance is load-bearing, not decoration: without
-// it a user on a mouse with no wheel cannot reach an overflowed tab AT ALL,
-// which is the unreachable-item class #85 closed for dropdowns. One stated
+// OVERFLOW. More tabs than columns scrolls the strip. At height one the ends
+// carry ‹ › indicators (ASCII < >); clicking an indicator scrolls one tab, and
+// so does the wheel. The click affordance is load-bearing, not decoration:
+// without it a user on a mouse with no wheel cannot reach an overflowed tab AT
+// ALL, which is the unreachable-item class #85 closed for dropdowns. One stated
 // exception: at a ONE-column rect neither indicator is drawn (an indicator
 // never takes the last content column — see layout_strip), so at that width the
 // wheel and the arrow keys are the only ways to move. One column is degenerate
 // and there is nowhere to put an arrow that is not the strip itself.
+//
+// At height two or more (#131) the second row hosts a real horizontal
+// scrollbar instead: content units are cumulative title columns (not tab
+// indices), the thumb shows where the window sits, and a track click snaps to
+// the nearest tab boundary. Height one keeps the indicators — forcing a track
+// into the only content row would replace navigation with chrome.
 //
 // A RESIZE re-reveals the active tab; a scroll does not. The wheel is allowed
 // to push the active tab off the strip because the user asked for it; a window
@@ -48,17 +54,17 @@
 // stating nothing at all while the pane below it still shows the active view.
 //
 // The scroll offset is counted in TABS, not columns, because titles have
-// different widths. That is also why none of detail/viewport.hpp,
-// detail/scroll.hpp or detail/scrollbar.hpp is used here: every one of them
-// computes its ceiling as `total - visible`, which assumes uniform items and is
-// meaningless when the number that fits depends on WHICH ones. The ceiling here
-// is max_first(), and the wheel step is one tab rather than detail::kWheelStep
-// (3) for the reason detail/dropdown.hpp gives for kDropdownWheelStep: over a
-// handful of tabs, three is a whole page. Do not "unify" either of these.
+// different widths. That is also why detail/viewport.hpp and detail/scroll.hpp
+// are not used for the tab-counted ceiling: both compute it as
+// `total - visible`, which assumes uniform items and is meaningless when the
+// number that fits depends on WHICH ones. The ceiling here is max_first(), and
+// the wheel step is one tab rather than detail::kWheelStep (3) for the reason
+// detail/dropdown.hpp gives for kDropdownWheelStep: over a handful of tabs,
+// three is a whole page. Do not "unify" either of these.
 //
-// ‹ and › are placeholders in the same sense arrow_up/arrow_down are: a real
-// horizontal scrollbar is their eventual owner, and #21's detail/scrollbar.hpp
-// is vertical-only today (its track is indexed by row).
+// The horizontal scrollbar (#131) still feeds detail/scrollbar.hpp, but with
+// CONTENT UNITS (cumulative title columns) for the thumb triple — never tab
+// indices dressed up as `count - visible`. ‹ › remain the height-one owner.
 //
 // TITLES ARE SANITIZED AT THE SETTER and the sanitized copy is what gets both
 // measured and painted. This is the one thing #22 explicitly asks for. Screen
@@ -156,9 +162,9 @@ class TabBar final : public Widget {
   // THE single source of truth for where everything on the strip is. draw() and
   // the hit test both go through this, so a painted column and a clickable
   // column cannot disagree — the same reason MenuBar::dropdown_rect and
-  // detail::dropdown_item_at exist. Returning only the spans would not be
-  // enough: which indicators are up, and in which columns, are three more facts
-  // that the two callers would each re-derive.
+  // detail::row_item_at exist. Returning only the spans would not be enough:
+  // which indicators are up, and in which columns, are three more facts that
+  // the two callers would each re-derive.
   struct StripLayout {
     std::vector<detail::StripSpan> spans;
     bool left_arrow{false};
@@ -196,6 +202,22 @@ class TabBar final : public Widget {
   auto activate(int index) -> void;
   // Scroll the strip by whole tabs; returns true if it moved.
   auto scroll_by(int delta) -> bool;
+
+  // #131: a second row hosts the shared horizontal scrollbar. Height one keeps
+  // the ‹ › indicators — the track never steals the only content row.
+  // hbar_visible additionally rejects a one-cell track and a single clipped
+  // tab: neither has a usable tab-counted scrollbar position.
+  [[nodiscard]] auto uses_hbar() const noexcept -> bool {
+    return rect().h >= 2;
+  }
+  // Cumulative title columns (span_width + gap) for the thumb triple. Not tab
+  // indices: variable-width titles make `count - visible` meaningless.
+  [[nodiscard]] auto content_total() const -> int;
+  [[nodiscard]] auto content_offset(int first) const -> int;
+  // Snap a content-column position to the nearest tab-start boundary, then
+  // clamp into [0, max_first()].
+  [[nodiscard]] auto nearest_first_at(int content_col) const -> int;
+  [[nodiscard]] auto hbar_visible() const -> bool;
 
   auto handle_mouse(const MouseEvent& m) -> bool;
 

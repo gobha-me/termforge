@@ -64,14 +64,14 @@ auto Screen::fill_rect(int x, int y, int w, int h, Rgb fg, Rgb bg,
       m_cells[static_cast<std::size_t>(yy) * m_cols + xx] = fill;
 }
 
-auto Screen::write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
-                        Attr attrs) -> int {
+auto Screen::write_text_impl(int x, int y, std::string_view text, Rgb fg,
+                             Rgb bg, Attr attrs) -> WriteResult {
   // m_cols <= 0 is load-bearing, not defensive padding: since #152 a negative
   // x SURVIVES this guard, and on a zero-column grid `cx < m_cols` reads
   // `cx < 0`, which -1 satisfies -- so the straddle arm below would pad a
   // column 0 that does not exist. at() sinks the write, but `written` would
   // come back 1 for a screen with no columns.
-  if (m_cols <= 0 || y < 0 || y >= m_rows || x >= m_cols) return 0;
+  if (m_cols <= 0 || y < 0 || y >= m_rows || x >= m_cols) return {0, x};
   // Borrow already-safe text. The predicate lives beside the canonical
   // sanitizer and only answers true when Strip is the identity; every other
   // byte shape still takes the allocation-owning sanitizer path.
@@ -186,7 +186,30 @@ auto Screen::write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
     cx += w;
     i += len;
   }
-  return written;
+  return {written, cx};
+}
+
+auto Screen::write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
+                        Attr attrs) -> int {
+  return write_text_impl(x, y, text, fg, bg, attrs).written;
+}
+
+auto Screen::write_styled(int x, int y, std::span<const TextSpan> spans) -> int {
+  // The public write_text return deliberately reports only visible cells, so
+  // it cannot locate the next span after a left-clipped prefix. Carry the
+  // primitive's actual cursor instead: both clipping edges and wide-glyph
+  // padding then behave exactly as one unstyled run would.
+  int total = 0;
+  int cx = x;
+  for (const TextSpan& span : spans) {
+    if (span.text.empty()) continue;
+    const WriteResult result =
+        write_text_impl(cx, y, span.text, span.style.fg, span.style.bg,
+                        span.style.attrs);
+    cx = result.next_x;
+    total += result.written;
+  }
+  return total;
 }
 
 auto Screen::sanitize(std::string_view in) -> std::string {

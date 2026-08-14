@@ -1,12 +1,15 @@
 #include <catch2/catch_test_macros.hpp>
 #include "support/events.hpp"
 #include "termforge/widgets/text_box.hpp"
+#include "termforge/widgets/theme.hpp"
 #include "termforge/core/screen.hpp"
+#include "termforge/core/styled_text.hpp"
 
 using termforge::Event;
 using termforge::KeyEvent;
 using termforge::Key;
 using termforge::Rect;
+using termforge::Rgb;
 using termforge::Screen;
 using termforge::TextBox;
 
@@ -272,4 +275,140 @@ TEST_CASE("TextBox: a one-column rect keeps the text, drops the bar (#21)",
   REQUIRE(s.at(0, 0).text == "x");
   REQUIRE(s.at(0, 0).text != "█");
   REQUIRE(s.at(0, 0).text != "│");
+}
+
+TEST_CASE("TextBox: styled append paints per-span fg/bg/attrs (#25)",
+          "[textbox][styled]") {
+  using termforge::Attr;
+  using termforge::StyledText;
+  using termforge::TextSpan;
+  using termforge::TextStyle;
+
+  TextBox box;
+  box.set_geometry({0, 0, 20, 3});
+  const Rgb red{0xFF, 0, 0};
+  const Rgb blue{0, 0, 0xFF};
+  StyledText line;
+  line.push_back(TextSpan{"hi", TextStyle{red, {}, Attr::Bold}});
+  line.push_back(TextSpan{"there", TextStyle{blue, {}, Attr::None}});
+  box.append(std::move(line));
+
+  Screen s{20, 3};
+  box.draw(s);
+  REQUIRE(s.at(0, 0).text == "h");
+  REQUIRE(s.at(0, 0).fg == red);
+  REQUIRE(s.at(0, 0).attrs == Attr::Bold);
+  REQUIRE(s.at(2, 0).text == "t");
+  REQUIRE(s.at(2, 0).fg == blue);
+  REQUIRE(s.at(2, 0).attrs == Attr::None);
+}
+
+TEST_CASE("TextBox: span boundary exactly at wrap column (#25)",
+          "[textbox][styled]") {
+  using termforge::StyledText;
+  using termforge::TextSpan;
+  using termforge::TextStyle;
+
+  TextBox box;
+  const Rgb a{1, 0, 0}, b{0, 1, 0};
+  StyledText line;
+  line.push_back(TextSpan{"abcd", TextStyle{a, {}}});
+  line.push_back(TextSpan{"efgh", TextStyle{b, {}}});
+  box.append(std::move(line));
+
+  Screen s{4, 5};
+  box.set_geometry({0, 0, 4, 5});
+  box.draw(s);
+  REQUIRE(s.at(0, 0).text == "a");
+  REQUIRE(s.at(0, 0).fg == a);
+  REQUIRE(s.at(3, 0).text == "d");
+  REQUIRE(s.at(3, 0).fg == a);
+  REQUIRE(s.at(0, 1).text == "e");
+  REQUIRE(s.at(0, 1).fg == b);
+  REQUIRE(s.at(3, 1).text == "h");
+  REQUIRE(s.at(3, 1).fg == b);
+}
+
+TEST_CASE("TextBox: style continues across a wrapped span (#25)",
+          "[textbox][styled]") {
+  using termforge::StyledText;
+  using termforge::TextSpan;
+  using termforge::TextStyle;
+
+  TextBox box;
+  const Rgb red{0xCC, 0, 0};
+  const Rgb blue{0, 0, 0xCC};
+  StyledText line;
+  line.push_back(TextSpan{"ab", TextStyle{red, {}}});
+  line.push_back(TextSpan{"cdef", TextStyle{blue, {}}});
+  box.append(std::move(line));
+
+  Screen s{4, 5};
+  box.set_geometry({0, 0, 4, 5});
+  box.draw(s);
+  // Row 0: ab + cd; row 1: ef — blue continues onto the continuation row.
+  REQUIRE(s.at(0, 0).fg == red);
+  REQUIRE(s.at(1, 0).fg == red);
+  REQUIRE(s.at(2, 0).fg == blue);
+  REQUIRE(s.at(3, 0).fg == blue);
+  REQUIRE(s.at(0, 1).text == "e");
+  REQUIRE(s.at(0, 1).fg == blue);
+  REQUIRE(s.at(1, 1).text == "f");
+  REQUIRE(s.at(1, 1).fg == blue);
+}
+
+TEST_CASE("TextBox: zero-length spans paint nothing (#25)",
+          "[textbox][styled]") {
+  using termforge::StyledText;
+  using termforge::TextSpan;
+  using termforge::TextStyle;
+
+  TextBox box;
+  const Rgb fg{0x10, 0x20, 0x30};
+  StyledText line;
+  line.push_back(TextSpan{"", TextStyle{fg, {}}});
+  line.push_back(TextSpan{"ok", TextStyle{fg, {}}});
+  line.push_back(TextSpan{"", TextStyle{fg, {}}});
+  box.append(std::move(line));
+
+  Screen s{10, 2};
+  box.set_geometry({0, 0, 10, 2});
+  box.draw(s);
+  REQUIRE(s.at(0, 0).text == "o");
+  REQUIRE(s.at(1, 0).text == "k");
+  REQUIRE(s.at(2, 0).text.empty());
+}
+
+TEST_CASE("TextBox: sanitizes each span at append (#25)",
+          "[textbox][styled][security]") {
+  using termforge::StyledText;
+  using termforge::TextSpan;
+  using termforge::TextStyle;
+
+  TextBox box;
+  StyledText line;
+  line.push_back(TextSpan{"hi\033[1J", TextStyle{termforge::theme::kFg, {}}});
+  line.push_back(TextSpan{"there\007", TextStyle{termforge::theme::kFg, {}}});
+  box.append(std::move(line));
+
+  Screen s{20, 2};
+  box.set_geometry({0, 0, 20, 2});
+  box.draw(s);
+  std::string row;
+  for (int x = 0; x < 10; ++x) row += s.at(x, 0).text;
+  REQUIRE(row.substr(0, 7) == "hithere");
+}
+
+TEST_CASE("TextBox: plain append is a single-span wrapper (#25)",
+          "[textbox][styled]") {
+  // Same glyphs as the historical plain path; colours match theme defaults.
+  TextBox plain;
+  plain.append("wrapme!!");  // 8 chars -> two rows at width 4
+  REQUIRE(render_row(plain, 4, 5, 0) == "wrap");
+  REQUIRE(render_row(plain, 4, 5, 1) == "me!!");
+
+  Screen s{4, 5};
+  plain.set_geometry({0, 0, 4, 5});
+  plain.draw(s);
+  REQUIRE(s.at(0, 0).fg == termforge::theme::kFg);
 }

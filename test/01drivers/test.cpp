@@ -3,6 +3,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <set>
 #include <string>
@@ -37,6 +38,7 @@ using tfsupport::solid;
 // substring checks are left alone rather than swept in an unrelated cut.
 using tfsupport::data_deletes_of;
 using tfsupport::ids_named;
+using tfsupport::reassemble;
 
 // The DriverImpl concept must hold for concrete drivers (compile-time check).
 static_assert(DriverImpl<AnsiRgbDriver>);
@@ -866,4 +868,72 @@ TEST_CASE("Drivers: an empty destination rect is a warning, not a crash",
   REQUIRE_FALSE(fb.draw_image(Rect{0, 0, 0, 4}, img).has_value());
   REQUIRE_FALSE(ansi.draw_image(Rect{0, 0, 4, 0}, img).has_value());
   REQUIRE_FALSE(kitty.draw_image(Rect{}, img).has_value());
+}
+
+TEST_CASE("AnsiRgbDriver: opaque RGBA still draws (#99)",
+          "[drivers][alpha]") {
+  AnsiRgbDriver d;
+  std::string out;
+  d.set_output(&out);
+  Image img{1, 2, {Pixel{255, 0, 0, 255}, Pixel{0, 0, 255, 255}}};
+  REQUIRE(d.draw_image(Rect{0, 0, 1, 1}, img).has_value());
+  d.flush();
+  REQUIRE(out.find("\xE2\x96\x80") != std::string::npos);
+}
+
+TEST_CASE("AnsiRgbDriver: translucent RGBA is Warning with no bytes (#99)",
+          "[drivers][failure][alpha]") {
+  AnsiRgbDriver d;
+  std::string out;
+  d.set_output(&out);
+  Image img{1, 1, {Pixel{255, 0, 0, 128}}};
+  auto r = d.draw_image(Rect{0, 0, 1, 1}, img);
+  REQUIRE_FALSE(r.has_value());
+  REQUIRE(r.error().severity == Severity::Warning);
+  REQUIRE(r.error().source == "ansi_rgb");
+  REQUIRE(r.error().message.find("ansi_rgb") != std::string::npos);
+  d.flush();
+  REQUIRE(out.empty());
+}
+
+TEST_CASE("FallbackDriver: opaque RGBA still draws (#99)",
+          "[drivers][alpha]") {
+  FallbackDriver d;
+  std::string out;
+  d.set_output(&out);
+  Image img{2, 1, {Pixel{255, 255, 255, 255}, Pixel{0, 0, 0, 255}}};
+  REQUIRE(d.draw_image(Rect{0, 0, 2, 1}, img).has_value());
+  d.flush();
+  REQUIRE(out.find('@') != std::string::npos);
+}
+
+TEST_CASE("FallbackDriver: translucent RGBA is Warning with no bytes (#99)",
+          "[drivers][failure][alpha]") {
+  FallbackDriver d;
+  std::string out;
+  d.set_output(&out);
+  Image img{1, 1, {Pixel{255, 255, 255, 0}}};
+  auto r = d.draw_image(Rect{0, 0, 1, 1}, img);
+  REQUIRE_FALSE(r.has_value());
+  REQUIRE(r.error().severity == Severity::Warning);
+  REQUIRE(r.error().source == "fallback");
+  REQUIRE(r.error().message.find("fallback") != std::string::npos);
+  d.flush();
+  REQUIRE(out.empty());
+}
+
+TEST_CASE("KittyDriver: translucent pixels preserve alpha without an event (#99)",
+          "[drivers][kitty][alpha]") {
+  // Kitty transmits f=32 RGBA; alpha is the terminal's job. Assert the payload
+  // as well as success so a driver that silently forces opacity cannot pass.
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  Image img{1, 1, {Pixel{255, 0, 0, 128}}};
+  REQUIRE(d.draw_image(Rect{0, 0, 1, 1}, img).has_value());
+  d.flush();
+  REQUIRE(out.find("f=32") != std::string::npos);
+  const auto payload = reassemble(out);
+  REQUIRE(payload.size() == 4);
+  REQUIRE(std::to_integer<std::uint8_t>(payload[3]) == 128);
 }
