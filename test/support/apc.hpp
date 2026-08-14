@@ -96,15 +96,15 @@ inline auto key_value(const Apc& a, std::string_view key) -> std::string {
 }
 
 // The payload chunks only: a=t opens an image transmission, a=f opens an
-// animation-frame edit, and the continuation chunks that follow carry m= and
-// nothing else. Parse a= as a key rather than depending on its position: key
-// ordering is not part of the wire contract.
+// animation-frame edit, and their continuation chunks carry payload plus m=.
+// Direct-image continuations omit a=; animation-frame continuations repeat
+// a=f (#259). Parse keys rather than depending on their order.
 inline auto transmit_chunks(const std::vector<Apc>& all) -> std::vector<Apc> {
   std::vector<Apc> out;
   for (const Apc& a : all) {
     const std::string action = key_value(a, "a");
     const bool opener = action == "t" || action == "f";
-    const bool continuation = a.has_payload && a.keys.starts_with("m=");
+    const bool continuation = a.has_payload && has_key(a, "m");
     if (opener || continuation) out.push_back(a);
   }
   return out;
@@ -158,8 +158,10 @@ inline auto reassemble(std::string_view out) -> std::vector<std::byte> {
     stream.clear();
   };
   for (const Apc& a : transmit_chunks(apcs(out))) {
-    const std::string action = key_value(a, "a");
-    if (action == "t" || action == "f") finish();  // a new upload
+    // Only the first chunk names i=. Animation-frame continuations repeat a=f,
+    // so treating every action key as an opener would split one base64 stream
+    // into several independently padded transmissions.
+    if (has_key(a, "i")) finish();
     stream += a.payload;
   }
   finish();
@@ -233,8 +235,8 @@ inline auto placement_ids_of(std::string_view out, std::uint32_t image_id)
   return ids;
 }
 
-// Every transmission OPENER, whatever its id. Continuation chunks carry m= and
-// no a=, so nothing is counted twice.
+// Every direct-image transmission opener, whatever its id. Direct-image
+// continuation chunks carry no a=, so nothing is counted twice.
 inline auto total_transmits(std::string_view out) -> int {
   int n = 0;
   for (const Apc& c : apcs(out))
@@ -242,13 +244,13 @@ inline auto total_transmits(std::string_view out) -> int {
   return n;
 }
 
-// Initial image transmissions plus root-frame updates: every command that
-// carries a new data payload, counted once at its opener.
+// Initial image transmissions plus root-frame updates, counted once at each
+// opener. Animation-frame continuation chunks repeat a=f but never i= (#259).
 inline auto total_data_transmits(std::string_view out) -> int {
   int n = 0;
   for (const Apc& c : apcs(out)) {
     const std::string action = key_value(c, "a");
-    if (action == "t" || action == "f") ++n;
+    if ((action == "t" || action == "f") && has_key(c, "i")) ++n;
   }
   return n;
 }

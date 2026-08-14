@@ -14,7 +14,9 @@
 
 #include <termforge/core/app.hpp>
 #include <termforge/core/screen.hpp>
+#include <termforge/core/styled_text.hpp>
 #include <termforge/widgets/label.hpp>
+#include <termforge/widgets/text_box.hpp>
 
 namespace {
 
@@ -55,6 +57,10 @@ auto main() -> int {
   termforge::SyntheticClock clock;
   clock.advance(std::chrono::duration<double>{0.25});
   ScriptedApp scripted;
+  scripted.require(termforge::AppRequirements{
+      .truecolor = true, .min_cols = 80, .min_rows = 24});
+  if (!scripted.requirements().truecolor || !scripted.requirements_met())
+    return 1;
   scripted.set_render_mode(termforge::RenderMode::Demand);
   if (scripted.render_mode() != termforge::RenderMode::Demand) return 1;
   scripted.request_render();
@@ -70,9 +76,23 @@ auto main() -> int {
 
   termforge::Screen screen(20, 3);  // core/screen.cpp
 
+  const termforge::TextStyle style{
+      termforge::Rgb{0x11, 0x22, 0x33}, {}, termforge::Attr::Underline};
+  termforge::StyledText styled{{"styled", style}};
+  if (screen.write_styled(0, 1, styled) != 6) return 1;
+
+  termforge::TextBox text_box;
+  text_box.set_geometry(termforge::Rect{0, 2, 20, 1});
+  text_box.append(styled);
+  text_box.draw(screen);  // widgets/text_box.cpp
+
   termforge::Label label{"consumed"};
   label.set_geometry(termforge::Rect{0, 0, 20, 1});
   label.draw(screen);  // widgets/label.cpp
 
-  return screen.at(0, 0).blank() ? 1 : 0;
+  if (screen.at(0, 0).blank() ||
+      screen.at(0, 1).attrs != termforge::Attr::Underline ||
+      screen.at(0, 2).text != "s")
+    return 1;
+  return 0;
 }

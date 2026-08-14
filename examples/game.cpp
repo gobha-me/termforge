@@ -269,7 +269,9 @@ class MeasuringSink final : public ByteSink {
       if (action == "t") {
         ++m_data_transmits;
         if (id) m_live_ids.insert(*id);
-      } else if (action == "f") {
+      } else if (action == "f" && id) {
+        // Every animation-frame continuation repeats a=f but only the opener
+        // names i= (#259). Count logical updates, not protocol chunks.
         ++m_root_updates;
       } else if (action == "p") {
         ++m_placements;

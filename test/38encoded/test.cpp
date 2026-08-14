@@ -406,6 +406,37 @@ TEST_CASE("encoded: Rgba32 emits exactly what the Image overload emits",
   }
 }
 
+TEST_CASE("encoded: flat tiers refuse translucent Rgba32 before output (#99)",
+          "[encoded][failure][alpha]") {
+  const Image art{1, 1, {Pixel{10, 20, 30, 128}}};
+  const EncodedImage translucent{ImageFormat::Rgba32,
+                                 std::as_bytes(art.pixels()), Extent{1, 1}};
+
+  SECTION("ansi_rgb") {
+    AnsiRgbDriver d;
+    std::string out;
+    d.set_output(&out);
+    const auto result = d.draw_image(Rect{0, 0, 1, 1}, translucent);
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error().severity == Severity::Warning);
+    CHECK(result.error().source == "ansi_rgb");
+    d.flush();
+    CHECK(out.empty());
+  }
+
+  SECTION("fallback") {
+    FallbackDriver d;
+    std::string out;
+    d.set_output(&out);
+    const auto result = d.draw_image(Rect{0, 0, 1, 1}, translucent);
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error().severity == Severity::Warning);
+    CHECK(result.error().source == "fallback");
+    d.flush();
+    CHECK(out.empty());
+  }
+}
+
 TEST_CASE("encoded: an Rgba32 payload that disagrees with its extent warns",
           "[encoded][failure]") {
   // The one format whose length is derivable is the one format where this

@@ -154,6 +154,20 @@ auto AnsiRgbDriver::draw_image(Rect cells, const EncodedImage& image,
 auto AnsiRgbDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
                               Extent px, PlacementFit fit)
     -> std::expected<void, ErrorEvent> {
+  // #99: half-block cells have no alpha and no honest background to composite
+  // against. Any a != 255 is a refusal — Warning, no bytes — before paint.
+  {
+    const std::size_t n =
+        static_cast<std::size_t>(px.w) * static_cast<std::size_t>(px.h);
+    for (std::size_t i = 0; i < n; ++i) {
+      if (std::to_integer<std::uint8_t>(rgba[i * 4U + 3U]) != 255) {
+        return std::unexpected{ErrorEvent{
+            Severity::Warning, "ansi_rgb",
+            "draw_image: ansi_rgb refuses translucent RGBA"}};
+      }
+    }
+  }
+
   // Track the active SGR to coalesce runs of identical color.
   int cur_fg = -1, cur_bg = -1;
   const auto rgb_id = [](const Pixel& p) {
