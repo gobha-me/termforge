@@ -6,36 +6,48 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-14, latest)
 
-**Pending release: v0.29.1 — refuse translucent fallback images.** #99 makes
-AnsiRgbDriver and FallbackDriver reject any RGBA payload containing `a != 255`
-with `Severity::Warning` before queuing bytes. Neither cell tier has an honest
+**Pending release: v0.29.2 — Kitty image lifecycle contract.** The first,
+offline phase of #113 documents what TermForge currently promises across
+alternate-screen entry and exit, in-session resize, suspend/resume,
+detach/reattach and process death. `test/61imagelifecycle` observes the
+production App cadence: resident payloads survive resize, Unicode placement is
+refreshed without retransmission, normal shutdown sends Kitty `a=d,d=A` through
+the still-live borrowed sink, and retiring a pinned placement uses lowercase
+`d=i` without deleting the image it does not own.
+
+Review merged current main and fixed the new App case to use the nested
+`App::Size` type. It also narrowed the prose to Kitty's actual one-way mode-1049
+rule (main → alternate clears the alternate buffer; the main buffer preserves
+its images), described the exact conditional cleanup scope of uppercase
+`d=A`, and removed a variant-size assertion that froze the intended absence of
+`ImageInvalidatedEvent` instead of testing behaviour. Removing resize repaint,
+the region delete, or the shutdown uppercase delete makes the focused suite
+fail.
+
+The integration passes 66/66 CTest targets with GCC 14.2 Release `-Werror`
+(including benchmark smoke and the production game benchmark CLI) and 65/65
+with Clang 20.1.8 Release `-Werror`. GCC and Clang each pass the subdirectory,
+installed-package and plain-vendored consumer paths. GCC ASan+UBSan with leak
+detection passes 65/65. No public API or terminal bytes change, so no
+live-emulator gate applies.
+
+**How it got picked:** task #166 gives open contributor PRs priority. #250 is
+the older of the two priority-1 submissions and covers a bounded prerequisite
+for #113; its only compile failure was reviewable locally. #113 stays open:
+the invalidation hook/event, suspend/reattach behaviour and real-pty acceptance
+remain future work.
+
+**Next:** finish hosted validation and release v0.29.2, then review #251 before
+the lower-priority #245 and #249 submissions.
+
+## Previous release: v0.29.1
+
+**v0.29.1 — refuse translucent fallback images.** #99 makes AnsiRgbDriver and
+FallbackDriver reject any RGBA payload containing `a != 255` with
+`Severity::Warning` before queuing bytes. Neither cell tier has an honest
 background against which to composite; callers that need those tiers must
-precompose explicitly. Kitty continues to transmit the original f=32 bytes,
-including alpha, unchanged.
-
-Review found that the benchmark's shared pixel generator deliberately varies
-alpha for the blend kernel, then reused the same data for the two flat-driver
-benchmarks. The driver fixtures are now explicitly opaque without weakening
-the blend workload. Review also corrected the pixel-region documentation: the
-ANSI enhanced pass has already blanked its cells when submission is refused,
-so ignoring the Warning leaves the promised visible hole rather than restoring
-the Baseline. Both `Image` and `EncodedImage::Rgba32` paths are pinned, and the
-Kitty case decodes the wire payload to prove alpha survives.
-
-The current-main integration passes 65/65 CTest targets with GCC 14.2 Release
-`-Werror` (including benchmark smoke) and 64/64 with Clang 20.1.8 Release
-`-Werror`, plus 64/64 under GCC ASan+UBSan with leak detection. GCC and Clang
-each pass the subdirectory, installed-package and plain-vendored consumer
-paths. Mutating either driver's opaque-alpha sentinel fails the focused suites.
-No terminal protocol form changes, so no live-emulator gate applies.
-
-**How it got picked:** task #166 gives the five remaining contributor PRs
-priority over new issue work. #247 was the nearest to merge-ready: all ordinary
-CI lanes were already green and its one benchmark failure directly exposed the
-fixture that needed to become opaque.
-
-**Next:** finish hosted validation and release v0.29.1, then resume task #166
-with PRs #245, #249, #250 and #251.
+precompose explicitly. Kitty continues to transmit alpha unchanged. The
+release passed all ten hosted jobs and shipped on 2026-08-14.
 
 ## Previous release: v0.29.0
 
