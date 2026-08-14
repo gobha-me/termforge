@@ -260,17 +260,21 @@ static_assert([] {
   return kUnicodeMarks;
 }
 
-// The scrollbar's one-column strip (#21): a `track` under everything and a
+// The scrollbar's strip (#21 / #131): a `track` under everything and a
 // `thumb` marking where the viewport sits and how much of the content it
 // covers. Chrome, not content — this joins the border family, not the
 // ProgressBar/Waveform content glyphs the header note keeps out.
 //
-// Same shape as MarkGlyphs: the only axis of variation is whether the strip
-// may leave 7-bit ASCII (│/█ vs |/#), the struct is initialised POSITIONALLY
-// with the same tripwire asserts, and both glyphs are exactly one terminal
-// column wide. █ U+2588 (FULL BLOCK) is the same block ProgressBar and
-// WaveformWidget already draw with, so it inherits their rendering bet rather
-// than making a new one; │ is the light vertical every border family shares.
+// Same shape as MarkGlyphs: the axes of variation are ASCII vs Unicode and
+// vertical vs horizontal track (│/█ vs ─/█, |/# vs -/#). The struct itself
+// carries one resolved pair -- orientation is chosen at the call site via
+// scrollbar_glyphs(style, orient) -- so draw_scrollbar never re-derives it.
+// Both glyphs are exactly one terminal column wide. █ U+2588 (FULL BLOCK) is
+// the same block ProgressBar and WaveformWidget already draw with, so it
+// inherits their rendering bet rather than making a new one; │/─ are the light
+// box-drawing lines every border family shares.
+enum class ScrollOrientation { Vertical, Horizontal };
+
 struct ScrollGlyphs {
   std::string_view track, thumb;
 
@@ -282,33 +286,41 @@ struct ScrollGlyphs {
 
 inline constexpr ScrollGlyphs kUnicodeScroll{"│", "█"};
 inline constexpr ScrollGlyphs kAsciiScroll{"|", "#"};
+inline constexpr ScrollGlyphs kUnicodeHScroll{"─", "█"};
+inline constexpr ScrollGlyphs kAsciiHScroll{"-", "#"};
 
 static_assert(sizeof(ScrollGlyphs) ==
                   kUnicodeScroll.all().size() * sizeof(std::string_view),
               "ScrollGlyphs gained a field: add it to all() and to BOTH tables");
 
 static_assert([] {
-  for (const auto& table : {kUnicodeScroll, kAsciiScroll})
+  for (const auto& table : {kUnicodeScroll, kAsciiScroll, kUnicodeHScroll,
+                            kAsciiHScroll})
     for (const auto glyph : table.all())
       if (glyph.empty()) return false;
   return true;
 }(), "a ScrollGlyphs field is empty in one of the tables (positional init)");
 
-// Same fall-through switch as mark_glyphs(), for the same reason.
-[[nodiscard]] constexpr auto scrollbar_glyphs(BorderStyle style) noexcept
+// Same fall-through switch as mark_glyphs(), for the same reason. Orientation
+// defaults to Vertical so every #21 call site stays source-compatible; #131's
+// horizontal track picks ─/# (or -/#) instead of │/|.
+[[nodiscard]] constexpr auto scrollbar_glyphs(
+    BorderStyle style,
+    ScrollOrientation orient = ScrollOrientation::Vertical) noexcept
     -> ScrollGlyphs {
+  const bool horizontal = orient == ScrollOrientation::Horizontal;
   switch (style) {
     case BorderStyle::Single:
     case BorderStyle::Double:
     case BorderStyle::Rounded:
     case BorderStyle::Heavy:
-      return kUnicodeScroll;
+      return horizontal ? kUnicodeHScroll : kUnicodeScroll;
     case BorderStyle::Ascii:
-      return kAsciiScroll;
+      return horizontal ? kAsciiHScroll : kAsciiScroll;
   }
   // Unreachable: every enumerator returns above. No `default:` on purpose —
   // same reason as border_glyphs().
-  return kUnicodeScroll;
+  return horizontal ? kUnicodeHScroll : kUnicodeScroll;
 }
 
 }  // namespace termforge
