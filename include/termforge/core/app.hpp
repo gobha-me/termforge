@@ -48,10 +48,12 @@
 #include <ranges>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "termforge/core/input.hpp"
 #include "termforge/core/renderer.hpp"
+#include "termforge/core/requirements.hpp"
 #include "termforge/core/screen.hpp"
 #include "termforge/core/terminal.hpp"
 #include "termforge/drivers/terminal_driver.hpp"
@@ -221,9 +223,7 @@ class App {
   // ErrorEvent{Severity::Info, "keyboard"} on the first frame, never a silent
   // downgrade — so a game can fall back to discrete steps knowingly. See
   // docs/keyboard-protocol.md.
-  auto set_keyboard_mode(KeyboardMode mode) -> void {
-    m_term.set_keyboard_mode(mode);
-  }
+  auto set_keyboard_mode(KeyboardMode mode) -> void;
   [[nodiscard]] auto keyboard_mode() const noexcept -> KeyboardMode {
     return m_term.keyboard_mode();
   }
@@ -231,6 +231,29 @@ class App {
   // What the startup probe found. Empty until setup() has run.
   [[nodiscard]] auto capabilities() const noexcept -> const Capabilities& {
     return m_caps;
+  }
+
+  // ── capability / geometry floor (#91) ──
+  // Declare a floor before run(). Empty by default — every existing app keeps
+  // the degrade-everywhere contract. Non-empty requirements are evaluated after
+  // the probe, driver selection, current/pushed size, and cell-geometry setup,
+  // but before enter_screen(). An unmet floor returns Severity::Error from
+  // setup(); run() then unwinds raw mode (never having entered the alt-screen)
+  // and prints the diagnostic on the normal screen.
+  //
+  // Mid-session, the same floor is re-checked on resize. Crossing it emits an
+  // ErrorEvent (source "requirements") and suppresses enhanced image submission
+  // until restored; the framework does not invent a modal or layout policy.
+  auto require(AppRequirements requirements) -> void {
+    m_requirements = std::move(requirements);
+  }
+  [[nodiscard]] auto requirements() const noexcept -> const AppRequirements& {
+    return m_requirements;
+  }
+  // True while the declared floor is met (or empty). False after a live resize
+  // drops below it, until a later resize restores it.
+  [[nodiscard]] auto requirements_met() const noexcept -> bool {
+    return m_requirements_met;
   }
 
   // ── override points ──
@@ -1066,6 +1089,11 @@ class App {
   // "did the terminal answer the keyboard query" has to outlive the probe to
   // be reportable, and an app has legitimate reasons to ask later too.
   Capabilities m_caps;
+  AppRequirements m_requirements{};
+  // Starts true so empty requirements and headless seams need no special case.
+  // setup() sets it from the startup evaluation; frame_step updates it on
+  // resize transitions (#91).
+  bool m_requirements_met{true};
   std::unique_ptr<TerminalDriver> m_driver;
   std::unique_ptr<Screen> m_screen;
   std::unique_ptr<Renderer> m_renderer;
@@ -1210,6 +1238,10 @@ class App {
   // can be told what resolution to render at (#83). Called at setup and again
   // on every resize, *before* the frame that would use it.
   auto push_cell_pixel_size(Size size) -> void;
+  // Startup uses Severity::Error; live size/mode changes use Warning and emit
+  // only when the floor's truth value changes.
+  auto check_requirements_startup(Size size) -> std::expected<void, ErrorEvent>;
+  auto update_requirements(Size size) -> void;
 };
 
 }  // namespace termforge
