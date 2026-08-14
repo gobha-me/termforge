@@ -29,7 +29,7 @@ TEST_CASE("Screen: sanitize strips ESC and control chars (injection defense)", "
 
 
 TEST_CASE("Screen: sanitize strips full escape sequences (CSI/OSC), not just ESC", "[screen][security]") {
-  // Stripping only the ESC byte leaves "[2J" as visible garbage ù the whole
+  // Stripping only the ESC byte leaves "[2J" as visible garbage ‚Äî the whole
   // sequence must go. These are the sequences an injection would actually use.
   REQUIRE(Screen::sanitize("a[2Jb") == "ab");        // CSI erase display
   REQUIRE(Screen::sanitize("a[1;1Hb") == "ab");      // CSI cursor position
@@ -51,7 +51,7 @@ TEST_CASE("Screen: sanitize keeps well-formed multi-byte UTF-8 glyphs", "[screen
   // Regression: sanitize used to drop continuation bytes in 0x80..0x9F,
   // truncating the block glyph (E2 96 88) to its lead byte.
   const std::string block = "\xE2\x96\x88";        // U+2588 full block
-  const std::string eacute = "\xC3\xA9";            // ù (2-byte)
+  const std::string eacute = "\xC3\xA9";            // √© (2-byte)
   const std::string party = "\xF0\x9F\x8E\x89";   // U+1F389 (4-byte)
   REQUIRE(Screen::sanitize(block) == block);
   REQUIRE(Screen::sanitize(eacute) == eacute);
@@ -64,7 +64,7 @@ TEST_CASE("Screen: sanitize keeps well-formed multi-byte UTF-8 glyphs", "[screen
 
 TEST_CASE("Screen: sanitize rejects overlong UTF-8 and surrogates", "[screen][security]") {
   // Overlong encodings are structurally valid (right continuation bits) but
-  // decode to control characters on a lenient terminal ù exactly the
+  // decode to control characters on a lenient terminal ‚Äî exactly the
   // injection this function must stop. 0xC0 0x9B is an overlong ESC (0x1B).
   REQUIRE(Screen::sanitize(std::string{"a\xC0\x9B"} + "b") == "ab");   // overlong ESC
   REQUIRE(Screen::sanitize(std::string{"a\xC1\xBF"} + "b") == "ab");   // overlong DEL
@@ -103,14 +103,14 @@ TEST_CASE("Screen: write_text clips at the right edge", "[screen][failure]") {
 
 TEST_CASE("Screen: write_text emits continuation cells for wide glyphs",
           "[screen][width]") {
-  // #10: a width-2 glyph (CJK) occupies two terminal columns ù the glyph in
-  // cell cx and a "\0" continuation cell in cx+1 ù and advances the column
+  // #10: a width-2 glyph (CJK) occupies two terminal columns ‚Äî the glyph in
+  // cell cx and a "\0" continuation cell in cx+1 ‚Äî and advances the column
   // cursor by two, so the grid stays in sync with the physical terminal.
   Screen s{10, 2};
-  const std::string shi = "\xE4\xB8\x96";   // ? U+4E16 (width 2)
-  const std::string jie = "\xE7\x95\x8C";   // ? U+4E16 (width 2)
+  const std::string shi = "\xE4\xB8\x96";   // ‰∏ñ U+4E16 (width 2)
+  const std::string jie = "\xE7\x95\x8C";   // Áïå U+4E16 (width 2)
   const int cols = s.write_text(0, 0, shi + jie, Rgb{}, Rgb{});
-  REQUIRE(cols == 4);                        // two glyphs ù two columns
+  REQUIRE(cols == 4);                        // two glyphs √ó two columns
   REQUIRE(s.at(0, 0).text == shi);
   REQUIRE(s.at(1, 0).text == std::string("\0", 1));  // continuation cell
   REQUIRE(s.at(2, 0).text == jie);
@@ -122,9 +122,9 @@ TEST_CASE("Screen: write_text emits continuation cells for wide glyphs",
 TEST_CASE("Screen: write_text pads rather than splitting a wide glyph at the edge",
           "[screen][width][failure]") {
   // A width-2 glyph can't straddle the last column: it must not write a lone
-  // continuation cell past the edge. One column left ? pad with a space.
+  // continuation cell past the edge. One column left ‚Üí pad with a space.
   Screen s{3, 1};
-  const std::string shi = "\xE4\xB8\x96";   // ?
+  const std::string shi = "\xE4\xB8\x96";   // ‰∏ñ
   const int cols = s.write_text(2, 0, shi, Rgb{}, Rgb{});  // only col 2 free
   REQUIRE(cols == 1);
   REQUIRE(s.at(2, 0).text == " ");          // padded, not half a glyph
@@ -159,7 +159,7 @@ const Rgb kFg{0xAB, 0xCD, 0xEF};
 const Rgb kBg{0x12, 0x34, 0x56};
 const Rgb kSeedFg{0x01, 0x02, 0x03};
 const Rgb kSeedBg{0x71, 0x72, 0x73};
-const std::string kShi = "\xE4\xB8\x96";  // ? U+4E16, width 2
+const std::string kShi = "\xE4\xB8\x96";  // ‰∏ñ U+4E16, width 2
 }  // namespace
 
 TEST_CASE("Screen: write_text drops the off-screen prefix at a negative x",
@@ -214,7 +214,7 @@ TEST_CASE("Screen: a wide glyph fully off the left leaves column 0 to the next g
   // The pair to the case above: this one fails if the straddle arm's test is
   // loosened from `cx == -1` to `cx < 0`, that one fails if it is dropped.
   Screen s{6, 1};
-  const int n = s.write_text(-2, 0, kShi + "ab", kFg, kBg);  // ? covers -2,-1
+  const int n = s.write_text(-2, 0, kShi + "ab", kFg, kBg);  // ‰∏ñ covers -2,-1
   REQUIRE(n == 2);
   REQUIRE(s.at(0, 0).text == "a");
   REQUIRE(tfsupport::row_text(s, 0) == "ab    ");
@@ -223,7 +223,7 @@ TEST_CASE("Screen: a wide glyph fully off the left leaves column 0 to the next g
 TEST_CASE("Screen: a combining mark whose base fell off the left does not migrate",
           "[screen][width][failure]") {
   Screen s{6, 1};
-  const int n = s.write_text(-1, 0, "a\xCC\x81" "b", kFg, kBg);  // ù at -1, b at 0
+  const int n = s.write_text(-1, 0, "a\xCC\x81" "b", kFg, kBg);  // √° at -1, b at 0
   REQUIRE(n == 1);
   REQUIRE(s.at(0, 0).text == "b");  // the acute did not fold onto 'b'
   REQUIRE(tfsupport::row_text(s, 0) == "b     ");
@@ -240,7 +240,7 @@ TEST_CASE("Screen: a combining mark after a dropped straddling glyph does not mi
   Screen s{6, 1};
   const int n = s.write_text(-1, 0, kShi + "\xCC\x81" "b", kFg, kBg);
   REQUIRE(n == 2);
-  REQUIRE(s.at(0, 0).text == " ");  // the pad, not " ?"
+  REQUIRE(s.at(0, 0).text == " ");  // the pad, not " ÃÅ"
   REQUIRE(tfsupport::row_text(s, 0) == " b    ");
 }
 
@@ -313,7 +313,7 @@ TEST_CASE("Screen: fill_rect blanks a sub-rect and clamps to the grid",
   // Seed content inside and outside the target rect.
   s.write_text(0, 0, "outside", Rgb{}, Rgb{});          // row 0 (above rect)
   s.write_text(2, 2, "junk", Rgb{}, Rgb{});             // inside rect
-  const std::string shi = "\xE4\xB8\x96";               // ? (width 2)
+  const std::string shi = "\xE4\xB8\x96";               // ‰∏ñ (width 2)
   s.write_text(3, 3, shi, Rgb{}, Rgb{});                // wide glyph inside rect
 
   const Rgb bg{0x11, 0x22, 0x33};
@@ -354,8 +354,8 @@ TEST_CASE("Screen: fill_rect does not lose a rect to signed overflow",
   // #102. The old longhand computed x + w in int and handed it to std::min:
   // for x near INT_MAX that is signed overflow, and the wrapped value won the
   // min, so the loop never ran. The visible symptom is not a sanitizer report
-  // but a wrong answer ù a rect that genuinely covers most of the screen is
-  // silently dropped ù which is why this case fails as an ordinary REQUIRE in
+  // but a wrong answer ‚Äî a rect that genuinely covers most of the screen is
+  // silently dropped ‚Äî which is why this case fails as an ordinary REQUIRE in
   // a plain build as well as under -fsanitize=undefined.
   //
   // This is the cell-grid half of what #63 did for the pixel grid; the same
@@ -392,7 +392,7 @@ TEST_CASE("Screen: resize preserves top-left content", "[screen]") {
   REQUIRE(s.at(2, 3).text.empty());  // now OOB -> blank
 }
 
-TEST_CASE("Screen: write_styled paints per-span styles and advances by painted width",
+TEST_CASE("Screen: write_styled paints per-span styles and empty spans",
           "[screen][styled]") {
   using termforge::Attr;
   using termforge::TextSpan;
@@ -404,7 +404,7 @@ TEST_CASE("Screen: write_styled paints per-span styles and advances by painted w
   Screen s{10, 1};
   const TextSpan spans[] = {
       TextSpan{"ab", TextStyle{red, bg, Attr::Bold}},
-      TextSpan{"", TextStyle{red, bg}},                 // empty: paints nothing
+      TextSpan{"", TextStyle{red, bg}},  // empty: paints nothing
       TextSpan{"cd", TextStyle{blue, bg, Attr::None}},
   };
   const int n = s.write_styled(0, 0, spans);
@@ -419,10 +419,8 @@ TEST_CASE("Screen: write_styled paints per-span styles and advances by painted w
   REQUIRE(s.at(3, 0).text == "d");
 }
 
-TEST_CASE("Screen: write_styled advances by painted cells, not display_width",
-          "[screen][styled]") {
-  // At the right edge, write_text clips. The next span must start at the
-  // first unpainted column (painted-width advance), not at x+display_width.
+TEST_CASE("Screen: write_styled keeps later spans past a right-clipped run",
+          "[screen][styled][failure]") {
   using termforge::TextSpan;
   using termforge::TextStyle;
 
@@ -430,13 +428,36 @@ TEST_CASE("Screen: write_styled advances by painted cells, not display_width",
   const Rgb a{1, 0, 0}, b{0, 1, 0};
   const TextSpan spans[] = {
       TextSpan{"xyz", TextStyle{a, {}}},  // starts at col 3 -> paints x,y only
-      TextSpan{"Q", TextStyle{b, {}}},    // must see column 5 is past the edge
+      TextSpan{"Q", TextStyle{b, {}}},    // cursor is already past the edge
   };
   REQUIRE(s.write_styled(3, 0, spans) == 2);
   REQUIRE(s.at(3, 0).text == "x");
   REQUIRE(s.at(3, 0).fg == a);
   REQUIRE(s.at(4, 0).text == "y");
   REQUIRE(s.at(4, 0).fg == a);
+}
+
+TEST_CASE("Screen: write_styled carries the logical cursor past a clipped prefix",
+          "[screen][styled][failure]") {
+  // The first span starts two columns left of the grid. Its visible-cell
+  // return is 1, but its actual cursor ends at column 1; using that return as
+  // the advance relocates the second span to -1 and drops it.
+  using termforge::TextSpan;
+  using termforge::TextStyle;
+
+  Screen s{5, 1};
+  const Rgb a{1, 0, 0}, b{0, 1, 0};
+  const TextSpan spans[] = {
+      TextSpan{"abc", TextStyle{a, {}}},  // a,b clipped; c paints at column 0
+      TextSpan{"XY", TextStyle{b, {}}},   // must begin at logical column 1
+  };
+  REQUIRE(s.write_styled(-2, 0, spans) == 3);
+  REQUIRE(s.at(0, 0).text == "c");
+  REQUIRE(s.at(0, 0).fg == a);
+  REQUIRE(s.at(1, 0).text == "X");
+  REQUIRE(s.at(1, 0).fg == b);
+  REQUIRE(s.at(2, 0).text == "Y");
+  REQUIRE(s.at(2, 0).fg == b);
 }
 
 TEST_CASE("Screen: single-span write_styled matches write_text cell-for-cell",

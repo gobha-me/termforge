@@ -24,12 +24,8 @@ auto sanitize_spans(StyledText& line) -> void {
 }  // namespace
 
 auto TextBox::append(std::string line) -> void {
-  // Single-span wrapper over the styled document type (#25).
-  StyledText styled;
-  styled.push_back(TextSpan{Screen::sanitize(line), plain_style()});
-  m_lines.push_back(std::move(styled));
-  if (m_follow) m_scroll = 0;  // stay pinned to bottom
-  mark_dirty();
+  // Single-span compatibility wrapper over the styled document path (#25).
+  append(StyledText{TextSpan{std::move(line), plain_style()}});
 }
 
 auto TextBox::append(StyledText line) -> void {
