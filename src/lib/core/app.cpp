@@ -26,6 +26,7 @@
 #include <unistd.h>
 
 #include "detail/keyboard.hpp"
+#include "detail/requirements.hpp"
 #include "detail/trace.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
 
@@ -83,6 +84,15 @@ struct App::PlaybackState {
 App::App() = default;
 
 App::~App() { teardown(); }
+
+auto App::set_keyboard_mode(KeyboardMode mode) -> void {
+  m_term.set_keyboard_mode(mode);
+  // Before setup there are no observed facts to evaluate; setup owns the
+  // Error-grade startup decision. During a live session, changing away from
+  // Enhanced can invalidate a repeat/release floor just as surely as a resize
+  // can invalidate a geometry floor, so use the same transition path.
+  if (m_in_screen) update_requirements(current_size());
+}
 
 auto App::start_recording(std::ostream& out) -> void {
   if (m_loop_active) {
@@ -628,17 +638,6 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
   m_driver = m_term.select_driver(m_caps);
   if (auto r = m_driver->init(); !r) return r;
 
-  // Degradation is an event: an app that asked for the kitty keyboard
-  // protocol on a terminal that hasn't got it is told so, rather than
-  // waiting forever for releases that will never arrive (#60). Queued, not
-  // returned — this is not a setup failure — so it drains on the first frame
-  // through the ordinary pump, and dispatch_event routes ErrorEvent past the
-  // overlay stack, so even an app that opens a dialog immediately sees it.
-  if (auto e = detail::keyboard_fallback_event(m_term.keyboard_mode(),
-                                               m_caps.kitty_keyboard)) {
-    m_input.push_error(std::move(*e));
-  }
-
   const auto size = current_size();
   m_screen = std::make_unique<Screen>(size.cols, size.rows);
   m_renderer = std::make_unique<Renderer>(*m_driver);
@@ -649,6 +648,16 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
   // run() (or the caller of test_setup) must tear it down — but never paints
   // into a buffer the user will not see.
   if (auto r = check_requirements_startup(size); !r) return r;
+
+  // Degradation is an event: an app that asked for the kitty keyboard
+  // protocol on a terminal that hasn't got it is told so, rather than
+  // waiting forever for releases that will never arrive (#60). This follows
+  // the fatal floor check so a refused startup does not strand a duplicate
+  // fallback Info in the input queue for a later run.
+  if (auto e = detail::keyboard_fallback_event(m_term.keyboard_mode(),
+                                               m_caps.kitty_keyboard)) {
+    m_input.push_error(std::move(*e));
+  }
 
   m_term.enter_screen();
   m_in_screen = true;
@@ -820,7 +829,7 @@ auto App::frame_step() -> void {
     // #91: re-evaluate the floor on every resize. Crossing it is an event and
     // a latch that suppresses enhanced submission — not a modal the framework
     // invents, and not a silent downgrade.
-    update_requirements_on_resize(size);
+    update_requirements(size);
     dispatch_event(ResizeEvent{size.cols, size.rows});
   }
   m_trace_point = TracePoint::InputPump;
@@ -1847,36 +1856,37 @@ auto App::push_cell_pixel_size(Size size) -> void {
   m_driver->set_cell_pixel_size(cell);
 }
 
-auto App::requirement_facts_for(Size size) const -> AppRequirementFacts {
-  return make_requirement_facts(m_caps, size.cols, size.rows, size.px_w,
-                                size.px_h);
-}
-
 auto App::check_requirements_startup(Size size)
     -> std::expected<void, ErrorEvent> {
-  auto result =
-      evaluate_requirements(m_requirements, requirement_facts_for(size),
-                            Severity::Error);
+  const auto driver_caps = m_driver ? m_driver->capabilities() : Capabilities{};
+  const auto facts = detail::make_requirement_facts(
+      m_caps, driver_caps, m_term.keyboard_mode(), size.cols, size.rows,
+      size.px_w, size.px_h);
+  auto result = detail::evaluate_requirements(m_requirements, facts,
+                                               Severity::Error);
   m_requirements_met = result.has_value();
   return result;
 }
 
-auto App::update_requirements_on_resize(Size size) -> void {
-  if (requirements_empty(m_requirements)) {
+auto App::update_requirements(Size size) -> void {
+  if (detail::requirements_empty(m_requirements)) {
     m_requirements_met = true;
     return;
   }
-  auto result =
-      evaluate_requirements(m_requirements, requirement_facts_for(size),
-                            Severity::Warning);
+  const auto driver_caps = m_driver ? m_driver->capabilities() : Capabilities{};
+  const auto facts = detail::make_requirement_facts(
+      m_caps, driver_caps, m_term.keyboard_mode(), size.cols, size.rows,
+      size.px_w, size.px_h);
+  auto result = detail::evaluate_requirements(m_requirements, facts,
+                                               Severity::Warning);
   const bool met = result.has_value();
   if (met == m_requirements_met) return;
   m_requirements_met = met;
   if (met) {
     m_input.push_error(ErrorEvent{
         Severity::Info, "requirements",
-        "terminal size restored above the declared AppRequirements floor; "
-        "enhanced submission resumed."});
+        "the declared AppRequirements floor is met again; enhanced submission "
+        "resumed"});
   } else {
     m_input.push_error(std::move(result.error()));
   }

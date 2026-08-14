@@ -48,6 +48,7 @@
 #include <ranges>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "termforge/core/input.hpp"
@@ -222,9 +223,7 @@ class App {
   // ErrorEvent{Severity::Info, "keyboard"} on the first frame, never a silent
   // downgrade — so a game can fall back to discrete steps knowingly. See
   // docs/keyboard-protocol.md.
-  auto set_keyboard_mode(KeyboardMode mode) -> void {
-    m_term.set_keyboard_mode(mode);
-  }
+  auto set_keyboard_mode(KeyboardMode mode) -> void;
   [[nodiscard]] auto keyboard_mode() const noexcept -> KeyboardMode {
     return m_term.keyboard_mode();
   }
@@ -247,9 +246,6 @@ class App {
   // until restored; the framework does not invent a modal or layout policy.
   auto require(AppRequirements requirements) -> void {
     m_requirements = std::move(requirements);
-  }
-  auto set_requirements(AppRequirements requirements) -> void {
-    require(std::move(requirements));
   }
   [[nodiscard]] auto requirements() const noexcept -> const AppRequirements& {
     return m_requirements;
@@ -1242,11 +1238,10 @@ class App {
   // can be told what resolution to render at (#83). Called at setup and again
   // on every resize, *before* the frame that would use it.
   auto push_cell_pixel_size(Size size) -> void;
-  // Build facts from caps + size and run evaluate_requirements. Startup uses
-  // Severity::Error; live resize uses Warning and only emits on transition.
-  auto requirement_facts_for(Size size) const -> AppRequirementFacts;
+  // Startup uses Severity::Error; live size/mode changes use Warning and emit
+  // only when the floor's truth value changes.
   auto check_requirements_startup(Size size) -> std::expected<void, ErrorEvent>;
-  auto update_requirements_on_resize(Size size) -> void;
+  auto update_requirements(Size size) -> void;
 };
 
 }  // namespace termforge

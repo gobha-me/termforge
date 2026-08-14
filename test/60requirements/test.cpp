@@ -12,12 +12,14 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <chrono>
 #include <expected>
 #include <string>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "detail/requirements.hpp"
 #include "termforge/core/app.hpp"
 #include "termforge/core/requirements.hpp"
 #include "termforge/core/screen.hpp"
@@ -27,6 +29,9 @@
 #include "termforge/widgets/widget.hpp"
 
 using namespace termforge;
+using detail::AppRequirementFacts;
+using detail::evaluate_requirements;
+using detail::make_requirement_facts;
 
 namespace {
 
@@ -106,10 +111,23 @@ struct Plate : Widget {
   auto draw(Screen& screen) -> void override {
     for (int y = region.y; y < region.y + region.h; ++y)
       for (int x = region.x; x < region.x + region.w; ++x)
-        screen.at(x, y).ch = U'#';
+        screen.at(x, y).text = "#";
   }
   auto pixel_regions() -> std::vector<Rect> override { return {region}; }
-  auto draw_pixels(Rect, Extent) -> const Image* override { return &cache; }
+  [[nodiscard]] auto pixel_region_state(Rect) const noexcept
+      -> PixelRegionState override {
+    return {.mode = PixelRegionMode::Persistent};
+  }
+  auto draw_pixels(Rect, Extent) -> const Image* override {
+    ++pixel_calls;
+    return &cache;
+  }
+  auto pixel_region_submitted(Rect) noexcept -> void override {
+    ++submissions;
+  }
+
+  int pixel_calls{0};
+  int submissions{0};
 };
 
 }  // namespace
@@ -137,31 +155,42 @@ TEST_CASE("evaluate_requirements: graphics satisfied by kitty or sixel",
   REQUIRE(miss.error().message.find("graphics") != std::string::npos);
 
   AppRequirementFacts kitty;
-  kitty.caps.kitty_graphics = true;
+  kitty.driver_caps.kitty_graphics = true;
   REQUIRE(evaluate_requirements(req, kitty).has_value());
 
-  AppRequirementFacts sixel;
-  sixel.caps.sixel = true;
-  REQUIRE(evaluate_requirements(req, sixel).has_value());
+  // Reported support is not reachability: until a SixelDriver is selected,
+  // App has no graphics route and must refuse rather than silently pass.
+  AppRequirementFacts reported_sixel;
+  reported_sixel.terminal_caps.sixel = true;
+  REQUIRE_FALSE(evaluate_requirements(req, reported_sixel).has_value());
+
+  AppRequirementFacts selected_sixel = reported_sixel;
+  selected_sixel.driver_caps.sixel = true;
+  REQUIRE(evaluate_requirements(req, selected_sixel).has_value());
 }
 
 TEST_CASE("evaluate_requirements: truecolor satisfied by KittyDriver tier",
           "[requirements]") {
-  // Kitty reports truecolor on its capabilities(); the probe's
-  // kitty_graphics bit alone must also count — same semantic floor.
+  // Truecolor is a property of the route App selected, not an environment
+  // hint. KittyDriver and AnsiRgbDriver both self-report it.
   AppRequirements req{.truecolor = true};
-  AppRequirementFacts kitty_only;
-  kitty_only.caps.kitty_graphics = true;
-  REQUIRE(evaluate_requirements(req, kitty_only).has_value());
+  AppRequirementFacts kitty;
+  kitty.driver_caps.kitty_graphics = true;
+  kitty.driver_caps.truecolor = true;
+  REQUIRE(evaluate_requirements(req, kitty).has_value());
 
   AppRequirementFacts ansi;
-  ansi.caps.truecolor = true;
+  ansi.driver_caps.truecolor = true;
   REQUIRE(evaluate_requirements(req, ansi).has_value());
+
+  AppRequirementFacts reported_only;
+  reported_only.terminal_caps.truecolor = true;
+  REQUIRE_FALSE(evaluate_requirements(req, reported_only).has_value());
 
   REQUIRE_FALSE(evaluate_requirements(req, AppRequirementFacts{}).has_value());
 }
 
-TEST_CASE("evaluate_requirements: key repeat/release need kitty_keyboard",
+TEST_CASE("evaluate_requirements: key actions need support and Enhanced mode",
           "[requirements]") {
   AppRequirements repeat{.key_repeat = true};
   AppRequirements release{.key_release = true};
@@ -172,10 +201,23 @@ TEST_CASE("evaluate_requirements: key repeat/release need kitty_keyboard",
   REQUIRE_FALSE(
       evaluate_requirements(release, AppRequirementFacts{}).has_value());
 
-  AppRequirementFacts kb;
-  kb.caps.kitty_keyboard = true;
-  REQUIRE(evaluate_requirements(repeat, kb).has_value());
-  REQUIRE(evaluate_requirements(release, kb).has_value());
+  AppRequirementFacts legacy;
+  legacy.terminal_caps.kitty_keyboard = true;
+  REQUIRE_FALSE(evaluate_requirements(repeat, legacy).has_value());
+  REQUIRE(legacy.keyboard_mode == KeyboardMode::Legacy);
+
+  AppRequirementFacts disambiguate = legacy;
+  disambiguate.keyboard_mode = KeyboardMode::Disambiguate;
+  REQUIRE_FALSE(evaluate_requirements(release, disambiguate).has_value());
+
+  AppRequirementFacts unsupported;
+  unsupported.keyboard_mode = KeyboardMode::Enhanced;
+  REQUIRE_FALSE(evaluate_requirements(repeat, unsupported).has_value());
+
+  AppRequirementFacts enhanced = unsupported;
+  enhanced.terminal_caps.kitty_keyboard = true;
+  REQUIRE(evaluate_requirements(repeat, enhanced).has_value());
+  REQUIRE(evaluate_requirements(release, enhanced).has_value());
 }
 
 TEST_CASE("evaluate_requirements: unknown geometry fails only when required",
@@ -196,7 +238,8 @@ TEST_CASE("evaluate_requirements: unknown geometry fails only when required",
   AppRequirements need_min{.min_cell_pixels = Extent{6, 12}};
   REQUIRE_FALSE(evaluate_requirements(need_min, unknown).has_value());
 
-  AppRequirementFacts known = make_requirement_facts({}, 80, 24, 800, 480);
+  AppRequirementFacts known = make_requirement_facts(
+      {}, {}, KeyboardMode::Legacy, 80, 24, 800, 480);
   REQUIRE(known.cell_pixels_known);
   REQUIRE(known.cell_pixels == Extent{10, 20});
   REQUIRE(evaluate_requirements(need_known, known).has_value());
@@ -241,6 +284,49 @@ TEST_CASE("App::setup: unmet requirements refuse before alt-screen",
   app.test_teardown();  // unwind raw mode explicitly
 }
 
+TEST_CASE("App::setup: reported sixel cannot satisfy an unimplemented route",
+          "[requirements][app]") {
+  SocketPair sp;
+  REQUIRE(sp.ok());
+
+  FloorApp app;
+  REQUIRE(app.inject(TerminalIo{sp.app(), sp.app()}));
+  Capabilities caps;
+  caps.sixel = true;
+  REQUIRE(app.push_caps(caps));
+  app.require(AppRequirements{.graphics = true});
+  REQUIRE(app.set_size({80, 24}).has_value());
+
+  auto r = app.test_setup();
+  REQUIRE_FALSE(r.has_value());
+  REQUIRE(r.error().message.find("selected driver") != std::string::npos);
+  REQUIRE(r.error().message.find("sixel=true") != std::string::npos);
+  REQUIRE_FALSE(app.test_winch_hooked());
+  REQUIRE(sp.drain_peer().find("\033[?1049h") == std::string::npos);
+  app.test_teardown();
+}
+
+TEST_CASE("App::setup: fatal keyboard floor does not queue fallback Info",
+          "[requirements][app][keyboard]") {
+  SocketPair sp;
+  REQUIRE(sp.ok());
+
+  FloorApp app;
+  REQUIRE(app.inject(TerminalIo{sp.app(), sp.app()}));
+  REQUIRE(app.push_caps(Capabilities{}));
+  app.set_keyboard_mode(KeyboardMode::Enhanced);
+  app.require(AppRequirements{.key_release = true});
+  REQUIRE(app.set_size({80, 24}).has_value());
+
+  auto r = app.test_setup();
+  REQUIRE_FALSE(r.has_value());
+  REQUIRE(r.error().severity == Severity::Error);
+  REQUIRE(r.error().message.find("keyboard-flags") != std::string::npos);
+  app.test_pump({});
+  REQUIRE(app.errors.empty());
+  app.test_teardown();
+}
+
 TEST_CASE("App::setup: satisfied requirements still enter the screen",
           "[requirements][app]") {
   SocketPair sp;
@@ -261,43 +347,93 @@ TEST_CASE("App::setup: satisfied requirements still enter the screen",
   app.test_teardown();
 }
 
-// ── runtime resize half ─────────────────────────────────────────────────────
+TEST_CASE("App: live keyboard mode changes re-evaluate the floor",
+          "[requirements][app][keyboard][runtime]") {
+  SocketPair sp;
+  REQUIRE(sp.ok());
 
-TEST_CASE("App: resize below floor emits transition and latches unmet",
-          "[requirements][app][runtime]") {
   FloorApp app;
-  app.require(AppRequirements{.min_cols = 100});
-  REQUIRE(app.set_size({120, 40}).has_value());
-
-  std::string sink;
-  app.test_run_frames(1, 7, 7, &sink);
+  REQUIRE(app.inject(TerminalIo{sp.app(), sp.app()}));
+  Capabilities caps;
+  caps.kitty_keyboard = true;
+  REQUIRE(app.push_caps(caps));
+  app.set_keyboard_mode(KeyboardMode::Enhanced);
+  app.require(AppRequirements{.key_release = true});
+  REQUIRE(app.set_size({80, 24}).has_value());
+  REQUIRE(app.test_setup().has_value());
   REQUIRE(app.requirements_met());
-  REQUIRE(app.resizes.size() == 1);
 
-  REQUIRE(app.set_size({50, 40}).has_value());
-  app.test_run_frames(1, 7, 7, &sink);
+  app.set_keyboard_mode(KeyboardMode::Legacy);
   REQUIRE_FALSE(app.requirements_met());
-  REQUIRE_FALSE(app.errors.empty());
-  REQUIRE(app.errors.back().source == "requirements");
-  REQUIRE(app.errors.back().severity == Severity::Warning);
+  app.test_pump({});
+  REQUIRE(app.errors.size() == 1);
+  REQUIRE(app.errors[0].severity == Severity::Warning);
+  REQUIRE(app.errors[0].message.find("Enhanced") != std::string::npos);
 
-  REQUIRE(app.set_size({110, 40}).has_value());
-  app.test_run_frames(1, 7, 7, &sink);
+  app.set_keyboard_mode(KeyboardMode::Enhanced);
   REQUIRE(app.requirements_met());
-  REQUIRE(app.errors.back().severity == Severity::Info);
-  REQUIRE(app.errors.back().message.find("restored") != std::string::npos);
+  app.test_pump({});
+  REQUIRE(app.errors.size() == 2);
+  REQUIRE(app.errors[1].severity == Severity::Info);
+  app.test_teardown();
 }
 
-TEST_CASE("App: below floor suppresses enhanced pixel submission",
-          "[requirements][app][runtime]") {
-  class PixelApp : public App {
+// ── runtime resize half ─────────────────────────────────────────────────────
+
+TEST_CASE("App: one production cadence gates and restores enhanced submission",
+          "[requirements][app][runtime][pixels]") {
+  class PixelApp final : public App {
    public:
     Plate plate;
+    std::vector<ErrorEvent> errors;
+    std::vector<ResizeEvent> resizes;
+    std::vector<FrameBytes> meters;
+    int direct_pixel_calls{0};
+    bool resize_push_ok{true};
+
     auto on_render(Screen& screen) -> void override {
       screen.clear();
       plate.draw(screen);
       render_pixel_regions(plate);
     }
+    auto on_pixels(TerminalDriver&) -> void override { ++direct_pixel_calls; }
+    auto on_event(const Event& ev) -> void override {
+      if (const auto* e = std::get_if<ErrorEvent>(&ev)) {
+        errors.push_back(*e);
+        return;
+      }
+      if (const auto* r = std::get_if<ResizeEvent>(&ev)) {
+        resizes.push_back(*r);
+        // Four frames over ONE driver: above, below, still below, restored.
+        // The repeated 40x40 push proves a stable false state emits no second
+        // Warning; the same driver/persistent map proves restoration uploads.
+        if (resizes.size() == 1)
+          resize_push_ok &= set_size({40, 40}).has_value();
+        if (resizes.size() == 2)
+          resize_push_ok &= set_size({40, 40}).has_value();
+        if (resizes.size() == 3)
+          resize_push_ok &= set_size({110, 40}).has_value();
+        return;
+      }
+      App::on_event(ev);
+    }
+
+   protected:
+    [[nodiscard]] auto now_steady() const
+        -> std::chrono::steady_clock::time_point override {
+      return now;
+    }
+    auto wait_readable(int timeout_ms) -> bool override {
+      // Called after the frame's sole flush and before test_run_frames' final
+      // shutdown write, so each sample is exactly one production frame.
+      meters.push_back(driver().last_frame_bytes());
+      now += std::chrono::milliseconds(timeout_ms);
+      return false;
+    }
+    auto read_available(char*, int) -> int override { return 0; }
+
+   private:
+    std::chrono::steady_clock::time_point now{};
   };
 
   PixelApp app;
@@ -305,16 +441,22 @@ TEST_CASE("App: below floor suppresses enhanced pixel submission",
   REQUIRE(app.set_size({120, 40}).has_value());
 
   std::string sink;
-  app.test_run_frames(1, 7, 7, &sink, std::make_unique<KittyDriver>());
+  app.test_run_frames(4, 7, 7, &sink, std::make_unique<KittyDriver>());
   REQUIRE(app.requirements_met());
-  REQUIRE(sink.find("\033_G") != std::string::npos);
+  REQUIRE(app.resize_push_ok);
+  REQUIRE(app.resizes.size() == 4);
+  REQUIRE(app.errors.size() == 2);
+  REQUIRE(app.errors[0].severity == Severity::Warning);
+  REQUIRE(app.errors[1].severity == Severity::Info);
+  REQUIRE(app.errors[1].message.find("met again") != std::string::npos);
 
-  sink.clear();
-  REQUIRE(app.set_size({40, 40}).has_value());
-  app.test_run_frames(1, 7, 7, &sink, std::make_unique<KittyDriver>());
-  REQUIRE_FALSE(app.requirements_met());
-  // No new graphics APC while the floor is unmet. Shutdown may still write
-  // cleanup; require the transmit-shaped payload is absent.
-  REQUIRE(sink.find("a=T") == std::string::npos);
-  REQUIRE(sink.find("a=t") == std::string::npos);
+  REQUIRE(app.meters.size() == 4);
+  REQUIRE(app.meters[0].image_transmit > 0);
+  REQUIRE(app.meters[1].image_transmit == 0);
+  REQUIRE(app.meters[2].image_transmit == 0);
+  REQUIRE(app.meters[3].image_transmit > 0);
+  REQUIRE(app.meters[1].cells > 0);  // authored Baseline was still painted
+  REQUIRE(app.plate.pixel_calls == 2);
+  REQUIRE(app.plate.submissions == 2);
+  REQUIRE(app.direct_pixel_calls == 2);
 }

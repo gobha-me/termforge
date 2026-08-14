@@ -57,6 +57,10 @@ auto main() -> int {
   termforge::SyntheticClock clock;
   clock.advance(std::chrono::duration<double>{0.25});
   ScriptedApp scripted;
+  scripted.require(termforge::AppRequirements{
+      .truecolor = true, .min_cols = 80, .min_rows = 24});
+  if (!scripted.requirements().truecolor || !scripted.requirements_met())
+    return 1;
   scripted.set_render_mode(termforge::RenderMode::Demand);
   if (scripted.render_mode() != termforge::RenderMode::Demand) return 1;
   scripted.request_render();
