@@ -6,33 +6,44 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-14, latest)
 
-**Pending release: v0.29.0 — styled text spans.** #25 adds the public
-`TextStyle`, `TextSpan` and `StyledText` vocabulary, teaches `Screen` to write
-per-span colours and attributes, and lets `TextBox` retain styled lines. Plain
-text remains source-compatible and delegates through the same sanitization and
-storage path. Renderer wrapping preserves span boundaries while still counting
-display cells rather than bytes.
+**Pending release: v0.29.1 — refuse translucent fallback images.** #99 makes
+AnsiRgbDriver and FallbackDriver reject any RGBA payload containing `a != 255`
+with `Severity::Warning` before queuing bytes. Neither cell tier has an honest
+background against which to composite; callers that need those tiers must
+precompose explicitly. Kitty continues to transmit the original f=32 bytes,
+including alpha, unchanged.
 
-Review found that the proposed `write_styled` advanced later spans by visible
-cells instead of the logical cursor position. A left-clipped prefix therefore
-overwrote itself at the viewport edge. The shared writer now returns both its
-visible count and next logical x coordinate; a focused two-span case fails when
-the visible-count mutation is restored. Review also replaced invalid raw bytes
-in Screen test comments with valid UTF-8 so Clang 19 and 20 can compile the
-suite, and extended the installed consumer fixture across the new API.
+Review found that the benchmark's shared pixel generator deliberately varies
+alpha for the blend kernel, then reused the same data for the two flat-driver
+benchmarks. The driver fixtures are now explicitly opaque without weakening
+the blend workload. Review also corrected the pixel-region documentation: the
+ANSI enhanced pass has already blanked its cells when submission is refused,
+so ignoring the Warning leaves the promised visible hole rather than restoring
+the Baseline. Both `Image` and `EncodedImage::Rgba32` paths are pinned, and the
+Kitty case decodes the wire payload to prove alpha survives.
 
-The current-main integration result passes 64/64 CTest targets with GCC 14.2
-and Clang 20.1.8 Release `-Werror`, plus 64/64 under GCC ASan+UBSan with leak
-detection. GCC and Clang each pass the subdirectory, installed-package and
-plain-vendored consumer paths. This changes rendered cells only, not a terminal
-protocol form, so no live-emulator gate applies.
+The current-main integration passes 65/65 CTest targets with GCC 14.2 Release
+`-Werror` (including benchmark smoke) and 64/64 with Clang 20.1.8 Release
+`-Werror`, plus 64/64 under GCC ASan+UBSan with leak detection. GCC and Clang
+each pass the subdirectory, installed-package and plain-vendored consumer
+paths. Mutating either driver's opaque-alpha sentinel fails the focused suites.
+No terminal protocol form changes, so no live-emulator gate applies.
 
-**How it got picked:** open PR #254 is the active implementation of priority-1
-issue #25. Its styled-span vocabulary is also the explicit first dependency in
-the #25 -> #24 -> #217 rich-text sequence.
+**How it got picked:** task #166 gives the five remaining contributor PRs
+priority over new issue work. #247 was the nearest to merge-ready: all ordinary
+CI lanes were already green and its one benchmark failure directly exposed the
+fixture that needed to become opaque.
 
-**Next:** finish hosted validation and release v0.29.0, then take #24's markup
-parser on top of the released span model.
+**Next:** finish hosted validation and release v0.29.1, then resume task #166
+with PRs #245, #249, #250 and #251.
+
+## Previous release: v0.29.0
+
+**v0.29.0 — styled text spans.** #25 adds public `TextStyle`, `TextSpan` and
+`StyledText`, preserves sanitization and cell-width wrapping across spans, and
+lets TextBox retain styled lines. Review fixed logical cursor carry after a
+left-clipped span. The release passed all ten hosted jobs and shipped on
+2026-08-14.
 
 ## Previous release: v0.28.0
 

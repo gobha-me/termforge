@@ -493,8 +493,11 @@ wrong at every antialiased edge, with no diagnostic.
 | Fallback | refused before paint — the luminance ramp has no alpha | `Warning`, no bytes |
 
 Callers that want AnsiRgb/Fallback must precompose onto an explicit opaque
-background. Widget pixel regions already keep an information-complete cell
-Baseline when the enhanced payload is refused.
+background. App reports an AnsiRgb refusal through its normal `ErrorEvent`
+queue, but the enhanced pass has already blanked that region's cells before
+submission. Ignoring the `Warning` therefore leaves a hole rather than
+silently restoring the widget's Baseline, exactly as the severity contract
+promises.
 
 ## Pre-encoded payloads (#163)
 

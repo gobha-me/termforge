@@ -3,6 +3,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <set>
 #include <string>
@@ -37,6 +38,7 @@ using tfsupport::solid;
 // substring checks are left alone rather than swept in an unrelated cut.
 using tfsupport::data_deletes_of;
 using tfsupport::ids_named;
+using tfsupport::reassemble;
 
 // The DriverImpl concept must hold for concrete drivers (compile-time check).
 static_assert(DriverImpl<AnsiRgbDriver>);
@@ -920,9 +922,10 @@ TEST_CASE("FallbackDriver: translucent RGBA is Warning with no bytes (#99)",
   REQUIRE(out.empty());
 }
 
-TEST_CASE("KittyDriver: translucent pixels stay silent success (#99)",
+TEST_CASE("KittyDriver: translucent pixels preserve alpha without an event (#99)",
           "[drivers][kitty][alpha]") {
-  // Kitty transmits f=32 RGBA; alpha is the terminal's job. No refusal.
+  // Kitty transmits f=32 RGBA; alpha is the terminal's job. Assert the payload
+  // as well as success so a driver that silently forces opacity cannot pass.
   KittyDriver d;
   std::string out;
   d.set_output(&out);
@@ -930,5 +933,7 @@ TEST_CASE("KittyDriver: translucent pixels stay silent success (#99)",
   REQUIRE(d.draw_image(Rect{0, 0, 1, 1}, img).has_value());
   d.flush();
   REQUIRE(out.find("f=32") != std::string::npos);
-  REQUIRE_FALSE(out.empty());
+  const auto payload = reassemble(out);
+  REQUIRE(payload.size() == 4);
+  REQUIRE(std::to_integer<std::uint8_t>(payload[3]) == 128);
 }
