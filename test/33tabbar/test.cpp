@@ -905,3 +905,75 @@ TEST_CASE("TabBar: a bar left of the screen clips its title, it does not move it
   // -2, so 4 survive at column 0.
   REQUIRE(highlighted_run(s, 0) == std::pair{0, 4});
 }
+
+// ── #131 horizontal track on a two-row bar ──────────────────────────────────
+
+TEST_CASE("TabBar: height one keeps indicator columns, not a track (#131)",
+          "[tabbar]") {
+  TabBar t{kTitles};
+  t.set_style(BorderStyle::Ascii);
+  t.set_geometry({0, 0, 12, 1});
+  t.set_focused(true);
+  drawn(t, 12);
+  const Screen s = drawn(t, 12);
+  REQUIRE(s.at(11, 0).text == ">");
+  // No second row exists to host a track.
+  REQUIRE(s.rows() == 1);
+}
+
+TEST_CASE("TabBar: height two paints a horizontal track and no indicators (#131)",
+          "[tabbar]") {
+  TabBar t{kTitles};
+  t.set_style(BorderStyle::Ascii);
+  t.set_geometry({0, 0, 12, 2});
+  t.set_focused(true);
+  Screen s{12, 2};
+  t.draw(s);
+  // Content row keeps every column for titles -- no < > chrome.
+  REQUIRE(s.at(0, 0).text != "<");
+  REQUIRE(s.at(11, 0).text != ">");
+  // Second row is the shared horizontal scrollbar (ASCII -/#).
+  bool saw_thumb = false;
+  bool saw_track = false;
+  for (int c = 0; c < 12; ++c) {
+    if (s.at(c, 1).text == "#") saw_thumb = true;
+    if (s.at(c, 1).text == "-") saw_track = true;
+  }
+  REQUIRE(saw_thumb);
+  REQUIRE(saw_track);
+}
+
+TEST_CASE("TabBar: track click snaps to the nearest tab boundary (#131)",
+          "[tabbar]") {
+  TabBar t{kTitles};
+  t.set_style(BorderStyle::Ascii);
+  t.set_geometry({0, 0, 12, 2});
+  t.set_focused(true);
+  Screen warm{12, 2};
+  t.draw(warm);
+  REQUIRE(t.first_visible() == 0);
+
+  // Far-right track click maps toward the end of the content and should land
+  // on a later tab boundary (max_first is 2 for this fixture at width 12).
+  REQUIRE(t.on_event(press(11, 1)));
+  REQUIRE(t.first_visible() > 0);
+
+  // Far-left track click snaps back toward tab 0.
+  REQUIRE(t.on_event(press(0, 1)));
+  REQUIRE(t.first_visible() == 0);
+}
+
+TEST_CASE("TabBar: two-row bar with room for every tab paints no track (#131)",
+          "[tabbar][failure]") {
+  TabBar t{kTitles};
+  t.set_geometry({0, 0, 20, 2});
+  t.set_focused(true);
+  Screen s{20, 2};
+  t.draw(s);
+  for (int c = 0; c < 20; ++c) {
+    REQUIRE(s.at(c, 1).text != "█");
+    REQUIRE(s.at(c, 1).text != "─");
+    REQUIRE(s.at(c, 1).text != "#");
+    REQUIRE(s.at(c, 1).text != "-");
+  }
+}
