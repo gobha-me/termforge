@@ -4,11 +4,13 @@
 // style). Lines are appended; the view shows the most recent lines that fit
 // its rect, auto-scrolling to the bottom on new content unless the user has
 // scrolled up. Supports manual scroll (PageUp/PageDown / scroll wheel) and
-// simple word-wrap. This is the foundation of a chat message view.
+// simple character-wrap across styled spans (#25). This is the foundation of
+// a chat message view. Word-aware wrapping is #24.
 
 #include <string>
 #include <vector>
 
+#include "termforge/core/styled_text.hpp"
 #include "termforge/widgets/glyphs.hpp"
 #include "termforge/widgets/theme.hpp"
 #include "termforge/widgets/widget.hpp"
@@ -21,8 +23,14 @@ class TextBox final : public Widget {
 
   // Append a logical line (a chat message, a log entry). Long lines wrap to
   // the widget width at draw time. Marks the widget dirty and auto-scrolls
-  // to the bottom if the user is already at the bottom.
+  // to the bottom if the user is already at the bottom. Plain text becomes a
+  // single span in the default content colours; sanitization runs here (#25).
   auto append(std::string line) -> void;
+
+  // Append a styled logical line. Each span's text is sanitized at this
+  // boundary (styles are data, never escape codes). Empty spans are retained
+  // in the document but paint nothing.
+  auto append(StyledText line) -> void;
 
   // Replace all content.
   auto clear() -> void;
@@ -66,12 +74,13 @@ class TextBox final : public Widget {
   [[nodiscard]] auto content_w() const noexcept -> int;
 
  private:
-  // Wrap `line` to `width` columns, appending to `out`. Returns rows added.
-  static auto wrap_into(std::vector<std::string>& out, const std::string& line, int width) -> void;
+  // Wrap a styled logical line to `width` columns, appending visual rows.
+  static auto wrap_into(std::vector<StyledText>& out, const StyledText& line,
+                        int width) -> void;
 
-  std::vector<std::string> m_lines;  // logical (unwrapped) lines
-  int m_scroll{0};                   // 0 = pinned to bottom; >0 = lines scrolled up
-  bool m_follow{true};               // auto-scroll to bottom on new content
+  std::vector<StyledText> m_lines;  // logical (unwrapped) lines
+  int m_scroll{0};                  // 0 = pinned to bottom; >0 = lines scrolled up
+  bool m_follow{true};              // auto-scroll to bottom on new content
 
   // #21: the scrollbar strip's family and colours. Default colours mirror
   // the list/table: dim track, selection-blue thumb.
