@@ -77,13 +77,13 @@ between the pump and `on_event`, and every event goes through it:
 | key, paste | `on_event` | top overlay only |
 | mouse, inside `hit_test` | `on_event` | top overlay only |
 | mouse, outside | `on_event` | swallowed (press may dismiss, opt-in) |
-| resize, error | `on_event` | `on_event` |
+| resize, image invalidation, error | `on_event` | `on_event` |
 | Ctrl+C | `on_event` | `on_event` |
 
-Resize and error are deliberately never captured. The app still owns the
-layout of the widgets underneath — it must re-lay them out or the dialog is
-centered over a stale frame — and silently eating an `ErrorEvent` would break
-the "degradation is an event" contract in AGENTS.md.
+Resize, image invalidation, and error are deliberately never captured. The app
+still owns the layout and direct resident-image handles underneath — it must
+re-lay or re-pin them — and silently eating an `ErrorEvent` would break the
+"degradation is an event" contract in AGENTS.md.
 
 Ctrl+C is the break-glass. Raw mode turned it from a signal into an ordinary
 key, so if an overlay could swallow it, an app whose dialog has no wired close

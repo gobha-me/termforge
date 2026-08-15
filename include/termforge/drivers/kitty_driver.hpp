@@ -119,6 +119,11 @@ class KittyDriver final : public TerminalDriver {
       -> std::expected<void, ErrorEvent> override;
   auto retain_pinned(Rect cells, PinnedImage image, PlacementFit fit)
       -> std::expected<void, ErrorEvent> override;
+
+  // Forget terminal-side image/placement state without emitting deletes.  A
+  // SIGCONT or embedding reattach can leave those payloads gone already; the
+  // next draw must upload again and every old PinnedImage must stay stale.
+  auto invalidate_images() noexcept -> void override;
   // The base's Stretch convenience overload is non-virtual, so overriding the
   // three-argument one above would HIDE it for every call made through
   // KittyDriver's static type. Same trap as draw_image, same fix.

@@ -94,6 +94,10 @@ class ChatApp final : public App {
     // Ignore errors in this demo
   }
 
+  auto handle(const ImageInvalidatedEvent&) -> void {
+    // No resident images in this demo.
+  }
+
   TextBox m_textbox;
 };
 

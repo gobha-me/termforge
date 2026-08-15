@@ -534,6 +534,21 @@ struct ResizeEvent {
   int cols{0}, rows{0};
 };
 
+// Why resident terminal-side image data is no longer usable (#113).  Resize is
+// deliberately absent: a grid/cell-geometry change preserves the payload and
+// only refreshes its placement.  These are transitions that can discard the
+// data itself, so an application that owns a PinnedImage must re-pin from its
+// own storage after observing the event.
+enum class ImageInvalidationReason {
+  SuspendResume,
+  Reattach,
+  TerminalReset,
+};
+
+struct ImageInvalidatedEvent {
+  ImageInvalidationReason reason{ImageInvalidationReason::TerminalReset};
+};
+
 // A bracketed-paste run (mode 2004): the terminal brackets pasted text in
 // ESC[200~ … ESC[201~ so it arrives as one event, and an ESC *inside* the paste
 // can't masquerade as an Escape keypress. `text` is the raw pasted bytes.
@@ -541,8 +556,12 @@ struct PasteEvent {
   std::string text;
 };
 
-// The event bus: input, resize, and error/degradation all ride one variant.
+// The event bus: input, resize, image lifecycle, and error/degradation all ride
+// one variant.  ImageInvalidatedEvent is appended so the indices of every
+// pre-#113 alternative remain stable for code that (despite variant's typed
+// API) persisted or inspected them.
 using Event =
-    std::variant<KeyEvent, MouseEvent, PasteEvent, ResizeEvent, ErrorEvent>;
+    std::variant<KeyEvent, MouseEvent, PasteEvent, ResizeEvent, ErrorEvent,
+                 ImageInvalidatedEvent>;
 
 }  // namespace termforge

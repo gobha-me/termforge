@@ -6,7 +6,46 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-15, latest)
 
-**Release candidate: v0.32.0 — owned structured event sources.** #264 adds an
+**Release candidate: v0.33.0 — explicit resident-image invalidation.** #113
+adds a payload-free lifecycle boundary for transitions that can discard
+terminal-side image data. `SIGCONT` stages `SuspendResume` automatically;
+embedding code reports `Reattach` or `TerminalReset` through the loop-thread
+`invalidate_images()` API or the existing thread-safe `post()` path. Requests
+coalesce at a clean frame boundary, where App clears driver image beliefs,
+invalidates the renderer, marks Persistent regions for recreation, and
+delivers one `ImageInvalidatedEvent` before rendering.
+
+Kitty forgets regions, pins, placements and placeholder clears without sending
+deletes for resources the terminal already discarded. Its serial generation
+survives the reset, so pre-transition handles warn and emit nothing even after
+numeric id reuse. Direct pin owners re-pin from their own storage in the event
+callback; App-managed Persistent widgets re-upload through their existing
+borrowed-image contract. Resize still preserves resident payload and refreshes
+placement only. The new driver hook is non-pure for out-of-tree compatibility,
+and SIGCONT teardown restores the prior handler only while TermForge still
+owns it. Trace schema 3 records the applied transition; schemas 1 and 2 remain
+readable.
+
+GCC 14.2 and Clang 20.1 Release `-Werror` builds pass all 67 CTest targets.
+GCC ASan+UBSan with leak detection passes 67/67. GCC and Clang each pass the
+subdirectory, installed-package and plain-vendored consumer paths. Mutation
+checks prove the lifecycle suite fails if Kitty retains its pin map or resets
+the serial that stales reused ids.
+
+**Live evidence:** on Kitty 0.32.2, a real external stop/continue restored the
+complete 320×180 Persistent image without a hole or stale placement. Through
+tmux 3.4, detach/reattach followed by the lifecycle notification restored the
+ANSI enhanced frame cleanly. Both sessions terminated without visible residue.
+The hosted PR and exact-main matrices remain for the release candidate.
+
+**Next:** merge the #113 PR after all hosted checks pass, require the exact
+merge commit's main matrix to pass, publish v0.33.0, and refresh ignored task
+memory. Then return to the priority queue; #140 remains ordered after #165 and
+#112 by its recorded owner decision.
+
+## Previous stable release: v0.32.0
+
+**v0.32.0 — owned structured event sources.** #264 adds an
 explicit, pollable `EventSource` boundary for ordered `Event` batches. An app
 chooses replacement (terminal bytes are drained without decoding) or composition
 (terminal events first, then the source batch), so one physical action is never
@@ -31,11 +70,6 @@ ordering/replacement/composition/readiness/lifecycle/failure tests. GCC
 ASan+UBSan with leak detection passes 67/67. GCC 14 and Clang 20 each pass the
 subdirectory, installed-package and plain-vendored consumer paths. No
 terminal-protocol output bytes change, so no live-emulator gate applies.
-
-**Next:** complete the full GCC/Clang, ASan+UBSan and consumer matrix; open and
-merge the #264 PR after all hosted checks pass; require the exact merge
-commit's main matrix to pass; then publish v0.32.0 as a normal GitHub release
-and refresh the ignored task memory.
 
 ## Previous stable release: v0.31.3
 

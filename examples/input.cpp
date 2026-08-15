@@ -112,6 +112,12 @@ class InputApp final : public App {
     m_action = "";
   }
 
+  auto handle(const ImageInvalidatedEvent&) -> void {
+    m_last_key = "resident images invalidated";
+    m_modifiers = "";
+    m_action = "";
+  }
+
   static auto action_name(KeyAction a) -> std::string {
     switch (a) {
       case KeyAction::Press: return "press";

@@ -2,10 +2,11 @@
 
 A lightweight, modular **terminal UI framework in C++23**, BSD 3-clause
 licensed. It renders pixel graphics inline in the terminal using
-terminal-native protocols — **Kitty graphics protocol first, ANSI truecolor
-half-blocks as the universal floor**, with plain-ASCII degradation for bare
-TTYs. A Sixel driver (legacy fallback) and an optional framebuffer driver
-(console-VT/embedded) are on the roadmap but not yet implemented.
+terminal-native protocols — **Kitty Terminal Graphics Protocol (TGP) first,
+ANSI truecolor half-blocks as the universal floor**, with plain-ASCII
+degradation for bare TTYs. A Sixel driver (legacy fallback) and an optional
+framebuffer driver (console-VT/embedded) are on the roadmap but not yet
+implemented.
 
 A distinguishing feature: degradation and failure (e.g. a graphics fallback)
 are **events**, queryable and loggable via `std::expected` / `std::variant` —
@@ -27,7 +28,8 @@ Landed and verified:
   with color pass-through), `Input` (escape state machine, UTF-8, SGR mouse,
   kitty CSI-u key reports with press/repeat/release — see
   [docs/keyboard-protocol.md](docs/keyboard-protocol.md)),
-  `App` (event loop, SIGWINCH resize, pixel-region plumbing, guarded teardown
+  `App` (event loop, SIGWINCH resize, explicit resident-image invalidation on
+  suspend/reattach/reset, pixel-region plumbing, guarded teardown
   on every exit path including an exception, thread-safe `post(Event)`
   delivery onto the loop thread, and owned structured `EventSource` adapters
   with explicit terminal replacement/composition). Terminal input, structured

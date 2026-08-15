@@ -760,6 +760,22 @@ auto KittyDriver::unpin_image(PinnedImage image)
   return {};
 }
 
+auto KittyDriver::invalidate_images() noexcept -> void {
+  // The terminal has already discarded these resources.  Emitting d=I/d=i
+  // would address ids whose meaning is no longer ours, and retaining the maps
+  // would let old handles place missing data.  Clear the beliefs only.
+  m_regions.clear();
+  m_pinned.clear();
+  m_pin_places.clear();
+  m_placeholder_clears.clear();
+  m_transmitted = false;
+
+  // Do NOT reset m_next_pin_serial.  Image ids are deliberately recycled, and
+  // the monotonic serial is what keeps a pre-invalidation handle stale when a
+  // new pin inherits the same id.  The draw clock may remain monotonic too;
+  // its maps are empty, so no old timestamp can be observed.
+}
+
 auto KittyDriver::draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
     -> std::expected<void, ErrorEvent> {
   auto entry = resolve_pin(image, "draw_pinned");

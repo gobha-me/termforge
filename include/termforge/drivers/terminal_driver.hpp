@@ -406,6 +406,18 @@ class TerminalDriver {
     return retain_pinned(cells, image, PlacementFit::Stretch);
   }
 
+  // The terminal discarded every resident image without a protocol delete
+  // from this driver (#113).  Forget all image and placement beliefs so old
+  // handles become stale and the next draw/pin recreates content from caller-
+  // owned storage.  No bytes are emitted: this notification describes bytes
+  // the terminal has already lost.
+  //
+  // NON-PURE for source compatibility with out-of-tree drivers.  A tier that
+  // has no resident-image state has nothing to forget, so the no-op default is
+  // exact rather than a silent degradation.  Call at a frame boundary; App
+  // stages the transition there before invoking this hook.
+  virtual auto invalidate_images() noexcept -> void {}
+
   // The pixel resolution a widget should rasterize at to fill `cells` on THIS
   // tier -- cells are the logical unit, this is the device pixel ratio. Auto
   // scaling alone cannot fix blur or aspect for a widget that *generates* its

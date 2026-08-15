@@ -144,7 +144,8 @@ auto valid_kind(TraceKind kind) -> bool {
     case TraceKind::Posted:
     case TraceKind::End:
     case TraceKind::Source:
-    case TraceKind::InputCapabilities: return true;
+    case TraceKind::InputCapabilities:
+    case TraceKind::ImageInvalidation: return true;
   }
   return false;
 }
@@ -159,6 +160,11 @@ auto valid_action(std::uint8_t value) -> bool {
 
 auto valid_severity(std::uint8_t value) -> bool {
   return value <= static_cast<std::uint8_t>(Severity::Error);
+}
+
+auto valid_image_invalidation_reason(std::uint8_t value) -> bool {
+  return value <=
+         static_cast<std::uint8_t>(ImageInvalidationReason::TerminalReset);
 }
 
 auto input_capabilities_bits(InputCapabilities capabilities) -> std::uint32_t {
@@ -237,7 +243,7 @@ auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent> {
   prefix = prefix.subspan(kMagic.size());
   const auto schema = take_le<std::uint16_t>(prefix);
   const auto reserved = take_le<std::uint16_t>(prefix);
-  if (!schema || (*schema != 1 && *schema != kTraceSchemaVersion)) {
+  if (!schema || *schema < 1 || *schema > kTraceSchemaVersion) {
     return trace_error("trace schema version is not supported");
   }
   if (!reserved || *reserved != 0) return trace_error("trace header is malformed");
@@ -312,7 +318,9 @@ auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent> {
         !fields.empty() || *record_reserved != 0 || !valid_kind(*kind) ||
         !valid_phase(*phase) ||
         (*schema == 1 && (*kind == TraceKind::Source ||
-                          *kind == TraceKind::InputCapabilities))) {
+                          *kind == TraceKind::InputCapabilities ||
+                          *kind == TraceKind::ImageInvalidation)) ||
+        (*schema == 2 && *kind == TraceKind::ImageInvalidation)) {
       return trace_error("trace record header is malformed");
     }
     if (*payload_size > kMaxPayloadBytes ||
@@ -411,6 +419,9 @@ auto encode_event(const Event& event) -> std::vector<std::uint8_t> {
           append_le(bytes, static_cast<std::uint8_t>(value.severity));
           append_string(bytes, value.source);
           append_string(bytes, value.message);
+        } else if constexpr (std::same_as<T, ImageInvalidatedEvent>) {
+          append_le(bytes, std::uint8_t{5});
+          append_le(bytes, static_cast<std::uint8_t>(value.reason));
         }
       },
       event);
@@ -471,6 +482,15 @@ auto decode_event(const TraceRecord& record) -> std::expected<Event, ErrorEvent>
     }
     return Event{ErrorEvent{static_cast<Severity>(*severity), std::move(*source),
                             std::move(*message)}};
+  }
+  if (*type == 5) {
+    const auto reason = take_le<std::uint8_t>(bytes);
+    if (!reason || !bytes.empty() ||
+        !valid_image_invalidation_reason(*reason)) {
+      return trace_error("posted image-invalidation event is invalid");
+    }
+    return Event{ImageInvalidatedEvent{
+        static_cast<ImageInvalidationReason>(*reason)}};
   }
   return trace_error("posted-event record has an unknown event type");
 }

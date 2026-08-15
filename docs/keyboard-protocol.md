@@ -139,8 +139,9 @@ an error. Auto-repeat still works there — it simply arrives as more presses.
 
 ## Routing rules
 
-- **`Release` is never captured by an overlay.** It joins `ResizeEvent` and
-  `ErrorEvent` in the class `App::dispatch_event` routes straight to
+- **`Release` is never captured by an overlay.** It joins `ResizeEvent`,
+  `ImageInvalidatedEvent`, and `ErrorEvent` among the events
+  `App::dispatch_event` routes straight to
   `on_event`. An overlay that ate one would leave the app beneath holding a key
   forever — press captured before the dialog opened, release eaten by the
   dialog.

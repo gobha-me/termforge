@@ -25,6 +25,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/ioctl.h>
+#include <signal.h>
 #include <unistd.h>
 
 #include "detail/keyboard.hpp"
@@ -44,6 +45,50 @@ std::atomic<App*> g_active{nullptr};
 void on_winch(int) {
   if (auto* app = g_active.load(std::memory_order_relaxed); app != nullptr)
     app->request_resize();
+}
+
+void on_cont(int) {
+  if (auto* app = g_active.load(std::memory_order_relaxed); app != nullptr)
+    app->request_resume_invalidation();
+}
+
+struct ContinueSignalLease {
+  struct sigaction prior {};
+  bool active{false};
+};
+
+ContinueSignalLease g_continue_lease;
+
+auto install_continue_handler() noexcept -> bool {
+  if (g_continue_lease.active) return false;
+
+  struct sigaction prior {};
+  if (::sigaction(SIGCONT, nullptr, &prior) != 0) return false;
+
+  struct sigaction action {};
+  action.sa_handler = on_cont;
+  ::sigemptyset(&action.sa_mask);
+  // No SA_RESTART: a SIGCONT must wake a demand-mode poll so the invalidation
+  // reaches the next frame boundary instead of waiting for unrelated input.
+  action.sa_flags = 0;
+  if (::sigaction(SIGCONT, &action, nullptr) != 0) return false;
+
+  g_continue_lease.prior = prior;
+  g_continue_lease.active = true;
+  return true;
+}
+
+auto restore_continue_handler() noexcept -> void {
+  if (!g_continue_lease.active) return;
+
+  struct sigaction current {};
+  if (::sigaction(SIGCONT, nullptr, &current) == 0 &&
+      (current.sa_flags & SA_SIGINFO) == 0 && current.sa_handler == on_cont) {
+    (void)::sigaction(SIGCONT, &g_continue_lease.prior, nullptr);
+  }
+  // If somebody installed a newer handler, it owns SIGCONT now and must not be
+  // overwritten.  Either way this App no longer owns a lease.
+  g_continue_lease = {};
 }
 
 // The App-level image pass is an ENHANCEMENT over Widget::draw(), not every
@@ -101,6 +146,12 @@ auto trace_warning(std::string message) -> ErrorEvent {
 
 [[nodiscard]] constexpr auto valid_action(KeyAction action) noexcept -> bool {
   return action >= KeyAction::Press && action <= KeyAction::Release;
+}
+
+[[nodiscard]] constexpr auto valid_image_invalidation_reason(
+    ImageInvalidationReason reason) noexcept -> bool {
+  return reason >= ImageInvalidationReason::SuspendResume &&
+         reason <= ImageInvalidationReason::TerminalReset;
 }
 
 [[nodiscard]] constexpr auto valid_scalar(char32_t ch) noexcept -> bool {
@@ -171,6 +222,11 @@ auto validate_source_batch(std::span<const Event> events,
     }
     if (std::holds_alternative<ResizeEvent>(event)) {
       reason = "ResizeEvent is not an input event; use App::set_size";
+      return false;
+    }
+    if (std::holds_alternative<ImageInvalidatedEvent>(event)) {
+      reason = "ImageInvalidatedEvent is not an input event; use "
+               "App::invalidate_images or App::post";
       return false;
     }
     if (const auto* error = std::get_if<ErrorEvent>(&event)) {
@@ -439,6 +495,24 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
         if (auto size = detail::decode_size(record); !size)
           return std::unexpected{std::move(size.error())};
         break;
+      case detail::TraceKind::ImageInvalidation:
+        if (record.phase != detail::TracePhase::FrameStart ||
+            record.frame >= expected_frame) {
+          return std::unexpected{
+              trace_warning("play: image-invalidation phase is invalid")};
+        }
+        if (record.phase < last_phase) {
+          return std::unexpected{
+              trace_warning("play: record phases are out of order")};
+        }
+        last_phase = record.phase;
+        if (auto event = detail::decode_event(record); !event) {
+          return std::unexpected{std::move(event.error())};
+        } else if (!std::holds_alternative<ImageInvalidatedEvent>(*event)) {
+          return std::unexpected{trace_warning(
+              "play: image-invalidation record has the wrong event type")};
+        }
+        break;
       case detail::TraceKind::Posted:
         if (record.phase != detail::TracePhase::Posted ||
             record.frame >= expected_frame) {
@@ -698,11 +772,12 @@ auto App::playback_begin_frame() -> void {
   ++m_playback->next;
 }
 
-auto App::playback_apply_resizes() -> void {
+auto App::playback_apply_frame_transitions() -> void {
   if (!m_playback || m_playback->failure) return;
   while (m_playback->next < m_playback->trace.records.size()) {
     const auto& record = m_playback->trace.records[m_playback->next];
-    if (record.kind != detail::TraceKind::Resize ||
+    if ((record.kind != detail::TraceKind::Resize &&
+         record.kind != detail::TraceKind::ImageInvalidation) ||
         record.frame != m_frame_index) {
       break;
     }
@@ -713,15 +788,29 @@ auto App::playback_apply_resizes() -> void {
       m_playback->clock.advance(std::chrono::nanoseconds{
           record.offset_ns - static_cast<std::uint64_t>(now_ns)});
     }
-    auto decoded = detail::decode_size(record);
-    if (!decoded) {
-      m_playback->failure = std::move(decoded.error());
-      quit();
-      return;
+    if (record.kind == detail::TraceKind::Resize) {
+      auto decoded = detail::decode_size(record);
+      if (!decoded) {
+        m_playback->failure = std::move(decoded.error());
+        quit();
+        return;
+      }
+      m_pushed_size = Size{decoded->cols, decoded->rows, decoded->px_w,
+                           decoded->px_h};
+      m_resize_pending.store(true);
+    } else {
+      auto event = detail::decode_event(record);
+      const auto* invalidated =
+          event ? std::get_if<ImageInvalidatedEvent>(&*event) : nullptr;
+      if (!event || invalidated == nullptr ||
+          !stage_image_invalidation(invalidated->reason)) {
+        m_playback->failure =
+            event ? trace_warning("image-invalidation record is invalid")
+                  : std::move(event.error());
+        quit();
+        return;
+      }
     }
-    m_pushed_size = Size{decoded->cols, decoded->rows, decoded->px_w,
-                         decoded->px_h};
-    m_resize_pending.store(true);
     ++m_playback->next;
   }
 }
@@ -847,6 +936,63 @@ auto App::post(Event event) -> void {
   // best-effort byte cannot be added because the pipe is already full.
   m_posted.push_back(std::move(event));
   signal_posted_locked();
+}
+
+auto App::stage_image_invalidation(
+    ImageInvalidationReason reason) noexcept -> bool {
+  if (!valid_image_invalidation_reason(reason)) return false;
+  // There is one terminal state to clear.  If several notifications arrive
+  // before the application can observe that transition, clearing/re-pinning
+  // once is the only safe cadence; report the most recent explanation.
+  m_image_invalidation_pending = reason;
+  request_render();
+  return true;
+}
+
+auto App::invalidate_images(ImageInvalidationReason reason)
+    -> std::expected<void, ErrorEvent> {
+  if (!stage_image_invalidation(reason)) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "app", "invalidate_images: reason is invalid"}};
+  }
+  return {};
+}
+
+auto App::apply_image_invalidation() -> void {
+  if (!m_image_invalidation_pending) return;
+  const ImageInvalidationReason reason = *m_image_invalidation_pending;
+  // Clear before invoking application code.  A handler may immediately
+  // request a second transition; that request belongs to the next clean frame
+  // rather than being erased on return from this one.
+  m_image_invalidation_pending.reset();
+
+  if (m_driver) m_driver->invalidate_images();
+  if (m_renderer) m_renderer->invalidate();
+  m_pixel_force_repaint = true;
+
+  for (auto& state : m_persistent_pixels) {
+    // The terminal and driver no longer know this handle.  Do not call
+    // unpin_image on it: that would either warn as stale or, without serial
+    // checking, delete a newly recycled stranger.  Widget storage remains the
+    // source of truth and recreate asks for it again in this frame.
+    state.pin = {};
+    state.visible = false;
+    state.recreate = true;
+    state.pending_content = false;
+    state.pending_visible = false;
+    state.touched_wire = false;
+  }
+
+  record_payload(
+      static_cast<std::uint8_t>(detail::TraceKind::ImageInvalidation),
+      TracePoint::FrameStart,
+      detail::encode_event(Event{ImageInvalidatedEvent{reason}}));
+
+  // System transitions bypass overlays, like ResizeEvent and ErrorEvent.  The
+  // driver/Persistent state is already invalid before the callback, so direct
+  // pin owners can safely rebuild from their own payloads here.
+  request_render();
+  on_event(Event{ImageInvalidatedEvent{reason}});
 }
 
 auto App::start_event_source() -> std::expected<void, ErrorEvent> {
@@ -1143,6 +1289,13 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
   g_active.store(this, std::memory_order_relaxed);
   std::signal(SIGWINCH, on_winch);
   m_winch_hooked = true;
+  if (install_continue_handler()) {
+    m_cont_hooked = true;
+  } else {
+    m_input.push_error(ErrorEvent{
+        Severity::Warning, "app",
+        "setup: could not install SIGCONT image-invalidation handler"});
+  }
   // Reads never block, ever: VMIN=0/VTIME=0 once, here, and the loop never
   // touches termios again. All waiting is done by wait_readable(), which has
   // millisecond granularity where VTIME has only deciseconds. (The old loop
@@ -1166,12 +1319,18 @@ auto App::teardown() -> void {
     std::signal(SIGWINCH, SIG_DFL);
     m_winch_hooked = false;
   }
+  if (m_cont_hooked) {
+    restore_continue_handler();
+    m_cont_hooked = false;
+  }
   // Last, and here rather than only in ~App: the handler is unhooked above, so
   // leaving a process-wide pointer to this App behind would serve nothing and
   // outlive teardown on the one path (an exception escaping main) where ~App
   // is never going to run.
   App* expected = this;
   g_active.compare_exchange_strong(expected, nullptr, std::memory_order_relaxed);
+  m_resume_invalidation_pending.store(false, std::memory_order_relaxed);
+  m_image_invalidation_pending.reset();
   close_post_pipe();
 }
 
@@ -1286,8 +1445,13 @@ auto App::frame_step() -> void {
   const auto frame_start =
       m_playback ? m_playback->clock.now() : now_steady();
   record_frame(frame_start);
-  playback_apply_resizes();
+  playback_apply_frame_transitions();
   m_pixel_force_repaint = false;
+  if (m_resume_invalidation_pending.exchange(false,
+                                             std::memory_order_relaxed)) {
+    (void)stage_image_invalidation(ImageInvalidationReason::SuspendResume);
+  }
+  apply_image_invalidation();
   if (m_resize_pending) {
     // Clear *before* measuring: a SIGWINCH landing between the ioctl and
     // the store would otherwise be erased by it, leaving the screen at a
@@ -1769,8 +1933,16 @@ auto App::dispatch_event(const Event& ev) -> void {
   // changed state in a routing callback. Demand mode coalesces this with any
   // more specific request made below into the current frame's one render.
   request_render();
-  // Resize and error never get captured — the app underneath still owns its
-  // layout, and a degradation notice must not be swallowed by a dialog.
+  if (const auto* invalidated = std::get_if<ImageInvalidatedEvent>(&ev)) {
+    if (!stage_image_invalidation(invalidated->reason)) {
+      on_event(Event{ErrorEvent{Severity::Warning, "app",
+                               "ImageInvalidatedEvent reason is invalid"}});
+    }
+    return;
+  }
+  // Resize, image lifecycle, and error never get captured — the app underneath
+  // still owns its layout/resources, and a degradation notice must not be
+  // swallowed by a dialog. Image invalidation returned above after staging.
   if (std::holds_alternative<ResizeEvent>(ev) ||
       std::holds_alternative<ErrorEvent>(ev)) {
     on_event(ev);
