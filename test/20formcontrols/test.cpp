@@ -803,6 +803,7 @@ TEST_CASE("Select: the open list draws below the rect at dropdown_rect",
 
 TEST_CASE("Select: hit_test covers the dropdown only while it is open",
           "[form][select][mouse]") {
+  Screen s{20, 6};
   Select sel;
   make_select(sel);
 
@@ -810,6 +811,7 @@ TEST_CASE("Select: hit_test covers the dropdown only while it is open",
   REQUIRE_FALSE(sel.hit_test(3, 2));  // closed: the rows below are not ours
 
   REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
   REQUIRE(sel.hit_test(3, 2));
   REQUIRE(sel.hit_test(3, 3));
   REQUIRE_FALSE(sel.hit_test(3, 4));   // one past the last option
@@ -938,6 +940,7 @@ TEST_CASE("Select: an unhandled key while open is consumed",
 
 TEST_CASE("Select: clicking the box toggles, clicking a row commits",
           "[form][select][mouse]") {
+  Screen s{20, 6};
   Select sel;
   make_select(sel);
   std::vector<int> seen;
@@ -949,6 +952,7 @@ TEST_CASE("Select: clicking the box toggles, clicking a row commits",
   REQUIRE_FALSE(sel.dropdown_open());
 
   REQUIRE(sel.on_event(press(3, 0)));
+  sel.draw(s);
   REQUIRE(sel.on_event(press(3, 3)));  // third option
   REQUIRE_FALSE(sel.dropdown_open());
   REQUIRE(sel.selected() == 2);
@@ -957,12 +961,14 @@ TEST_CASE("Select: clicking the box toggles, clicking a row commits",
 
 TEST_CASE("Select: a non-left press inside the list commits nothing",
           "[form][select][mouse][failure]") {
+  Screen s{20, 6};
   Select sel;
   make_select(sel);
   int calls = 0;
   sel.on_change([&](int, const std::string&) { ++calls; });
 
   REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
   // Consumed — so it cannot leak to the widget under the dropdown — but inert.
   REQUIRE(sel.on_event(press(3, 3, 2)));
   REQUIRE(sel.dropdown_open());
@@ -1121,9 +1127,11 @@ TEST_CASE("Select: re-committing the current value fires nothing",
 
 TEST_CASE("Select: hover over the open list moves the highlight",
           "[form][select][mouse]") {
+  Screen s{20, 6};
   Select sel;
   make_select(sel);
   REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
 
   REQUIRE(sel.on_event(motion(3, 3)));  // hover over the third option
   REQUIRE(sel.highlighted() == 2);
@@ -1139,13 +1147,15 @@ TEST_CASE("Select: the wheel never picks the row under the pointer",
   // #85 gave the wheel a job (scrolling the window), which makes this the case
   // that keeps the two apart: a wheel may move the highlight only as a
   // consequence of the WINDOW moving, never to wherever the mouse happens to
-  // be. Here nothing scrolls at all — three options, no frame painted, so the
-  // window is the whole list — and the highlight must sit still regardless.
+  // be. Here the painted window holds all three options, so nothing scrolls
+  // and the highlight must sit still regardless.
+  Screen s{20, 6};
   Select sel;
   make_select(sel);
   int calls = 0;
   sel.on_change([&](int, const std::string&) { ++calls; });
   REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
   REQUIRE(sel.highlighted() == 0);
 
   // Over the open list, pointer parked on the THIRD row: consumed, so it
@@ -1163,21 +1173,19 @@ TEST_CASE("Select: the wheel never picks the row under the pointer",
   REQUIRE_FALSE(sel.on_event(wheel(3, 0)));
 }
 
-TEST_CASE("Select: a wheel with no frame painted cannot scroll (#85)",
+TEST_CASE("Select: an unpainted open list declines wheel events (#96)",
           "[form][select][mouse][failure]") {
-  // m_screen_rows == 0 means "no frame yet", which dropdown_visible_rows
-  // answers with the FULL item count (#48 item 3). The window is then the whole
-  // list and the offset is structurally pinned at 0 -- there is nowhere to
-  // scroll to. This pins that branch, because it is what makes the wheel tests
-  // that never call draw() honest rather than accidentally green.
+  // A list that has never been painted owns no popup pixels yet. A wheel where
+  // the popup will appear is therefore declined, just like a press there; the
+  // painted end-stop absorption contract is covered by the sibling above.
   Select sel;
   sel.set_options({"a", "b", "c", "d", "e", "f", "g", "h"});
   sel.set_geometry({0, 0, 10, 1});
   REQUIRE(sel.on_event(key(Key::Enter)));
   REQUIRE(sel.highlighted() == 0);
 
-  for (int i = 0; i < 5; ++i) REQUIRE(sel.on_event(wheel(3, 2)));
-  REQUIRE(sel.highlighted() == 0);  // no window movement, so no carry
+  for (int i = 0; i < 5; ++i) REQUIRE_FALSE(sel.on_event(wheel(3, 2)));
+  REQUIRE(sel.highlighted() == 0);
 }
 
 TEST_CASE("Select: the wheel scrolls the window and carries the highlight (#85)",
@@ -1475,8 +1483,11 @@ TEST_CASE("Select: a relayout between frames cannot desync click from paint "
   // New live rows are not yet painted: decline rather than commit unseen
   // geometry. The painted rows at y=9..11 are still claimed and still resolve
   // through the memoized scroll (== 1), so they commit j/k/l, never b/c/d.
-  REQUIRE_FALSE(sel.hit_test(3, 8));  // old box row, no longer ours
-  REQUIRE(sel.hit_test(3, 9));        // still painted
+  REQUIRE_FALSE(sel.hit_test(3, 0));  // old box row, no longer ours
+  REQUIRE(sel.hit_test(3, 8));        // current box row remains interactive
+  REQUIRE(sel.hit_test(3, 9));        // old dropdown row is still painted
+  REQUIRE(sel.on_event(motion(3, 9)));
+  REQUIRE(sel.highlighted() == 9);    // hover sees "j", not live row "b"
   REQUIRE(sel.on_event(press(3, 9)));
   REQUIRE(sel.selected_text() == "j");
 }
@@ -1816,6 +1827,7 @@ TEST_CASE("Select: a hover moves the marker too (#76)",
   Select sel;
   make_select(sel);
   REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
   REQUIRE(sel.on_event(motion(3, 3)));  // third option row
   sel.draw(s);
 

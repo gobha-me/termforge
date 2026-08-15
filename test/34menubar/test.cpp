@@ -53,6 +53,7 @@ using termforge::Renderer;
 using termforge::Screen;
 using tfsupport::all_seven_bit;
 using tfsupport::key;
+using tfsupport::motion;
 using tfsupport::press;
 using tfsupport::row_text;
 
@@ -575,8 +576,15 @@ TEST_CASE("MenuBar: a relayout between frames cannot desync click from paint "
   REQUIRE(mb.dropdown_open());
 
   REQUIRE(mb.hit_test(2, 9));
-  REQUIRE(mb.on_event(press(2, 9)));
-  REQUIRE(fired == 9);  // "j", not "b" (index 1)
+  SECTION("hover resolves the painted row") {
+    REQUIRE(mb.on_event(motion(2, 9)));
+    REQUIRE(mb.on_event(key(Key::Enter)));
+    REQUIRE(fired == 9);  // "j", not "b" (index 1)
+  }
+  SECTION("press resolves the painted row") {
+    REQUIRE(mb.on_event(press(2, 9)));
+    REQUIRE(fired == 9);  // "j", not "b" (index 1)
+  }
 }
 
 TEST_CASE("MenuBar: an unpainted open list declines dropdown presses (#96)",

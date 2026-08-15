@@ -1370,6 +1370,7 @@ TEST_CASE("MenuBar: a hover moves the marker too (#76)",
   Screen s{40, 5};
   MenuBar mb;
   open_file_menu(mb);
+  mb.draw(s);  // the pointer can only target rows that have been painted (#96)
   REQUIRE(mb.on_event(motion(3, 3)));  // third item's row
   mb.draw(s);
 
