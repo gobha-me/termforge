@@ -7,10 +7,10 @@
 #include <expected>
 #include <format>
 #include <string>
-#include <string_view>
 #include <utility>
 
 #include "termforge/core/requirements.hpp"
+#include "termforge/core/event_source.hpp"
 #include "termforge/core/types.hpp"
 
 namespace termforge::detail {
@@ -22,7 +22,10 @@ namespace termforge::detail {
 struct AppRequirementFacts {
   Capabilities terminal_caps{};
   Capabilities driver_caps{};
-  KeyboardMode keyboard_mode{KeyboardMode::Legacy};
+  // Effective semantic input route after App has applied replacement or
+  // composition. Press is the terminal default; structured replacement may
+  // deliberately pass an all-false value.
+  InputCapabilities input_caps{true, false, false, false};
   int cols{0};
   int rows{0};
   bool cell_pixels_known{false};
@@ -31,12 +34,12 @@ struct AppRequirementFacts {
 
 [[nodiscard]] inline auto make_requirement_facts(
     const Capabilities& terminal_caps, const Capabilities& driver_caps,
-    KeyboardMode keyboard_mode, int cols, int rows, int px_w, int px_h)
+    InputCapabilities input_caps, int cols, int rows, int px_w, int px_h)
     -> AppRequirementFacts {
   AppRequirementFacts facts;
   facts.terminal_caps = terminal_caps;
   facts.driver_caps = driver_caps;
-  facts.keyboard_mode = keyboard_mode;
+  facts.input_caps = input_caps;
   facts.cols = cols;
   facts.rows = rows;
   if (px_w > 0 && px_h > 0 && cols > 0 && rows > 0) {
@@ -53,16 +56,6 @@ struct AppRequirementFacts {
          !req.key_release && req.min_cols <= 0 && req.min_rows <= 0 &&
          !req.known_cell_pixels && req.min_cell_pixels.w <= 0 &&
          req.min_cell_pixels.h <= 0;
-}
-
-[[nodiscard]] constexpr auto keyboard_mode_name(KeyboardMode mode)
-    -> std::string_view {
-  switch (mode) {
-    case KeyboardMode::Legacy: return "Legacy";
-    case KeyboardMode::Disambiguate: return "Disambiguate";
-    case KeyboardMode::Enhanced: return "Enhanced";
-  }
-  return "unknown";
 }
 
 // Pure predicate. App uses Error at startup and Warning when a live fact
@@ -93,22 +86,15 @@ struct AppRequirementFacts {
         facts.driver_caps.truecolor, facts.terminal_caps.truecolor));
   }
 
-  // Press is universal. Disambiguate reports actions only for keys that were
-  // already escape sequences; a semantic floor on repeat/release needs every
-  // key to use CSI-u, which is the Enhanced tier.
-  if ((req.key_repeat || req.key_release) &&
-      facts.keyboard_mode != KeyboardMode::Enhanced) {
-    return fail(std::format(
-        "requires complete key repeat/release events; configure "
-        "KeyboardMode::Enhanced (current mode is {})",
-        keyboard_mode_name(facts.keyboard_mode)));
-  }
-  if ((req.key_repeat || req.key_release) &&
-      !facts.terminal_caps.kitty_keyboard) {
-    return fail(
-        "requires complete key repeat/release events; this terminal did not "
-        "answer the kitty keyboard-flags query");
-  }
+  if (req.key_press && !facts.input_caps.key_press)
+    return fail("requires key press events; the effective input route does not "
+                "provide them");
+  if (req.key_repeat && !facts.input_caps.key_repeat)
+    return fail("requires complete key repeat events; the effective input route "
+                "does not provide them");
+  if (req.key_release && !facts.input_caps.key_release)
+    return fail("requires complete key release events; the effective input "
+                "route does not provide them");
 
   if (req.min_cols > 0 && facts.cols < req.min_cols) {
     return fail(std::format("requires at least {} columns; current grid is {}x{}",

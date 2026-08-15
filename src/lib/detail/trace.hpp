@@ -9,11 +9,11 @@
 #include <iosfwd>
 #include <vector>
 
-#include "termforge/core/types.hpp"
+#include "termforge/core/event_source.hpp"
 
 namespace termforge::detail {
 
-inline constexpr std::uint16_t kTraceSchemaVersion{1};
+inline constexpr std::uint16_t kTraceSchemaVersion{2};
 
 enum class TraceKind : std::uint8_t {
   Frame = 1,
@@ -21,6 +21,8 @@ enum class TraceKind : std::uint8_t {
   Resize = 3,
   Posted = 4,
   End = 5,
+  Source = 6,
+  InputCapabilities = 7,
 };
 
 enum class TracePhase : std::uint8_t {
@@ -46,6 +48,7 @@ struct TraceHeader {
   std::uint32_t version_patch{0};
   std::uint32_t version_tweak{0};
   Capabilities capabilities{};
+  InputCapabilities input_capabilities{true, false, false, false};
   TraceSize initial_size{};
 };
 
@@ -72,6 +75,10 @@ auto encode_size(TraceSize size) -> std::vector<std::uint8_t>;
 auto decode_size(const TraceRecord& record) -> std::expected<TraceSize, ErrorEvent>;
 auto encode_event(const Event& event) -> std::vector<std::uint8_t>;
 auto decode_event(const TraceRecord& record) -> std::expected<Event, ErrorEvent>;
+auto encode_input_capabilities(InputCapabilities capabilities)
+    -> std::vector<std::uint8_t>;
+auto decode_input_capabilities(const TraceRecord& record)
+    -> std::expected<InputCapabilities, ErrorEvent>;
 auto encode_end(TraceEnd end) -> std::vector<std::uint8_t>;
 auto decode_end(const TraceRecord& record) -> std::expected<TraceEnd, ErrorEvent>;
 

@@ -52,6 +52,7 @@
 #include <vector>
 
 #include "termforge/core/input.hpp"
+#include "termforge/core/event_source.hpp"
 #include "termforge/core/renderer.hpp"
 #include "termforge/core/requirements.hpp"
 #include "termforge/core/screen.hpp"
@@ -188,6 +189,35 @@ class App {
   // them. As with any member call, the App itself must remain alive for the
   // duration of post().
   auto post(Event event) -> void;
+
+  // Install an owned structured event source (#264).  The mode is mandatory:
+  // a caller must say whether this source replaces decoded terminal input or
+  // is known to be disjoint and may be composed with it.  The source object
+  // persists across runs; App starts/stops it with each session and destroys
+  // it on clear, replacement, or App destruction.
+  //
+  // Loop-thread only.  A null source or inconsistent capability declaration is
+  // a total Warning refusal.  During a live run the candidate is started and
+  // validated before the old source is disturbed.
+  auto set_event_source(std::unique_ptr<EventSource> source,
+                        EventSourceMode mode)
+      -> std::expected<void, ErrorEvent>;
+  auto clear_event_source() -> void;
+  [[nodiscard]] auto has_event_source() const noexcept -> bool {
+    return m_event_source != nullptr;
+  }
+  [[nodiscard]] auto event_source_active() const noexcept -> bool {
+    return m_event_source_active;
+  }
+  [[nodiscard]] auto event_source_mode() const noexcept
+      -> std::optional<EventSourceMode> {
+    if (!m_event_source) return std::nullopt;
+    return m_event_source_mode;
+  }
+  // The semantic union currently available to AppRequirements and callers.
+  // Before setup this is derived from the configured source plus an unprobed
+  // legacy terminal; during playback it is the trace-recorded value.
+  [[nodiscard]] auto input_capabilities() const noexcept -> InputCapabilities;
 
   // Whether the loop is still running \u2014 true until quit() is called, false
   // after. Lets a test observe that a quit happened without inferring it
@@ -472,12 +502,11 @@ class App {
     m_clock = clock;
   }
 
-  // Record and replay the raw input stream through the production loop
-  // (#120). A trace stores the exact chunks read from the terminal, their
-  // synthetic-clock offsets and frame points, effective resizes, and posted
-  // events. Playback therefore feeds Input again; it never serializes decoded
-  // terminal events and cannot accidentally bypass the parser whose failures
-  // the artifact exists to reproduce.
+  // Record and replay input through the production loop (#120, #264). A trace
+  // stores exact terminal chunks, structured-source events/capability changes,
+  // their synthetic-clock offsets and frame points, effective resizes, and
+  // posted events. Playback feeds terminal bytes through Input again; source
+  // events are structured because that route has no byte decoder to bypass.
   //
   // The streams are BORROWED. start_recording() may be called only while the
   // loop is stopped, and the stream must outlive that run or an earlier
@@ -1040,6 +1069,14 @@ class App {
   // Safe to call once per run; TerminalDriver::shutdown() self-guards.
   auto shutdown_driver() -> void;
   auto pump_input() -> void;
+  auto start_event_source() -> std::expected<void, ErrorEvent>;
+  auto stop_event_source() noexcept -> void;
+  auto poll_event_source() -> int;
+  auto dispatch_source_events() -> void;
+  auto discard_terminal_input() -> int;
+  auto fail_event_source(ErrorEvent error) -> void;
+  auto apply_source_capabilities(InputCapabilities next) -> void;
+  auto release_source_keys() -> void;
   // The headless Screen/Renderer/driver wiring shared by the test hooks. Not a
   // test hook itself — none of them should own it.
   //
@@ -1083,6 +1120,8 @@ class App {
   auto record_input(std::string_view bytes) -> void;
   auto record_resize(Size size) -> void;
   auto record_posted(const Event& event) -> void;
+  auto record_source_event(const Event& event) -> void;
+  auto record_input_capabilities(InputCapabilities capabilities) -> void;
   auto playback_begin_frame() -> void;
   auto playback_apply_resizes() -> void;
   auto playback_feed(TracePoint point) -> int;
@@ -1103,6 +1142,16 @@ class App {
   std::unique_ptr<Screen> m_screen;
   std::unique_ptr<Renderer> m_renderer;
   Input m_input;
+  std::unique_ptr<EventSource> m_event_source;
+  EventSourceMode m_event_source_mode{EventSourceMode::ReplaceTerminal};
+  InputCapabilities m_source_capabilities{};
+  bool m_event_source_active{false};
+  bool m_source_woke{false};
+  std::deque<Event> m_source_events;
+  // Source-only held state, in first-press order.  A release synthesized on
+  // loss/removal therefore has deterministic order and never touches a key
+  // that arrived through the terminal half of a composed session.
+  std::vector<KeyEvent> m_source_held;
   std::unique_ptr<RecordingState> m_recording;
   std::unique_ptr<PlaybackState> m_playback;
   std::uint64_t m_frame_index{0};

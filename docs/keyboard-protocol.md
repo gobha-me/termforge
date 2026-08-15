@@ -111,7 +111,7 @@ modifiers on every keystroke. There is a regression test for exactly this.
 CapsLock deliberately does **not** surface as `shift`: it changes the character
 the terminal produces, and the associated-text parameter is what carries that.
 
-## Fallback: `Release` is never delivered on a terminal without the protocol
+## Fallback: the terminal route has no `Release` without the protocol
 
 A terminal that does not implement the protocol ignores the push and keeps
 sending presses. That is a **degradation, and degradation is an event**: an app
@@ -125,7 +125,13 @@ presses only"}
 ```
 
 which reaches `on_event` even with a modal overlay up. `App::capabilities()`
-carries the same answer as `kitty_keyboard`.
+carries the terminal answer as `kitty_keyboard`.
+
+An installed structured `EventSource` can provide repeat, release, and bare
+modifier transitions independently of the terminal. `App::input_capabilities()`
+reports the effective replacement or composed route, and keyboard
+`AppRequirements` use that value. See
+[event-sources.md](event-sources.md).
 
 **Design for it.** A game must degrade to discrete-step movement rather than
 wait for a release that will never arrive: treat "no release" as a mode, not as

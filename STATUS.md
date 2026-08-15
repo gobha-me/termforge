@@ -6,8 +6,41 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-15, latest)
 
-**Stable release candidate: v0.31.3 — headless frames never read cooked
-stdin.** #256 found that public `App::test_run_frames()` drove the production
+**Release candidate: v0.32.0 — owned structured event sources.** #264 adds an
+explicit, pollable `EventSource` boundary for ordered `Event` batches. An app
+chooses replacement (terminal bytes are drained without decoding) or composition
+(terminal events first, then the source batch), so one physical action is never
+silently delivered twice. Sources declare press/repeat/release/bare-modifier
+semantics, participate in demand-mode readiness, and can satisfy the keyboard
+half of `AppRequirements` independently of terminal CSI-u.
+
+The App owns and session-starts/stops the source while the adapter owns its fd
+and platform policy. Whole batches are validated before delivery. Source loss,
+malformed transitions and capability degradation emit `ErrorEvent`s; held keys
+are released before the source failure/degradation notice. Trace schema 2
+records structured events and source-reported effective input-capability
+changes, playback never starts or polls the live source, and schema 1 remains
+readable as press-only.
+The core neither discovers nor opens/grabs raw Linux devices; focus,
+permissions, layout/IME, hotplug and remote-session policy stay with an opt-in
+adapter supplied an already-authorized fd.
+
+GCC 14.2 and Clang 20.1 Release `-Werror` builds pass all 67 configured CTest
+targets, including standalone public-header compilation and focused source
+ordering/replacement/composition/readiness/lifecycle/failure tests. GCC
+ASan+UBSan with leak detection passes 67/67. GCC 14 and Clang 20 each pass the
+subdirectory, installed-package and plain-vendored consumer paths. No
+terminal-protocol output bytes change, so no live-emulator gate applies.
+
+**Next:** complete the full GCC/Clang, ASan+UBSan and consumer matrix; open and
+merge the #264 PR after all hosted checks pass; require the exact merge
+commit's main matrix to pass; then publish v0.32.0 as a normal GitHub release
+and refresh the ignored task memory.
+
+## Previous stable release: v0.31.3
+
+**v0.31.3 — headless frames never read cooked stdin.** #256 found that public
+`App::test_run_frames()` drove the production
 input pump without driving `setup()`. The skipped setup owns `enter_raw()`,
 which is what gives both tty and injected streams the nonblocking read mode the
 pump requires. An interactive caller therefore blocked on its first cooked-tty
@@ -38,10 +71,6 @@ no deletes, and zero image bytes on 60 clean frames. The project owner also
 reports Apsis Drift fully functional on v0.31.2 at resolutions through 1080p.
 #256 changes no terminal-protocol bytes, so that evidence carries into the
 stable candidate without another visual gate.
-
-**Next:** complete GCC/Clang, sanitizer, consumer and hosted validation; merge
-the #256 PR; require the exact merge commit's main matrix to pass; then publish
-v0.31.3 as a normal GitHub release and refresh the ignored task memory.
 
 ## Previous prerelease: v0.31.2
 

@@ -30,6 +30,12 @@ constexpr std::uint32_t kCapabilitySync{1U << 4};
 constexpr std::uint32_t kCapabilityMask =
     kCapabilityKitty | kCapabilitySixel | kCapabilityTruecolor |
     kCapabilityKeyboard | kCapabilitySync;
+constexpr std::uint32_t kInputPress{1U << 0};
+constexpr std::uint32_t kInputRepeat{1U << 1};
+constexpr std::uint32_t kInputRelease{1U << 2};
+constexpr std::uint32_t kInputModifiers{1U << 3};
+constexpr std::uint32_t kInputMask =
+    kInputPress | kInputRepeat | kInputRelease | kInputModifiers;
 constexpr std::size_t kMaxPayloadBytes{16U * 1024U * 1024U};
 constexpr std::size_t kMaxTraceBytes{256U * 1024U * 1024U};
 constexpr std::size_t kMaxRecords{4U * 1024U * 1024U};
@@ -131,7 +137,16 @@ auto valid_phase(TracePhase phase) -> bool {
 }
 
 auto valid_kind(TraceKind kind) -> bool {
-  return kind >= TraceKind::Frame && kind <= TraceKind::End;
+  switch (kind) {
+    case TraceKind::Frame:
+    case TraceKind::Input:
+    case TraceKind::Resize:
+    case TraceKind::Posted:
+    case TraceKind::End:
+    case TraceKind::Source:
+    case TraceKind::InputCapabilities: return true;
+  }
+  return false;
 }
 
 auto valid_key(std::uint16_t value) -> bool {
@@ -146,12 +161,37 @@ auto valid_severity(std::uint8_t value) -> bool {
   return value <= static_cast<std::uint8_t>(Severity::Error);
 }
 
+auto input_capabilities_bits(InputCapabilities capabilities) -> std::uint32_t {
+  std::uint32_t bits{0};
+  if (capabilities.key_press) bits |= kInputPress;
+  if (capabilities.key_repeat) bits |= kInputRepeat;
+  if (capabilities.key_release) bits |= kInputRelease;
+  if (capabilities.modifier_transitions) bits |= kInputModifiers;
+  return bits;
+}
+
+auto input_capabilities_from_bits(std::uint32_t bits)
+    -> std::optional<InputCapabilities> {
+  if ((bits & ~kInputMask) != 0) return std::nullopt;
+  InputCapabilities capabilities{(bits & kInputPress) != 0,
+                                 (bits & kInputRepeat) != 0,
+                                 (bits & kInputRelease) != 0,
+                                 (bits & kInputModifiers) != 0};
+  if ((capabilities.key_repeat || capabilities.key_release ||
+       capabilities.modifier_transitions) &&
+      !capabilities.key_press)
+    return std::nullopt;
+  if (capabilities.modifier_transitions && !capabilities.key_release)
+    return std::nullopt;
+  return capabilities;
+}
+
 }  // namespace
 
 auto write_trace_header(std::ostream& out, const TraceHeader& header)
     -> std::expected<void, ErrorEvent> {
   std::vector<std::uint8_t> bytes;
-  bytes.reserve(52);
+  bytes.reserve(56);
   bytes.insert(bytes.end(), kMagic.begin(), kMagic.end());
   append_le(bytes, kTraceSchemaVersion);
   append_le(bytes, std::uint16_t{0});
@@ -161,6 +201,7 @@ auto write_trace_header(std::ostream& out, const TraceHeader& header)
   append_le(bytes, VERSION_TWEAK);
   append_le(bytes, capabilities_bits(header.capabilities));
   append_le(bytes, static_cast<std::int32_t>(header.capabilities.color_levels));
+  append_le(bytes, input_capabilities_bits(header.input_capabilities));
   append_le(bytes, header.initial_size.cols);
   append_le(bytes, header.initial_size.rows);
   append_le(bytes, header.initial_size.px_w);
@@ -186,20 +227,24 @@ auto write_trace_record(std::ostream& out, const TraceRecord& record)
 }
 
 auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent> {
-  std::array<std::uint8_t, 52> raw_header{};
-  if (!read_exact(in, raw_header)) return trace_error("trace header is truncated");
-  if (!std::equal(kMagic.begin(), kMagic.end(), raw_header.begin())) {
+  std::array<std::uint8_t, 12> raw_prefix{};
+  if (!read_exact(in, raw_prefix)) return trace_error("trace header is truncated");
+  if (!std::equal(kMagic.begin(), kMagic.end(), raw_prefix.begin())) {
     return trace_error("trace magic is not recognized");
   }
 
-  std::span<const std::uint8_t> header{raw_header};
-  header = header.subspan(kMagic.size());
-  const auto schema = take_le<std::uint16_t>(header);
-  const auto reserved = take_le<std::uint16_t>(header);
-  if (!schema || *schema != kTraceSchemaVersion) {
+  std::span<const std::uint8_t> prefix{raw_prefix};
+  prefix = prefix.subspan(kMagic.size());
+  const auto schema = take_le<std::uint16_t>(prefix);
+  const auto reserved = take_le<std::uint16_t>(prefix);
+  if (!schema || (*schema != 1 && *schema != kTraceSchemaVersion)) {
     return trace_error("trace schema version is not supported");
   }
   if (!reserved || *reserved != 0) return trace_error("trace header is malformed");
+
+  std::vector<std::uint8_t> raw_header(*schema == 1 ? 40U : 44U);
+  if (!read_exact(in, raw_header)) return trace_error("trace header is truncated");
+  std::span<const std::uint8_t> header{raw_header};
 
   Trace trace;
   const auto major = take_le<std::uint32_t>(header);
@@ -208,11 +253,15 @@ auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent> {
   const auto tweak = take_le<std::uint32_t>(header);
   const auto caps_bits = take_le<std::uint32_t>(header);
   const auto levels = take_le<std::int32_t>(header);
+  const auto input_bits = *schema == 1
+                              ? std::optional<std::uint32_t>{kInputPress}
+                              : take_le<std::uint32_t>(header);
   const auto cols = take_le<std::int32_t>(header);
   const auto rows = take_le<std::int32_t>(header);
   const auto px_w = take_le<std::int32_t>(header);
   const auto px_h = take_le<std::int32_t>(header);
-  if (!major || !minor || !patch || !tweak || !caps_bits || !levels || !cols ||
+  if (!major || !minor || !patch || !tweak || !caps_bits || !levels ||
+      !input_bits || !cols ||
       !rows || !px_w || !px_h || !header.empty()) {
     return trace_error("trace header is malformed");
   }
@@ -231,6 +280,10 @@ auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent> {
       (*caps_bits & kCapabilityKeyboard) != 0,
       (*caps_bits & kCapabilitySync) != 0,
   };
+  auto input_capabilities = input_capabilities_from_bits(*input_bits);
+  if (!input_capabilities)
+    return trace_error("trace header has invalid input capability flags");
+  trace.header.input_capabilities = *input_capabilities;
   trace.header.initial_size = {*cols, *rows, *px_w, *px_h};
   if (*cols <= 0 || *rows <= 0 || *px_w < 0 || *px_h < 0 ||
       *cols > std::numeric_limits<unsigned short>::max() ||
@@ -240,7 +293,7 @@ auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent> {
     return trace_error("trace header has an invalid terminal size");
   }
 
-  std::size_t total_bytes = raw_header.size();
+  std::size_t total_bytes = raw_prefix.size() + raw_header.size();
   bool ended = false;
   while (!ended) {
     if (trace.records.size() >= kMaxRecords) {
@@ -257,7 +310,9 @@ auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent> {
     const auto frame = take_le<std::uint64_t>(fields);
     if (!kind || !phase || !record_reserved || !payload_size || !offset || !frame ||
         !fields.empty() || *record_reserved != 0 || !valid_kind(*kind) ||
-        !valid_phase(*phase)) {
+        !valid_phase(*phase) ||
+        (*schema == 1 && (*kind == TraceKind::Source ||
+                          *kind == TraceKind::InputCapabilities))) {
       return trace_error("trace record header is malformed");
     }
     if (*payload_size > kMaxPayloadBytes ||
@@ -418,6 +473,26 @@ auto decode_event(const TraceRecord& record) -> std::expected<Event, ErrorEvent>
                             std::move(*message)}};
   }
   return trace_error("posted-event record has an unknown event type");
+}
+
+auto encode_input_capabilities(InputCapabilities capabilities)
+    -> std::vector<std::uint8_t> {
+  std::vector<std::uint8_t> bytes;
+  bytes.reserve(sizeof(std::uint32_t));
+  append_le(bytes, input_capabilities_bits(capabilities));
+  return bytes;
+}
+
+auto decode_input_capabilities(const TraceRecord& record)
+    -> std::expected<InputCapabilities, ErrorEvent> {
+  std::span<const std::uint8_t> bytes{record.payload};
+  const auto bits = take_le<std::uint32_t>(bytes);
+  if (!bits || !bytes.empty())
+    return trace_error("input-capability record is malformed");
+  auto capabilities = input_capabilities_from_bits(*bits);
+  if (!capabilities)
+    return trace_error("input-capability record has invalid flags");
+  return *capabilities;
 }
 
 auto encode_end(TraceEnd end) -> std::vector<std::uint8_t> {
