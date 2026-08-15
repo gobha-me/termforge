@@ -385,7 +385,7 @@ TEST_CASE("playback restores the caller's pushed size and compatible caps",
   REQUIRE(played.current_size() == App::Size{31, 9, 310, 180});
 }
 
-TEST_CASE("posted modifier keys round-trip through trace schema 1 (#209)",
+TEST_CASE("posted modifier keys round-trip through trace schema 2 (#209)",
           "[trace][keyboard][modifier]") {
   const Event original{KeyEvent{Key::RightAlt, 0, false, true, false,
                                  KeyAction::Release}};
@@ -422,7 +422,7 @@ TEST_CASE("malformed traces are rejected before the App starts", "[trace][failur
   SECTION("unknown schema") {
     std::string broken = artifact.trace;
     REQUIRE(broken.size() > 9);
-    broken[8] = 2;
+    broken[8] = 3;
     const auto [wire, error] = play_bytes(std::move(broken));
     REQUIRE(wire.empty());
     REQUIRE(error.message.find("schema") != std::string::npos);
@@ -430,8 +430,8 @@ TEST_CASE("malformed traces are rejected before the App starts", "[trace][failur
 
   SECTION("invalid initial size") {
     std::string broken = artifact.trace;
-    REQUIRE(broken.size() > 39);
-    std::fill(broken.begin() + 36, broken.begin() + 40, '\0');
+    REQUIRE(broken.size() > 43);
+    std::fill(broken.begin() + 40, broken.begin() + 44, '\0');
     const auto [wire, error] = play_bytes(std::move(broken));
     REQUIRE(wire.empty());
     REQUIRE(error.message.find("size") != std::string::npos);
@@ -439,12 +439,44 @@ TEST_CASE("malformed traces are rejected before the App starts", "[trace][failur
 
   SECTION("unknown record kind") {
     std::string broken = artifact.trace;
-    REQUIRE(broken.size() > 52);
-    broken[52] = static_cast<char>(0x7F);
+    REQUIRE(broken.size() > 56);
+    broken[56] = static_cast<char>(0x7F);
     const auto [wire, error] = play_bytes(std::move(broken));
     REQUIRE(wire.empty());
     REQUIRE(error.message.find("record") != std::string::npos);
   }
+}
+
+TEST_CASE("schema 1 traces remain readable after input capabilities were added",
+          "[trace][compatibility]") {
+  const Artifact artifact = make_artifact();
+  std::string v1 = artifact.trace;
+  REQUIRE(v1.size() > 56);
+  // v2 inserted one uint32_t after color_levels. Removing it restores the v1
+  // 52-byte header; the record stream itself is unchanged for this artifact.
+  v1.erase(36, 4);
+  v1[8] = 1;
+  v1[9] = 0;
+  std::istringstream input{v1, std::ios::binary};
+  const auto decoded = detail::read_trace(input);
+  REQUIRE(decoded.has_value());
+  REQUIRE(decoded->header.input_capabilities ==
+          InputCapabilities{true, false, false, false});
+}
+
+TEST_CASE("schema 1 refuses record kinds introduced by schema 2",
+          "[trace][compatibility][failure]") {
+  const Artifact artifact = make_artifact();
+  std::string v1 = artifact.trace;
+  REQUIRE(v1.size() > 52);
+  v1.erase(36, 4);
+  v1[8] = 1;
+  v1[9] = 0;
+  v1[52] = static_cast<char>(detail::TraceKind::Source);
+  std::istringstream input{v1, std::ios::binary};
+  const auto decoded = detail::read_trace(input);
+  REQUIRE_FALSE(decoded.has_value());
+  REQUIRE(decoded.error().message.find("record") != std::string::npos);
 }
 
 TEST_CASE("a refused recording stream becomes a Warning event", "[trace][failure]") {
@@ -490,9 +522,9 @@ TEST_CASE("an end-record write refusal is delivered before shutdown",
   REQUIRE(app.set_size(App::Size{20, 5}).has_value());
   SyntheticClock clock;
   app.use_script(clock, {{0ns, "q"}});
-  // Header (52), frame (24), initial resize (40), and input (25) fit. Only
+  // Header (56), frame (24), initial resize (40), and input (25) fit. Only
   // the 25-byte end record is refused, after the final input pump has run.
-  RefusingBuffer buffer{141};
+  RefusingBuffer buffer{145};
   std::ostream refused{&buffer};
   app.start_recording(refused);
   REQUIRE(app.run() == 0);

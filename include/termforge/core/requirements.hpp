@@ -19,8 +19,9 @@ struct AppRequirements {
   bool graphics{false};
   // Satisfied by a selected truecolor driver (ANSI or kitty today).
   bool truecolor{false};
-  // Press is universal. Complete repeat/release delivery needs both the kitty
-  // keyboard protocol and KeyboardMode::Enhanced (#60).
+  // Evaluated against App's effective input route. The terminal route always
+  // provides press; repeat/release may come from kitty Enhanced mode or an
+  // installed structured EventSource (#60, #264).
   bool key_press{false};
   bool key_repeat{false};
   bool key_release{false};

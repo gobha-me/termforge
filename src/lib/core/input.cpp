@@ -278,6 +278,13 @@ auto Input::poll() -> std::deque<Event> {
   return std::exchange(m_events, {});
 }
 
+auto Input::discard_incomplete() noexcept -> void {
+  m_pending.clear();
+  m_esc_pending = false;
+  m_in_paste = false;
+  m_paste_buf.clear();
+}
+
 auto Input::decode(std::string_view bytes) -> std::deque<Event> {
   feed(bytes);
   flush();  // convenience: the fed string is the complete input

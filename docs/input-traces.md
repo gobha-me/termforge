@@ -22,21 +22,28 @@ the output stream alive through `run()` or an earlier `stop_recording()`.
 Stopping during a frame produces a playable prefix ending after that frame.
 Destruction never writes to a borrowed stream.
 
-Playback is isolated from live terminal input. It temporarily installs the
-recorded terminal size and capabilities, drives the production loop with an
-internal `SyntheticClock`, and restores the caller's prior pushed size,
-capabilities, clock and pending decoder state afterwards. A caller that has
-explicitly pushed different capabilities gets a `Warning` before setup or
-output; silently replaying against another rendering tier would not be the same
-run.
+Playback is isolated from live terminal and structured-source input. It
+temporarily installs the recorded terminal size and capabilities, drives the
+production loop with an internal `SyntheticClock`, and restores the caller's
+prior pushed size, capabilities, clock and pending decoder state afterwards. A
+caller that has explicitly pushed different capabilities gets a `Warning`
+before setup or output; silently replaying against another rendering tier would
+not be the same run.
 
 ## What is recorded
 
-The source of truth is the exact byte chunks returned by the nonblocking input
-source—not decoded `Event` objects. Each chunk carries its frame, frame phase,
-and monotonic nanosecond offset. Playback feeds those bytes through `Input`
-again, preserving split and malformed escape sequences and the boundary where
-a lone Escape is committed.
+For the terminal route, the source of truth is the exact byte chunks returned
+by the nonblocking input stream—not decoded `Event` objects. Each chunk carries
+its frame, frame phase, and monotonic nanosecond offset. Playback feeds those
+bytes through `Input` again, preserving split and malformed escape sequences
+and the boundary where a lone Escape is committed.
+
+A structured `EventSource` has no terminal byte representation, so schema 2
+records its validated events in batch order plus source-reported effective
+input-capability transitions. Playback never starts or polls the configured
+live source; it replays these records at the same input/wait boundary and uses
+the recorded capabilities when evaluating `AppRequirements`. Schema-1 traces
+remain readable and imply the historical press-only route.
 
 The trace also records:
 
@@ -44,7 +51,8 @@ The trace also records:
   wait rounding rather than merely the configured frame budget;
 - the effective terminal size at each production resize boundary;
 - events consumed from `App::post`, at the posted-event snapshot boundary;
-- the terminal capabilities and initial size resolved during setup;
+- the terminal capabilities, effective input capabilities, and initial size
+  resolved during setup;
 - the producing TermForge version for provenance; and
 - a clean-run or deliberately stopped-prefix end record.
 
@@ -53,6 +61,9 @@ magic header, schema number, explicit field widths and length-prefixed
 payloads. It never dumps C++ object layout or enum storage. The schema version
 is the compatibility gate; the producing library version is not. A regression
 artifact must remain playable by the release containing its fix.
+
+See [event-sources.md](event-sources.md) for replacement/composition semantics
+and source failure handling.
 
 Malformed, truncated, oversized, non-monotonic, unknown-schema, invalid-size,
 and incompatible-capability traces return

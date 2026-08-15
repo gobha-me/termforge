@@ -46,8 +46,10 @@ file is the tactical version.
   declared value plus selected-driver, keyboard-mode, probe, size and
   cell-geometry facts, run after driver selection and cell-geometry setup but
   **before `enter_screen()`**. Reported sixel does not satisfy `graphics` until
-  a selected SixelDriver can actually carry it; repeat/release requires both
-  terminal support and `KeyboardMode::Enhanced`. Startup refusal is
+  a selected SixelDriver can actually carry it; repeat/release requires the
+  effective input route to provide it (kitty terminal support plus
+  `KeyboardMode::Enhanced`, or a structured `EventSource` declaration).
+  Startup refusal is
   `Severity::Error`; raw mode is unwound and the diagnostic lands on the normal
   screen. A live resize or keyboard-mode change below the floor emits a
   requirements-transition `ErrorEvent`, latches

@@ -190,7 +190,7 @@ TEST_CASE("evaluate_requirements: truecolor satisfied by KittyDriver tier",
   REQUIRE_FALSE(evaluate_requirements(req, AppRequirementFacts{}).has_value());
 }
 
-TEST_CASE("evaluate_requirements: key actions need support and Enhanced mode",
+TEST_CASE("evaluate_requirements: key actions use the effective input route",
           "[requirements]") {
   AppRequirements repeat{.key_repeat = true};
   AppRequirements release{.key_release = true};
@@ -201,23 +201,19 @@ TEST_CASE("evaluate_requirements: key actions need support and Enhanced mode",
   REQUIRE_FALSE(
       evaluate_requirements(release, AppRequirementFacts{}).has_value());
 
-  AppRequirementFacts legacy;
-  legacy.terminal_caps.kitty_keyboard = true;
-  REQUIRE_FALSE(evaluate_requirements(repeat, legacy).has_value());
-  REQUIRE(legacy.keyboard_mode == KeyboardMode::Legacy);
+  AppRequirementFacts no_keys;
+  no_keys.input_caps = {};
+  REQUIRE_FALSE(evaluate_requirements(press, no_keys).has_value());
 
-  AppRequirementFacts disambiguate = legacy;
-  disambiguate.keyboard_mode = KeyboardMode::Disambiguate;
-  REQUIRE_FALSE(evaluate_requirements(release, disambiguate).has_value());
+  AppRequirementFacts repeat_route;
+  repeat_route.input_caps = {true, true, false, false};
+  REQUIRE(evaluate_requirements(repeat, repeat_route).has_value());
+  REQUIRE_FALSE(evaluate_requirements(release, repeat_route).has_value());
 
-  AppRequirementFacts unsupported;
-  unsupported.keyboard_mode = KeyboardMode::Enhanced;
-  REQUIRE_FALSE(evaluate_requirements(repeat, unsupported).has_value());
-
-  AppRequirementFacts enhanced = unsupported;
-  enhanced.terminal_caps.kitty_keyboard = true;
-  REQUIRE(evaluate_requirements(repeat, enhanced).has_value());
-  REQUIRE(evaluate_requirements(release, enhanced).has_value());
+  AppRequirementFacts release_route;
+  release_route.input_caps = {true, false, true, true};
+  REQUIRE_FALSE(evaluate_requirements(repeat, release_route).has_value());
+  REQUIRE(evaluate_requirements(release, release_route).has_value());
 }
 
 TEST_CASE("evaluate_requirements: unknown geometry fails only when required",
@@ -239,7 +235,7 @@ TEST_CASE("evaluate_requirements: unknown geometry fails only when required",
   REQUIRE_FALSE(evaluate_requirements(need_min, unknown).has_value());
 
   AppRequirementFacts known = make_requirement_facts(
-      {}, {}, KeyboardMode::Legacy, 80, 24, 800, 480);
+      {}, {}, InputCapabilities{true, false, false, false}, 80, 24, 800, 480);
   REQUIRE(known.cell_pixels_known);
   REQUIRE(known.cell_pixels == Extent{10, 20});
   REQUIRE(evaluate_requirements(need_known, known).has_value());
@@ -321,7 +317,7 @@ TEST_CASE("App::setup: fatal keyboard floor does not queue fallback Info",
   auto r = app.test_setup();
   REQUIRE_FALSE(r.has_value());
   REQUIRE(r.error().severity == Severity::Error);
-  REQUIRE(r.error().message.find("keyboard-flags") != std::string::npos);
+  REQUIRE(r.error().message.find("effective input route") != std::string::npos);
   app.test_pump({});
   REQUIRE(app.errors.empty());
   app.test_teardown();
@@ -368,7 +364,8 @@ TEST_CASE("App: live keyboard mode changes re-evaluate the floor",
   app.test_pump({});
   REQUIRE(app.errors.size() == 1);
   REQUIRE(app.errors[0].severity == Severity::Warning);
-  REQUIRE(app.errors[0].message.find("Enhanced") != std::string::npos);
+  REQUIRE(app.errors[0].message.find("effective input route") !=
+          std::string::npos);
 
   app.set_keyboard_mode(KeyboardMode::Enhanced);
   REQUIRE(app.requirements_met());

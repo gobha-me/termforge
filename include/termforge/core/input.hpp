@@ -45,6 +45,12 @@ class Input {
   // and the loop can return without any timed read at all.
   [[nodiscard]] auto esc_pending() const noexcept -> bool { return m_esc_pending; }
 
+  // Drop only the incomplete byte-stream state, preserving events already
+  // decoded into the queue. App uses this when a live structured source starts
+  // or stops replacing the terminal route: an ESC or paste prefix from the old
+  // route must not complete after the routing boundary.
+  auto discard_incomplete() noexcept -> void;
+
   // Convenience: feed and drain in one call (used by tests and simple loops).
   auto decode(std::string_view bytes) -> std::deque<Event>;
 

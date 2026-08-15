@@ -1,6 +1,7 @@
 #include "termforge/core/app.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -8,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <format>
 #include <initializer_list>
 #include <istream>
@@ -66,6 +68,129 @@ void on_winch(int) {
 auto trace_warning(std::string message) -> ErrorEvent {
   return ErrorEvent{Severity::Warning, "trace", std::move(message)};
 }
+
+[[nodiscard]] constexpr auto valid_input_capabilities(
+    InputCapabilities caps) noexcept -> bool {
+  if ((caps.key_repeat || caps.key_release || caps.modifier_transitions) &&
+      !caps.key_press)
+    return false;
+  if (caps.modifier_transitions && !caps.key_release) return false;
+  return true;
+}
+
+[[nodiscard]] constexpr auto combine_input_capabilities(
+    InputCapabilities a, InputCapabilities b) noexcept -> InputCapabilities {
+  return {a.key_press || b.key_press, a.key_repeat || b.key_repeat,
+          a.key_release || b.key_release,
+          a.modifier_transitions || b.modifier_transitions};
+}
+
+[[nodiscard]] constexpr auto terminal_input_capabilities(
+    const Capabilities& caps, KeyboardMode mode) noexcept -> InputCapabilities {
+  const bool enhanced = caps.kitty_keyboard && mode == KeyboardMode::Enhanced;
+  return {true, enhanced, enhanced, enhanced};
+}
+
+[[nodiscard]] constexpr auto bare_modifier(Key key) noexcept -> bool {
+  return key >= Key::LeftShift && key <= Key::RightAlt;
+}
+
+[[nodiscard]] constexpr auto valid_key(Key key) noexcept -> bool {
+  return key > Key::Unknown && key <= Key::RightAlt;
+}
+
+[[nodiscard]] constexpr auto valid_action(KeyAction action) noexcept -> bool {
+  return action >= KeyAction::Press && action <= KeyAction::Release;
+}
+
+[[nodiscard]] constexpr auto valid_scalar(char32_t ch) noexcept -> bool {
+  return ch <= 0x10FFFF && !(ch >= 0xD800 && ch <= 0xDFFF);
+}
+
+[[nodiscard]] auto same_source_key(const KeyEvent& a,
+                                   const KeyEvent& b) noexcept -> bool {
+  return a.key == b.key && a.ch == b.ch;
+}
+
+auto validate_source_batch(std::span<const Event> events,
+                           InputCapabilities caps,
+                           std::vector<KeyEvent>& held,
+                           std::string& reason) -> bool {
+  auto next_held = held;
+  for (const auto& event : events) {
+    if (const auto* key = std::get_if<KeyEvent>(&event)) {
+      if (!valid_key(key->key) || !valid_action(key->action) ||
+          (key->key == Key::Char ? !valid_scalar(key->ch) : key->ch != 0)) {
+        reason = "malformed key event";
+        return false;
+      }
+      if (!caps.key_press) {
+        reason = "key event exceeds the source's key-press capability";
+        return false;
+      }
+      if (bare_modifier(key->key) && !caps.modifier_transitions) {
+        reason = "modifier transition exceeds the source's declared capability";
+        return false;
+      }
+      const auto it = std::find_if(next_held.begin(), next_held.end(),
+                                   [&](const KeyEvent& prior) {
+                                     return same_source_key(prior, *key);
+                                   });
+      if (key->action == KeyAction::Press) {
+        if (it != next_held.end()) {
+          reason = "duplicate key press without an intervening release";
+          return false;
+        }
+        next_held.push_back(*key);
+      } else if (key->action == KeyAction::Repeat) {
+        if (!caps.key_repeat || it == next_held.end()) {
+          reason = "key repeat is unsupported or has no matching press";
+          return false;
+        }
+        *it = *key;
+      } else {
+        if (!caps.key_release || it == next_held.end()) {
+          reason = "key release is unsupported or has no matching press";
+          return false;
+        }
+        next_held.erase(it);
+      }
+      continue;
+    }
+    if (const auto* mouse = std::get_if<MouseEvent>(&event)) {
+      const bool wheel = mouse->button == -1;
+      const bool exactly_one_scroll = mouse->scroll_up != mouse->scroll_down;
+      if (mouse->button < -1 || mouse->button > 3 ||
+          (wheel && (!exactly_one_scroll || mouse->pressed)) ||
+          (!wheel && (mouse->scroll_up || mouse->scroll_down)) ||
+          (mouse->button == 3 && mouse->pressed)) {
+        reason = "malformed mouse event";
+        return false;
+      }
+      continue;
+    }
+    if (std::holds_alternative<ResizeEvent>(event)) {
+      reason = "ResizeEvent is not an input event; use App::set_size";
+      return false;
+    }
+    if (const auto* error = std::get_if<ErrorEvent>(&event)) {
+      if (error->severity < Severity::Info || error->severity > Severity::Error ||
+          error->source.empty()) {
+        reason = "malformed ErrorEvent";
+        return false;
+      }
+    }
+    // PasteEvent is intentionally byte-opaque.  Sanitization remains the
+    // renderer's boundary, just as it is for terminal-decoded paste.
+  }
+  held = std::move(next_held);
+  return true;
+}
+
+auto input_source_error(std::string message,
+                        Severity severity = Severity::Warning) -> ErrorEvent {
+  return ErrorEvent{severity, "input_source", std::move(message)};
+}
 }  // namespace
 
 struct App::RecordingState {
@@ -84,6 +209,108 @@ struct App::PlaybackState {
 App::App() = default;
 
 App::~App() { teardown(); }
+
+auto App::input_capabilities() const noexcept -> InputCapabilities {
+  if (m_playback) return m_playback->trace.header.input_capabilities;
+  const auto terminal_caps =
+      terminal_input_capabilities(m_caps, m_term.keyboard_mode());
+  if (!m_event_source) return terminal_caps;
+
+  // A configured source is the declared route between runs; a failed source in
+  // a live loop is not.  Replacement stays replacement-only after failure so
+  // terminal bytes cannot suddenly duplicate the physical input it replaced.
+  const auto source_caps =
+      m_event_source_active
+          ? m_source_capabilities
+          : (!m_loop_active ? m_event_source->capabilities()
+                            : InputCapabilities{});
+  if (m_event_source_mode == EventSourceMode::ReplaceTerminal) return source_caps;
+  return combine_input_capabilities(terminal_caps, source_caps);
+}
+
+auto App::set_event_source(std::unique_ptr<EventSource> source,
+                           EventSourceMode mode)
+    -> std::expected<void, ErrorEvent> {
+  if (!source) {
+    return std::unexpected{
+        input_source_error("set_event_source: source is null")};
+  }
+  if (mode != EventSourceMode::ReplaceTerminal &&
+      mode != EventSourceMode::ComposeTerminal) {
+    return std::unexpected{
+        input_source_error("set_event_source: mode is invalid")};
+  }
+  const auto caps = source->capabilities();
+  if (!valid_input_capabilities(caps)) {
+    return std::unexpected{input_source_error(
+        "set_event_source: capability declaration is inconsistent")};
+  }
+
+  const bool live_source_session = m_loop_active && !m_playback;
+  bool candidate_started{false};
+  if (live_source_session) {
+    std::expected<void, ErrorEvent> started;
+    try {
+      started = source->start();
+    } catch (const std::exception& e) {
+      return std::unexpected{input_source_error(std::format(
+          "set_event_source: source threw while starting: {}", e.what()))};
+    } catch (...) {
+      return std::unexpected{input_source_error(
+          "set_event_source: source threw while starting")};
+    }
+    if (!started) {
+      auto error = std::move(started.error());
+      error.severity = Severity::Warning;
+      if (error.source.empty()) error.source = "input_source";
+      return std::unexpected{std::move(error)};
+    }
+    candidate_started = true;
+    if (source->poll_fd() < 0 ||
+        !valid_input_capabilities(source->capabilities())) {
+      source->stop();
+      return std::unexpected{input_source_error(
+          "set_event_source: started source has an invalid fd or capabilities")};
+    }
+  }
+
+  const bool crossed_replacement_boundary =
+      mode == EventSourceMode::ReplaceTerminal ||
+      (m_event_source &&
+       m_event_source_mode == EventSourceMode::ReplaceTerminal);
+  if (live_source_session) release_source_keys();
+  stop_event_source();
+  m_event_source = std::move(source);
+  m_event_source_mode = mode;
+  m_source_capabilities = m_event_source->capabilities();
+  m_event_source_active = candidate_started;
+  m_source_woke = false;
+  if (live_source_session && crossed_replacement_boundary) {
+    m_input.discard_incomplete();
+    m_got_bytes = false;
+    m_esc_waited = false;
+  }
+  if (m_in_screen) update_requirements(current_size());
+  return {};
+}
+
+auto App::clear_event_source() -> void {
+  if (!m_event_source) return;
+  const bool replaced_terminal =
+      m_event_source_mode == EventSourceMode::ReplaceTerminal;
+  const bool live_source_session = m_loop_active && !m_playback;
+  if (live_source_session) release_source_keys();
+  stop_event_source();
+  m_event_source.reset();
+  m_source_capabilities = {};
+  m_source_woke = false;
+  if (live_source_session && replaced_terminal) {
+    m_input.discard_incomplete();
+    m_got_bytes = false;
+    m_esc_waited = false;
+  }
+  if (m_in_screen) update_requirements(current_size());
+}
 
 auto App::set_keyboard_mode(KeyboardMode mode) -> void {
   m_term.set_keyboard_mode(mode);
@@ -133,6 +360,8 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
   std::uint64_t expected_frame{0};
   bool saw_end{false};
   detail::TracePhase last_phase{detail::TracePhase::FrameStart};
+  InputCapabilities source_caps = parsed->header.input_capabilities;
+  std::vector<KeyEvent> source_held;
   for (std::size_t i = 0; i < parsed->records.size(); ++i) {
     const auto& record = parsed->records[i];
     switch (record.kind) {
@@ -153,6 +382,50 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
           return std::unexpected{trace_warning("play: record phases are out of order")};
         }
         last_phase = record.phase;
+        break;
+      case detail::TraceKind::Source:
+        if ((record.phase != detail::TracePhase::InputPump &&
+             record.phase != detail::TracePhase::Wait) ||
+            record.frame >= expected_frame) {
+          return std::unexpected{
+              trace_warning("play: source-event record phase is invalid")};
+        }
+        if (record.phase < last_phase)
+          return std::unexpected{
+              trace_warning("play: record phases are out of order")};
+        last_phase = record.phase;
+        if (auto event = detail::decode_event(record); !event) {
+          return std::unexpected{std::move(event.error())};
+        } else {
+          std::string reason;
+          const std::array<Event, 1> batch{*event};
+          if (!validate_source_batch(batch, source_caps, source_held, reason)) {
+            return std::unexpected{trace_warning(std::format(
+                "play: source event is invalid: {}", reason))};
+          }
+        }
+        break;
+      case detail::TraceKind::InputCapabilities:
+        if ((record.phase != detail::TracePhase::InputPump &&
+             record.phase != detail::TracePhase::Wait) ||
+            record.frame >= expected_frame) {
+          return std::unexpected{trace_warning(
+              "play: input-capability record phase is invalid")};
+        }
+        if (record.phase < last_phase)
+          return std::unexpected{
+              trace_warning("play: record phases are out of order")};
+        last_phase = record.phase;
+        if (auto caps = detail::decode_input_capabilities(record); !caps) {
+          return std::unexpected{std::move(caps.error())};
+        } else {
+          if (source_caps.key_release && !caps->key_release &&
+              !source_held.empty()) {
+            return std::unexpected{trace_warning(
+                "play: input capabilities lost release with held keys")};
+          }
+          source_caps = *caps;
+        }
         break;
       case detail::TraceKind::Resize:
         if (record.phase != detail::TracePhase::FrameStart ||
@@ -219,6 +492,9 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
   const TracePoint prior_trace_point = m_trace_point;
   const bool prior_frame_active = m_frame_active;
   const bool prior_render_requested = m_render_requested;
+  auto prior_source_events = std::move(m_source_events);
+  auto prior_source_held = std::move(m_source_held);
+  const bool prior_source_woke = m_source_woke;
 
   const auto& initial = playback->trace.header.initial_size;
   m_pushed_size = Size{initial.cols, initial.rows, initial.px_w, initial.px_h};
@@ -228,6 +504,9 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
   m_input = Input{};
   m_esc_waited = false;
   m_got_bytes = false;
+  m_source_events.clear();
+  m_source_held.clear();
+  m_source_woke = false;
   m_playback = std::move(playback);
   m_clock = &m_playback->clock;
 
@@ -243,6 +522,9 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
     m_trace_point = prior_trace_point;
     m_frame_active = prior_frame_active;
     m_render_requested = prior_render_requested;
+    m_source_events = std::move(prior_source_events);
+    m_source_held = std::move(prior_source_held);
+    m_source_woke = prior_source_woke;
     m_playback.reset();
     if (pushed_caps) m_term.clear_capabilities();
   };
@@ -276,6 +558,7 @@ auto App::begin_recording_run() -> void {
   const auto size = current_size();
   detail::TraceHeader header;
   header.capabilities = m_caps;
+  header.input_capabilities = input_capabilities();
   header.initial_size = {size.cols, size.rows, size.px_w, size.px_h};
   if (auto written = detail::write_trace_header(*m_recording->out, header); !written) {
     fail_recording(std::move(written.error()));
@@ -381,6 +664,17 @@ auto App::record_posted(const Event& event) -> void {
                  TracePoint::Posted, detail::encode_event(event));
 }
 
+auto App::record_source_event(const Event& event) -> void {
+  record_payload(static_cast<std::uint8_t>(detail::TraceKind::Source),
+                 m_trace_point, detail::encode_event(event));
+}
+
+auto App::record_input_capabilities(InputCapabilities capabilities) -> void {
+  record_payload(
+      static_cast<std::uint8_t>(detail::TraceKind::InputCapabilities),
+      m_trace_point, detail::encode_input_capabilities(capabilities));
+}
+
 auto App::playback_begin_frame() -> void {
   if (!m_playback || m_playback->failure) return;
   if (m_playback->next >= m_playback->trace.records.size()) {
@@ -438,10 +732,14 @@ auto App::playback_feed(TracePoint point) -> int {
                                         ? detail::TracePhase::Wait
                                         : detail::TracePhase::InputPump;
   int total{0};
+  bool fed_terminal_bytes{false};
   while (m_playback->next < m_playback->trace.records.size()) {
     const auto& record = m_playback->trace.records[m_playback->next];
-    if (record.kind != detail::TraceKind::Input || record.phase != wanted ||
-        record.frame != m_frame_index) {
+    const bool feed_kind =
+        record.kind == detail::TraceKind::Input ||
+        record.kind == detail::TraceKind::Source ||
+        record.kind == detail::TraceKind::InputCapabilities;
+    if (!feed_kind || record.phase != wanted || record.frame != m_frame_index) {
       break;
     }
     const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -451,17 +749,39 @@ auto App::playback_feed(TracePoint point) -> int {
       m_playback->clock.advance(std::chrono::nanoseconds{
           record.offset_ns - static_cast<std::uint64_t>(now_ns)});
     }
-    const auto* chars = reinterpret_cast<const char*>(record.payload.data());
-    m_input.feed(std::string_view{chars, record.payload.size()});
-    if (record.payload.size() >
-        static_cast<std::size_t>(std::numeric_limits<int>::max() - total)) {
-      total = std::numeric_limits<int>::max();
+    if (record.kind == detail::TraceKind::Input) {
+      const auto* chars = reinterpret_cast<const char*>(record.payload.data());
+      m_input.feed(std::string_view{chars, record.payload.size()});
+      fed_terminal_bytes = fed_terminal_bytes || !record.payload.empty();
+      if (record.payload.size() >
+          static_cast<std::size_t>(std::numeric_limits<int>::max() - total)) {
+        total = std::numeric_limits<int>::max();
+      } else {
+        total += static_cast<int>(record.payload.size());
+      }
+    } else if (record.kind == detail::TraceKind::Source) {
+      auto event = detail::decode_event(record);
+      if (!event) {
+        m_playback->failure = std::move(event.error());
+        quit();
+        return total;
+      }
+      m_source_events.push_back(std::move(*event));
+      if (total < std::numeric_limits<int>::max()) ++total;
     } else {
-      total += static_cast<int>(record.payload.size());
+      auto caps = detail::decode_input_capabilities(record);
+      if (!caps) {
+        m_playback->failure = std::move(caps.error());
+        quit();
+        return total;
+      }
+      m_playback->trace.header.input_capabilities = *caps;
+      if (m_in_screen) update_requirements(current_size());
+      if (total < std::numeric_limits<int>::max()) ++total;
     }
     ++m_playback->next;
   }
-  if (total > 0) m_got_bytes = true;
+  if (fed_terminal_bytes) m_got_bytes = true;
   return total;
 }
 
@@ -527,6 +847,154 @@ auto App::post(Event event) -> void {
   // best-effort byte cannot be added because the pipe is already full.
   m_posted.push_back(std::move(event));
   signal_posted_locked();
+}
+
+auto App::start_event_source() -> std::expected<void, ErrorEvent> {
+  if (!m_event_source || m_playback) return {};
+  if (m_event_source_active) return {};
+  m_source_capabilities = m_event_source->capabilities();
+  if (!valid_input_capabilities(m_source_capabilities)) {
+    return std::unexpected{input_source_error(
+        "event source has an inconsistent capability declaration",
+        Severity::Error)};
+  }
+  std::expected<void, ErrorEvent> started;
+  try {
+    started = m_event_source->start();
+  } catch (const std::exception& e) {
+    return std::unexpected{input_source_error(
+        std::format("event source threw while starting: {}", e.what()),
+        Severity::Error)};
+  } catch (...) {
+    return std::unexpected{input_source_error(
+        "event source threw while starting", Severity::Error)};
+  }
+  if (!started) {
+    auto error = std::move(started.error());
+    error.severity = Severity::Error;
+    if (error.source.empty()) error.source = "input_source";
+    return std::unexpected{std::move(error)};
+  }
+  m_source_capabilities = m_event_source->capabilities();
+  if (m_event_source->poll_fd() < 0 ||
+      !valid_input_capabilities(m_source_capabilities)) {
+    m_event_source->stop();
+    return std::unexpected{input_source_error(
+        "started event source has an invalid fd or capabilities",
+        Severity::Error)};
+  }
+  m_event_source_active = true;
+  m_source_woke = false;
+  m_source_held.clear();
+  return {};
+}
+
+auto App::stop_event_source() noexcept -> void {
+  if (m_event_source && m_event_source_active) m_event_source->stop();
+  m_event_source_active = false;
+  m_source_woke = false;
+  m_source_held.clear();
+}
+
+auto App::release_source_keys() -> void {
+  for (auto key : m_source_held) {
+    key.action = KeyAction::Release;
+    m_source_events.emplace_back(key);
+    record_source_event(m_source_events.back());
+  }
+  m_source_held.clear();
+}
+
+auto App::apply_source_capabilities(InputCapabilities next) -> void {
+  if (next == m_source_capabilities) return;
+  const auto prior = m_source_capabilities;
+  const bool lost = (prior.key_press && !next.key_press) ||
+                    (prior.key_repeat && !next.key_repeat) ||
+                    (prior.key_release && !next.key_release) ||
+                    (prior.modifier_transitions && !next.modifier_transitions);
+  if (prior.key_release && !next.key_release) release_source_keys();
+  m_source_capabilities = next;
+  record_input_capabilities(input_capabilities());
+  m_source_events.emplace_back(input_source_error(
+      lost ? "event-source capabilities degraded"
+           : "event-source capabilities restored",
+      lost ? Severity::Warning : Severity::Info));
+  record_source_event(m_source_events.back());
+  if (m_in_screen) update_requirements(current_size());
+}
+
+auto App::fail_event_source(ErrorEvent error) -> void {
+  if (!m_event_source_active) return;
+  release_source_keys();
+  error.severity = Severity::Warning;
+  if (error.source.empty()) error.source = "input_source";
+  m_source_events.emplace_back(std::move(error));
+  record_source_event(m_source_events.back());
+  stop_event_source();
+  m_source_capabilities = {};
+  record_input_capabilities(input_capabilities());
+  if (m_in_screen) update_requirements(current_size());
+}
+
+auto App::poll_event_source() -> int {
+  if (!m_event_source_active || m_playback) return 0;
+  const auto prior_caps = m_source_capabilities;
+  std::expected<std::vector<Event>, ErrorEvent> batch;
+  try {
+    batch = m_event_source->poll();
+  } catch (const std::exception& e) {
+    fail_event_source(input_source_error(
+        std::format("event source threw while polling: {}", e.what())));
+    return 1;
+  } catch (...) {
+    fail_event_source(
+        input_source_error("event source threw while polling"));
+    return 1;
+  }
+  if (!batch) {
+    fail_event_source(std::move(batch.error()));
+    return 1;
+  }
+
+  std::string reason;
+  auto held = m_source_held;
+  if (!validate_source_batch(*batch, prior_caps, held, reason)) {
+    fail_event_source(input_source_error(
+        std::format("malformed event batch: {}", reason)));
+    return 1;
+  }
+  m_source_held = std::move(held);
+  for (auto& event : *batch) {
+    record_source_event(event);
+    m_source_events.push_back(std::move(event));
+  }
+
+  const auto next_caps = m_event_source->capabilities();
+  if (!valid_input_capabilities(next_caps)) {
+    fail_event_source(input_source_error(
+        "event source changed to an inconsistent capability declaration"));
+    return 1;
+  }
+  const bool changed = next_caps != prior_caps;
+  apply_source_capabilities(next_caps);
+  return static_cast<int>(batch->size()) + (changed ? 1 : 0);
+}
+
+auto App::dispatch_source_events() -> void {
+  std::deque<Event> ready;
+  ready.swap(m_source_events);
+  for (const auto& event : ready) dispatch_event(event);
+}
+
+auto App::discard_terminal_input() -> int {
+  char buf[256];
+  int total{0};
+  while (true) {
+    const int n = read_available(buf, sizeof(buf));
+    if (n <= 0) break;
+    total += n;
+  }
+  return total;
 }
 
 auto App::open_post_pipe() -> std::expected<void, ErrorEvent> {
@@ -627,6 +1095,7 @@ auto App::pump_posted() -> void {
 auto App::setup() -> std::expected<void, ErrorEvent> {
   if (auto r = open_post_pipe(); !r) return r;
   if (auto r = m_term.enter_raw(); !r) return r;
+  if (auto r = start_event_source(); !r) return r;
   // Probe once, then select the driver from that single result. A probe
   // failure isn't fatal: degrade to the fallback driver on empty caps.
   // A caller that pushed capabilities (a cached tier, a user override) gets
@@ -654,9 +1123,19 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
   // waiting forever for releases that will never arrive (#60). This follows
   // the fatal floor check so a refused startup does not strand a duplicate
   // fallback Info in the input queue for a later run.
-  if (auto e = detail::keyboard_fallback_event(m_term.keyboard_mode(),
-                                               m_caps.kitty_keyboard)) {
-    m_input.push_error(std::move(*e));
+  const auto effective_input = input_capabilities();
+  if (m_term.keyboard_mode() != KeyboardMode::Legacy &&
+      !(effective_input.key_repeat && effective_input.key_release)) {
+    if (!m_event_source) {
+      if (auto e = detail::keyboard_fallback_event(m_term.keyboard_mode(),
+                                                   m_caps.kitty_keyboard))
+        m_input.push_error(std::move(*e));
+    } else {
+      m_input.push_error(ErrorEvent{
+          Severity::Info, "keyboard",
+          "effective input routes do not provide complete key repeat and "
+          "release events; keys may arrive as presses only"});
+    }
   }
 
   m_term.enter_screen();
@@ -674,6 +1153,7 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
 }
 
 auto App::teardown() -> void {
+  stop_event_source();
   if (m_in_screen) {
     m_term.leave_screen();
     m_in_screen = false;
@@ -953,11 +1433,11 @@ auto App::wait_for_sources(int timeout_ms) -> bool {
     std::lock_guard lock{m_post_mutex};
     post_fd = m_post_read;
   }
-  // A production run always owns the post pipe, so its indefinite wait reaches
-  // poll() below. Headless frame-step tests intentionally omit setup; use the
-  // largest supported finite timeout there so their protected readiness seam
-  // keeps its nonnegative contract and can model the wake deterministically.
-  if (post_fd < 0) {
+  // Preserve the protected terminal seam for existing headless tests when it
+  // is the only possible source.  A configured structured source has its own
+  // real readiness fd and must enter the combined poll even without setup's
+  // post pipe.
+  if (post_fd < 0 && !m_event_source_active) {
     return wait_readable(indefinite ? std::numeric_limits<int>::max()
                                     : timeout_ms);
   }
@@ -970,18 +1450,46 @@ auto App::wait_for_sources(int timeout_ms) -> bool {
       indefinite ? Clock::time_point::max()
                  : Clock::now() + std::chrono::milliseconds(timeout_ms);
   while (true) {
-    pollfd fds[2]{{m_term.io().in, POLLIN, 0}, {post_fd, POLLIN, 0}};
-    const int result = ::poll(fds, 2, indefinite ? -1 : timeout_ms);
+    std::array<pollfd, 3> fds{};
+    nfds_t fd_count{0};
+    int terminal_index{-1};
+    int post_index{-1};
+    int source_index{-1};
+    if (m_term.raw() && m_term.io().in >= 0) {
+      terminal_index = static_cast<int>(fd_count);
+      fds[fd_count++] = {m_term.io().in, POLLIN, 0};
+    }
+    if (post_fd >= 0) {
+      post_index = static_cast<int>(fd_count);
+      fds[fd_count++] = {post_fd, POLLIN, 0};
+    }
+    if (m_event_source_active) {
+      source_index = static_cast<int>(fd_count);
+      fds[fd_count++] = {m_event_source->poll_fd(), POLLIN, 0};
+    }
+    if (fd_count == 0) return false;
+    const int result = ::poll(fds.data(), fd_count,
+                              indefinite ? -1 : timeout_ms);
     if (result > 0) {
       const bool post_ready =
-          (fds[1].revents & (POLLIN | POLLHUP | POLLERR)) != 0;
+          post_index >= 0 &&
+          (fds[static_cast<std::size_t>(post_index)].revents &
+           (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0;
       if (post_ready) {
         std::lock_guard lock{m_post_mutex};
         drain_post_pipe_locked();
         m_post_woke = true;
       }
-      return post_ready ||
-             (fds[0].revents & (POLLIN | POLLHUP | POLLERR)) != 0;
+      const bool source_ready =
+          source_index >= 0 &&
+          (fds[static_cast<std::size_t>(source_index)].revents &
+           (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0;
+      if (source_ready) m_source_woke = true;
+      const bool terminal_ready =
+          terminal_index >= 0 &&
+          (fds[static_cast<std::size_t>(terminal_index)].revents &
+           (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0;
+      return post_ready || source_ready || terminal_ready;
     }
     if (result == 0) return false;
     if (errno != EINTR) return false;
@@ -1051,7 +1559,12 @@ auto App::wait_frame(std::chrono::steady_clock::time_point frame_start,
     if (wait_for_sources(-1)) {
       // Bytes are deliberately only absorbed here. They are decoded and
       // dispatched at the next frame's ordinary pump, preserving frame order.
-      (void)drain_input();
+      if (!m_playback && m_event_source &&
+          m_event_source_mode == EventSourceMode::ReplaceTerminal)
+        (void)discard_terminal_input();
+      else
+        (void)drain_input();
+      if (std::exchange(m_source_woke, false)) (void)poll_event_source();
       (void)std::exchange(m_post_woke, false);
     }
     return;
@@ -1090,13 +1603,22 @@ auto App::wait_frame(std::chrono::steady_clock::time_point frame_start,
     }
     // Readable but empty means EOF/hangup: stop, or we'd spin on a dead fd
     // for the rest of the budget.
-    const int input_bytes = drain_input();
+    const int input_bytes =
+        !m_playback && m_event_source &&
+                m_event_source_mode == EventSourceMode::ReplaceTerminal
+            ? discard_terminal_input()
+            : drain_input();
+    const int source_work = std::exchange(m_source_woke, false)
+                                ? poll_event_source()
+                                : 0;
     if (std::exchange(m_post_woke, false)) break;
     // Continuous mode absorbs input without shortening the authoritative frame
     // budget. Demand mode is latency-oriented once a source has work: end the
     // wait, then dispatch at the next frame boundary.
-    if (m_render_mode == RenderMode::Demand && input_bytes > 0) break;
-    if (input_bytes == 0) break;
+    if (m_render_mode == RenderMode::Demand &&
+        (input_bytes > 0 || source_work > 0))
+      break;
+    if (input_bytes == 0 && source_work == 0) break;
   }
 }
 
@@ -1138,11 +1660,14 @@ auto App::test_run_frames(int frames, int cols, int rows, std::string* sink) -> 
 auto App::test_run_frames(int frames, int cols, int rows, std::string* sink,
                           std::unique_ptr<TerminalDriver> driver) -> void {
   test_wire_headless(cols, rows, sink, std::move(driver));
+  if (auto started = start_event_source(); !started)
+    m_input.push_error(std::move(started.error()));
   m_running = true;
   m_loop_active = true;
   try {
     for (int i = 0; i < frames && m_running; ++i) frame_step();
   } catch (...) {
+    stop_event_source();
     m_loop_active = false;
     throw;
   }
@@ -1152,11 +1677,14 @@ auto App::test_run_frames(int frames, int cols, int rows, std::string* sink,
   // already accepted by the sink remain available to the test. A suite that
   // parses the stream accounts for that trailing cleanup write.
   shutdown_driver();
+  stop_event_source();
   m_loop_active = false;
 }
 
 auto App::test_run_guarded(int cols, int rows, std::string* sink) -> int {
   test_wire_headless(cols, rows, sink);
+  if (auto started = start_event_source(); !started)
+    m_input.push_error(std::move(started.error()));
   // Stand in for the piece of setup() that teardown() undoes, so teardown()
   // has real work to do and a test can see it happen.
   //
@@ -1185,7 +1713,12 @@ auto App::stop_app() noexcept -> void {
 }
 
 auto App::pump_input() -> void {
-  drain_input();
+  if (!m_playback && m_event_source &&
+      m_event_source_mode == EventSourceMode::ReplaceTerminal)
+    (void)discard_terminal_input();
+  else
+    (void)drain_input();
+  (void)poll_event_source();
 
   // Only flush at a true input boundary, and never while an escape sequence
   // may still be in flight — flushing a lone ESC commits it as an Escape
@@ -1200,6 +1733,7 @@ auto App::pump_input() -> void {
   }
   if (!m_input.esc_pending()) m_esc_waited = false;
   for (auto& ev : m_input.poll()) dispatch_event(ev);
+  dispatch_source_events();
 }
 
 auto App::on_event(const Event& ev) -> void {
@@ -1870,8 +2404,8 @@ auto App::check_requirements_startup(Size size)
     -> std::expected<void, ErrorEvent> {
   const auto driver_caps = m_driver ? m_driver->capabilities() : Capabilities{};
   const auto facts = detail::make_requirement_facts(
-      m_caps, driver_caps, m_term.keyboard_mode(), size.cols, size.rows,
-      size.px_w, size.px_h);
+      m_caps, driver_caps, input_capabilities(), size.cols, size.rows, size.px_w,
+      size.px_h);
   auto result = detail::evaluate_requirements(m_requirements, facts,
                                                Severity::Error);
   m_requirements_met = result.has_value();
@@ -1885,8 +2419,8 @@ auto App::update_requirements(Size size) -> void {
   }
   const auto driver_caps = m_driver ? m_driver->capabilities() : Capabilities{};
   const auto facts = detail::make_requirement_facts(
-      m_caps, driver_caps, m_term.keyboard_mode(), size.cols, size.rows,
-      size.px_w, size.px_h);
+      m_caps, driver_caps, input_capabilities(), size.cols, size.rows, size.px_w,
+      size.px_h);
   auto result = detail::evaluate_requirements(m_requirements, facts,
                                                Severity::Warning);
   const bool met = result.has_value();
