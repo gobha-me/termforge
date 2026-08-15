@@ -6,38 +6,45 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-15, latest)
 
-**Release candidate: v0.34.0 — correlated Kitty graphics replies.** #165
-closes the opaque-payload blind spot without adding a decoder. `Input` now
-recognizes bounded Kitty APC replies as terminal control-plane records and
-keeps them out of application `Event`s. `App` passes replies to the selected
-driver before ordinary input, including when a structured `EventSource`
-replaces terminal keystrokes. Trace schema 4 records normalized replies in
-that replacement case; schemas 1–3 remain readable.
+**Release candidate: v0.35.0 — driver-accounted image residency.** #112 adds
+`ImageResidency` and the non-pure `TerminalDriver::residency()` query. The
+snapshot splits region-cache and application-pinned image counts and reports
+their combined exact source payload bytes. For opaque PNG that means compressed
+input bytes, not a guessed decoded allocation; terminal byte capacity remains
+unknown rather than invented. Legacy and non-resident tiers inherit an empty
+snapshot.
 
-Raw RGBA remains locally validated and byte-identical. Opaque PNG transmit,
-pin and root-frame edit operations use `q=2` on intermediate chunks and `q=0`
-on the final chunk. Kitty holds one correlated pending operation per image id
-and generation: `OK` commits the candidate hash, a terminal error emits a
-`Warning` and rolls back the relevant belief, and different work refuses
-without mutation while the id is pending. Immediate API success means
-"validated and queued"; an opaque pin cannot be used until its initial `OK`.
-A rejected region retries, a rejected pin becomes stale, and a rejected root
-edit keeps its last accepted frame. After 120 driver flushes, an unanswered
-operation warns, rolls back and quarantines its numeric id until the late reply
-arrives.
+Kitty keeps the ledger per driver and stages ordered, generation-qualified
+changes because one frame may evict an id and reuse it. An accepted
+`emit_frame` commits uploads, replacements and deletes; a refused sink write
+discards them while preserving the previous snapshot. Opaque operations count
+as believed resident after their write, then terminal rejection or timeout
+removes a region/initial pin or restores a rejected root edit's prior source
+bytes. Explicit invalidation clears the belief without wire, and an accepted
+shutdown delete-all clears it at the same boundary.
 
-The local GCC and Clang Release `-Werror` builds each pass all 67 tests;
+GCC 14.2 and Clang 20.1 Release `-Werror` builds each pass all 68 tests;
 ASan+UBSan passes the same matrix. Both compilers pass the `subdir`, `install`
-and `vendored` consumer paths. Focused mutations of APC recognition,
-replacement-source routing, placement/image correlation and timeout quarantine
-all fail their owning suites, and `tools/png_repro.sh --dump` verifies the
-offline wire generator. Because this changes Kitty protocol bytes, the
-required real-emulator matrix remains a human gate before merge: Kitty,
-Ghostty, WezTerm, Konsole, xterm, GNOME Terminal and a bare TTY.
+and `vendored` consumer paths. Focused mutations of accepted-write commit,
+reply invalidation and rejected-edit restoration all fail the residency suite.
+Hosted PR and exact-main CI remain required before release. No real-emulator
+gate applies because the emitted terminal protocol is byte-identical.
 
-**Next:** finish the validation matrix, open the #165 PR, obtain the live
-emulator report, require hosted PR and exact-main CI green, then publish
-v0.34.0. #112 follows; #140 remains ordered after both by its owner decision.
+**Next:** once #112 lands and v0.35.0 is published, take #140; its owner
+explicitly ordered partial resident edits after #165 and #112.
+
+## Previous stable release: v0.34.0
+
+**v0.34.0 — correlated Kitty graphics replies.** #165 closes the opaque-payload
+blind spot without adding a decoder. `Input` recognizes bounded Kitty APC
+replies as terminal control-plane records; `App` offers them to the selected
+driver before ordinary input, and trace schema 4 records normalized replies.
+
+Raw RGBA remains locally validated and quiet. Opaque PNG operations request one
+final acknowledgement, correlate it by image id and generation, roll back on
+rejection, and quarantine unanswered ids after 120 flushes until a late reply
+arrives. The release shipped on 2026-08-15 from merge commit `35a5fd2` after all
+hosted checks passed.
 
 ## Previous stable release: v0.33.0
 

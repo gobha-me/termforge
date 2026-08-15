@@ -362,7 +362,7 @@ auto KittyDriver::region_slot(Rect dest)
           Severity::Warning, "kitty",
           "draw_image: every region id is awaiting a terminal reply"}};
     }
-    delete_image(lru->second.image_id);
+    delete_image(lru->second.image_id, lru->second.serial);
     queue_placeholder_clear(lru->second.rect, lru->second.last_used);
     // Reuse the evicted ids on the spot. This is the same pool the branch
     // below derives from -- eviction just happens to know which id came free
@@ -561,6 +561,20 @@ auto KittyDriver::max_pinned_images() const noexcept -> std::size_t {
   return kMaxPinnedImages;
 }
 
+auto KittyDriver::residency() const noexcept -> ImageResidency {
+  ImageResidency result;
+  for (const auto& [id, image] : m_accounted_images) {
+    (void)id;
+    if (image.kind == ResidencyKind::Region) {
+      ++result.region_images;
+    } else {
+      ++result.pinned_images;
+    }
+    result.source_payload_bytes += image.source_payload_bytes;
+  }
+  return result;
+}
+
 auto KittyDriver::pin_image(const Image& image)
     -> std::expected<PinnedImage, ErrorEvent> {
   if (image.empty()) {
@@ -641,6 +655,7 @@ auto KittyDriver::pin_payload(std::span<const std::byte> payload,
                                    .content_hash = request_reply ? 0 : hash,
                                    .accepted = !request_reply,
                                    .serial = serial});
+  stage_residency_set(id, serial, ResidencyKind::Pinned, payload.size());
   if (request_reply) {
     m_pending_replies.emplace(
         id, PendingReply{PendingKind::PinTransmit, 0, serial, hash,
@@ -714,13 +729,22 @@ auto KittyDriver::replace_payload(std::uint32_t id, PinnedEntry& entry,
   }
   if (entry.content_hash == hash) return {};
 
+  const auto accounted = m_accounted_images.find(id);
+  const bool previously_accounted =
+      accounted != m_accounted_images.end() &&
+      accounted->second.serial == entry.serial;
+  const std::uint64_t previous_source_payload_bytes =
+      previously_accounted ? accounted->second.source_payload_bytes : 0;
+
   const std::size_t before = m_buf.size();
   replace_root_frame(payload, format_code, px, id, request_reply);
   tally_image_transmit(m_buf.size() - before);
+  stage_residency_set(id, entry.serial, ResidencyKind::Pinned, payload.size());
   if (request_reply) {
     m_pending_replies.emplace(
         id, PendingReply{PendingKind::PinnedReplace, 0, entry.serial, hash,
-                         m_flush_count});
+                         m_flush_count, previous_source_payload_bytes,
+                         previously_accounted});
   } else {
     entry.content_hash = hash;
   }
@@ -810,7 +834,7 @@ auto KittyDriver::unpin_image(PinnedImage image)
     m_quarantined_ids.insert(image.id);
   // d=I frees the data AND every placement of it, so the placements need no
   // separate escape -- only their bookkeeping has to go.
-  delete_image(image.id);
+  delete_image(image.id, (*entry)->serial);
   std::erase_if(m_pin_places, [&](const auto& kv) {
     if (kv.second.image_id != image.id) return false;
     queue_placeholder_clear(kv.second.rect, kv.second.last_used);
@@ -833,6 +857,8 @@ auto KittyDriver::invalidate_images() noexcept -> void {
   m_regions.clear();
   m_pinned.clear();
   m_pin_places.clear();
+  m_accounted_images.clear();
+  m_residency_mutations.clear();
   m_placeholder_clears.clear();
   m_transmitted = false;
 
@@ -1084,6 +1110,8 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
     const std::size_t before = m_buf.size();
     transmit(payload, format_code, px, slot.image_id, request_reply);
     tally.transmitted = m_buf.size() - before;
+    stage_residency_set(slot.image_id, slot.serial, ResidencyKind::Region,
+                        payload.size());
     if (request_reply) {
       m_pending_replies.emplace(
           slot.image_id,
@@ -1134,6 +1162,55 @@ auto KittyDriver::pending_warning(std::string_view operation,
                   operation, image_id)};
 }
 
+auto KittyDriver::stage_residency_set(std::uint32_t image_id,
+                                      std::uint32_t serial,
+                                      ResidencyKind kind,
+                                      std::size_t source_payload_bytes) -> void {
+  m_residency_mutations.push_back(
+      ResidencyMutation{ResidencyMutationKind::Set, image_id,
+                        AccountedImage{serial, kind, source_payload_bytes}});
+}
+
+auto KittyDriver::stage_residency_erase(std::uint32_t image_id,
+                                        std::uint32_t serial) -> void {
+  m_residency_mutations.push_back(
+      ResidencyMutation{ResidencyMutationKind::Erase, image_id,
+                        AccountedImage{serial, ResidencyKind::Region, 0}});
+}
+
+auto KittyDriver::finish_residency_frame(bool accepted) -> void {
+  if (accepted) {
+    for (const auto& change : m_residency_mutations) {
+      if (change.mutation == ResidencyMutationKind::Set) {
+        m_accounted_images.insert_or_assign(change.image_id, change.image);
+      } else {
+        erase_accounted(change.image_id, change.image.serial);
+      }
+    }
+  }
+  m_residency_mutations.clear();
+}
+
+auto KittyDriver::erase_accounted(std::uint32_t image_id,
+                                  std::uint32_t serial) -> void {
+  const auto it = m_accounted_images.find(image_id);
+  if (it != m_accounted_images.end() && it->second.serial == serial)
+    m_accounted_images.erase(it);
+}
+
+auto KittyDriver::restore_accounted(std::uint32_t image_id,
+                                    std::uint32_t serial,
+                                    std::uint64_t source_payload_bytes,
+                                    bool previously_accounted) -> void {
+  if (!previously_accounted) {
+    erase_accounted(image_id, serial);
+    return;
+  }
+  const auto it = m_accounted_images.find(image_id);
+  if (it != m_accounted_images.end() && it->second.serial == serial)
+    it->second.source_payload_bytes = source_payload_bytes;
+}
+
 auto KittyDriver::finish_pending(std::uint32_t image_id,
                                  const PendingReply& pending, bool success,
                                  std::string_view status, bool timed_out)
@@ -1148,6 +1225,7 @@ auto KittyDriver::finish_pending(std::uint32_t image_id,
         } else {
           it->second.content_hash = 0;
           it->second.placed = false;
+          erase_accounted(image_id, pending.serial);
         }
       }
       break;
@@ -1163,6 +1241,7 @@ auto KittyDriver::finish_pending(std::uint32_t image_id,
             return item.second.image_id == image_id;
           });
           m_pinned.erase(it);
+          erase_accounted(image_id, pending.serial);
         }
       }
       break;
@@ -1172,6 +1251,11 @@ auto KittyDriver::finish_pending(std::uint32_t image_id,
       if (success && it != m_pinned.end() &&
           it->second.serial == pending.serial) {
         it->second.content_hash = pending.candidate_hash;
+      }
+      if (!success) {
+        restore_accounted(image_id, pending.serial,
+                          pending.previous_source_payload_bytes,
+                          pending.previously_accounted);
       }
       break;
     }
@@ -1259,7 +1343,8 @@ void KittyDriver::flush() {
   // begin/end never become a second/third write, and the GC ordering
   // guarantees collection precedes wrap. emit_frame stays AFTER gc_regions()
   // above, or the deletions land in the next frame.
-  emit_frame(m_buf);
+  const bool accepted = emit_frame(m_buf);
+  finish_residency_frame(accepted);
   m_buf.clear();
   m_cursor_known = false;
   m_frame_start_fg = m_cur_fg;
@@ -1299,7 +1384,7 @@ void KittyDriver::set_placement_mode(PlacementMode mode) {
   }
   if (m_mode == PlacementMode::Classic) {
     for (const auto& [key, slot] : m_regions)
-      if (slot.placed) delete_image(slot.image_id);
+      if (slot.placed) delete_image(slot.image_id, slot.serial);
   }
   // Pinned placements are retired in BOTH directions, and that asymmetry with
   // the region loop above is deliberate rather than an oversight.
@@ -1386,7 +1471,7 @@ auto KittyDriver::gc_regions() -> void {
     if (it->second.last_used <= m_frame_start_clock &&
         !m_pending_replies.contains(it->second.image_id)) {
       queue_placeholder_clear(it->second.rect, it->second.last_used);
-      delete_image(it->second.image_id);
+      delete_image(it->second.image_id, it->second.serial);
       it = m_regions.erase(it);
     } else {
       ++it;
@@ -1630,9 +1715,11 @@ void KittyDriver::append_placeholder(std::string& buf, int row, int col) {
   buf.append(dia, static_cast<std::size_t>(n));
 }
 
-auto KittyDriver::delete_image(std::uint32_t image_id) -> void {
+auto KittyDriver::delete_image(std::uint32_t image_id,
+                               std::uint32_t serial) -> void {
   // a=d (delete), d=I (this id, freeing the data and its placements).
   m_buf += std::format("\033_Ga=d,d=I,i={},q=2\033\\", image_id);
+  stage_residency_erase(image_id, serial);
 }
 
 auto KittyDriver::delete_placement(std::uint32_t image_id,
@@ -1666,7 +1753,9 @@ auto KittyDriver::on_shutdown() -> void {
   // describe. Append cleanup to the same buffer and close it once.
   m_buf += kDeleteAll;
   tally_image_edit(kDeleteAll.size());
-  emit_frame(m_buf);
+  const bool accepted = emit_frame(m_buf);
+  if (accepted) m_accounted_images.clear();
+  m_residency_mutations.clear();
   m_buf.clear();
 }
 

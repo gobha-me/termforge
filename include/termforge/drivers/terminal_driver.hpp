@@ -55,6 +55,31 @@ struct FrameBytes {
   }
 };
 
+// Image data this driver currently believes the terminal holds (#112).
+//
+// This is DRIVER-ACCOUNTED residency, not a claim about terminal allocation:
+// `source_payload_bytes` is the exact number of source bytes handed to the
+// terminal for the currently believed-resident payloads. For an opaque Png it
+// is therefore the compressed input size, never decoded bytes or inferred
+// terminal memory. Region-cache and application-pinned images are split
+// because their ownership and eviction policies differ; bytes cover both.
+//
+// The snapshot advances only after the frame write is accepted. A later
+// control-plane rejection may invalidate that committed belief. Terminal byte
+// capacity is intentionally absent: the protocol has not reported one, and a
+// made-up number would be worse than no number.
+struct ImageResidency {
+  std::size_t region_images{0};
+  std::size_t pinned_images{0};
+  std::uint64_t source_payload_bytes{0};
+
+  [[nodiscard]] constexpr auto total_images() const noexcept -> std::size_t {
+    return region_images + pinned_images;
+  }
+
+  auto operator==(const ImageResidency&) const -> bool = default;
+};
+
 class TerminalDriver {
  public:
   // Defaulted explicitly: declaring the copy operations below suppresses the
@@ -284,6 +309,14 @@ class TerminalDriver {
   // returned after the decision was already made, which is not one.
   [[nodiscard]] virtual auto max_pinned_images() const noexcept -> std::size_t {
     return 0;
+  }
+
+  // Driver-accounted resident image usage (#112). NON-PURE so a third-party
+  // driver written before the query keeps compiling; a tier with no resident
+  // image channel has exactly the empty snapshot returned here. Drivers that
+  // cache or pin terminal-side data override it.
+  [[nodiscard]] virtual auto residency() const noexcept -> ImageResidency {
+    return {};
   }
 
   // Transmit `image` and hold it resident. The returned handle is the
@@ -747,7 +780,11 @@ class TerminalDriver {
   // RESETS m_pending, and skipping it would carry this frame's image tallies
   // into the next one and over-report it. The meter measures what the driver
   // handed over; take_output_error() is what says whether it was accepted.
-  auto emit_frame(std::string_view bytes) -> void;
+  // Returns whether this frame's sink accepted the write. Public flush()
+  // remains `void` for out-of-tree compatibility; the protected result lets a
+  // driver commit frame-scoped beliefs at the same boundary without consuming
+  // the ErrorEvent that App must drain.
+  auto emit_frame(std::string_view bytes) -> bool;
 
  private:
   // Set by set_sync_updates (#148); read by emit_frame(), which wraps the

@@ -108,6 +108,7 @@ class KittyDriver final : public TerminalDriver {
   // region pool, and neither the LRU cap nor gc_regions can see it.
   [[nodiscard]] auto max_pinned_images() const noexcept
       -> std::size_t override;
+  [[nodiscard]] auto residency() const noexcept -> ImageResidency override;
   auto pin_image(const Image& image)
       -> std::expected<PinnedImage, ErrorEvent> override;
   auto pin_image(const EncodedImage& image)
@@ -269,6 +270,27 @@ class KittyDriver final : public TerminalDriver {
     std::uint32_t serial{0};
     std::uint64_t candidate_hash{0};
     std::uint64_t issued_flush{0};
+    // Root-frame rejection preserves the previous accepted frame, so its
+    // source-byte belief must be restorable after the candidate write was
+    // accepted. Other pending kinds invalidate their resident belief.
+    std::uint64_t previous_source_payload_bytes{0};
+    bool previously_accounted{false};
+  };
+
+  enum class ResidencyKind { Region, Pinned };
+
+  struct AccountedImage {
+    std::uint32_t serial{0};
+    ResidencyKind kind{ResidencyKind::Region};
+    std::uint64_t source_payload_bytes{0};
+  };
+
+  enum class ResidencyMutationKind { Set, Erase };
+
+  struct ResidencyMutation {
+    ResidencyMutationKind mutation{ResidencyMutationKind::Set};
+    std::uint32_t image_id{0};
+    AccountedImage image{};
   };
 
   // RAII byte attribution for a draw path (#139). Everything appended to
@@ -388,6 +410,17 @@ class KittyDriver final : public TerminalDriver {
                                      std::uint32_t image_id) const
       -> ErrorEvent;
 
+  auto stage_residency_set(std::uint32_t image_id, std::uint32_t serial,
+                           ResidencyKind kind,
+                           std::size_t source_payload_bytes) -> void;
+  auto stage_residency_erase(std::uint32_t image_id, std::uint32_t serial)
+      -> void;
+  auto finish_residency_frame(bool accepted) -> void;
+  auto erase_accounted(std::uint32_t image_id, std::uint32_t serial) -> void;
+  auto restore_accounted(std::uint32_t image_id, std::uint32_t serial,
+                         std::uint64_t source_payload_bytes,
+                         bool previously_accounted) -> void;
+
   // Retire the text-grid half of a Unicode-placeholder placement (#201).
   // A stale placement is discovered after the frame's cell diff has already
   // been queued, so its spaces are accumulated separately and prepended in
@@ -399,7 +432,7 @@ class KittyDriver final : public TerminalDriver {
   auto prepend_placeholder_clears() -> std::size_t;
 
   // Delete one region's image (and its placements) from terminal memory.
-  auto delete_image(std::uint32_t image_id) -> void;
+  auto delete_image(std::uint32_t image_id, std::uint32_t serial) -> void;
 
   // GC (called from flush): delete terminal-side and drop every region not
   // drawn since the previous collection, so a disappeared region's classic
@@ -480,6 +513,10 @@ class KittyDriver final : public TerminalDriver {
   // Resident images (#109), keyed on the terminal-side image id. Nothing in
   // gc_regions or region_slot can reach this map -- that is the feature.
   std::unordered_map<std::uint32_t, PinnedEntry> m_pinned;
+  // Committed only at an accepted emit_frame boundary. The mutation vector is
+  // ordered because one frame may evict an id and reuse it for a new image.
+  std::unordered_map<std::uint32_t, AccountedImage> m_accounted_images;
+  std::vector<ResidencyMutation> m_residency_mutations;
   // Placements of pinned images, keyed like a region on the destination rect.
   // Uncapped on purpose: they are collected every frame, so the live count is
   // whatever the last frame drew, and an LRU here would reintroduce the silent
