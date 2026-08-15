@@ -683,6 +683,37 @@ The replacement edits content lifetime only. Placement lifetime remains the
 separate rule below: omit `draw_pinned` for a frame and normal collection may
 retire that placement while the image data and handle remain resident.
 
+### TGP support is per feature, not per terminal name
+
+The [Terminal Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/)
+is broader than “display one image”: it separately specifies direct/file/shared
+memory transport, classic and Unicode-placeholder placement, deletion,
+root-frame edits, animation control, composition, and relative placement. A
+successful basic query proves only the query payload the terminal accepted. It
+does **not** prove every later action, so neither an emulator name nor a version
+number is a capability.
+
+That distinction is already load-bearing for TermForge. Mutable Persistent
+content uses the documented `a=f,r=1` root-frame edit above. Current Konsole
+answers the basic TGP query and implements transmit/place/delete, but its
+[graphics dispatcher](https://github.com/KDE/konsole/blob/423eff3492aaf822d022e6e7a6c3391f8500a742/src/Vt102Emulation.cpp#L2469-L2615)
+has no `a=f`, animation-control, or composition branch. The project owner's
+current Konsole test therefore needs the ANSI driver forced for mutable image
+content; basic static images are not evidence that animation-frame edits work.
+
+WezTerm's [changelog](https://wezterm.org/changelog.html) records numerous
+Kitty Image Protocol fixes immediately before its 2024-02-03 stable release,
+while current development continues in nightly builds. That makes the exact
+tested build more important, not less: do not infer current TGP coverage from
+the stable release date. The same rule applies to Ghostty and every other
+implementation.
+
+TermForge currently has one coarse `kitty_graphics` probe, so callers that know
+their terminal lacks a required TGP action must select ANSI until the
+capability schema can express and query that action. Future terminal-driven
+animation work must add a feature requirement/probe rather than expanding the
+meaning of the existing basic flag or pinning emulator versions.
+
 ### The image's lifetime and the placement's lifetime are separate
 
 This is the whole design, and it is one letter on the wire. A region owns its
@@ -1082,6 +1113,7 @@ Same widget, same code, no driver branching.
   sub-cell offsets make it expressible.
 - **MapWidget** — tile-based maps fit naturally: `draw_pixels` renders
   the tile grid, `draw` provides the half-block approximation.
-- **Animation** — frame-based image replacement for animated widgets
-  (kitty supports native animation via image ID replacement).
+- **Animation** — terminal-driven frame registration/playback for animated
+  widgets, with action-level capability probing rather than assuming the basic
+  TGP query proves animation support.
 - **Sixel pixel regions** — same mechanism, different driver.

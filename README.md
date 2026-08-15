@@ -2,10 +2,11 @@
 
 A lightweight, modular **terminal UI framework in C++23**, BSD 3-clause
 licensed. It renders pixel graphics inline in the terminal using
-terminal-native protocols — **Kitty graphics protocol first, ANSI truecolor
-half-blocks as the universal floor**, with plain-ASCII degradation for bare
-TTYs. A Sixel driver (legacy fallback) and an optional framebuffer driver
-(console-VT/embedded) are on the roadmap but not yet implemented.
+terminal-native protocols — **Kitty Terminal Graphics Protocol (TGP) first,
+ANSI truecolor half-blocks as the universal floor**, with plain-ASCII
+degradation for bare TTYs. A Sixel driver (legacy fallback) and an optional
+framebuffer driver (console-VT/embedded) are on the roadmap but not yet
+implemented.
 
 A distinguishing feature: degradation and failure (e.g. a graphics fallback)
 are **events**, queryable and loggable via `std::expected` / `std::variant` —

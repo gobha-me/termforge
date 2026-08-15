@@ -266,7 +266,10 @@ completed items.
 - [ ] **6.3 — KittyDriver animation**
   #196 provides client-driven root-frame replacement under one pinned image id
   while preserving placements. Terminal-driven frame sequencing and
-  `std::jthread` remain.
+  `std::jthread` remain. The capability must be action-level: Konsole's basic
+  TGP query succeeds while its current dispatcher has no animation/edit
+  actions, so emulator identity or the coarse `kitty_graphics` bit is not a
+  sufficient gate.
 
 - [ ] **6.4 — Doxygen docs + custom-driver guide**
 
