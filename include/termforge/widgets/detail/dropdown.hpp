@@ -333,4 +333,51 @@ enum class WheelResult {
                   std::min(item_count, screen_rows - anchor_bottom_exclusive));
 }
 
+// #96: the geometry that was actually painted for an open dropdown. Hover,
+// press and hit_test resolve against this rather than against a live
+// dropdown_rect() that mixes the current set_geometry() with the last frame's
+// m_screen_rows / unrevealed m_scroll. set_geometry() does not close the list
+// (forms relayout every frame), so the painted snapshot is the only state that
+// matches the pixels the user can still see.
+//
+// Cleared on close and on content mutation. Invalid until the first open draw,
+// and after a mutator that has not been redrawn -- callers must decline those
+// hits rather than commit against unseen geometry. Running dropdown_reveal on
+// the event side would make the click internally self-consistent but still
+// land on pixels the user never saw; that alternative was rejected for #96.
+struct DropdownPaintSnapshot {
+  Rect rect{0, 0, 0, 0};
+  int scroll{0};
+  bool valid{false};
+
+  auto clear() noexcept -> void {
+    rect = {0, 0, 0, 0};
+    scroll = 0;
+    valid = false;
+  }
+
+  // What draw() just put on screen. A zero-size window paints nothing, so it
+  // is not a valid hit target either.
+  auto record(Rect painted, int painted_scroll) noexcept -> void {
+    if (painted.w <= 0 || painted.h <= 0) {
+      clear();
+      return;
+    }
+    rect = painted;
+    scroll = painted_scroll;
+    valid = true;
+  }
+
+  [[nodiscard]] auto contains(int px, int py) const noexcept -> bool {
+    return valid && rect.contains(px, py);
+  }
+
+  // -1 when invalid or outside the painted window / past the content -- the
+  // same contract as dropdown_item_at.
+  [[nodiscard]] auto item_at(int count, int py) const noexcept -> int {
+    if (!valid) return -1;
+    return dropdown_item_at(rect, scroll, count, py);
+  }
+};
+
 }  // namespace termforge::detail

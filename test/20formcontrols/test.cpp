@@ -803,6 +803,7 @@ TEST_CASE("Select: the open list draws below the rect at dropdown_rect",
 
 TEST_CASE("Select: hit_test covers the dropdown only while it is open",
           "[form][select][mouse]") {
+  Screen s{20, 6};
   Select sel;
   make_select(sel);
 
@@ -810,6 +811,7 @@ TEST_CASE("Select: hit_test covers the dropdown only while it is open",
   REQUIRE_FALSE(sel.hit_test(3, 2));  // closed: the rows below are not ours
 
   REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
   REQUIRE(sel.hit_test(3, 2));
   REQUIRE(sel.hit_test(3, 3));
   REQUIRE_FALSE(sel.hit_test(3, 4));   // one past the last option
@@ -938,6 +940,7 @@ TEST_CASE("Select: an unhandled key while open is consumed",
 
 TEST_CASE("Select: clicking the box toggles, clicking a row commits",
           "[form][select][mouse]") {
+  Screen s{20, 6};
   Select sel;
   make_select(sel);
   std::vector<int> seen;
@@ -949,6 +952,7 @@ TEST_CASE("Select: clicking the box toggles, clicking a row commits",
   REQUIRE_FALSE(sel.dropdown_open());
 
   REQUIRE(sel.on_event(press(3, 0)));
+  sel.draw(s);
   REQUIRE(sel.on_event(press(3, 3)));  // third option
   REQUIRE_FALSE(sel.dropdown_open());
   REQUIRE(sel.selected() == 2);
@@ -957,12 +961,14 @@ TEST_CASE("Select: clicking the box toggles, clicking a row commits",
 
 TEST_CASE("Select: a non-left press inside the list commits nothing",
           "[form][select][mouse][failure]") {
+  Screen s{20, 6};
   Select sel;
   make_select(sel);
   int calls = 0;
   sel.on_change([&](int, const std::string&) { ++calls; });
 
   REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
   // Consumed — so it cannot leak to the widget under the dropdown — but inert.
   REQUIRE(sel.on_event(press(3, 3, 2)));
   REQUIRE(sel.dropdown_open());
@@ -1121,9 +1127,11 @@ TEST_CASE("Select: re-committing the current value fires nothing",
 
 TEST_CASE("Select: hover over the open list moves the highlight",
           "[form][select][mouse]") {
+  Screen s{20, 6};
   Select sel;
   make_select(sel);
   REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
 
   REQUIRE(sel.on_event(motion(3, 3)));  // hover over the third option
   REQUIRE(sel.highlighted() == 2);
@@ -1139,13 +1147,15 @@ TEST_CASE("Select: the wheel never picks the row under the pointer",
   // #85 gave the wheel a job (scrolling the window), which makes this the case
   // that keeps the two apart: a wheel may move the highlight only as a
   // consequence of the WINDOW moving, never to wherever the mouse happens to
-  // be. Here nothing scrolls at all — three options, no frame painted, so the
-  // window is the whole list — and the highlight must sit still regardless.
+  // be. Here the painted window holds all three options, so nothing scrolls
+  // and the highlight must sit still regardless.
+  Screen s{20, 6};
   Select sel;
   make_select(sel);
   int calls = 0;
   sel.on_change([&](int, const std::string&) { ++calls; });
   REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
   REQUIRE(sel.highlighted() == 0);
 
   // Over the open list, pointer parked on the THIRD row: consumed, so it
@@ -1163,21 +1173,19 @@ TEST_CASE("Select: the wheel never picks the row under the pointer",
   REQUIRE_FALSE(sel.on_event(wheel(3, 0)));
 }
 
-TEST_CASE("Select: a wheel with no frame painted cannot scroll (#85)",
+TEST_CASE("Select: an unpainted open list declines wheel events (#96)",
           "[form][select][mouse][failure]") {
-  // m_screen_rows == 0 means "no frame yet", which dropdown_visible_rows
-  // answers with the FULL item count (#48 item 3). The window is then the whole
-  // list and the offset is structurally pinned at 0 -- there is nowhere to
-  // scroll to. This pins that branch, because it is what makes the wheel tests
-  // that never call draw() honest rather than accidentally green.
+  // A list that has never been painted owns no popup pixels yet. A wheel where
+  // the popup will appear is therefore declined, just like a press there; the
+  // painted end-stop absorption contract is covered by the sibling above.
   Select sel;
   sel.set_options({"a", "b", "c", "d", "e", "f", "g", "h"});
   sel.set_geometry({0, 0, 10, 1});
   REQUIRE(sel.on_event(key(Key::Enter)));
   REQUIRE(sel.highlighted() == 0);
 
-  for (int i = 0; i < 5; ++i) REQUIRE(sel.on_event(wheel(3, 2)));
-  REQUIRE(sel.highlighted() == 0);  // no window movement, so no carry
+  for (int i = 0; i < 5; ++i) REQUIRE_FALSE(sel.on_event(wheel(3, 2)));
+  REQUIRE(sel.highlighted() == 0);
 }
 
 TEST_CASE("Select: the wheel scrolls the window and carries the highlight (#85)",
@@ -1443,47 +1451,78 @@ TEST_CASE("Select: a box on the LAST screen row reaches nothing, by design "
 }
 
 TEST_CASE("Select: a relayout between frames cannot desync click from paint "
-          "(#85, #10)", "[form][select][mouse][failure]") {
+          "(#85, #10, #96)", "[form][select][mouse][failure]") {
   // set_geometry() is public, non-virtual, and reachable while the list is
   // open, so an app that relayouts inside an event handler changes the window
-  // height before the widget gets a chance to re-clamp its offset. If the draw
-  // loop clamped a stale offset and the hit-test did not, a press landing in
-  // that gap would commit the option the row is ABOUT to show rather than the
-  // one drawn on it -- #10's hit-span drift, reachable only because #85 made
-  // the row->item map something other than the identity.
-  // Two widgets driven into the identical stale state, because a press both
-  // commits AND closes: `painter` shows what that row draws, `presser` shows
-  // what clicking it takes. Drawing heals the offset, so only the presser may
-  // stay undrawn -- which is exactly the window the bug lived in.
-  const std::vector<std::string> opts{"o0", "o1", "o2", "o3", "o4",
-                                      "o5", "o6", "o7", "o8", "o9"};
-  const auto stage = [&](Select& sel, Screen& s) {
-    sel.set_options(opts);
-    sel.set_geometry({0, 15, 12, 1});  // 4 rows fit: y=16..19
-    REQUIRE(sel.on_event(key(Key::Enter)));
-    sel.draw(s);
-    REQUIRE(sel.on_event(key(Key::End)));  // scrolled to the tail
-    sel.draw(s);
-    // The app moves the control to the top of the screen from an event
-    // handler. The window is 10 rows now and the stored offset is stale --
-    // its valid maximum just became 0.
-    sel.set_geometry({0, 0, 12, 1});
-  };
-  const int item_y = 1;  // first dropdown row under the new geometry
+  // before the widget gets a chance to redraw. #85 closed the out-of-range
+  // half (stale m_scroll past the new window); #96 closes the in-range half:
+  // hover/press resolve against the LAST PAINTED dropdown snapshot, not live
+  // dropdown_rect() + unrevealed scroll. set_geometry must NOT close the list
+  // (forms relayout every frame).
+  //
+  // Issue #96 repro: 12 options on a 12-row screen, End scrolls to show b..l
+  // at y=1..11, then the box moves to y=8 with no intervening draw. Live
+  // geometry would accept y=9..11 through m_scroll==1 and commit b/c/d; the
+  // screen still shows j/k/l there. The press must take the painted item.
+  Screen s{12, 12};
+  Select sel;
+  sel.set_options({"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"});
+  sel.set_geometry({0, 0, 12, 1});  // 11 rows fit: y=1..11
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
+  REQUIRE(sel.on_event(key(Key::End)));
+  sel.draw(s);
+  REQUIRE(row_text(s, 1, 1, 1) == "b");
+  REQUIRE(row_text(s, 9, 1, 1) == "j");
+  REQUIRE(row_text(s, 11, 1, 1) == "l");
 
-  Screen s{20, 20};
-  Select painter;
-  stage(painter, s);
-  painter.draw(s);
-  const std::string drawn = row_text(s, item_y, 1, 2);
+  REQUIRE(sel.dropdown_open());
+  sel.set_geometry({0, 8, 12, 1});  // no draw -- live window would be y=9..11
+  REQUIRE(sel.dropdown_open());    // set_geometry must not close (#96)
 
-  Screen s2{20, 20};
-  Select presser;
-  stage(presser, s2);
-  REQUIRE(presser.on_event(press(3, item_y)));  // no draw in between
+  // New live rows are not yet painted: decline rather than commit unseen
+  // geometry. The painted rows at y=9..11 are still claimed and still resolve
+  // through the memoized scroll (== 1), so they commit j/k/l, never b/c/d.
+  REQUIRE_FALSE(sel.hit_test(3, 0));  // old box row, no longer ours
+  REQUIRE(sel.hit_test(3, 8));        // current box row remains interactive
+  REQUIRE(sel.hit_test(3, 9));        // old dropdown row is still painted
+  REQUIRE(sel.on_event(motion(3, 9)));
+  REQUIRE(sel.highlighted() == 9);    // hover sees "j", not live row "b"
+  REQUIRE(sel.on_event(press(3, 9)));
+  REQUIRE(sel.selected_text() == "j");
+}
 
-  REQUIRE(drawn == "o0");                       // the clamped window's top
-  REQUIRE(opts[static_cast<std::size_t>(presser.selected())] == drawn);
+TEST_CASE("Select: an unpainted open list declines dropdown presses (#96)",
+          "[form][select][mouse][failure]") {
+  // Open without a draw: no snapshot yet, so a press where the list WILL
+  // appear must not commit. The closed-box toggle at rect() still works.
+  Select sel;
+  sel.set_options({"a", "b", "c", "d"});
+  sel.set_geometry({0, 0, 12, 1});
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  REQUIRE(sel.dropdown_open());
+  REQUIRE_FALSE(sel.hit_test(3, 1));           // no paint yet
+  REQUIRE_FALSE(sel.on_event(press(3, 1)));    // decline
+  REQUIRE(sel.dropdown_open());
+  REQUIRE(sel.selected() == 0);                // untouched
+  REQUIRE(sel.on_event(press(3, 0)));          // box still toggles
+  REQUIRE_FALSE(sel.dropdown_open());
+}
+
+TEST_CASE("Select: content mutation clears the paint snapshot (#96)",
+          "[form][select][mouse][failure]") {
+  Screen s{12, 12};
+  Select sel;
+  sel.set_options({"a", "b", "c", "d", "e", "f"});
+  sel.set_geometry({0, 0, 12, 1});
+  REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
+  REQUIRE(sel.hit_test(3, 2));
+  sel.add_option("g");  // does not close, but invalidates the paint
+  REQUIRE(sel.dropdown_open());
+  REQUIRE_FALSE(sel.hit_test(3, 2));
+  REQUIRE_FALSE(sel.on_event(press(3, 2)));
+  REQUIRE(sel.selected() == 0);
 }
 
 TEST_CASE("Select: a shrinking screen re-clamps a scrolled window (#85)",
@@ -1788,6 +1827,7 @@ TEST_CASE("Select: a hover moves the marker too (#76)",
   Select sel;
   make_select(sel);
   REQUIRE(sel.on_event(key(Key::Enter)));
+  sel.draw(s);
   REQUIRE(sel.on_event(motion(3, 3)));  // third option row
   sel.draw(s);
 

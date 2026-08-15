@@ -8,11 +8,13 @@
 //    ansi-rgb                      control taller than one row is not
 //    fallback                      overdrawn — #36 item 1)
 //
-// It reuses MenuBar's dropdown discipline: a single private dropdown_rect()
-// that draw(), hit_test() and on_event() all read, so drawing and hit-testing
-// can never disagree. Like MenuBar's dropdown, the open list is a deliberate
-// exception to the full-rect-repaint contract (widget.hpp) — it draws below
-// rect(), and hit_test() is overridden to match.
+// It reuses MenuBar's dropdown discipline: draw() paints through
+// dropdown_rect(), and while the list is open the last paint is memoized so
+// hit_test()/on_event() resolve against those pixels (#96) -- drawing and
+// hit-testing can never disagree on what the user can still see. Like
+// MenuBar's dropdown, the open list is a deliberate exception to the
+// full-rect-repaint contract (widget.hpp) — it draws below rect(), and
+// hit_test() is overridden to match.
 //
 // TWO DIVERGENCES FROM MENUBAR, both because a Select lives INSIDE the
 // FocusRing as an ordinary form control, where MenuBar sits outside it and is
@@ -74,6 +76,7 @@
 #include <string>
 #include <vector>
 
+#include "termforge/widgets/detail/dropdown.hpp"
 #include "termforge/widgets/detail/options_list.hpp"
 #include "termforge/widgets/glyphs.hpp"
 #include "termforge/widgets/widget.hpp"
@@ -181,6 +184,11 @@ class Select final : public Widget {
   // First option of the visible window (#85). Reset by close_dropdown(), which
   // every teardown path already runs through, so a reopen never inherits it.
   int m_scroll{0};
+  // Last painted open-list geometry (#96). Hover/press/hit_test for the list
+  // read this, not live dropdown_rect() + m_scroll, so a set_geometry between
+  // frames cannot commit against pixels the user never saw. Cleared on close
+  // and on content mutation; invalid until the first open draw.
+  detail::DropdownPaintSnapshot m_paint;
   // The box's truncated value text, rebuilt in draw() when the selection,
   // options, style, or inner width change (#42 item 5). m_line_inner is the
   // ONLY staleness sentinel (#56 item 3): -1 = stale, else the width the

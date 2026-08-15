@@ -82,8 +82,10 @@ TEST_CASE("MenuBar: click on dropdown item fires action once and closes",
           "[mouse][menu]") {
   bool fired = false;
   auto mb = make_menu(fired);
+  Screen s{40, 5};
   Event open = press(1, 0);
   mb.on_event(open);
+  mb.draw(s);  // establish the visible dropdown hit target (#96)
   Event item = press(2, 1);  // "New" — first dropdown row
   REQUIRE(mb.on_event(item));
   REQUIRE(fired);
@@ -97,8 +99,10 @@ TEST_CASE("MenuBar: click on second dropdown row selects second item",
   int which = -1;
   mb.add_menu({"File", {{"New", [&] { which = 0; }},
                         {"Open", [&] { which = 1; }}}});
+  Screen s{40, 5};
   Event open = press(1, 0);
   mb.on_event(open);
+  mb.draw(s);
   Event item = press(2, 2);  // row 2 = "Open"
   mb.on_event(item);
   REQUIRE(which == 1);
@@ -126,10 +130,12 @@ TEST_CASE("MenuBar: hit_test covers open dropdown only while open",
           "[mouse][menu]") {
   bool fired = false;
   auto mb = make_menu(fired);
+  Screen s{40, 5};
   // "File" dropdown: x=0, w=max(6, strlen("Open")+4=8)=8, rows 1..2.
   REQUIRE_FALSE(mb.hit_test(2, 1));
   Event open = press(1, 0);
   mb.on_event(open);
+  mb.draw(s);
   REQUIRE(mb.hit_test(2, 1));
   REQUIRE(mb.hit_test(7, 2));
   REQUIRE_FALSE(mb.hit_test(8, 1));   // past dropdown width
@@ -142,8 +148,10 @@ TEST_CASE("MenuBar: hover moves dropdown selection", "[mouse][menu]") {
   int which = -1;
   mb.add_menu({"File", {{"New", [&] { which = 0; }},
                         {"Open", [&] { which = 1; }}}});
+  Screen s{40, 5};
   Event open = press(1, 0);
   mb.on_event(open);
+  mb.draw(s);
   Event hover = motion(2, 2);  // over "Open"
   REQUIRE(mb.on_event(hover));
   // Enter now activates the hovered item.
@@ -162,13 +170,14 @@ TEST_CASE("MenuBar: wheel over an open dropdown does not drag the selection",
   int which = -1;
   mb.add_menu({"File", {{"New", [&] { which = 0; }},
                         {"Open", [&] { which = 1; }}}});
+  Screen s{40, 5};
   Event open = press(1, 0);
   mb.on_event(open);
+  mb.draw(s);
   REQUIRE(mb.dropdown_open());
 
-  // No frame has painted, so the window is the whole 2-item menu (#48 item 3's
-  // unclamped pre-frame leg) and there is nowhere to scroll: the wheel cannot
-  // move the selection even now that it has a job (#85).
+  // The painted window holds the whole 2-item menu, so there is nowhere to
+  // scroll: the wheel is absorbed without moving the selection (#85/#96).
   Event tick = wheel(2, 2);  // over "Open": would highlight row 1 ungated
   REQUIRE(mb.on_event(tick));  // consumed while open
 
@@ -225,7 +234,9 @@ TEST_CASE("MenuBar: a two-row bar anchors its dropdown BELOW itself (#85)",
   int which = -1;
   mb.add_menu({"File", {{"New", [&] { which = 0; }},
                         {"Open", [&] { which = 1; }}}});
+  Screen s{40, 5};
   mb.on_event(press(1, 0));  // open
+  mb.draw(s);
   REQUIRE(mb.dropdown_open());
 
   // Row 1 is still the bar; the dropdown starts at row 2 and both its rows are
@@ -443,8 +454,10 @@ TEST_CASE("route_mouse: open dropdown wins over the widget underneath",
   // overlapped widget.
   bool item_fired = false;
   auto mb = make_menu(item_fired);
+  Screen s{40, 5};
   Event open = press(1, 0);
   mb.on_event(open);
+  mb.draw(s);
 
   bool button_fired = false;
   Button under;
@@ -506,8 +519,10 @@ TEST_CASE("route_mouse: the container form routes from a vector (#123)",
   // that keeps its hit targets in a container had no way to call the forwarder.
   bool item_fired = false;
   auto mb = make_menu(item_fired);
+  Screen s{40, 5};
   Event open = press(1, 0);
   mb.on_event(open);
+  mb.draw(s);
 
   bool button_fired = false;
   Button under;

@@ -729,6 +729,7 @@ TEST_CASE("Dialog: a click on a dropdown row over a button commits the option",
   const Rect sr = d.select.rect();
   REQUIRE(d.on_event(press(sr.x + 1, sr.y)));  // open the dropdown
   REQUIRE(d.select.dropdown_open());
+  d.draw(s);  // paint the popup before routing a click to its rows (#96)
 
   REQUIRE(d.on_event(press(sr.x + 1, sr.y + 2)));  // "two", over the OK button
   REQUIRE(picked == 1);                            // the option committed...
@@ -776,6 +777,7 @@ TEST_CASE("App: a dropdown past the dialog rect still takes clicks",
   const Rect dr = d.rect();
   app.dispatch_event(press(sr.x + 1, sr.y));  // open the dropdown
   REQUIRE(d.select.dropdown_open());
+  app.draw_overlays(s);  // establish the popup's tree hit target (#96)
 
   // Row "five" renders below the dialog's rect. A left press there must
   // reach the select, commit the option, and NOT dismiss the dialog.
@@ -963,6 +965,7 @@ TEST_CASE("Dialog: wheel over an open dropdown routes to the Select, not the wid
   const Rect sr = d.select.rect();
   REQUIRE(d.on_event(press(sr.x + 1, sr.y)));  // open the dropdown
   REQUIRE(d.select.dropdown_open());
+  d.draw(s);
 
   const int row_y = sr.y + 2;  // option row "two", over the child underneath
   REQUIRE(row_y > sr.y);       // the premise: past the Select's own rect
@@ -992,6 +995,7 @@ TEST_CASE("Dialog: the routed wheel scrolls the dropdown itself (#85, #47)",
   REQUIRE(d.on_event(press(sr.x + 1, sr.y)));  // open
   REQUIRE(d.select.dropdown_open());
   REQUIRE(d.select.highlighted() == 0);
+  d.draw(s);
 
   d.under.mice = 0;
   REQUIRE(d.on_event(wheel(sr.x + 1, sr.y + 1)));
@@ -1013,6 +1017,7 @@ TEST_CASE("Dialog: hover over an open dropdown moves the Select highlight (#47)"
   REQUIRE(d.on_event(press(sr.x + 1, sr.y)));  // open, highlight on selected=0
   REQUIRE(d.select.dropdown_open());
   REQUIRE(d.select.highlighted() == 0);
+  d.draw(s);
 
   REQUIRE(d.on_event(motion(sr.x + 1, sr.y + 3)));  // hover "three"
   REQUIRE(d.select.highlighted() == 2);             // follows the pointer

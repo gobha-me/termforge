@@ -53,6 +53,7 @@ using termforge::Renderer;
 using termforge::Screen;
 using tfsupport::all_seven_bit;
 using tfsupport::key;
+using tfsupport::motion;
 using tfsupport::press;
 using tfsupport::row_text;
 
@@ -542,4 +543,61 @@ TEST_CASE("MenuBar: a zero-width or zero-height rect draws nothing",
     const Screen s = drawn(mb, 20);
     REQUIRE(row_text(s, 0) == std::string(20, ' '));
   }
+}
+
+TEST_CASE("MenuBar: a relayout between frames cannot desync click from paint "
+          "(#96)", "[menubar][mouse][failure]") {
+  // Same hazard as Select (#96): set_geometry while open must not close the
+  // dropdown, and presses resolve against the last painted snapshot -- not
+  // live dropdown_rect() mixed with an unrevealed scroll. Repro mirrors the
+  // Select case: End scrolls the window so y=9 shows "j"; moving the bar to
+  // y=8 without a draw would make live geometry commit "b" at that row.
+  Screen s{40, 12};
+  MenuBar mb;
+  mb.set_geometry({0, 0, 40, 1});
+  int fired = -1;
+  Menu file{"File", {}};
+  for (int i = 0; i < 12; ++i) {
+    const char label = static_cast<char>('a' + i);
+    file.items.push_back(
+        {std::string(1, label), [&, i] { fired = i; }});
+  }
+  mb.set_menus({std::move(file)});
+
+  REQUIRE(mb.on_event(key(Key::Enter)));
+  mb.draw(s);
+  REQUIRE(mb.on_event(key(Key::End)));
+  mb.draw(s);
+  REQUIRE(row_text(s, 1, 2, 1) == "b");
+  REQUIRE(row_text(s, 9, 2, 1) == "j");
+
+  REQUIRE(mb.dropdown_open());
+  mb.set_geometry({0, 8, 40, 1});  // no draw
+  REQUIRE(mb.dropdown_open());
+
+  REQUIRE(mb.hit_test(2, 9));
+  SECTION("hover resolves the painted row") {
+    REQUIRE(mb.on_event(motion(2, 9)));
+    REQUIRE(mb.on_event(key(Key::Enter)));
+    REQUIRE(fired == 9);  // "j", not "b" (index 1)
+  }
+  SECTION("press resolves the painted row") {
+    REQUIRE(mb.on_event(press(2, 9)));
+    REQUIRE(fired == 9);  // "j", not "b" (index 1)
+  }
+}
+
+TEST_CASE("MenuBar: an unpainted open list declines dropdown presses (#96)",
+          "[menubar][mouse][failure]") {
+  MenuBar mb;
+  mb.set_geometry({0, 0, 40, 1});
+  int fired = -1;
+  mb.set_menus({{"File", {{"a", [&] { fired = 0; }},
+                          {"b", [&] { fired = 1; }}}}});
+  REQUIRE(mb.on_event(key(Key::Enter)));
+  REQUIRE(mb.dropdown_open());
+  REQUIRE_FALSE(mb.hit_test(2, 1));
+  REQUIRE_FALSE(mb.on_event(press(2, 1)));
+  REQUIRE(fired == -1);
+  REQUIRE(mb.dropdown_open());
 }
