@@ -323,6 +323,25 @@ TEST_CASE("a malformed source batch is rejected atomically",
   REQUIRE_FALSE(app.event_source_active());
 }
 
+TEST_CASE("an image invalidation cannot masquerade as source input (#113)",
+          "[event-source][failure][image]") {
+  auto state = make_source_state();
+  queue_events(state,
+               {ImageInvalidatedEvent{ImageInvalidationReason::Reattach}});
+  SourceProbe app;
+  app.set_frame_ms(0);
+  REQUIRE(app.set_event_source(std::make_unique<PipeSource>(state),
+                               EventSourceMode::ReplaceTerminal));
+  std::string wire;
+  app.test_run_frames(1, 20, 5, &wire);
+
+  const auto failures = errors(app.events);
+  REQUIRE(failures.size() == 1);
+  CHECK(failures[0].message.find("ImageInvalidatedEvent") !=
+        std::string::npos);
+  CHECK_FALSE(app.event_source_active());
+}
+
 TEST_CASE("source failure releases held keys before its Warning",
           "[event-source][failure][release]") {
   auto state = make_source_state();
@@ -463,7 +482,7 @@ TEST_CASE("source readiness wakes an idle demand loop",
   REQUIRE(state->stops == 1);
 }
 
-TEST_CASE("trace schema 2 replays source events and their input floor",
+TEST_CASE("trace schema 3 replays source events and their input floor",
           "[event-source][trace]") {
   SocketPair recording_socket;
   REQUIRE(recording_socket.ok());

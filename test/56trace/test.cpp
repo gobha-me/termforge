@@ -114,6 +114,10 @@ class TraceProbe final : public App {
       events += 'S';
       return;
     }
+    if (std::holds_alternative<ImageInvalidatedEvent>(event)) {
+      events += 'I';
+      return;
+    }
     if (std::holds_alternative<ErrorEvent>(event)) events += 'E';
   }
 
@@ -385,7 +389,7 @@ TEST_CASE("playback restores the caller's pushed size and compatible caps",
   REQUIRE(played.current_size() == App::Size{31, 9, 310, 180});
 }
 
-TEST_CASE("posted modifier keys round-trip through trace schema 2 (#209)",
+TEST_CASE("posted modifier keys round-trip through the current trace schema (#209)",
           "[trace][keyboard][modifier]") {
   const Event original{KeyEvent{Key::RightAlt, 0, false, true, false,
                                  KeyAction::Release}};
@@ -408,6 +412,49 @@ TEST_CASE("posted modifier keys round-trip through trace schema 2 (#209)",
   REQUIRE(refused.error().message.find("posted key event") != std::string::npos);
 }
 
+TEST_CASE("image invalidation records and replays at its frame boundary (#113)",
+          "[trace][image][lifecycle]") {
+  QuietPipe pipe;
+  REQUIRE(pipe.ok());
+  TraceProbe recorded;
+  REQUIRE(recorded.configure_io(pipe.read_fd()));
+  REQUIRE(recorded.push_caps(Capabilities{}));
+  REQUIRE(recorded.set_size(App::Size{20, 5, 160, 80}).has_value());
+  SyntheticClock clock;
+  recorded.use_script(clock, {{250ms, "q"}});
+  std::ostringstream output{std::ios::binary};
+  recorded.start_recording(output);
+  recorded.post(Event{ImageInvalidatedEvent{
+      ImageInvalidationReason::Reattach}});
+  REQUIRE(recorded.run() == 0);
+  REQUIRE(recorded.events.find('I') != std::string::npos);
+
+  QuietPipe replay_pipe;
+  REQUIRE(replay_pipe.ok());
+  TraceProbe played;
+  REQUIRE(played.configure_io(replay_pipe.read_fd()));
+  REQUIRE(played.push_caps(Capabilities{}));
+  std::istringstream input{output.str(), std::ios::binary};
+  REQUIRE(played.play(input).has_value());
+  CHECK(played.events == recorded.events);
+
+  detail::TraceRecord record{
+      detail::TraceKind::ImageInvalidation,
+      detail::TracePhase::FrameStart,
+      0,
+      0,
+      detail::encode_event(Event{ImageInvalidatedEvent{
+          ImageInvalidationReason::SuspendResume}})};
+  auto invalid_payload = record.payload;
+  REQUIRE(invalid_payload.size() == 2);
+  invalid_payload[1] = 99;
+  record.payload = std::move(invalid_payload);
+  const auto refused = detail::decode_event(record);
+  REQUIRE_FALSE(refused.has_value());
+  CHECK(refused.error().message.find("image-invalidation") !=
+        std::string::npos);
+}
+
 TEST_CASE("malformed traces are rejected before the App starts", "[trace][failure]") {
   const Artifact artifact = make_artifact();
 
@@ -422,7 +469,7 @@ TEST_CASE("malformed traces are rejected before the App starts", "[trace][failur
   SECTION("unknown schema") {
     std::string broken = artifact.trace;
     REQUIRE(broken.size() > 9);
-    broken[8] = 3;
+    broken[8] = 4;
     const auto [wire, error] = play_bytes(std::move(broken));
     REQUIRE(wire.empty());
     REQUIRE(error.message.find("schema") != std::string::npos);
@@ -462,6 +509,32 @@ TEST_CASE("schema 1 traces remain readable after input capabilities were added",
   REQUIRE(decoded.has_value());
   REQUIRE(decoded->header.input_capabilities ==
           InputCapabilities{true, false, false, false});
+}
+
+TEST_CASE("schema 2 traces remain readable after image invalidation was added",
+          "[trace][compatibility]") {
+  const Artifact artifact = make_artifact();
+  std::string v2 = artifact.trace;
+  REQUIRE(v2.size() > 56);
+  v2[8] = 2;
+  v2[9] = 0;
+  std::istringstream input{v2, std::ios::binary};
+  const auto decoded = detail::read_trace(input);
+  REQUIRE(decoded.has_value());
+}
+
+TEST_CASE("schema 2 refuses image-invalidation records introduced by schema 3",
+          "[trace][compatibility][failure]") {
+  const Artifact artifact = make_artifact();
+  std::string v2 = artifact.trace;
+  REQUIRE(v2.size() > 56);
+  v2[8] = 2;
+  v2[9] = 0;
+  v2[56] = static_cast<char>(detail::TraceKind::ImageInvalidation);
+  std::istringstream input{v2, std::ios::binary};
+  const auto decoded = detail::read_trace(input);
+  REQUIRE_FALSE(decoded.has_value());
+  CHECK(decoded.error().message.find("record") != std::string::npos);
 }
 
 TEST_CASE("schema 1 refuses record kinds introduced by schema 2",

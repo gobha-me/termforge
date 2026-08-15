@@ -909,6 +909,9 @@ TEST_CASE("pinned: a driver that never heard of pinning refuses honestly",
   TerminalDriver& base = legacy;
 
   CHECK(base.max_pinned_images() == 0);
+  // #113 is also non-pure.  A legacy tier has no resident belief to clear, so
+  // the inherited no-op is the exact answer and remains callable.
+  base.invalidate_images();
 
   const auto p1 = base.pin_image(Image{1, 1, {Pixel{1, 2, 3, 255}}});
   REQUIRE_FALSE(p1.has_value());

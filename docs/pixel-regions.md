@@ -894,11 +894,11 @@ its slot remains live. Residency is what `pin_image` is for.
 
 ## Image lifecycle across terminal transitions (#113)
 
-This is the **current** contract as of the library today: what App and
-`KittyDriver` actually do on each transition, measured against the in-memory
-sink suites. It is not a promise that every emulator keeps the same pixels
-visible after the same OS-level event, and it does **not** yet include an
-`ImageInvalidatedEvent` (see [What is not signaled yet](#what-is-not-signaled-yet-113)).
+This is the current contract: what App and `KittyDriver` do on each transition,
+measured against the in-memory sink suites. It is not a promise that every
+emulator keeps the same pixels visible after the same OS-level event. Instead,
+transitions that may discard terminal-side data have an explicit, payload-free
+invalidation boundary.
 
 The [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/#interaction-with-other-terminal-actions)
 requires images in the alternate buffer to be cleared when mode 1049 switches
@@ -915,8 +915,8 @@ buffer rule into a bidirectional invalidation guarantee.
 | alt-screen **enter** (`setup` / `enter_screen`) | n/a — session starts empty | no image traffic; pin and region maps are empty | pin / Persistent upload on first enhanced frame |
 | alt-screen **leave** (normal final teardown) | session ends; handles must not be reused | `shutdown()` emits Kitty `a=d,d=A` through the live sink; then `leave_screen` | nothing special; a later run must re-pin |
 | in-session **grid / cell-geometry resize** (`SIGWINCH`, `request_resize`, `set_size`) | **yes** for resident payloads | `ResizeEvent`; `m_pixel_force_repaint` asks for a placement refresh (Unicode re-emits the placeholder grid; classic is a no-op when the same rect/fit is already live); pin ids and payloads are **not** deleted or retransmitted unless the Persistent region's returned `Image` logical `Extent` changes (that path unpins and re-pins) | handle `ResizeEvent` for layout; keep using existing `PinnedImage` / Persistent regions |
-| **SIGTSTP** suspend / resume (`Ctrl-Z`, job control) | **unknown to the library** — treated as still valid | no `SIGTSTP` handler; pin/region maps and handles are unchanged; no image delete and no invalidation event | no library signal; if the terminal dropped graphics, the app is not told and must discover it itself |
-| detach / reattach (multiplexer / embedding) | **unknown to the library** — treated as still valid | same as suspend: no invalidation hook, no `d=A`, handles stay live | same gap as suspend |
+| **SIGTSTP** suspend / resume (`Ctrl-Z`, job control) | **no** after the process receives `SIGCONT` | the async handler only sets a flag; at the next clean frame boundary App clears driver image state without emitting image deletes, marks Persistent regions for recreation, and delivers `ImageInvalidatedEvent{SuspendResume}` before rendering | direct `PinnedImage` owners re-pin from their own storage in `on_event`; Persistent regions need no special action |
+| detach / reattach (multiplexer / embedding) | **no** after the embedding reports it | the loop thread calls `invalidate_images(Reattach)`, or another thread posts `ImageInvalidatedEvent{Reattach}`; the next clean frame performs the same payload-free invalidation | direct pin owners re-pin in the event callback; Persistent regions recreate automatically |
 | process death mid-session | no API recovery | crash / `atexit` leave-sequence restores the tty; it does **not** route Kitty `d=A` through a live App sink | emulator-dependent residue; real-terminal matrix, not a library promise |
 
 ### Normal teardown requests cleanup; unmanaged destruction does not
@@ -960,6 +960,40 @@ transmit (plus a placeholder-grid refresh in Unicode mode). A producer that
 re-rasterizes to `preferred_pixel_extent` and returns a new extent deliberately
 recreates.
 
+### Invalidation forgets beliefs; it does not send cleanup
+
+`App::invalidate_images(reason)` is a loop-thread operation. Cross-thread
+embedding code uses the existing thread-safe `post()` boundary with an
+`ImageInvalidatedEvent`. Requests coalesce until the next frame and the latest
+reason is reported. The defined reasons are `SuspendResume`, `Reattach`, and
+`TerminalReset`.
+
+At that frame boundary, before `on_event` and `on_render`, App:
+
+1. calls the selected driver's non-pure `invalidate_images()` hook;
+2. invalidates the cell renderer and forces the enhanced placement pass;
+3. forgets App-owned Persistent handles and marks their widget-backed content
+   for recreation; and
+4. delivers one `ImageInvalidatedEvent` outside modal capture.
+
+Kitty clears its region, resident-image, placement and placeholder-clear maps.
+It emits no `d=I`, `d=i`, `d=A`, transmit, or placement bytes: the transition
+already made those terminal resources untrustworthy. Its pin serial remains
+monotonic, so an old `PinnedImage` stays stale even if a new pin reuses the same
+numeric image id. Drawing, replacing or unpinning that old handle returns a
+`Warning` and queues nothing.
+
+App cannot recreate a caller-owned direct pin because it never borrows the
+payload. The event callback is deliberately after invalidation so that owner
+can pin its stored asset immediately. Persistent widget regions are different:
+the widget remains the payload owner, so the normal enhanced pass re-reads and
+uploads dirty content in the same event frame. A refused sink write remains
+unacknowledged and therefore remains eligible for recreation on a later frame.
+
+The base driver hook is a non-pure no-op so existing out-of-tree drivers remain
+source-compatible. Such a driver owns any tier-specific cache reset it needs;
+App still invalidates renderer/Persistent state and delivers the event.
+
 ### Per-frame collection is unchanged by those transitions
 
 Independently of alt-screen / resize / suspend:
@@ -974,31 +1008,17 @@ Independently of alt-screen / resize / suspend:
 Those rules are what `test/01drivers`, `test/46pinned`, `test/49regionids`, and
 `test/61imagelifecycle` pin offline.
 
-### What is not signaled yet (#113)
+### What remains outside the boundary
 
-There is **no** `ImageInvalidatedEvent` (and no other images-invalidated
-signal) on the `Event` bus today. `Event` remains
-`KeyEvent | MouseEvent | PasteEvent | ResizeEvent | ErrorEvent`.
+Process death still has no live App callback or trustworthy borrowed sink, and
+TermForge does not infer multiplexer detach/reattach from emulator identity.
+The embedding layer that observes a reattach must report it explicitly. A
+plain resize remains a placement/layout transition and intentionally does not
+invalidate resident payloads.
 
-Consequences of that gap, stated so this contract cannot be read as the full
-#113 acceptance shape:
-
-- After suspend/resume or detach/reattach, if the terminal discarded graphics,
-  TermForge still treats pre-transition `PinnedImage` handles as live and will
-  emit placements that may point at missing terminal data.
-- The library does **not** clear pin/placement maps on those transitions, does
-  **not** bump a generation that would stale every handle, and does **not**
-  mark every Persistent region `recreate` solely because the process stopped
-  and continued.
-- The intended future path (issue #113) is: for transitions known to discard
-  terminal image data, retire library pin state without relying on borrowed
-  encoded payloads for silent retransmit, make old handles refuse, and emit one
-  invalidation event so the application can re-pin from its own storage. That
-  event and hook are **not implemented** in this Phase-1 documentation slice.
-
-Offline suites therefore pin what *is* true now (teardown `d=A`, in-session
-resize without retransmit, collection `d=I` / `d=i`). They do not pretend an
-invalidation event fires on suspend or reattach.
+`test/61imagelifecycle` pins teardown cleanup, resize retention, payload-free
+invalidation, stale-handle refusal, Persistent recreation, request coalescing,
+real `SIGCONT` delivery, and prior/newer signal-handler ownership offline.
 
 ## Placement Modes
 

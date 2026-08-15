@@ -101,6 +101,14 @@ completed items.
 > 180 frames under a hard timeout, with both reports checked for stable image
 > lifecycle, clean-frame zero bytes and shutdown. A one-command host diagnostic
 > preserves the process state and all-thread backtrace if the symptom recurs.
+>
+> **2026-08-15 — explicit resident-image invalidation.** **#113** adds a
+> payload-free frame boundary for suspend/resume, embedding reattach and
+> terminal reset. App clears driver/Persistent beliefs before delivering
+> `ImageInvalidatedEvent`; Kitty emits no cleanup for already-lost resources,
+> keeps serials monotonic so old handles stay stale across id reuse, and leaves
+> ordinary resize as placement-only. `SIGCONT` is captured with prior/newer
+> handler ownership, and trace schema 3 replays the same lifecycle transition.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
@@ -117,6 +125,9 @@ completed items.
 - Mutable resident frames + dirty submission (#196/#197) — stable Kitty image
   id/root-frame edits, placement-only moves, accepted-write acknowledgement,
   and clean-frame suppression on both enhanced tiers
+- Resident-image invalidation (#113) — explicit suspend/reattach/reset events,
+  payload-free Kitty state reset, stale-handle refusal, and automatic
+  Persistent-region recreation while resize retains payloads
 - forge-top (#16, #230, #231) — live `/proc` monitor, deterministic all-tier
   harness, and top-compatible controls and information hierarchy
 - forge-top CPU grid (#238) — separator-aware per-core layout with

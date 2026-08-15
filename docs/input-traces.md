@@ -39,17 +39,21 @@ bytes through `Input` again, preserving split and malformed escape sequences
 and the boundary where a lone Escape is committed.
 
 A structured `EventSource` has no terminal byte representation, so schema 2
-records its validated events in batch order plus source-reported effective
-input-capability transitions. Playback never starts or polls the configured
-live source; it replays these records at the same input/wait boundary and uses
-the recorded capabilities when evaluating `AppRequirements`. Schema-1 traces
-remain readable and imply the historical press-only route.
+added its validated events in batch order plus source-reported effective
+input-capability transitions. Schema 3 adds the applied
+`ImageInvalidatedEvent` frame boundary, including its suspend/resume, reattach,
+or terminal-reset reason. Playback clears the same driver/Persistent beliefs
+before delivering the event, so a recording cannot silently keep resident
+image state that the live run discarded. Playback never starts or polls the
+configured live source. Schema-1 and schema-2 traces remain readable; schema 1
+implies the historical press-only route.
 
 The trace also records:
 
 - every observed frame-start time, so fixed ticks retain real overruns and
   wait rounding rather than merely the configured frame budget;
 - the effective terminal size at each production resize boundary;
+- each applied resident-image invalidation at its production frame boundary;
 - events consumed from `App::post`, at the posted-event snapshot boundary;
 - the terminal capabilities, effective input capabilities, and initial size
   resolved during setup;

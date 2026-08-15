@@ -81,9 +81,10 @@ cannot remain stuck.
 A batch is atomic. `App` validates the complete batch before delivering any of
 it. It rejects malformed key or mouse values, transitions exceeding the
 declared capabilities, duplicate presses, repeats/releases without a matching
-press, and `ResizeEvent` (a remote adapter must use `App::set_size`). Paste
-payload bytes remain opaque; display sanitization still belongs to the
-renderer.
+press, `ResizeEvent` (a remote adapter must use `App::set_size`), and
+`ImageInvalidatedEvent` (embedding code must use `App::invalidate_images` or
+the thread-safe `App::post` boundary). Paste payload bytes remain opaque;
+display sanitization still belongs to the renderer.
 
 The matching identity available in today's `KeyEvent` is `(key, ch)`. An
 adapter must preserve that pair from press through repeat and release, even if
@@ -104,12 +105,13 @@ The source descriptor is polled beside the terminal and `App::post` wake pipe,
 so it wakes an idle `RenderMode::Demand` loop without a polling timer. Events
 absorbed during a frame wait are delivered at the next ordinary input boundary.
 
-Trace schema 2 records structured-source events and source-reported effective
-input-capability changes in addition to raw terminal chunks. Playback does not
-start or poll a configured live source: it replays those records through the
-same event boundary and uses the recorded capabilities for `AppRequirements`.
-Schema-1 traces remain readable and imply the historical press-only terminal
-route.
+Trace schema 2 added structured-source events and source-reported effective
+input-capability changes in addition to raw terminal chunks. Schema 3 adds
+resident-image invalidation boundaries; this does not widen what an
+`EventSource` may emit. Playback does not start or poll a configured live
+source: it replays source records through the same event boundary and uses the
+recorded capabilities for `AppRequirements`. Schema-1 and schema-2 traces
+remain readable; schema 1 implies the historical press-only terminal route.
 
 ## Raw evdev is an adapter policy, not a core feature
 

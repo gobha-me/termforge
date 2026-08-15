@@ -190,6 +190,20 @@ class App {
   // duration of post().
   auto post(Event event) -> void;
 
+  // Report that an external terminal transition discarded resident image
+  // data (#113).  The request is staged to the next clean frame boundary;
+  // before ImageInvalidatedEvent reaches on_event, App clears the driver's
+  // image beliefs and marks Persistent widget regions for recreation.  Direct
+  // PinnedImage owners then re-pin from their own storage in the callback.
+  //
+  // Loop-thread only, like every App operation except post().  An embedding
+  // thread uses post(ImageInvalidatedEvent{reason}); dispatch stages that
+  // event through the same path, preserving post() as the sole thread-safe
+  // entry point.  Repeated requests before the boundary coalesce and the most
+  // recent reason is reported.
+  auto invalidate_images(ImageInvalidationReason reason)
+      -> std::expected<void, ErrorEvent>;
+
   // Install an owned structured event source (#264).  The mode is mandatory:
   // a caller must say whether this source replaces decoded terminal input or
   // is known to be disjoint and may be composed with it.  The source object
@@ -641,6 +655,12 @@ class App {
   // Called by the SIGWINCH handler (async-signal context): just sets a flag
   // the loop consumes next frame. Public so the signal trampoline can reach it.
   auto request_resize() -> void { m_resize_pending = true; }
+  // SIGCONT trampoline counterpart to request_resize().  Public only because
+  // the process signal handler cannot be a member; applications use
+  // invalidate_images() / post() instead.
+  auto request_resume_invalidation() noexcept -> void {
+    m_resume_invalidation_pending.store(true, std::memory_order_relaxed);
+  }
 
   // Test hooks: drive the input pump with the sequence of read() chunks a
   // single drain would produce, then the one end-of-drain flush. Models
@@ -1049,6 +1069,9 @@ class App {
   auto signal_posted_locked() noexcept -> void;
   auto drain_post_pipe_locked() noexcept -> void;
   auto pump_posted() -> void;
+  auto stage_image_invalidation(ImageInvalidationReason reason) noexcept
+      -> bool;
+  auto apply_image_invalidation() -> void;
   auto setup() -> std::expected<void, ErrorEvent>;
   // The exact inverse of setup(): leave the alt-screen, restore cooked mode,
   // return SIGWINCH to its default, and deregister from the resize handler.
@@ -1123,7 +1146,7 @@ class App {
   auto record_source_event(const Event& event) -> void;
   auto record_input_capabilities(InputCapabilities capabilities) -> void;
   auto playback_begin_frame() -> void;
-  auto playback_apply_resizes() -> void;
+  auto playback_apply_frame_transitions() -> void;
   auto playback_feed(TracePoint point) -> int;
   auto playback_dispatch_posted() -> void;
   auto playback_finish_frame() -> void;
@@ -1245,9 +1268,16 @@ class App {
   // default only if it did — an unconditional reset would clobber a handler an
   // embedding program owns on the run where setup() failed before installing.
   bool m_winch_hooked{false};
+  // SIGCONT is leased separately from SIGWINCH because it must preserve a
+  // prior/newer process handler rather than resetting it unconditionally.
+  bool m_cont_hooked{false};
   // Set from the SIGWINCH handler — must be atomic (lock-free atomics are
   // async-signal-safe; a plain bool write from a handler is a data race).
   std::atomic<bool> m_resize_pending{false};
+  // A signal handler can only set the atomic half.  frame_step translates it
+  // into the ordinary staged event at the next clean driver boundary.
+  std::atomic<bool> m_resume_invalidation_pending{false};
+  std::optional<ImageInvalidationReason> m_image_invalidation_pending;
   // The peer's statement about its own window (#180), or nothing while the size
   // is still being pulled from the fd. An optional rather than a sentinel Size:
   // "nobody has said" is a real state, and every value that could stand in for

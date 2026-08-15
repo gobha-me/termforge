@@ -27,7 +27,8 @@ Landed and verified:
   with color pass-through), `Input` (escape state machine, UTF-8, SGR mouse,
   kitty CSI-u key reports with press/repeat/release — see
   [docs/keyboard-protocol.md](docs/keyboard-protocol.md)),
-  `App` (event loop, SIGWINCH resize, pixel-region plumbing, guarded teardown
+  `App` (event loop, SIGWINCH resize, explicit resident-image invalidation on
+  suspend/reattach/reset, pixel-region plumbing, guarded teardown
   on every exit path including an exception, thread-safe `post(Event)`
   delivery onto the loop thread, and owned structured `EventSource` adapters
   with explicit terminal replacement/composition). Terminal input, structured
