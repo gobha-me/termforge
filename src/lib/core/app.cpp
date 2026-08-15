@@ -998,12 +998,22 @@ auto App::wait_for_sources(int timeout_ms) -> bool {
   }
 }
 
-auto App::read_available(char* out, int max) -> int { return m_term.read_input(out, max); }
+auto App::read_available(char* out, int max) -> int {
+  // Production reaches a frame only after setup() put the Terminal into the
+  // nonblocking event-loop mode. The public headless hooks deliberately skip
+  // setup; treating their caller's cooked stdin as immediately readable turns
+  // the first drain into a blocking read. Keep the default source empty there.
+  // A test override is still dispatched virtually and can supply bytes without
+  // a Terminal at all.
+  return m_term.raw() ? m_term.read_input(out, max) : 0;
+}
 
 auto App::drain_input() -> int {
   if (m_playback) return playback_feed(m_trace_point);
-  // Reads are non-blocking (VMIN=0/VTIME=0, set once in setup), so this
-  // empties whatever the tty has buffered and stops the instant it's dry.
+  // Production reads are non-blocking (VMIN=0/VTIME=0, set once in setup), so
+  // this empties whatever the tty has buffered and stops the instant it's dry.
+  // The default headless source returns empty before touching an unprepared fd;
+  // a read_available() override carries the same nonblocking contract itself.
   char buf[256];
   int total = 0;
   while (true) {

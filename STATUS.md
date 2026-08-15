@@ -6,49 +6,51 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-15, latest)
 
-**Pending release: v0.31.2 — keep chunked Kitty edits on root frame 1.** #261
-was introduced by #259's otherwise necessary continuation fix. Multi-chunk
-`a=f,r=1,X=1` edits repeated `a=f` but not `r=1` after the opener. Kitty
-chooses new-vs-existing frame from each continuation before restoring the
-opener's saved controls, so the successful transfer became new frame 2 and the
-displayed root remained frame 1. The application and driver counters advanced
-normally while the game and Apsis Drift looked frozen.
+**Stable release candidate: v0.31.3 — headless frames never read cooked
+stdin.** #256 found that public `App::test_run_frames()` drove the production
+input pump without driving `setup()`. The skipped setup owns `enter_raw()`,
+which is what gives both tty and injected streams the nonblocking read mode the
+pump requires. An interactive caller therefore blocked on its first cooked-tty
+read even though the API promises a headless frame.
 
-Every animation-frame continuation now repeats `a=f,r=1`. This preserves
-#259's required action on every chunk while keeping every chunk in the root
-edit operation. It also preserves #196's already live-accepted contract: the
-existing classic placement follows a correct root edit without delete or
-re-placement. The first #262 draft added placement refreshes based on the wrong
-hypothesis; the owner's failed game run and the Kitty handler's ordering
-invalidated that draft, and the extra lifecycle traffic has been removed.
+The default `App::read_available()` now treats a Terminal whose raw/event-loop
+mode was never entered as an empty source. Production is unchanged: a real run
+cannot reach a frame until setup has entered raw mode. Tests that deliberately
+run setup keep real injected input, and overrides of the protected input seam
+continue to supply deterministic bytes without a Terminal. A child-process
+regression injects a blocking cooked pty and requires one headless frame to
+finish; removing the guard makes that child hit the bounded timeout.
 
-Stanza 10 now uses 32x32 RGBA payloads so both the initial transmission and
-root edit cross the 4096-byte encoded chunk boundary. The offline regression
-requires `r=1` on every replacement chunk and continues to require one image
-id, one placement, no placement/data deletes, verbatim reassembly, and correct
-metering.
+This is the final code ticket for the first stable cut since v0.7.2. The
+v0.7.3-v0.31.3 line adds remote-session injection, explicit image/data and
+placement lifetimes, persistent mutable pixel surfaces, deterministic clocks
+and traces, demand rendering, cross-thread event posting, application
+capability floors, styled widgets, forge-top, the production game workload,
+measured scalar/SIMD frame assembly, and the hardened Kitty lifecycle. The
+stable notes must call out the CMake 3.28/C++23 and compiler floor, additive
+driver-extension rules, source-level migrations, and deferred Sixel/encoded
+payload response-reader work.
 
-Fresh Release `-Werror` builds pass 67/67 GCC 14.2 tests and 66/66 Clang 20.1
-tests; GCC ASan+UBSan with leak detection passes 66/66. Removing `r=1` from
-the continuation kills the focused regression. The 180-frame production game
-workload returns to the intended lifecycle: one image id, one upload, 174 root
-updates, one placement, no deletes, and zero image bytes on all five clean
-frames. The response-enabled stanza dump has 4096/1368-byte edit chunks and no
-delete or second placement.
+**Live evidence:** v0.31.2 passed all ten PR and exact-main jobs. Direct Kitty
+0.32.2 refreshed the existing placement and the production game visibly
+advanced at 30.12 FPS over 1,808 frames with one id, one upload, one placement,
+no deletes, and zero image bytes on 60 clean frames. The project owner also
+reports Apsis Drift fully functional on v0.31.2 at resolutions through 1080p.
+#256 changes no terminal-protocol bytes, so that evidence carries into the
+stable candidate without another visual gate.
 
-**Validation complete:** all ten hosted jobs pass. In direct Kitty 0.32.2,
-response-enabled stanza 10 changed the existing red placement to green and the
-60-second production game visibly advanced. The capture sustained 30.12 FPS
-over 1,808 frames with one image id, one upload, 1,747 root updates, one
-placement, no deletes, and zero image bytes on all 60 clean frames. This closes
-#225's deferred direct-Kitty lifecycle and cadence evidence as well as #261's
-presentation gate.
+**Next:** complete GCC/Clang, sanitizer, consumer and hosted validation; merge
+the #256 PR; require the exact merge commit's main matrix to pass; then publish
+v0.31.3 as a normal GitHub release and refresh the ignored task memory.
 
-The project owner approved merge after that live gate. Apsis Drift's owning
-session will repin to v0.31.2 and independently confirm the application against
-the release tag; that downstream repin is not a TermForge merge blocker.
+## Previous prerelease: v0.31.2
 
-**Next:** merge #262 and publish v0.31.2, then refresh the open PR/issue queue.
+**v0.31.2 — keep chunked Kitty edits on root frame 1.** #261 was introduced by
+#259's otherwise necessary continuation fix. Every multi-chunk replacement
+continuation now repeats `a=f,r=1`, so Kitty finalizes it against the displayed
+root frame instead of a new frame 2. The fix preserves one resident image, one
+placement and no in-frame deletes. All ten PR and exact-main jobs passed, and
+the direct live results are recorded above.
 
 ## Previous release: v0.29.1
 

@@ -18,8 +18,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cerrno>
 #include <csignal>
 #include <fcntl.h>
+#include <poll.h>
 #include <unistd.h>
 #if defined(__linux__)
 #include <pty.h>
@@ -28,6 +30,7 @@
 #endif
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <termios.h>
 
 #include <atomic>
@@ -690,6 +693,57 @@ TEST_CASE("App: a session over a socketpair runs frames and receives input",
   REQUIRE(app.keys.size() == 1);
   REQUIRE(app.keys.front().ch == 'q');
   REQUIRE_FALSE(sink.empty());  // frames really were rendered
+}
+
+TEST_CASE("App: headless frames never read a cooked blocking terminal",
+          "[fds][app][regression]") {
+  // test_run_frames promises a headless frame without setup(). Its default
+  // input source must therefore be empty: setup is what makes Terminal reads
+  // nonblocking. Run the exact public seam in a child so the old blocking read
+  // becomes a bounded test failure instead of hanging the whole Catch process.
+  PtyPair pty;
+  REQUIRE(pty.ok());
+
+  int done[2]{-1, -1};
+  REQUIRE(::pipe(done) == 0);
+  const pid_t pid = ::fork();
+
+  if (pid == 0) {
+    ::close(done[0]);
+    SessionApp app;
+    if (!app.inject(TerminalIo{pty.slave(), pty.slave()})) ::_exit(2);
+
+    std::string sink;
+    app.test_run_frames(1, 20, 5, &sink);
+    const char complete =
+        app.cols() == 20 && app.rows() == 5 && !sink.empty() ? '1' : '0';
+    [[maybe_unused]] const ssize_t wrote = ::write(done[1], &complete, 1);
+    ::close(done[1]);
+    ::_exit(complete == '1' ? 0 : 3);
+  }
+
+  REQUIRE(pid > 0);
+
+  ::close(done[1]);
+  pollfd completion{done[0], POLLIN, 0};
+  int ready = -1;
+  do {
+    ready = ::poll(&completion, 1, 2000);
+  } while (ready < 0 && errno == EINTR);
+
+  if (ready <= 0) ::kill(pid, SIGKILL);
+  int status = 0;
+  const pid_t waited = ::waitpid(pid, &status, 0);
+  char complete = '0';
+  const ssize_t read = ready > 0 ? ::read(done[0], &complete, 1) : 0;
+  ::close(done[0]);
+
+  REQUIRE(ready > 0);
+  REQUIRE(waited == pid);
+  REQUIRE(WIFEXITED(status));
+  REQUIRE(WEXITSTATUS(status) == 0);
+  REQUIRE(read == 1);
+  REQUIRE(complete == '1');
 }
 
 TEST_CASE("App: current_size asks the stream the Terminal writes to",
