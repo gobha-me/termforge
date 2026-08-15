@@ -640,7 +640,9 @@ class App {
   // discard), then calls the same frame_step() run() calls. Subclass and
   // override now_steady()/wait_readable()/read_available() to drive it over a
   // fake clock and a fake fd — that is how frame cadence is tested without
-  // sleeping in the suite. Stops early if quit() is called.
+  // sleeping in the suite. The default read_available() is dormant because
+  // this path never enters raw mode, so the caller's cooked stdin is neither
+  // consumed nor waited on. Stops early if quit() is called.
   //
   // Unlike run(), it deliberately does NOT reset the tick clock: a probe that
   // calls it one frame at a time gets a continuous dt across calls, which is
@@ -980,7 +982,10 @@ class App {
 
   // Copy up to max immediately available bytes into out without blocking.
   // Return the byte count, or a nonpositive value when no bytes are available
-  // or the source has ended. App drains repeatedly until that boundary.
+  // or the source has ended. App drains repeatedly until that boundary. The
+  // default reads Terminal only after enter_raw() established the event-loop
+  // read mode; headless frame hooks skip setup, so their default source is
+  // empty while an override remains fully active.
   virtual auto read_available(char* out, int max) -> int;
 
  private:
