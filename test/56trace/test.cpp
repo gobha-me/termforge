@@ -385,6 +385,29 @@ TEST_CASE("playback restores the caller's pushed size and compatible caps",
   REQUIRE(played.current_size() == App::Size{31, 9, 310, 180});
 }
 
+TEST_CASE("posted modifier keys round-trip through trace schema 1 (#209)",
+          "[trace][keyboard][modifier]") {
+  const Event original{KeyEvent{Key::RightAlt, 0, false, true, false,
+                                 KeyAction::Release}};
+  detail::TraceRecord record{
+      detail::TraceKind::Posted, detail::TracePhase::Posted, 0, 0,
+      detail::encode_event(original)};
+
+  const auto decoded = detail::decode_event(record);
+  REQUIRE(decoded.has_value());
+  const auto& key = std::get<KeyEvent>(*decoded);
+  REQUIRE(key.key == Key::RightAlt);
+  REQUIRE(key.alt);
+  REQUIRE(key.action == KeyAction::Release);
+
+  auto invalid = std::get<KeyEvent>(original);
+  invalid.key = static_cast<Key>(static_cast<int>(Key::RightAlt) + 1);
+  record.payload = detail::encode_event(Event{invalid});
+  const auto refused = detail::decode_event(record);
+  REQUIRE_FALSE(refused.has_value());
+  REQUIRE(refused.error().message.find("posted key event") != std::string::npos);
+}
+
 TEST_CASE("malformed traces are rejected before the App starts", "[trace][failure]") {
   const Artifact artifact = make_artifact();
 

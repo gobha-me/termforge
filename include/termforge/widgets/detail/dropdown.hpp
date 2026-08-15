@@ -71,9 +71,10 @@ inline constexpr int kDropdownWheelStep = 1;
 // widget getting a chance to re-clamp first.
 //
 // Everything below routes through this, which is what makes the claim on
-// dropdown_item_at true rather than merely intended: if the draw loop clamped
-// and the hit-test did not, a press between the relayout and the next frame
-// would commit the option the row is ABOUT to show rather than the one on it.
+// row_item_at / dropdown_item_at true rather than merely intended: if the draw
+// loop clamped and the hit-test did not, a press between the relayout and the
+// next frame would commit the option the row is ABOUT to show rather than the
+// one on it.
 [[nodiscard]] constexpr auto dropdown_scroll_at(int scroll, int count,
                                                 int visible_rows) noexcept
     -> int {
@@ -81,23 +82,14 @@ inline constexpr int kDropdownWheelStep = 1;
   return std::clamp(scroll, 0, std::max(0, count - visible_rows));
 }
 
-// The ONE screen-row -> item mapping. The draw loop, the hover branch and both
-// widgets' press paths all resolve a row through here, so a click can never
-// land on an option other than the one painted on that row. That is not
-// hypothetical: before #85 the two press paths each open-coded `m.y - dr.y` --
-// two hand-copies of the arithmetic in two widgets, which is the drift this
-// header exists to end, and getting it out of step with the draw loop at a
-// non-zero offset is #10's hit-span bug restated.
-//
-// Returns -1 for a y outside the window or past the end of the content; callers
-// treat -1 as "no row here" rather than clamping, because a press on a painted
-// but empty tail row must commit nothing.
+// Thin wrapper over detail::row_item_at (#95): dropdowns have no header chrome,
+// so header_rows is 0. Kept as a name so Select / MenuBar call sites and the
+// hover helper keep reading as "dropdown hit-test" without restating the
+// inset. The arithmetic itself lives in scroll.hpp so ListWidget, RadioGroup
+// and TableWidget share the same mapper rather than open-coding `m.y - dr.y`.
 [[nodiscard]] constexpr auto dropdown_item_at(Rect dr, int scroll, int count,
                                               int py) noexcept -> int {
-  const int vi = py - dr.y;
-  if (vi < 0 || vi >= dr.h) return -1;
-  const int item = dropdown_scroll_at(scroll, count, dr.h) + vi;
-  return (item >= 0 && item < count) ? item : -1;
+  return row_item_at(dr, /*header_rows=*/0, scroll, count, py);
 }
 
 // Paint the dropdown's visible window inside dr: row background, then the label

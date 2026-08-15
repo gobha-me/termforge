@@ -458,6 +458,9 @@ enum class Key {
   Unknown, Char, Enter, Escape, Backspace, Delete, Tab,
   Up, Down, Left, Right, Home, End, PageUp, PageDown,
   F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+  // Bare modifiers under KeyboardMode::Enhanced (#209). Kitty reports
+  // left/right variants as distinct CSI-u codes; Legacy never synthesizes them.
+  LeftShift, LeftCtrl, LeftAlt, RightShift, RightCtrl, RightAlt,
 };
 
 // What happened to the key (#60). A plain terminal reports presses and

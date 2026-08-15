@@ -135,7 +135,7 @@ auto valid_kind(TraceKind kind) -> bool {
 }
 
 auto valid_key(std::uint16_t value) -> bool {
-  return value <= static_cast<std::uint16_t>(Key::F12);
+  return value <= static_cast<std::uint16_t>(Key::RightAlt);
 }
 
 auto valid_action(std::uint8_t value) -> bool {

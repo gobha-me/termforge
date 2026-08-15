@@ -93,6 +93,14 @@ completed items.
 > vector tail bit-exactly; unsupported CPUs stay scalar without an event.
 > `memcpy` remains the blit kernel because a private AVX2 loop did not improve
 > it. The #88 harness records 16-52% median gains without timing gates.
+>
+> **2026-08-14 — bounded game benchmark CLI.** **#252** was not reproducible
+> from a fresh GCC 13 Release build on either the development or reporting
+> host, but exposed that CI replayed the frame seam without ever launching the
+> shipped command. The production `--benchmark` executable now runs for one and
+> 180 frames under a hard timeout, with both reports checked for stable image
+> lifecycle, clean-frame zero bytes and shutdown. A one-command host diagnostic
+> preserves the process state and all-thread backtrace if the symptom recurs.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 

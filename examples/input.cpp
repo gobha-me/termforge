@@ -168,6 +168,12 @@ class InputApp final : public App {
       case Key::F10: return "F10";
       case Key::F11: return "F11";
       case Key::F12: return "F12";
+      case Key::LeftShift: return "LeftShift";
+      case Key::LeftCtrl: return "LeftCtrl";
+      case Key::LeftAlt: return "LeftAlt";
+      case Key::RightShift: return "RightShift";
+      case Key::RightCtrl: return "RightCtrl";
+      case Key::RightAlt: return "RightAlt";
     }
     return "?";
   }

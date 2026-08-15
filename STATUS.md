@@ -4,14 +4,114 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-13, latest)
+## Where we are (2026-08-14, latest)
 
-**Pending release: v0.27.0 — runtime-dispatched SIMD kernels.** #90 adds a
-private AVX2 tier for base64, image fill, opaque-destination source-over blend
-and contiguous fallback luminance. The scalar implementations remain compiled
-on every architecture and serve as permanent bit-exact oracles; non-x86 and
-non-AVX2 hosts select them silently. Image blit stays on libc `memcpy` because
-the attempted AVX2 loop measured no faster.
+**Pending release: v0.29.2 — Kitty image lifecycle contract.** The first,
+offline phase of #113 documents what TermForge currently promises across
+alternate-screen entry and exit, in-session resize, suspend/resume,
+detach/reattach and process death. `test/61imagelifecycle` observes the
+production App cadence: resident payloads survive resize, Unicode placement is
+refreshed without retransmission, normal shutdown sends Kitty `a=d,d=A` through
+the still-live borrowed sink, and retiring a pinned placement uses lowercase
+`d=i` without deleting the image it does not own.
+
+Review merged current main and fixed the new App case to use the nested
+`App::Size` type. It also narrowed the prose to Kitty's actual one-way mode-1049
+rule (main → alternate clears the alternate buffer; the main buffer preserves
+its images), described the exact conditional cleanup scope of uppercase
+`d=A`, and removed a variant-size assertion that froze the intended absence of
+`ImageInvalidatedEvent` instead of testing behaviour. Removing resize repaint,
+the region delete, or the shutdown uppercase delete makes the focused suite
+fail.
+
+The integration passes 66/66 CTest targets with GCC 14.2 Release `-Werror`
+(including benchmark smoke and the production game benchmark CLI) and 65/65
+with Clang 20.1.8 Release `-Werror`. GCC and Clang each pass the subdirectory,
+installed-package and plain-vendored consumer paths. GCC ASan+UBSan with leak
+detection passes 65/65. No public API or terminal bytes change, so no
+live-emulator gate applies.
+
+**How it got picked:** task #166 gives open contributor PRs priority. #250 is
+the older of the two priority-1 submissions and covers a bounded prerequisite
+for #113; its only compile failure was reviewable locally. #113 stays open:
+the invalidation hook/event, suspend/reattach behaviour and real-pty acceptance
+remain future work.
+
+**Next:** finish hosted validation and release v0.29.2, then review #251 before
+the lower-priority #245 and #249 submissions.
+
+## Previous release: v0.29.1
+
+**v0.29.1 — refuse translucent fallback images.** #99 makes AnsiRgbDriver and
+FallbackDriver reject any RGBA payload containing `a != 255` with
+`Severity::Warning` before queuing bytes. Neither cell tier has an honest
+background against which to composite; callers that need those tiers must
+precompose explicitly. Kitty continues to transmit alpha unchanged. The
+release passed all ten hosted jobs and shipped on 2026-08-14.
+
+## Previous release: v0.29.0
+
+**v0.29.0 — styled text spans.** #25 adds public `TextStyle`, `TextSpan` and
+`StyledText`, preserves sanitization and cell-width wrapping across spans, and
+lets TextBox retain styled lines. Review fixed logical cursor carry after a
+left-clipped span. The release passed all ten hosted jobs and shipped on
+2026-08-14.
+
+## Previous release: v0.28.0
+
+**v0.28.0 — horizontal scrollbars.** #131 generalizes the shared scrollbar
+glyphs and drawing helper with a source-compatible vertical default, then gives
+a two-row TabBar a horizontal track over cumulative title columns. Review fixed
+the inclusive endpoint mapping and suppressed inert degenerate tracks. The
+release passed all ten hosted jobs and shipped on 2026-08-14.
+
+## Previous release: v0.27.2
+
+**v0.27.2 — shared scroll-row mapping.** #95 moves the one
+screen-row-to-item calculation into `detail::row_item_at`, with an explicit
+header-row inset, and routes ListWidget, RadioGroup, TableWidget and the
+dropdown compatibility wrapper through it. A stale offset is clamped against
+the content window before mapping, while header, outside and painted-empty
+rows remain inert instead of being clamped onto an item.
+
+TableWidget names its one-row header once and shares that value between header
+absorption, scrollbar paging and item hit-testing. The release passed all ten
+hosted jobs and shipped on 2026-08-14.
+
+## Previous release: v0.27.1
+
+**v0.27.1 — bounded game benchmark CLI.** #252 reported that the shipped
+game's headless `--benchmark` command could remain running on the reference
+host even for one frame, while the same binary ran interactively. The exact
+GCC 13.3 Release path completed from fresh builds both locally and on that
+host, so there is no reproducible source-level hang to patch and no basis for
+blaming the SIMD layer.
+
+The missing coverage was real: the suites replayed `App::test_run_frames` but
+never launched the production executable. `game-benchmark-cli` now runs the
+actual command for one and 180 frames under an inner ten-second timeout and an
+outer CTest timeout, parses both reports, and pins stable resident-image state,
+clean-frame zero bytes and explicit shutdown. A hanging-process mutation fails
+in ten seconds. `tools/diagnose_game_benchmark.sh` gives a recurrence one
+command: a fresh GCC 13 Release build, bounded one-frame run, process wait
+channel and automatic all-thread backtrace capture.
+
+GCC 13.3 and Clang 20.1 Release `-Werror` builds pass 65/65 and 64/64
+configured CTest targets respectively (the GCC tree also enables the benchmark
+smoke target). GCC ASan+UBSan with leak detection passes 64/64. GCC 14 and
+Clang 20 each pass the subdirectory, installed-package and plain-vendored
+consumer paths. The reporting host's fresh GCC 13 diagnostic completes the
+one-frame command in 1.744 ms. No public API or terminal bytes change, so no
+live-emulator gate applies. The prerelease shipped on 2026-08-14.
+
+## Previous release: v0.27.0
+
+**v0.27.0 — runtime-dispatched SIMD kernels.** #90 adds a private AVX2 tier for
+base64, image fill, opaque-destination source-over blend and contiguous
+fallback luminance. The scalar implementations remain compiled on every
+architecture and serve as permanent bit-exact oracles; non-x86 and non-AVX2
+hosts select them silently. Image blit stays on libc `memcpy` because the
+attempted AVX2 loop measured no faster.
 
 The benchmark's schema 2 records requested and resolved kernel tiers. On the
 GCC 14.2 reference host AVX2 improves base64 51.8%, image fill 38.2%, image
@@ -23,14 +123,7 @@ lifecycle. Timing remains evidence, never a CI threshold.
 `test/59simd` forces both tiers over unaligned spans, alpha early-outs and every
 vector tail; base64's independent oracle still covers every input length
 through 8192. The public API and terminal bytes are unchanged, so no live
-emulator gate applies.
-
-**How it got picked:** v0.26.0 completed #89 and the roadmap explicitly named
-#90 as the next offline kernel layer. #225 still requires a human-controlled
-direct Kitty TTY.
-
-**Next:** finish validation and release v0.27.0. #88 retains W2/W4/W5 and #225
-retains the direct Kitty capture.
+emulator gate applies. The prerelease shipped on 2026-08-13.
 
 ## Previous release: v0.26.0
 

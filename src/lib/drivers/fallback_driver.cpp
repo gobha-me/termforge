@@ -139,6 +139,21 @@ auto FallbackDriver::draw_image(Rect cells, const EncodedImage& image,
 auto FallbackDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
                                Extent px, PlacementFit fit)
     -> std::expected<void, ErrorEvent> {
+  // #99: the luminance ramp has no alpha and no honest background to
+  // composite against. Any a != 255 is a refusal — Warning, no bytes —
+  // before paint.
+  {
+    const std::size_t n =
+        static_cast<std::size_t>(px.w) * static_cast<std::size_t>(px.h);
+    for (std::size_t i = 0; i < n; ++i) {
+      if (std::to_integer<std::uint8_t>(rgba[i * 4U + 3U]) != 255) {
+        return std::unexpected{ErrorEvent{
+            Severity::Warning, "fallback",
+            "draw_image: fallback refuses translucent RGBA"}};
+      }
+    }
+  }
+
   // One glyph per cell, each sampling the nearest source pixel (#83). At 1:1
   // every index maps to itself, so this is the pre-#83 loop exactly.
   //

@@ -208,8 +208,10 @@ auto ListWidget::on_event(const Event& ev) -> bool {
         mark_dirty();
         return true;
       }
-      const int clicked = m_scroll + (m->y - rect().y);
-      if (clicked >= 0 && clicked < m_list.count()) {
+      const int clicked =
+          detail::row_item_at(rect(), /*header_rows=*/0, m_scroll,
+                              m_list.count(), m->y);
+      if (clicked >= 0) {
         set_selected(clicked);
         if (m_on_select) {
           // Copy the item — see the keyboard path above.

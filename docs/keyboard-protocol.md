@@ -21,6 +21,10 @@ class Game final : public App {
 
   auto on_event(const Event& ev) -> void override {
     if (const auto* k = std::get_if<KeyEvent>(&ev)) {
+      if (k->key == Key::LeftShift || k->key == Key::RightShift) {
+        m_sprint = (k->action != KeyAction::Release);
+        return;
+      }
       if (k->key != Key::Char) return;
       if (k->action == KeyAction::Release) m_held.erase(k->ch);
       else m_held.insert(k->ch);           // Press and Repeat both mean "down"
@@ -29,8 +33,14 @@ class Game final : public App {
   }
  private:
   std::set<char32_t> m_held;
+  bool m_sprint{false};  // hold-Shift-to-sprint: tracks the modifier key itself
 };
 ```
+
+Track sprint from `Key::LeftShift` / `Key::RightShift` press and release — not
+from the `shift` snapshot on `W`. Releasing Shift while `W` stays down clears
+sprint immediately; Legacy never synthesizes these transitions, so the pattern
+requires `KeyboardMode::Enhanced`.
 
 ## Tiers
 
@@ -59,12 +69,12 @@ terminal itself produced. TermForge never ships one without the other.
   bracketed paste for bulk text.
 - **Keys TermForge cannot name** (`Insert`, `F13`+, keypad Begin) arrive as
   `Key::Unknown`, exactly as `ESC[2~` always has.
-- **Bare modifier presses report nothing.** Under flag 8 the terminal reports
-  `LeftShift` (code 57441) on every shifted keystroke; delivering `Key::Unknown`
-  for those would be an `Unknown` storm on ordinary typing. The locks,
-  PrintScreen/Pause/Menu and the media keys are dropped for the same reason.
-  The consequence is that *hold-Shift-to-sprint is not expressible yet* — it
-  needs a wider `Key` enum, which is a separate API decision.
+- **Bare Shift/Ctrl/Alt arrive as ordinary `KeyEvent`s** (`LeftShift`,
+  `LeftCtrl`, `LeftAlt`, `RightShift`, `RightCtrl`, `RightAlt`) with the usual
+  press/repeat/release actions — only when the terminal actually reports them
+  (Enhanced). Legacy does not synthesize transitions. Super/Hyper/Meta,
+  ISO_LEVEL, the locks, PrintScreen/Pause/Menu and the media keys are still
+  dropped: delivering `Key::Unknown` for those would be an `Unknown` storm.
 - **Keypad keys resolve to the key the user pressed**: keypad `7` is `'7'`,
   keypad `Up` is `Key::Up`, keypad `Enter` is `Key::Enter`.
 

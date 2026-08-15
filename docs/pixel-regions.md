@@ -481,6 +481,24 @@ onto the scene — is the normal way to build a sprite frame, and is what
 `docs/map-widget.md` commits the sprite tier to. Assuming opacity is silently
 wrong at every antialiased edge, with no diagnostic.
 
+### Per-tier alpha survival (#99)
+
+`Pixel::a` is real data. What each driver does with a translucent payload
+(`any a != 255`):
+
+| tier | what happens | event |
+|---|---|---|
+| Kitty | transmitted as `f=32` RGBA; the terminal composites | none |
+| AnsiRgb | refused before paint — a cell has no alpha and no honest background | `Warning`, no bytes |
+| Fallback | refused before paint — the luminance ramp has no alpha | `Warning`, no bytes |
+
+Callers that want AnsiRgb/Fallback must precompose onto an explicit opaque
+background. App reports an AnsiRgb refusal through its normal `ErrorEvent`
+queue, but the enhanced pass has already blanked that region's cells before
+submission. Ignoring the `Warning` therefore leaves a hole rather than
+silently restoring the widget's Baseline, exactly as the severity contract
+promises.
+
 ## Pre-encoded payloads (#163)
 
 Everything above assumes the library holds pixels. Sometimes it should not.
@@ -866,6 +884,114 @@ frame.
 
 The slot-level caveat remains: unchanged content avoids re-upload only while
 its slot remains live. Residency is what `pin_image` is for.
+
+## Image lifecycle across terminal transitions (#113)
+
+This is the **current** contract as of the library today: what App and
+`KittyDriver` actually do on each transition, measured against the in-memory
+sink suites. It is not a promise that every emulator keeps the same pixels
+visible after the same OS-level event, and it does **not** yet include an
+`ImageInvalidatedEvent` (see [What is not signaled yet](#what-is-not-signaled-yet-113)).
+
+The [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/#interaction-with-other-terminal-actions)
+requires images in the alternate buffer to be cleared when mode 1049 switches
+from the main buffer into it; the main buffer preserves its images when the
+alternate buffer is entered or left. TermForge enters and leaves the alt screen,
+handles `SIGWINCH`, and can be suspended or reattached underneath the process.
+The table below answers, for each transition, whether the **library** treats
+resident payloads as still valid, what bytes it emits, and what the application
+is expected to do. It does not generalize the protocol's one-way alternate-
+buffer rule into a bidirectional invalidation guarantee.
+
+| transition | do transmitted images survive (library view)? | what the library does | what the application does today |
+|---|---|---|---|
+| alt-screen **enter** (`setup` / `enter_screen`) | n/a — session starts empty | no image traffic; pin and region maps are empty | pin / Persistent upload on first enhanced frame |
+| alt-screen **leave** (normal final teardown) | session ends; handles must not be reused | `shutdown()` emits Kitty `a=d,d=A` through the live sink; then `leave_screen` | nothing special; a later run must re-pin |
+| in-session **grid / cell-geometry resize** (`SIGWINCH`, `request_resize`, `set_size`) | **yes** for resident payloads | `ResizeEvent`; `m_pixel_force_repaint` asks for a placement refresh (Unicode re-emits the placeholder grid; classic is a no-op when the same rect/fit is already live); pin ids and payloads are **not** deleted or retransmitted unless the Persistent region's returned `Image` logical `Extent` changes (that path unpins and re-pins) | handle `ResizeEvent` for layout; keep using existing `PinnedImage` / Persistent regions |
+| **SIGTSTP** suspend / resume (`Ctrl-Z`, job control) | **unknown to the library** — treated as still valid | no `SIGTSTP` handler; pin/region maps and handles are unchanged; no image delete and no invalidation event | no library signal; if the terminal dropped graphics, the app is not told and must discover it itself |
+| detach / reattach (multiplexer / embedding) | **unknown to the library** — treated as still valid | same as suspend: no invalidation hook, no `d=A`, handles stay live | same gap as suspend |
+| process death mid-session | no API recovery | crash / `atexit` leave-sequence restores the tty; it does **not** route Kitty `d=A` through a live App sink | emulator-dependent residue; real-terminal matrix, not a library promise |
+
+### Normal teardown requests cleanup; unmanaged destruction does not
+
+`App::run_loop` / `test_run_frames` call `shutdown_driver()` **before**
+`teardown()` leaves the alt screen, while the session sink is still borrowed.
+Kitty's `on_shutdown` appends `a=d,d=A` and emits one metered write when anything
+was transmitted in the session. Uppercase `A` removes every visible placement
+and frees its image data when no other reference retains it. The offline suite
+pins that request and its borrowed-sink lifetime; it does not claim an emulator
+must free a payload that was transmitted but never placed.
+
+`~KittyDriver` does **not** emit that delete-all: destruction is too late to
+trust a borrowed sink (and would be wrong for a multi-session server). Explicit
+`shutdown()` is required. Headless App seams already call it; a direct driver
+user that skips `shutdown()` may leave terminal-side images behind.
+
+### In-session resize keeps payloads, refreshes placements
+
+A resize arms the same path `SIGWINCH` uses: clear the pending flag, remeasure
+size, resize the `Screen`, invalidate the cell renderer, push
+`set_cell_pixel_size`, dispatch one `ResizeEvent`, and set
+`m_pixel_force_repaint` for that frame's pixel pass.
+
+On Kitty Persistent regions and on `draw_pinned`:
+
+- the resident image id and uploaded bytes stay; there is no automatic `d=I` /
+  unpin of every pin just because the grid moved;
+- App treats the frame as needing a placement refresh. Under **Unicode
+  placeholders** that re-emits the placeholder cell grid after the full cell
+  repaint. Under **classic** placement, `draw_pinned` is a no-op when the same
+  rect/fit is already live (`placed && !fit_changed`), so no second `a=p`
+  appears on the wire — the library still assumes the resident payload is
+  valid;
+- `replace_pinned` / a fresh `a=t` happen only when content is dirty, the
+  Persistent region was marked `recreate` (today: a refused sink write that
+  touched image wire), or the borrowed `Image`'s logical extent changed.
+
+So a fixed-resolution `PixelSurface` survives an in-session resize as one
+transmit (plus a placeholder-grid refresh in Unicode mode). A producer that
+re-rasterizes to `preferred_pixel_extent` and returns a new extent deliberately
+recreates.
+
+### Per-frame collection is unchanged by those transitions
+
+Independently of alt-screen / resize / suspend:
+
+- an **unpinned** region not drawn in a flush is retired with `a=d,d=I`
+  (data + placements);
+- a **pinned** placement not drawn in a flush is retired with `a=d,d=i`
+  (placement only; data and `PinnedImage` stay);
+- omitting a Persistent region outside a modal overlay unpins and erases it;
+  an overlay only suspends the placement and keeps the pin.
+
+Those rules are what `test/01drivers`, `test/46pinned`, `test/49regionids`, and
+`test/61imagelifecycle` pin offline.
+
+### What is not signaled yet (#113)
+
+There is **no** `ImageInvalidatedEvent` (and no other images-invalidated
+signal) on the `Event` bus today. `Event` remains
+`KeyEvent | MouseEvent | PasteEvent | ResizeEvent | ErrorEvent`.
+
+Consequences of that gap, stated so this contract cannot be read as the full
+#113 acceptance shape:
+
+- After suspend/resume or detach/reattach, if the terminal discarded graphics,
+  TermForge still treats pre-transition `PinnedImage` handles as live and will
+  emit placements that may point at missing terminal data.
+- The library does **not** clear pin/placement maps on those transitions, does
+  **not** bump a generation that would stale every handle, and does **not**
+  mark every Persistent region `recreate` solely because the process stopped
+  and continued.
+- The intended future path (issue #113) is: for transitions known to discard
+  terminal image data, retire library pin state without relying on borrowed
+  encoded payloads for silent retransmit, make old handles refuse, and emit one
+  invalidation event so the application can re-pin from its own storage. That
+  event and hook are **not implemented** in this Phase-1 documentation slice.
+
+Offline suites therefore pin what *is* true now (teardown `d=A`, in-session
+resize without retransmit, collection `d=I` / `d=i`). They do not pretend an
+invalidation event fires on suspend or reattach.
 
 ## Placement Modes
 

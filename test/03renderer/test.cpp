@@ -1,8 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include "termforge/core/renderer.hpp"
 #include "termforge/core/screen.hpp"
+#include "termforge/core/styled_text.hpp"
 #include "termforge/drivers/ansi_rgb_driver.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
+
+#include <span>
+#include <utility>
 
 using termforge::AnsiRgbDriver;
 using termforge::Cell;
@@ -167,4 +171,39 @@ TEST_CASE("Renderer: blank cells emit space with background color", "[renderer][
   r.flush();
   // The blank cells should be emitted as spaces with the fill's bg color.
   REQUIRE(out.find("48;2;10;10;20") != std::string::npos);  // bg 0x0A,0x0A,0x14
+}
+
+TEST_CASE("Renderer: single-span write_styled matches write_text present bytes (#25)",
+          "[renderer][styled]") {
+  // Acceptance: single-span lines must not change the diff-only present path.
+  using termforge::TextSpan;
+  using termforge::TextStyle;
+
+  auto present_bytes = [](auto paint) {
+    FallbackDriver d;
+    std::string out;
+    d.set_output(&out);
+    Renderer r(d);
+    Screen s{8, 1};
+    paint(s);
+    r.present(s);
+    r.flush();
+    const std::string first = out;
+    out.clear();
+    r.present(s);  // identical frame -> empty diff
+    r.flush();
+    return std::pair{first, out};
+  };
+
+  const Rgb fg{0xAA, 0xBB, 0xCC}, bg{};
+  const auto via_text = present_bytes([&](Screen& s) {
+    s.write_text(0, 0, "hello", fg, bg);
+  });
+  const auto via_styled = present_bytes([&](Screen& s) {
+    const TextSpan span{"hello", TextStyle{fg, bg}};
+    s.write_styled(0, 0, std::span{&span, 1});
+  });
+  REQUIRE(via_text.first == via_styled.first);
+  REQUIRE(via_text.second.empty());
+  REQUIRE(via_styled.second.empty());
 }

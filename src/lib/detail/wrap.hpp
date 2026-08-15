@@ -21,6 +21,7 @@
 
 #include "detail/utf8.hpp"
 #include "detail/width.hpp"
+#include "termforge/core/styled_text.hpp"
 
 namespace termforge::detail {
 
@@ -70,6 +71,67 @@ inline auto wrap_to_width(std::string_view text, int width)
     start = nl + 1;
   }
   return out;
+}
+
+// Character-wrap a styled line to `width` columns (#25). Span boundaries may
+// fall mid-row; a span that does not fit is split and its style continues on
+// the next row. Empty spans contribute no columns (paint nothing) and are
+// dropped from the wrapped rows — the document may still retain them. An
+// empty line (no spans, or only empty spans) yields one empty row, matching
+// wrap_into on "". Word-aware wrapping is #24.
+inline auto wrap_styled_into(std::vector<StyledText>& out, const StyledText& line,
+                             int width) -> void {
+  if (width <= 0) {
+    out.push_back(line);
+    return;
+  }
+
+  bool any_text = false;
+  for (const TextSpan& span : line) {
+    if (!span.text.empty()) {
+      any_text = true;
+      break;
+    }
+  }
+  if (!any_text) {
+    out.emplace_back();
+    return;
+  }
+
+  StyledText row;
+  int cols = 0;
+
+  auto flush = [&]() {
+    out.push_back(std::move(row));
+    row.clear();
+    cols = 0;
+  };
+
+  for (const TextSpan& span : line) {
+    std::string_view sv{span.text};
+    while (!sv.empty()) {
+      if (cols >= width) flush();
+      const int avail = width - cols;
+      std::size_t take = truncate_to_width(sv, avail).size();
+      if (take == 0) {
+        // A single wide glyph won't fit the remaining width: force one code
+        // point on an empty row so the loop progresses (same as wrap_into).
+        if (cols == 0) {
+          char32_t cp = 0;
+          std::size_t len = 0;
+          take = utf8_decode(sv, cp, len) ? len : 1;
+        } else {
+          flush();
+          continue;
+        }
+      }
+      const std::string_view piece = sv.substr(0, take);
+      row.push_back(TextSpan{std::string{piece}, span.style});
+      cols += display_width(piece);
+      sv.remove_prefix(take);
+    }
+  }
+  if (!row.empty()) out.push_back(std::move(row));
 }
 
 }  // namespace termforge::detail

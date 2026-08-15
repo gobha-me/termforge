@@ -7,10 +7,12 @@
 // driver. Screen also owns resize handling (SIGWINCH) and the escape
 // sanitization boundary for text.
 
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "termforge/core/styled_text.hpp"
 #include "termforge/core/types.hpp"
 
 namespace termforge {
@@ -76,6 +78,12 @@ class Screen {
   auto write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
                   Attr attrs = Attr::None) -> int;
 
+  // Write a sequence of styled spans on one row (#25). Span boundaries share
+  // write_text's exact cursor walk, so left/right clipping and wide-glyph
+  // padding cannot relocate a later span. Empty spans paint and advance
+  // nothing. Returns the total on-screen cells painted across all spans.
+  auto write_styled(int x, int y, std::span<const TextSpan> spans) -> int;
+
   // Sanitize untrusted text: drop C0/C1 control chars and ESC, keep printable
   // + valid UTF-8 continuation bytes. Delegates to text::sanitize(in, Strip)
   // (#149) — the write path and every measure-what-will-paint caller share
@@ -83,6 +91,17 @@ class Screen {
   static auto sanitize(std::string_view in) -> std::string;
 
  private:
+  struct WriteResult {
+    int written;
+    int next_x;
+  };
+
+  // The one text-placement primitive behind both public write paths. next_x
+  // is the cursor produced by the actual glyph walk; it cannot be recovered
+  // from written when a prefix was clipped off the left edge.
+  auto write_text_impl(int x, int y, std::string_view text, Rgb fg, Rgb bg,
+                       Attr attrs) -> WriteResult;
+
   // Renderer owns the shadow copy of this exact grid. Keeping the contiguous
   // hand-off private avoids exposing Cell's current vector representation as
   // public API immediately before #92 changes it.
