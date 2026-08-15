@@ -108,10 +108,14 @@ absorbed during a frame wait are delivered at the next ordinary input boundary.
 Trace schema 2 added structured-source events and source-reported effective
 input-capability changes in addition to raw terminal chunks. Schema 3 adds
 resident-image invalidation boundaries; this does not widen what an
-`EventSource` may emit. Playback does not start or poll a configured live
+`EventSource` may emit. Schema 4 records normalized terminal control replies
+while replacement mode suppresses terminal keystrokes; output acknowledgements
+therefore still reach the selected driver and replay in their original phase.
+Playback does not start or poll a configured live
 source: it replays source records through the same event boundary and uses the
 recorded capabilities for `AppRequirements`. Schema-1 and schema-2 traces
-remain readable; schema 1 implies the historical press-only terminal route.
+remain readable, as does schema 3; schema 1 implies the historical press-only
+terminal route.
 
 ## Raw evdev is an adapter policy, not a core feature
 

@@ -1,6 +1,7 @@
 #include "termforge/core/input.hpp"
 
 #include <cctype>
+#include <charconv>
 #include <utility>
 
 #include "detail/utf8.hpp"
@@ -233,11 +234,19 @@ auto scan_csi_params(std::string_view buf, std::size_t& i, CsiParams& out) -> bo
 }  // namespace
 
 auto Input::feed(std::string_view bytes) -> void {
-  // Bytes arriving prove a held ESC was the start of a sequence, not a
-  // keypress: put it back at the head so the combined bytes decode as one.
+  // Bytes following a held ESC normally complete its sequence, so put it back
+  // at the head. A second ESC starts a new sequence instead; the first is then
+  // an independently complete keypress.
   if (m_esc_pending && !bytes.empty()) {
-    m_pending.insert(0, 1, '\x1B');
-    m_esc_pending = false;
+    if (bytes.front() == '\x1B') {
+      // A new escape introducer proves the held ESC was a complete keypress,
+      // not the first byte of this sequence. This matters when an asynchronous
+      // terminal APC follows a user's Escape on the same input stream.
+      flush_esc();
+    } else {
+      m_pending.insert(0, 1, '\x1B');
+      m_esc_pending = false;
+    }
   }
   m_pending += bytes;
   std::size_t off = 0;
@@ -257,7 +266,8 @@ auto Input::feed(std::string_view bytes) -> void {
   // has drained the fd — commits the Escape interpretation.
   // (Not while a bracketed paste is open: a trailing ESC there is either the
   // start of the ESC[201~ terminator or a literal pasted ESC, never a keypress.)
-  if (!m_in_paste && m_pending.size() == 1 && m_pending[0] == '\x1B') {
+  if (!m_in_paste && !m_discard_apc && m_pending.size() == 1 &&
+      m_pending[0] == '\x1B') {
     m_pending.clear();
     m_esc_pending = true;
   }
@@ -278,10 +288,15 @@ auto Input::poll() -> std::deque<Event> {
   return std::exchange(m_events, {});
 }
 
+auto Input::poll_replies() -> std::deque<TerminalReplyRecord> {
+  return std::exchange(m_replies, {});
+}
+
 auto Input::discard_incomplete() noexcept -> void {
   m_pending.clear();
   m_esc_pending = false;
   m_in_paste = false;
+  m_discard_apc = false;
   m_paste_buf.clear();
 }
 
@@ -302,6 +317,8 @@ auto Input::push_error(ErrorEvent e) -> void {
 auto Input::decode_one(std::string_view buf) -> std::size_t {
   if (buf.empty()) return 0;
 
+  if (m_discard_apc) return discard_apc(buf);
+
   // In a bracketed paste every byte is literal content until the ESC[201~
   // terminator — including ESC bytes, which must not decode as keypresses.
   if (m_in_paste) return consume_paste(buf);
@@ -313,6 +330,7 @@ auto Input::decode_one(std::string_view buf) -> std::size_t {
     if (buf.size() < 2) return 0;  // need more
     if (buf[1] == '[') return parse_csi(buf);
     if (buf[1] == 'O') return parse_ss3(buf);  // SS3: app-cursor keys, F1–F4
+    if (buf[1] == '_') return parse_apc(buf);  // terminal control-plane APC
     // Alt+char: ESC followed by a printable char.
     if (buf[1] >= 0x20 && buf[1] < 0x7F) {
       m_events.push_back(KeyEvent{Key::Char, static_cast<char32_t>(buf[1]), false, true, false});
@@ -367,6 +385,117 @@ auto Input::decode_one(std::string_view buf) -> std::size_t {
   else cp = ((c & 0x07) << 18) | ((buf[1] & 0x3F) << 12) | ((buf[2] & 0x3F) << 6) | (buf[3] & 0x3F);
   m_events.push_back(KeyEvent{Key::Char, cp});
   return len;
+}
+
+auto Input::discard_apc(std::string_view buf) -> std::size_t {
+  if (const auto end = buf.find("\033\\"); end != std::string_view::npos) {
+    m_discard_apc = false;
+    return end + 2;
+  }
+  // Preserve a trailing ESC: it may be the first half of ST split across
+  // reads. Everything before it belongs to the oversized APC and is dropped.
+  return !buf.empty() && buf.back() == '\033' ? buf.size() - 1 : buf.size();
+}
+
+auto Input::parse_apc(std::string_view buf) -> std::size_t {
+  // buf starts with ESC _. Kitty graphics replies are ESC _ G controls ;
+  // status ST. Bound the whole record: a hostile or broken terminal must not
+  // grow m_pending forever while the application waits for a terminator.
+  constexpr std::size_t kMaxReplyBytes = 4096;
+  const auto end = buf.find("\033\\", 2);
+  if (end == std::string_view::npos) {
+    if (buf.size() <= kMaxReplyBytes) return 0;
+    m_replies.emplace_back(ErrorEvent{
+        Severity::Warning, "input",
+        "kitty graphics reply exceeded the 4096-byte limit"});
+    m_discard_apc = true;
+    // A trailing ESC may be the first half of ST split across reads. Leave it
+    // in m_pending, and unlike an ordinary lone ESC never expose it as a key.
+    return !buf.empty() && buf.back() == '\033' ? buf.size() - 1 : buf.size();
+  }
+  const std::size_t used = end + 2;
+  if (used > kMaxReplyBytes) {
+    m_replies.emplace_back(ErrorEvent{
+        Severity::Warning, "input",
+        "kitty graphics reply exceeded the 4096-byte limit"});
+    return used;
+  }
+
+  const auto body = buf.substr(2, end - 2);
+  if (body.empty() || body.front() != 'G') return used;  // unrelated APC
+  const auto semi = body.find(';');
+  const auto malformed = [&](std::string_view why) {
+    m_replies.emplace_back(ErrorEvent{
+        Severity::Warning, "input",
+        std::string{"malformed kitty graphics reply: "} + std::string{why}});
+  };
+  if (semi == std::string_view::npos) {
+    malformed("missing status separator");
+    return used;
+  }
+
+  TerminalReply reply;
+  bool have_image_id{false};
+  bool have_placement_id{false};
+  auto controls = body.substr(1, semi - 1);
+  while (!controls.empty()) {
+    const auto comma = controls.find(',');
+    const auto item = controls.substr(0, comma);
+    controls = comma == std::string_view::npos
+                   ? std::string_view{}
+                   : controls.substr(comma + 1);
+    const auto equals = item.find('=');
+    if (equals == std::string_view::npos || equals == 0 ||
+        equals + 1 == item.size()) {
+      malformed("invalid control field");
+      return used;
+    }
+    const auto key = item.substr(0, equals);
+    if (key != "i" && key != "p") continue;
+    std::uint32_t value{0};
+    const auto digits = item.substr(equals + 1);
+    const auto parsed = std::from_chars(digits.data(), digits.data() + digits.size(),
+                                        value);
+    if (parsed.ec != std::errc{} || parsed.ptr != digits.data() + digits.size() ||
+        value == 0) {
+      malformed("invalid numeric identifier");
+      return used;
+    }
+    if (key == "i") {
+      if (have_image_id) {
+        malformed("duplicate image identifier");
+        return used;
+      }
+      reply.image_id = value;
+      have_image_id = true;
+    } else {
+      if (have_placement_id) {
+        malformed("duplicate placement identifier");
+        return used;
+      }
+      reply.placement_id = value;
+      have_placement_id = true;
+    }
+  }
+  if (!have_image_id) {
+    malformed("missing image identifier");
+    return used;
+  }
+
+  const auto status = body.substr(semi + 1);
+  if (status.empty()) {
+    malformed("empty status");
+    return used;
+  }
+  for (const unsigned char c : status) {
+    if (c < 0x20 || c > 0x7e) {
+      malformed("status is not printable ASCII");
+      return used;
+    }
+  }
+  reply.status = status;
+  m_replies.emplace_back(std::move(reply));
+  return used;
 }
 
 auto Input::parse_csi(std::string_view buf) -> std::size_t {

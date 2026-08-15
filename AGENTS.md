@@ -135,6 +135,24 @@ file is the tactical version.
   only number that exists, and `s=`/`v=`, the content hash and
   `image_cell_extent(Extent)` already rest on it. Still nothing parses the
   payload.
+- **Opaque image success is acknowledged, not assumed** (#165). `Input`
+  recognizes Kitty graphics APC replies as terminal control-plane records and
+  never turns them into application `Event`s; `App` offers them to the selected
+  driver's non-pure `consume_reply` hook before ordinary input, even while an
+  `EventSource` replaces terminal keystrokes. Raw RGBA remains locally
+  validated and fully quiet. An opaque PNG transfer uses `q=2` on intermediate
+  chunks and `q=0` on the final chunk, and Kitty commits its content hash only
+  after the correlated `i=` reply says `OK`. Synchronous API success means only
+  "validated and queued"; a PNG pin's handle cannot draw, retain or replace
+  until its initial `OK`. A rejection is a `Warning` and rolls back the
+  relevant belief: a region retries, a rejected pin becomes
+  stale, and a rejected root edit preserves its last accepted frame. Only one
+  operation may await an id; different work refuses without mutation. After
+  120 driver flushes an unanswered operation warns, rolls back and quarantines
+  the id until its late reply arrives, so a stale acknowledgement can never
+  bless a later image that inherited the number. Trace schema 4 records
+  normalized replies for replacement-source sessions; schemas 1–3 remain
+  readable.
 - **A virtual an out-of-tree driver could not have implemented is never pure.**
   Third-party drivers are a stated extensibility goal, so a new pure virtual
   breaks every one of them at compile time on upgrade. #163 and #137 each add a

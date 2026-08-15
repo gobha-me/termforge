@@ -45,8 +45,12 @@ input-capability transitions. Schema 3 adds the applied
 or terminal-reset reason. Playback clears the same driver/Persistent beliefs
 before delivering the event, so a recording cannot silently keep resident
 image state that the live run discarded. Playback never starts or polls the
-configured live source. Schema-1 and schema-2 traces remain readable; schema 1
-implies the historical press-only route.
+configured live source. Schema 4 adds normalized Kitty graphics replies for a
+replacement-source session: terminal keystrokes are still suppressed, while
+the acknowledgements needed by the output driver remain deterministic. In a
+terminal or composed session the raw byte record already contains those APCs,
+so they are not duplicated. Schema-1 through schema-3 traces remain readable;
+schema 1 implies the historical press-only route.
 
 The trace also records:
 
@@ -54,6 +58,7 @@ The trace also records:
   wait rounding rather than merely the configured frame budget;
 - the effective terminal size at each production resize boundary;
 - each applied resident-image invalidation at its production frame boundary;
+- normalized terminal replies when a structured source replaces terminal input;
 - events consumed from `App::post`, at the posted-event snapshot boundary;
 - the terminal capabilities, effective input capabilities, and initial size
   resolved during setup;

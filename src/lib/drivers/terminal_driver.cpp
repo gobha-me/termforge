@@ -58,6 +58,14 @@ auto TerminalDriver::take_output_error() noexcept -> std::optional<ErrorEvent> {
   return taken;
 }
 
+auto TerminalDriver::push_driver_event(ErrorEvent event) -> void {
+  m_driver_events.push_back(std::move(event));
+}
+
+auto TerminalDriver::take_driver_events() noexcept -> std::deque<ErrorEvent> {
+  return std::exchange(m_driver_events, {});
+}
+
 auto TerminalDriver::shutdown() -> void {
   // Already run: a second shutdown must not re-emit terminal cleanup.
   if (m_shutdown) return;

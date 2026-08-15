@@ -10,6 +10,7 @@ using termforge::KeyEvent;
 using termforge::MouseEvent;
 using termforge::PasteEvent;
 using termforge::ResizeEvent;
+using termforge::TerminalReply;
 
 namespace {
 auto first_key(std::deque<Event>& ev) -> KeyEvent {
@@ -75,6 +76,88 @@ TEST_CASE("Input: malformed/truncated escape doesn't wedge the parser", "[input]
   auto ev2 = in.decode("\033");
   // should not crash; may yield nothing or an unknown
   REQUIRE(ev2.size() <= 1);
+}
+
+TEST_CASE("Input: kitty graphics replies use a separate ordered channel",
+          "[input][kitty-reply]") {
+  Input in;
+  in.feed("a\033_Gi=42,p=7;O");
+  CHECK(in.poll_replies().empty());
+  in.feed("K\033\\b");
+
+  const auto events = in.poll();
+  REQUIRE(events.size() == 2);
+  CHECK(std::get<KeyEvent>(events[0]).ch == U'a');
+  CHECK(std::get<KeyEvent>(events[1]).ch == U'b');
+
+  const auto replies = in.poll_replies();
+  REQUIRE(replies.size() == 1);
+  const auto* reply = std::get_if<TerminalReply>(&replies.front());
+  REQUIRE(reply != nullptr);
+  CHECK(reply->image_id == 42);
+  REQUIRE(reply->placement_id.has_value());
+  CHECK(*reply->placement_id == 7);
+  CHECK(reply->ok());
+}
+
+TEST_CASE("Input: a new APC cannot complete a held user Escape",
+          "[input][kitty-reply][failure]") {
+  Input in;
+  in.feed("\033");
+  REQUIRE(in.esc_pending());
+
+  in.feed("\033_Gi=42;OK\033\\");
+  const auto events = in.poll();
+  REQUIRE(events.size() == 1);
+  CHECK(std::get<KeyEvent>(events.front()).key == Key::Escape);
+  REQUIRE(in.poll_replies().size() == 1);
+}
+
+TEST_CASE("Input: malformed kitty replies cannot fabricate keypresses",
+          "[input][kitty-reply][failure]") {
+  Input in;
+  in.feed("\033_Gi=4,i=5;EINVAL\033\\");
+  CHECK(in.poll().empty());
+  const auto replies = in.poll_replies();
+  REQUIRE(replies.size() == 1);
+  const auto* error = std::get_if<termforge::ErrorEvent>(&replies.front());
+  REQUIRE(error != nullptr);
+  CHECK(error->severity == termforge::Severity::Warning);
+  CHECK(error->message.find("duplicate image identifier") != std::string::npos);
+}
+
+TEST_CASE("Input: oversized kitty replies are bounded and resynchronize",
+          "[input][kitty-reply][failure]") {
+  Input in;
+  std::string oversized{"\033_Gi=9;"};
+  oversized.append(5000, 'x');
+  in.feed(oversized);
+  auto replies = in.poll_replies();
+  REQUIRE(replies.size() == 1);
+  CHECK(std::holds_alternative<termforge::ErrorEvent>(replies.front()));
+
+  in.feed("\033\\z");
+  const auto events = in.poll();
+  REQUIRE(events.size() == 1);
+  CHECK(std::get<KeyEvent>(events.front()).ch == U'z');
+  CHECK(in.poll_replies().empty());
+}
+
+TEST_CASE("Input: a split terminator on a discarded APC is never Escape",
+          "[input][kitty-reply][failure]") {
+  Input in;
+  std::string oversized{"\033_Gi=9;"};
+  oversized.append(5000, 'x');
+  oversized += '\033';
+  in.feed(oversized);
+  in.flush();
+  CHECK(in.poll().empty());
+  REQUIRE(in.poll_replies().size() == 1);
+
+  in.feed("\\k");
+  const auto events = in.poll();
+  REQUIRE(events.size() == 1);
+  CHECK(std::get<KeyEvent>(events.front()).ch == U'k');
 }
 
 

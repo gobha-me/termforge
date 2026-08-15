@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <variant>
@@ -453,6 +454,21 @@ struct ErrorEvent {
   std::string source;   // e.g. "kitty", "sixel", "detect"
   std::string message;
 };
+
+// A terminal control-plane acknowledgement, not application input (#165).
+// Kitty graphics replies echo the image id and optionally a placement id,
+// followed by either "OK" or a printable error status. Input keeps these out
+// of Event so an APC reply can never masquerade as a keypress; App offers them
+// to the selected TerminalDriver before dispatching ordinary input.
+struct TerminalReply {
+  std::uint32_t image_id{0};
+  std::optional<std::uint32_t> placement_id;
+  std::string status;
+
+  [[nodiscard]] auto ok() const noexcept -> bool { return status == "OK"; }
+};
+
+using TerminalReplyRecord = std::variant<TerminalReply, ErrorEvent>;
 
 enum class Key {
   Unknown, Char, Enter, Escape, Backspace, Delete, Tab,

@@ -145,7 +145,8 @@ auto valid_kind(TraceKind kind) -> bool {
     case TraceKind::End:
     case TraceKind::Source:
     case TraceKind::InputCapabilities:
-    case TraceKind::ImageInvalidation: return true;
+    case TraceKind::ImageInvalidation:
+    case TraceKind::TerminalReply: return true;
   }
   return false;
 }
@@ -320,7 +321,8 @@ auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent> {
         (*schema == 1 && (*kind == TraceKind::Source ||
                           *kind == TraceKind::InputCapabilities ||
                           *kind == TraceKind::ImageInvalidation)) ||
-        (*schema == 2 && *kind == TraceKind::ImageInvalidation)) {
+        (*schema == 2 && *kind == TraceKind::ImageInvalidation) ||
+        (*schema < 4 && *kind == TraceKind::TerminalReply)) {
       return trace_error("trace record header is malformed");
     }
     if (*payload_size > kMaxPayloadBytes ||
@@ -513,6 +515,73 @@ auto decode_input_capabilities(const TraceRecord& record)
   if (!capabilities)
     return trace_error("input-capability record has invalid flags");
   return *capabilities;
+}
+
+auto encode_terminal_reply(const TerminalReplyRecord& record)
+    -> std::vector<std::uint8_t> {
+  std::vector<std::uint8_t> bytes;
+  std::visit(
+      [&](const auto& value) {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::same_as<T, TerminalReply>) {
+          append_le(bytes, std::uint8_t{0});
+          append_le(bytes, value.image_id);
+          append_le(bytes,
+                    static_cast<std::uint8_t>(value.placement_id.has_value()));
+          if (value.placement_id) append_le(bytes, *value.placement_id);
+          append_string(bytes, value.status);
+        } else {
+          append_le(bytes, std::uint8_t{1});
+          append_le(bytes, static_cast<std::uint8_t>(value.severity));
+          append_string(bytes, value.source);
+          append_string(bytes, value.message);
+        }
+      },
+      record);
+  return bytes;
+}
+
+auto decode_terminal_reply(const TraceRecord& record)
+    -> std::expected<TerminalReplyRecord, ErrorEvent> {
+  std::span<const std::uint8_t> bytes{record.payload};
+  const auto type = take_le<std::uint8_t>(bytes);
+  if (!type) return trace_error("terminal-reply record is empty");
+  if (*type == 0) {
+    const auto image_id = take_le<std::uint32_t>(bytes);
+    const auto has_placement = take_le<std::uint8_t>(bytes);
+    if (!image_id || !has_placement || *image_id == 0 || *has_placement > 1) {
+      return trace_error("terminal-reply record is invalid");
+    }
+    std::optional<std::uint32_t> placement_id;
+    if (*has_placement != 0) {
+      const auto value = take_le<std::uint32_t>(bytes);
+      if (!value || *value == 0)
+        return trace_error("terminal-reply record is invalid");
+      placement_id = *value;
+    }
+    auto status = take_string(bytes);
+    if (!status || status->empty() || !bytes.empty())
+      return trace_error("terminal-reply record is invalid");
+    for (const unsigned char c : *status) {
+      if (c < 0x20 || c > 0x7e)
+        return trace_error("terminal-reply record is invalid");
+    }
+    return TerminalReplyRecord{
+        TerminalReply{*image_id, placement_id, std::move(*status)}};
+  }
+  if (*type == 1) {
+    const auto severity = take_le<std::uint8_t>(bytes);
+    auto source = take_string(bytes);
+    auto message = take_string(bytes);
+    if (!severity || !source || !message || !bytes.empty() ||
+        !valid_severity(*severity)) {
+      return trace_error("terminal-reply error record is invalid");
+    }
+    return TerminalReplyRecord{ErrorEvent{static_cast<Severity>(*severity),
+                                           std::move(*source),
+                                           std::move(*message)}};
+  }
+  return trace_error("terminal-reply record has an unknown type");
 }
 
 auto encode_end(TraceEnd end) -> std::vector<std::uint8_t> {

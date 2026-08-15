@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -201,6 +202,110 @@ TEST_CASE("encoded: chunking obeys the protocol's framing rules",
   }
 }
 
+TEST_CASE("encoded: opaque transfers request one correlated final reply",
+          "[encoded][kitty][reply]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const auto big = blob(5000);
+  const EncodedImage img{ImageFormat::Png, as_span(big), Extent{50, 25}};
+  REQUIRE(d.draw_image(Rect{0, 0, 8, 4}, img));
+  d.flush();
+
+  const auto chunks = transmit_chunks(apcs(out));
+  REQUIRE(chunks.size() >= 2);
+  for (std::size_t i = 0; i < chunks.size(); ++i) {
+    const bool last = i + 1 == chunks.size();
+    CHECK(chunks[i].keys.find(last ? "q=0" : "q=2") !=
+          std::string::npos);
+  }
+}
+
+TEST_CASE("encoded: region state commits only after the matching reply",
+          "[encoded][kitty][reply][failure]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const EncodedImage first{ImageFormat::Png, png_bytes(), Extent{2, 2}};
+  const auto changed_bytes = blob(97, 3);
+  const EncodedImage changed{ImageFormat::Png, as_span(changed_bytes),
+                             Extent{2, 2}};
+
+  REQUIRE(d.draw_image(Rect{0, 0, 2, 2}, first));
+  d.flush();
+  out.clear();
+
+  // Identical work coalesces while the terminal decides. Different work is
+  // refused before wire or slot state changes.
+  REQUIRE(d.draw_image(Rect{0, 0, 2, 2}, first));
+  const auto busy = d.draw_image(Rect{0, 0, 2, 2}, changed);
+  REQUIRE_FALSE(busy);
+  CHECK(busy.error().severity == Severity::Warning);
+  d.flush();
+  CHECK(out.find("f=100") == std::string::npos);
+
+  // p= names a placement operation, not the image-scoped a=t above. Sharing
+  // i= is insufficient correlation: this reply must leave the transfer busy.
+  d.consume_reply(termforge::TerminalReply{1, 7, "OK"});
+  CHECK(d.take_driver_events().empty());
+  const auto still_busy = d.draw_image(Rect{0, 0, 2, 2}, changed);
+  REQUIRE_FALSE(still_busy);
+
+  d.consume_reply(termforge::TerminalReply{1, std::nullopt, "EINVAL"});
+  const auto errors = d.take_driver_events();
+  REQUIRE(errors.size() == 1);
+  CHECK(errors.front().severity == Severity::Warning);
+  out.clear();
+  REQUIRE(d.draw_image(Rect{0, 0, 2, 2}, first));
+  d.flush();
+  CHECK(out.find("f=100") != std::string::npos);
+
+  d.consume_reply(termforge::TerminalReply{1, std::nullopt, "OK"});
+  out.clear();
+  REQUIRE(d.draw_image(Rect{0, 0, 2, 2}, first));
+  d.flush();
+  CHECK(out.find("f=100") == std::string::npos);
+}
+
+TEST_CASE("encoded: timed-out ids stay quarantined until their late reply",
+          "[encoded][kitty][reply][failure]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const EncodedImage img{ImageFormat::Png, png_bytes(), Extent{2, 2}};
+  REQUIRE(d.draw_image(Rect{0, 0, 2, 2}, img));
+  for (int frame = 0; frame < 120; ++frame) d.flush();
+
+  const auto errors = d.take_driver_events();
+  REQUIRE(errors.size() == 1);
+  CHECK(errors.front().message.find("timed out") != std::string::npos);
+  out.clear();
+  REQUIRE(d.draw_image(Rect{1, 0, 2, 2}, img));
+  d.flush();
+  CHECK(out.find("i=2") != std::string::npos);
+
+  d.consume_reply(termforge::TerminalReply{1, std::nullopt, "OK"});
+  CHECK(d.take_driver_events().empty());
+}
+
+TEST_CASE("encoded: a placement-mode change cannot commit an old upload",
+          "[encoded][kitty][reply][failure]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const EncodedImage img{ImageFormat::Png, png_bytes(), Extent{2, 2}};
+  REQUIRE(d.draw_image(Rect{0, 0, 2, 2}, img));
+  d.flush();
+
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  d.flush();
+  d.consume_reply(termforge::TerminalReply{1, std::nullopt, "OK"});
+  out.clear();
+  REQUIRE(d.draw_image(Rect{0, 0, 2, 2}, img));
+  d.flush();
+  CHECK(out.find("f=100") != std::string::npos);
+}
+
 TEST_CASE("encoded: s=/v= carry the DECLARED extent, because we never parse",
           "[encoded][kitty]") {
   // The payload is a genuine 2x2 PNG whose header says so. The caller declares
@@ -313,6 +418,7 @@ TEST_CASE("encoded: two different payloads of the same size are two images",
                        EncodedImage{ImageFormat::Png, as_span(a), Extent{8, 8}}));
   d.flush();
   REQUIRE(d.last_frame_bytes().image_transmit > 0);
+  d.consume_reply(termforge::TerminalReply{1, std::nullopt, "OK"});
 
   REQUIRE(d.draw_image(Rect{0, 0, 4, 4},
                        EncodedImage{ImageFormat::Png, as_span(b), Extent{8, 8}}));

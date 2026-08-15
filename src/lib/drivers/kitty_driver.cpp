@@ -168,7 +168,8 @@ enum class ChunkTransfer { DirectImage, AnimationFrame };
 
 template <typename FirstChunk>
 auto append_chunked(std::string& out, std::span<const std::byte> payload,
-                    ChunkTransfer transfer, FirstChunk first_chunk) -> void {
+                    ChunkTransfer transfer, bool request_reply,
+                    FirstChunk first_chunk) -> void {
   const std::string b64 = detail::base64_encode(payload);
   constexpr std::size_t kChunkSize = 4096;
   static_assert(kChunkSize % 4 == 0,
@@ -179,14 +180,20 @@ auto append_chunked(std::string& out, std::span<const std::byte> payload,
   while (offset < b64.size() || first) {
     const auto chunk = std::string_view{b64}.substr(offset, kChunkSize);
     const bool more = (offset + kChunkSize) < b64.size();
+    const int quiet = request_reply && !more ? 0 : 2;
     if (first) {
-      first_chunk(chunk, more);
+      first_chunk(chunk, more, quiet);
       first = false;
     } else {
       switch (transfer) {
         case ChunkTransfer::DirectImage:
           // a=t continuation chunks inherit the action and carry only m=.
-          out += std::format("\033_Gm={};{}\033\\", more ? 1 : 0, chunk);
+          if (request_reply) {
+            out += std::format("\033_Gm={},q={};{}\033\\", more ? 1 : 0,
+                               quiet, chunk);
+          } else {
+            out += std::format("\033_Gm={};{}\033\\", more ? 1 : 0, chunk);
+          }
           break;
         case ChunkTransfer::AnimationFrame:
           // Kitty requires the animation action on every frame-data APC. Keep
@@ -194,8 +201,13 @@ auto append_chunked(std::string& out, std::span<const std::byte> payload,
           // continuation before restoring the opener's saved control data, so
           // a bare a=f continuation finalizes a chunked root edit as a new
           // frame and leaves the displayed root unchanged (#261).
-          out += std::format("\033_Ga=f,r=1,m={};{}\033\\", more ? 1 : 0,
-                             chunk);
+          if (request_reply) {
+            out += std::format("\033_Ga=f,r=1,m={},q={};{}\033\\",
+                               more ? 1 : 0, quiet, chunk);
+          } else {
+            out += std::format("\033_Ga=f,r=1,m={};{}\033\\",
+                               more ? 1 : 0, chunk);
+          }
           break;
       }
     }
@@ -322,9 +334,10 @@ auto KittyDriver::clamp_dest(Rect cells, bool& clamped) const noexcept -> Rect {
   return dest;
 }
 
-auto KittyDriver::region_slot(Rect dest) -> RegionSlot& {
+auto KittyDriver::region_slot(Rect dest)
+    -> std::expected<RegionSlot*, ErrorEvent> {
   const std::uint64_t key = region_key(dest.x, dest.y, dest.w, dest.h);
-  if (auto it = m_regions.find(key); it != m_regions.end()) return it->second;
+  if (auto it = m_regions.find(key); it != m_regions.end()) return &it->second;
 
   RegionSlot slot;
   slot.rect = dest;
@@ -333,9 +346,22 @@ auto KittyDriver::region_slot(Rect dest) -> RegionSlot& {
     // so regions drawn earlier in this same flush are genuinely older than
     // the new one — evicting them is correct, not the same-frame thrash a
     // frame-granularity clock produced (see issue #7).
-    auto lru = m_regions.begin();
-    for (auto it = m_regions.begin(); it != m_regions.end(); ++it)
-      if (it->second.last_used < lru->second.last_used) lru = it;
+    auto lru = m_regions.end();
+    for (auto it = m_regions.begin(); it != m_regions.end(); ++it) {
+      if (m_pending_replies.contains(it->second.image_id) ||
+          m_quarantined_ids.contains(it->second.image_id)) {
+        continue;
+      }
+      if (lru == m_regions.end() ||
+          it->second.last_used < lru->second.last_used) {
+        lru = it;
+      }
+    }
+    if (lru == m_regions.end()) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "kitty",
+          "draw_image: every region id is awaiting a terminal reply"}};
+    }
     delete_image(lru->second.image_id);
     queue_placeholder_clear(lru->second.rect, lru->second.last_used);
     // Reuse the evicted ids on the spot. This is the same pool the branch
@@ -344,7 +370,8 @@ auto KittyDriver::region_slot(Rect dest) -> RegionSlot& {
     slot.image_id = lru->second.image_id;
     m_regions.erase(lru);
   } else {
-    // The smallest id in [1, kMaxRegionSlots] that no live region is holding.
+    // The smallest id in [1, kMaxRegionSlots] that no live region or
+    // late-reply quarantine is holding.
     //
     // DERIVED FROM THE MAP, not tracked beside it -- pin_payload's bargain, for
     // pin_payload's reason. The counter this replaces owned the fact alone and
@@ -359,13 +386,12 @@ auto KittyDriver::region_slot(Rect dest) -> RegionSlot& {
     // wrong, but the old visual-severity claim was not.
     //
     // THE BOUND IS THE ALGORITHM, not a guard on it. The walk stops at
-    // kMaxRegionSlots and by pigeonhole that id is free when it arrives: this
-    // branch runs only when fewer than kMaxRegionSlots slots are live, and
-    // every live slot holds an id from this same range. So the result is inside
-    // the region pool BY CONSTRUCTION -- which is what makes the two pools
-    // disjoint (kFirstPinnedImageId > kMaxRegionSlots, asserted at the top of
-    // this file) instead of merely usually apart, and why neither allocator
-    // reads the other's map any more. There is nothing left to step over.
+    // kMaxRegionSlots, so any successful result is inside the region pool BY
+    // CONSTRUCTION -- which is what makes the two pools disjoint
+    // (kFirstPinnedImageId > kMaxRegionSlots, asserted at the top of this
+    // file). Before #165 pigeonhole guaranteed a free value whenever this
+    // branch ran. A quarantine can now occupy an otherwise-free value, so the
+    // explicit exhaustion result below is reachable and honest.
     //
     // WHAT THIS DOES NOT FIX: the upload. A new rect is a new key with no
     // content hash to compare against, so motion still costs one full transmit
@@ -389,15 +415,24 @@ auto KittyDriver::region_slot(Rect dest) -> RegionSlot& {
     // vendored subproject, so a downstream building with -Wshadow -Werror
     // compiles THIS file.
     const auto held = [this](std::uint32_t candidate) {
+      if (m_quarantined_ids.contains(candidate)) return true;
       for (const auto& [k, s] : m_regions)
         if (s.image_id == candidate) return true;
       return false;
     };
     std::uint32_t id = 1;
-    while (id < static_cast<std::uint32_t>(kMaxRegionSlots) && held(id)) ++id;
+    while (id <= static_cast<std::uint32_t>(kMaxRegionSlots) && held(id)) ++id;
+    if (id > static_cast<std::uint32_t>(kMaxRegionSlots)) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "kitty",
+          "draw_image: every free region id is quarantined awaiting a late "
+          "terminal reply"}};
+    }
     slot.image_id = id;
   }
-  return m_regions.emplace(key, slot).first->second;
+  slot.serial = ++m_next_region_serial;
+  if (slot.serial == 0) slot.serial = ++m_next_region_serial;
+  return &m_regions.emplace(key, slot).first->second;
 }
 
 auto KittyDriver::preferred_pixel_extent(Rect cells) const noexcept -> Extent {
@@ -478,7 +513,7 @@ auto KittyDriver::draw_image(Rect cells, const Image& image, PlacementFit fit)
     return ok;
   }
   return draw_payload(cells, std::as_bytes(image.pixels()), kFormatRgba32,
-                      Extent{image.width(), image.height()}, fit);
+                      Extent{image.width(), image.height()}, fit, false);
 }
 
 auto KittyDriver::draw_image(Rect cells, const EncodedImage& image)
@@ -517,7 +552,7 @@ auto KittyDriver::draw_image(Rect cells, const EncodedImage& image,
     return ok;
   }
   return draw_payload(cells, image.bytes, wire_format(image.format),
-                      image.pixels, fit);
+                      image.pixels, fit, image.format == ImageFormat::Png);
 }
 
 // ── resident images (#109) ──────────────────────────────────────────────────
@@ -533,7 +568,7 @@ auto KittyDriver::pin_image(const Image& image)
         ErrorEvent{Severity::Warning, "kitty", "pin_image: empty image"}};
   }
   return pin_payload(std::as_bytes(image.pixels()), kFormatRgba32,
-                     Extent{image.width(), image.height()});
+                     Extent{image.width(), image.height()}, false);
 }
 
 auto KittyDriver::pin_image(const EncodedImage& image)
@@ -546,11 +581,13 @@ auto KittyDriver::pin_image(const EncodedImage& image)
       !ok) {
     return std::unexpected{ok.error()};
   }
-  return pin_payload(image.bytes, wire_format(image.format), image.pixels);
+  return pin_payload(image.bytes, wire_format(image.format), image.pixels,
+                     image.format == ImageFormat::Png);
 }
 
 auto KittyDriver::pin_payload(std::span<const std::byte> payload,
-                              int format_code, Extent px)
+                              int format_code, Extent px,
+                              bool request_reply)
     -> std::expected<PinnedImage, ErrorEvent> {
   // Downward from the configured ceiling, leaving the region pool the bottom
   // of the range. The two walks run towards each other and stop at their own
@@ -559,13 +596,11 @@ auto KittyDriver::pin_payload(std::span<const std::byte> payload,
   // no slack between them. The static_assert below the constants orders them,
   // which is all that is needed and less than a gap would be.
   //
-  // Derived from the live map rather than tracked alongside it. A counter plus
-  // a free list would be two containers agreeing about a fact only one of them
-  // owns -- and an id pushed to the free list on a path that forgot to erase
-  // the entry (or the reverse) hands one terminal-side image to two live
-  // handles, enforced by nothing but two adjacent lines staying adjacent. The
-  // scan costs at most kMaxPinnedImages probes on an operation an application
-  // performs at cold start, which is the cheapest invariant this file has.
+  // Derived from the live map plus the late-reply quarantine rather than from
+  // a counter/free list. A quarantined id is intentionally unavailable even
+  // though no live handle owns it: reusing it would let an old reply commit a
+  // stranger's image. The scan costs at most kMaxPinnedImages probes on an
+  // operation an application performs at cold start.
   //
   // ONE POOL IS CONSULTED SINCE #190, and that is a strengthening rather than a
   // relaxation. region_slot derives every region id from [1, kMaxRegionSlots]
@@ -576,20 +611,19 @@ auto KittyDriver::pin_payload(std::span<const std::byte> payload,
   // so a MOVING region reached this range in about four seconds -- it was the
   // price of an id allocator that could not give an id back.
   //
-  // THE REFUSAL IS THE SCAN'S, and it used to be asked twice. "All the resident
-  // slots are in use" is a fact about this one map; computing it once as a size
-  // and again as a search is the same two-containers-one-fact shape the
-  // paragraph above objects to, one level up, and two computations of one
-  // predicate can disagree. So the walk running off the bottom of the pool IS
-  // the pool being full, and it says so with the message the cap check used to.
+  // THE REFUSAL IS THE SCAN'S. Running off the bottom means every id is live
+  // or quarantined; either way none can safely name this new payload.
   std::uint32_t id = kFirstPinnedImageId + kMaxPinnedImages - 1;
-  while (id >= kFirstPinnedImageId && m_pinned.contains(id)) --id;
+  while (id >= kFirstPinnedImageId &&
+         (m_pinned.contains(id) || m_quarantined_ids.contains(id))) {
+    --id;
+  }
   if (id < kFirstPinnedImageId) {
     return std::unexpected{ErrorEvent{
         Severity::Warning, "kitty",
-        std::format("pin_image: all {} resident slots are in use -- unpin "
-                    "one, or ask max_pinned_images() before committing to an "
-                    "art set",
+        std::format("pin_image: all {} resident ids are unavailable -- unpin "
+                    "one, wait for quarantined late replies, or ask "
+                    "max_pinned_images() before committing to an art set",
                     kMaxPinnedImages)}};
   }
 
@@ -597,16 +631,21 @@ auto KittyDriver::pin_payload(std::span<const std::byte> payload,
   // bytes sit in m_buf until the next flush() -- pin_image does not write, it
   // queues, exactly like every draw does.
   const std::size_t before = m_buf.size();
-  transmit(payload, format_code, px, id);
+  transmit(payload, format_code, px, id, request_reply);
   tally_image_transmit(m_buf.size() - before);
 
   const std::uint32_t serial = ++m_next_pin_serial;
+  const auto hash = detail::payload_hash(payload, px, format_code);
   m_pinned.emplace(id, PinnedEntry{.px = px,
                                    .format_code = format_code,
-                                   .content_hash =
-                                       detail::payload_hash(payload, px,
-                                                            format_code),
+                                   .content_hash = request_reply ? 0 : hash,
+                                   .accepted = !request_reply,
                                    .serial = serial});
+  if (request_reply) {
+    m_pending_replies.emplace(
+        id, PendingReply{PendingKind::PinTransmit, 0, serial, hash,
+                         m_flush_count});
+  }
   return PinnedImage{id, instance_token(), serial};
 }
 
@@ -620,7 +659,7 @@ auto KittyDriver::replace_pinned(PinnedImage image, const Image& frame)
   }
   return replace_payload(image.id, **entry, std::as_bytes(frame.pixels()),
                          kFormatRgba32,
-                         Extent{frame.width(), frame.height()});
+                         Extent{frame.width(), frame.height()}, false);
 }
 
 auto KittyDriver::replace_pinned(PinnedImage image, const EncodedImage& frame)
@@ -633,12 +672,14 @@ auto KittyDriver::replace_pinned(PinnedImage image, const EncodedImage& frame)
     return std::unexpected{ok.error()};
   }
   return replace_payload(image.id, **entry, frame.bytes,
-                         wire_format(frame.format), frame.pixels);
+                         wire_format(frame.format), frame.pixels,
+                         frame.format == ImageFormat::Png);
 }
 
 auto KittyDriver::replace_payload(std::uint32_t id, PinnedEntry& entry,
                                   std::span<const std::byte> payload,
-                                  int format_code, Extent px)
+                                  int format_code, Extent px,
+                                  bool request_reply)
     -> std::expected<void, ErrorEvent> {
   // Root-frame editing composes into the image's existing canvas. Making
   // either property mutable would require an explicit delete/recreate policy,
@@ -656,15 +697,33 @@ auto KittyDriver::replace_payload(std::uint32_t id, PinnedEntry& entry,
         std::format("replace_pinned: image format must remain f={} (got f={})",
                     entry.format_code, format_code)}};
   }
+  if (!entry.accepted) {
+    return std::unexpected{pending_warning("replace_pinned", id)};
+  }
 
   const std::uint64_t hash =
       detail::payload_hash(payload, px, format_code);
+  if (const auto pending = m_pending_replies.find(id);
+      pending != m_pending_replies.end()) {
+    if (pending->second.kind == PendingKind::PinnedReplace &&
+        pending->second.serial == entry.serial &&
+        pending->second.candidate_hash == hash) {
+      return {};
+    }
+    return std::unexpected{pending_warning("replace_pinned", id)};
+  }
   if (entry.content_hash == hash) return {};
 
   const std::size_t before = m_buf.size();
-  replace_root_frame(payload, format_code, px, id);
+  replace_root_frame(payload, format_code, px, id, request_reply);
   tally_image_transmit(m_buf.size() - before);
-  entry.content_hash = hash;
+  if (request_reply) {
+    m_pending_replies.emplace(
+        id, PendingReply{PendingKind::PinnedReplace, 0, entry.serial, hash,
+                         m_flush_count});
+  } else {
+    entry.content_hash = hash;
+  }
   return {};
 }
 
@@ -747,6 +806,8 @@ auto KittyDriver::unpin_image(PinnedImage image)
   if (!entry) return std::unexpected{entry.error()};
 
   const std::size_t before = m_buf.size();
+  if (m_pending_replies.erase(image.id) != 0)
+    m_quarantined_ids.insert(image.id);
   // d=I frees the data AND every placement of it, so the placements need no
   // separate escape -- only their bookkeeping has to go.
   delete_image(image.id);
@@ -764,6 +825,11 @@ auto KittyDriver::invalidate_images() noexcept -> void {
   // The terminal has already discarded these resources.  Emitting d=I/d=i
   // would address ids whose meaning is no longer ours, and retaining the maps
   // would let old handles place missing data.  Clear the beliefs only.
+  for (const auto& [id, pending] : m_pending_replies) {
+    (void)pending;
+    m_quarantined_ids.insert(id);
+  }
+  m_pending_replies.clear();
   m_regions.clear();
   m_pinned.clear();
   m_pin_places.clear();
@@ -780,6 +846,8 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
     -> std::expected<void, ErrorEvent> {
   auto entry = resolve_pin(image, "draw_pinned");
   if (!entry) return std::unexpected{entry.error()};
+  if (!(*entry)->accepted)
+    return std::unexpected{pending_warning("draw_pinned", image.id)};
   if (cells.empty()) {
     return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
                                       "draw_pinned: empty destination rect"}};
@@ -897,6 +965,8 @@ auto KittyDriver::retain_pinned(Rect cells, PinnedImage image,
     -> std::expected<void, ErrorEvent> {
   auto entry = resolve_pin(image, "retain_pinned");
   if (!entry) return std::unexpected{entry.error()};
+  if (!(*entry)->accepted)
+    return std::unexpected{pending_warning("retain_pinned", image.id)};
   if (cells.empty()) {
     return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
                                       "retain_pinned: empty destination rect"}};
@@ -954,7 +1024,8 @@ auto KittyDriver::retain_pinned(Rect cells, PinnedImage image,
 }
 
 auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
-                               int format_code, Extent px, PlacementFit fit)
+                               int format_code, Extent px, PlacementFit fit,
+                               bool request_reply)
     -> std::expected<void, ErrorEvent> {
   bool clamped = false;
   const Rect dest = clamp_dest(cells, clamped);
@@ -992,14 +1063,36 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   // disjoint sub-ranges of m_buf, which only grows until flush() clears it.
   ImageTally tally{*this, m_buf.size()};
 
-  auto& slot = region_slot(dest);
+  auto resolved_slot = region_slot(dest);
+  if (!resolved_slot) return std::unexpected{resolved_slot.error()};
+  auto& slot = **resolved_slot;
+  if (m_quarantined_ids.contains(slot.image_id)) {
+    return std::unexpected{pending_warning("draw_image", slot.image_id)};
+  }
   bool content_changed = false;
-  if (const auto hash = detail::payload_hash(payload, px, format_code);
-      hash != slot.content_hash) {
+  const auto hash = detail::payload_hash(payload, px, format_code);
+  if (const auto pending = m_pending_replies.find(slot.image_id);
+      pending != m_pending_replies.end()) {
+    const auto key = region_key(dest.x, dest.y, dest.w, dest.h);
+    if (pending->second.kind != PendingKind::RegionTransmit ||
+        pending->second.region_key != key ||
+        pending->second.serial != slot.serial ||
+        pending->second.candidate_hash != hash) {
+      return std::unexpected{pending_warning("draw_image", slot.image_id)};
+    }
+  } else if (hash != slot.content_hash) {
     const std::size_t before = m_buf.size();
-    transmit(payload, format_code, px, slot.image_id);
+    transmit(payload, format_code, px, slot.image_id, request_reply);
     tally.transmitted = m_buf.size() - before;
-    slot.content_hash = hash;
+    if (request_reply) {
+      m_pending_replies.emplace(
+          slot.image_id,
+          PendingReply{PendingKind::RegionTransmit,
+                       region_key(dest.x, dest.y, dest.w, dest.h), slot.serial,
+                       hash, m_flush_count});
+    } else {
+      slot.content_hash = hash;
+    }
     content_changed = true;
   }
   slot.last_used = ++m_clock;  // per-draw: strictly increasing within a frame
@@ -1033,7 +1126,108 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   return {};
 }
 
+auto KittyDriver::pending_warning(std::string_view operation,
+                                  std::uint32_t image_id) const -> ErrorEvent {
+  return ErrorEvent{
+      Severity::Warning, "kitty",
+      std::format("{}: image {} is awaiting a terminal acknowledgement",
+                  operation, image_id)};
+}
+
+auto KittyDriver::finish_pending(std::uint32_t image_id,
+                                 const PendingReply& pending, bool success,
+                                 std::string_view status, bool timed_out)
+    -> void {
+  switch (pending.kind) {
+    case PendingKind::RegionTransmit: {
+      const auto it = m_regions.find(pending.region_key);
+      if (it != m_regions.end() && it->second.image_id == image_id &&
+          it->second.serial == pending.serial) {
+        if (success) {
+          it->second.content_hash = pending.candidate_hash;
+        } else {
+          it->second.content_hash = 0;
+          it->second.placed = false;
+        }
+      }
+      break;
+    }
+    case PendingKind::PinTransmit: {
+      const auto it = m_pinned.find(image_id);
+      if (it != m_pinned.end() && it->second.serial == pending.serial) {
+        if (success) {
+          it->second.content_hash = pending.candidate_hash;
+          it->second.accepted = true;
+        } else {
+          std::erase_if(m_pin_places, [&](const auto& item) {
+            return item.second.image_id == image_id;
+          });
+          m_pinned.erase(it);
+        }
+      }
+      break;
+    }
+    case PendingKind::PinnedReplace: {
+      const auto it = m_pinned.find(image_id);
+      if (success && it != m_pinned.end() &&
+          it->second.serial == pending.serial) {
+        it->second.content_hash = pending.candidate_hash;
+      }
+      break;
+    }
+  }
+
+  if (!success) {
+    push_driver_event(ErrorEvent{
+        Severity::Warning, "kitty",
+        timed_out
+            ? std::format("image {} acknowledgement timed out after 120 "
+                          "flushes; its id is quarantined until a late reply",
+                          image_id)
+            : std::format("terminal rejected image {}: {}", image_id,
+                          status)});
+  }
+  if (timed_out) m_quarantined_ids.insert(image_id);
+}
+
+auto KittyDriver::expire_pending_replies() -> void {
+  constexpr std::uint64_t kReplyTimeoutFrames = 120;
+  std::vector<std::uint32_t> expired;
+  for (const auto& [id, pending] : m_pending_replies) {
+    if (m_flush_count - pending.issued_flush >= kReplyTimeoutFrames)
+      expired.push_back(id);
+  }
+  for (const auto id : expired) {
+    const auto it = m_pending_replies.find(id);
+    if (it == m_pending_replies.end()) continue;
+    const PendingReply pending = it->second;
+    m_pending_replies.erase(it);
+    finish_pending(id, pending, false, "timeout", true);
+  }
+}
+
+auto KittyDriver::consume_reply(const TerminalReply& reply) -> void {
+  // Every operation this driver requests a reply for is image-scoped: a=t or
+  // a=f carries i= but no p=. A placement-scoped response sharing the image
+  // id belongs to different work and must neither commit a pending transfer
+  // nor release its late-reply quarantine.
+  if (reply.placement_id) return;
+  const auto pending = m_pending_replies.find(reply.image_id);
+  if (pending == m_pending_replies.end()) {
+    // A timed-out or explicitly retired operation keeps the id unavailable
+    // until its one late answer arrives. The answer cannot safely mutate
+    // state: the operation was already rolled back and may have been deleted.
+    m_quarantined_ids.erase(reply.image_id);
+    return;
+  }
+  const PendingReply operation = pending->second;
+  m_pending_replies.erase(pending);
+  finish_pending(reply.image_id, operation, reply.ok(), reply.status, false);
+}
+
 void KittyDriver::flush() {
+  ++m_flush_count;
+  expire_pending_replies();
   // Region GC: any slot still tracked but not drawn since the last collection
   // has disappeared from the UI (a closed dialog, a removed widget). A
   // classic placement would otherwise float above the text grid
@@ -1075,6 +1269,20 @@ void KittyDriver::flush() {
 
 void KittyDriver::set_placement_mode(PlacementMode mode) {
   if (mode == m_mode) return;
+  // A region transmit and this mode transition cannot both commit. The
+  // transition deletes classic region data and forces every region to upload
+  // again; a later OK for the old upload must not restore its hash and make
+  // that forced retry disappear. Retire those operations and hold their ids
+  // until the late answers arrive. Pin data and root-frame edits survive a
+  // placement-mode change, so their pending operations remain valid.
+  for (auto it = m_pending_replies.begin(); it != m_pending_replies.end();) {
+    if (it->second.kind == PendingKind::RegionTransmit) {
+      m_quarantined_ids.insert(it->first);
+      it = m_pending_replies.erase(it);
+    } else {
+      ++it;
+    }
+  }
   // A slot placed in Classic has placed=true but no virtual placement.
   // Switching to UnicodePlaceholders would then emit placeholder cells
   // referencing a placement that was never created (nothing renders, and
@@ -1175,7 +1383,8 @@ auto KittyDriver::gc_regions() -> void {
   // rect and flush prepends its spaces before the already-built cell diff, so
   // same-frame replacement text follows rather than being erased (#201).
   for (auto it = m_regions.begin(); it != m_regions.end();) {
-    if (it->second.last_used <= m_frame_start_clock) {
+    if (it->second.last_used <= m_frame_start_clock &&
+        !m_pending_replies.contains(it->second.image_id)) {
       queue_placeholder_clear(it->second.rect, it->second.last_used);
       delete_image(it->second.image_id);
       it = m_regions.erase(it);
@@ -1271,12 +1480,13 @@ auto KittyDriver::prepend_placeholder_clears() -> std::size_t {
 // ── Kitty APC protocol ──────────────────────────────────────────────────────
 
 auto KittyDriver::transmit(std::span<const std::byte> payload, int format_code,
-                           Extent px, std::uint32_t id) -> void {
+                           Extent px, std::uint32_t id,
+                           bool request_reply) -> void {
   // Initial image transmission makes terminal-side ownership real; root-frame
   // replacement below can only operate on an image this path already created.
   m_transmitted = true;
-  append_chunked(m_buf, payload, ChunkTransfer::DirectImage,
-                 [&](std::string_view chunk, bool more) {
+  append_chunked(m_buf, payload, ChunkTransfer::DirectImage, request_reply,
+                 [&](std::string_view chunk, bool more, int quiet) {
                    // First chunk: full transmission parameters.
                    // a=t (transmit only, no display — display happens via
                    // placeholders), t=d (direct), f=<32 RGBA | 100 PNG>,
@@ -1287,24 +1497,27 @@ auto KittyDriver::transmit(std::span<const std::byte> payload, int format_code,
                    // Emitted for both anyway: kitty ignores them where they do
                    // not apply, and one format string beats two that can drift.
                    m_buf += std::format(
-                       "\033_Ga=t,t=d,f={},i={},s={},v={},m={},q=2;{}\033\\",
-                       format_code, id, px.w, px.h, more ? 1 : 0, chunk);
+                       "\033_Ga=t,t=d,f={},i={},s={},v={},m={},q={};{}\033\\",
+                       format_code, id, px.w, px.h, more ? 1 : 0, quiet,
+                       chunk);
                  });
 }
 
 auto KittyDriver::replace_root_frame(std::span<const std::byte> payload,
                                      int format_code, Extent px,
-                                     std::uint32_t id) -> void {
+                                     std::uint32_t id,
+                                     bool request_reply) -> void {
   m_transmitted = true;
-  append_chunked(m_buf, payload, ChunkTransfer::AnimationFrame,
-                 [&](std::string_view chunk, bool more) {
+  append_chunked(m_buf, payload, ChunkTransfer::AnimationFrame, request_reply,
+                 [&](std::string_view chunk, bool more, int quiet) {
                    // a=f transmits animation frame data. r=1 edits the existing
                    // root frame and X=1 replaces rather than alpha-blending its
                    // full canvas. Unlike a=t under the same image id, this
                    // operation leaves placements intact.
                    m_buf += std::format(
-                       "\033_Ga=f,t=d,f={},i={},s={},v={},r=1,X=1,m={},q=2;{}\033\\",
-                       format_code, id, px.w, px.h, more ? 1 : 0, chunk);
+                       "\033_Ga=f,t=d,f={},i={},s={},v={},r=1,X=1,m={},q={};{}\033\\",
+                       format_code, id, px.w, px.h, more ? 1 : 0, quiet,
+                       chunk);
                  });
 }
 

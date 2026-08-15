@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # png_repro.sh — the empirical gate for #163's pre-encoded transmit path.
 #
-# Run inside a real kitty-graphics terminal (kitty, ghostty, wezterm, konsole):
+# Run inside each real terminal in the acceptance matrix: kitty, ghostty,
+# wezterm, konsole, xterm, GNOME Terminal, and a bare TTY. The last three are
+# negative controls: no image and no Kitty reply is the expected result.
 #
 #   ./tools/png_repro.sh          # every stanza, with a pause between each
 #   ./tools/png_repro.sh 5        # ONE stanza, alone, with no pauses
@@ -23,11 +25,12 @@
 # whether a real terminal ACCEPTS what we emit — only a real terminal can.
 # That is what this script is for.
 #
-# Every command uses q=0 so the terminal REPORTS errors instead of swallowing
-# them, and each response is echoed. "OK" means accepted. Note that TermForge
-# itself emits q=2 in normal operation, which means a rejected payload is
-# SILENT in production (see #163's follow-up) — all the more reason to settle
-# acceptance here.
+# Every PNG command uses q=0 on its final chunk so the terminal REPORTS errors
+# instead of swallowing them, and each response is echoed. "OK" means accepted.
+# This is the production policy since #165: intermediate chunks remain q=2,
+# while the final PNG chunk requests the reply that commits driver state. Raw
+# RGBA remains q=2 because its length is validated locally and no terminal
+# decoder is involved.
 #
 # ── the three uncertainties this answers ────────────────────────────────────
 #

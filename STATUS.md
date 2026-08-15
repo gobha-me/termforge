@@ -6,7 +6,42 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-15, latest)
 
-**Release candidate: v0.33.0 — explicit resident-image invalidation.** #113
+**Release candidate: v0.34.0 — correlated Kitty graphics replies.** #165
+closes the opaque-payload blind spot without adding a decoder. `Input` now
+recognizes bounded Kitty APC replies as terminal control-plane records and
+keeps them out of application `Event`s. `App` passes replies to the selected
+driver before ordinary input, including when a structured `EventSource`
+replaces terminal keystrokes. Trace schema 4 records normalized replies in
+that replacement case; schemas 1–3 remain readable.
+
+Raw RGBA remains locally validated and byte-identical. Opaque PNG transmit,
+pin and root-frame edit operations use `q=2` on intermediate chunks and `q=0`
+on the final chunk. Kitty holds one correlated pending operation per image id
+and generation: `OK` commits the candidate hash, a terminal error emits a
+`Warning` and rolls back the relevant belief, and different work refuses
+without mutation while the id is pending. Immediate API success means
+"validated and queued"; an opaque pin cannot be used until its initial `OK`.
+A rejected region retries, a rejected pin becomes stale, and a rejected root
+edit keeps its last accepted frame. After 120 driver flushes, an unanswered
+operation warns, rolls back and quarantines its numeric id until the late reply
+arrives.
+
+The local GCC and Clang Release `-Werror` builds each pass all 67 tests;
+ASan+UBSan passes the same matrix. Both compilers pass the `subdir`, `install`
+and `vendored` consumer paths. Focused mutations of APC recognition,
+replacement-source routing, placement/image correlation and timeout quarantine
+all fail their owning suites, and `tools/png_repro.sh --dump` verifies the
+offline wire generator. Because this changes Kitty protocol bytes, the
+required real-emulator matrix remains a human gate before merge: Kitty,
+Ghostty, WezTerm, Konsole, xterm, GNOME Terminal and a bare TTY.
+
+**Next:** finish the validation matrix, open the #165 PR, obtain the live
+emulator report, require hosted PR and exact-main CI green, then publish
+v0.34.0. #112 follows; #140 remains ordered after both by its owner decision.
+
+## Previous stable release: v0.33.0
+
+**v0.33.0 — explicit resident-image invalidation.** #113
 adds a payload-free lifecycle boundary for transitions that can discard
 terminal-side image data. `SIGCONT` stages `SuspendResume` automatically;
 embedding code reports `Reattach` or `TerminalReset` through the loop-thread
@@ -36,12 +71,8 @@ the serial that stales reused ids.
 complete 320×180 Persistent image without a hole or stale placement. Through
 tmux 3.4, detach/reattach followed by the lifecycle notification restored the
 ANSI enhanced frame cleanly. Both sessions terminated without visible residue.
-The hosted PR and exact-main matrices remain for the release candidate.
-
-**Next:** merge the #113 PR after all hosted checks pass, require the exact
-merge commit's main matrix to pass, publish v0.33.0, and refresh ignored task
-memory. Then return to the priority queue; #140 remains ordered after #165 and
-#112 by its recorded owner decision.
+The release shipped on 2026-08-15 after the hosted PR and exact-main matrices
+passed.
 
 ## Previous stable release: v0.32.0
 

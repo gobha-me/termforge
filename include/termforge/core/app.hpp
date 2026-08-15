@@ -669,7 +669,9 @@ class App {
   auto test_pump(std::initializer_list<std::string_view> chunks) -> void {
     for (auto chunk : chunks)
       if (!chunk.empty()) m_input.feed(chunk);
+    collect_terminal_replies(false);
     m_input.flush();
+    dispatch_terminal_replies();
     for (auto& ev : m_input.poll()) dispatch_event(ev);
   }
   auto test_take_resize() -> bool {
@@ -1096,6 +1098,8 @@ class App {
   auto stop_event_source() noexcept -> void;
   auto poll_event_source() -> int;
   auto dispatch_source_events() -> void;
+  auto collect_terminal_replies(bool record_normalized) -> void;
+  auto dispatch_terminal_replies() -> void;
   auto discard_terminal_input() -> int;
   auto fail_event_source(ErrorEvent error) -> void;
   auto apply_source_capabilities(InputCapabilities next) -> void;
@@ -1145,6 +1149,7 @@ class App {
   auto record_posted(const Event& event) -> void;
   auto record_source_event(const Event& event) -> void;
   auto record_input_capabilities(InputCapabilities capabilities) -> void;
+  auto record_terminal_reply(const TerminalReplyRecord& reply) -> void;
   auto playback_begin_frame() -> void;
   auto playback_apply_frame_transitions() -> void;
   auto playback_feed(TracePoint point) -> int;
@@ -1165,6 +1170,7 @@ class App {
   std::unique_ptr<Screen> m_screen;
   std::unique_ptr<Renderer> m_renderer;
   Input m_input;
+  std::deque<TerminalReplyRecord> m_terminal_replies;
   std::unique_ptr<EventSource> m_event_source;
   EventSourceMode m_event_source_mode{EventSourceMode::ReplaceTerminal};
   InputCapabilities m_source_capabilities{};

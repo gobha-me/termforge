@@ -32,6 +32,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -54,6 +55,7 @@ using termforge::PlacementFit;
 using termforge::Rect;
 using termforge::Severity;
 using termforge::TerminalDriver;
+using termforge::TerminalReply;
 
 namespace {
 
@@ -130,6 +132,8 @@ TEST_CASE("pinned: 1800 changed frames replace one root without re-placement",
   const auto pinned =
       d.pin_image(EncodedImage{ImageFormat::Png, bytes, pixels});
   REQUIRE(pinned.has_value());
+  d.flush();
+  d.consume_reply(TerminalReply{pinned->id, std::nullopt, "OK"});
   REQUIRE(d.draw_pinned(cells, *pinned).has_value());
   d.flush();
 
@@ -147,6 +151,7 @@ TEST_CASE("pinned: 1800 changed frames replace one root without re-placement",
       break;
     }
     d.flush();
+    d.consume_reply(TerminalReply{pinned->id, std::nullopt, "OK"});
   }
   CAPTURE(failed_frame);
   REQUIRE(failed_frame == -1);
@@ -190,6 +195,7 @@ TEST_CASE("pinned: every chunk keeps a root replacement on frame one",
       EncodedImage{ImageFormat::Png, first, Extent{320, 180}});
   REQUIRE(pinned.has_value());
   d.flush();
+  d.consume_reply(TerminalReply{pinned->id, std::nullopt, "OK"});
   out.clear();
 
   REQUIRE(d.replace_pinned(
@@ -631,6 +637,9 @@ TEST_CASE("pinned: the 256-image policy carries GLOAM's 246-image inventory",
   }
   REQUIRE(held.size() == kGloamImages);
   CHECK(ids.size() == kGloamImages);
+  d.flush();
+  for (const auto& image : held)
+    d.consume_reply(TerminalReply{image.id, std::nullopt, "OK"});
 
   // Pins allocate down from id 272, so the first handle makes the newly
   // reachable 24-bit SGR branch observable through the public API.
@@ -654,6 +663,7 @@ TEST_CASE("pinned: the 256-image policy carries GLOAM's 246-image inventory",
   REQUIRE(replacement->id == high.id);
   CHECK(replacement->serial != high.serial);
   d.flush();
+  d.consume_reply(TerminalReply{replacement->id, std::nullopt, "OK"});
 
   out.clear();
   const auto stale_draw = d.draw_pinned(Rect{2, 3, 1, 1}, high);
@@ -715,6 +725,68 @@ TEST_CASE("pinned: a pre-encoded plate pins on its own wire format",
   CHECK(tfsupport::key_value(ts[0], "i") == std::to_string(p->id));
   // Shipped verbatim: the terminal reassembles exactly what was handed over.
   CHECK(tfsupport::reassemble(out) == png);
+}
+
+TEST_CASE("pinned: an opaque pin becomes usable only after OK",
+          "[pinned][kitty][encoded][reply][failure]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const std::vector<std::byte> png(32, std::byte{0x89});
+  const auto p = d.pin_image(EncodedImage{ImageFormat::Png, png, Extent{4, 4}});
+  REQUIRE(p.has_value());
+  d.flush();
+
+  const auto early = d.draw_pinned(Rect{0, 0, 1, 1}, *p);
+  REQUIRE_FALSE(early);
+  CHECK(early.error().message.find("awaiting a terminal acknowledgement") !=
+        std::string::npos);
+
+  d.consume_reply(TerminalReply{p->id, std::nullopt, "OK"});
+  REQUIRE(d.draw_pinned(Rect{0, 0, 1, 1}, *p));
+  CHECK(d.take_driver_events().empty());
+
+  const auto failed = d.pin_image(
+      EncodedImage{ImageFormat::Png, png, Extent{4, 4}});
+  REQUIRE(failed.has_value());
+  d.flush();
+  d.consume_reply(TerminalReply{failed->id, std::nullopt, "EBADPNG"});
+  const auto errors = d.take_driver_events();
+  REQUIRE(errors.size() == 1);
+  CHECK(errors.front().severity == Severity::Warning);
+  const auto stale = d.draw_pinned(Rect{1, 0, 1, 1}, *failed);
+  REQUIRE_FALSE(stale);
+  CHECK(stale.error().message.find("handle is stale") != std::string::npos);
+}
+
+TEST_CASE("pinned: a rejected opaque replacement keeps the accepted root",
+          "[pinned][kitty][encoded][reply][failure]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const std::vector<std::byte> first(32, std::byte{0x11});
+  const std::vector<std::byte> second(32, std::byte{0x22});
+  const auto p = d.pin_image(
+      EncodedImage{ImageFormat::Png, first, Extent{4, 4}});
+  REQUIRE(p.has_value());
+  d.flush();
+  d.consume_reply(TerminalReply{p->id, std::nullopt, "OK"});
+  out.clear();
+
+  REQUIRE(d.replace_pinned(
+      *p, EncodedImage{ImageFormat::Png, second, Extent{4, 4}}));
+  const auto competing = d.replace_pinned(
+      *p, EncodedImage{ImageFormat::Png, first, Extent{4, 4}});
+  REQUIRE_FALSE(competing);
+  d.flush();
+  d.consume_reply(TerminalReply{p->id, std::nullopt, "EINVAL"});
+  REQUIRE(d.take_driver_events().size() == 1);
+
+  out.clear();
+  REQUIRE(d.replace_pinned(
+      *p, EncodedImage{ImageFormat::Png, first, Extent{4, 4}}));
+  d.flush();
+  CHECK(frame_updates_of(out, p->id) == 0);
 }
 
 TEST_CASE("pinned: Exact is enforced against the extent declared at pin time",
@@ -907,6 +979,11 @@ TEST_CASE("pinned: a driver that never heard of pinning refuses honestly",
   // keep doing so — teaching it about this interface destroys what it is for.
   tfsupport::LegacyDriver legacy;
   TerminalDriver& base = legacy;
+
+  // #165 is non-pure for the same compatibility reason. A legacy tier has no
+  // asynchronous protocol and therefore consumes nothing and reports nothing.
+  base.consume_reply(TerminalReply{1, std::nullopt, "OK"});
+  CHECK(base.take_driver_events().empty());
 
   CHECK(base.max_pinned_images() == 0);
   // #113 is also non-pure.  A legacy tier has no resident belief to clear, so

@@ -236,17 +236,31 @@ class MutableSpriteApp final : public PixelApp {
         return;
       }
       m_pin = *pinned;
+      m_reply_due = true;
+      ++m_frame;
+      return;
     } else if (!d.replace_pinned(m_pin, frame)) {
       ++refusals;
       return;
     }
+    m_reply_due = true;
     if (!d.draw_pinned(Rect{1, 1, 18, 6}, m_pin)) ++refusals;
     ++m_frame;
+  }
+
+ protected:
+  auto read_available(char* out, int max) -> int override {
+    constexpr std::string_view reply{"\033_Gi=272;OK\033\\"};
+    if (!m_reply_due || max < static_cast<int>(reply.size())) return 0;
+    std::copy(reply.begin(), reply.end(), out);
+    m_reply_due = false;
+    return static_cast<int>(reply.size());
   }
 
  private:
   int m_frame{0};
   PinnedImage m_pin{};
+  bool m_reply_due{false};
 };
 
 // The #108 counterpart to SpriteApp. Pinning is intentionally Kitty-only, so
