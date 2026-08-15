@@ -65,6 +65,15 @@ file is the tactical version.
   state — one driver is one session, and a `static` here makes a server unable
   to bill any single connection. If you add an emit path that is image traffic,
   tally it; if you add one that is not, it is already counted.
+- **Image residency is committed at the same accepted-write boundary** (#112).
+  `ImageResidency` reports a driver's belief, never invented terminal capacity:
+  region-cache and pinned counts plus the exact source payload bytes believed
+  resident (compressed input bytes for opaque PNG, not decoded memory). Kitty
+  stages ordered, generation-qualified mutations because one frame may evict
+  and reuse an id; `emit_frame` acceptance commits them, sink refusal discards
+  them, and a later Kitty rejection/timeout invalidates or restores the relevant
+  belief. The ledger is per-driver instance state. `invalidate_images` clears it
+  without wire, while an accepted shutdown delete-all clears it with wire.
 - **`emit_frame` is the write boundary AND the meter boundary** (#178). They
   are one function on `TerminalDriver` precisely so that "sent but not metered"
   and "metered but not sent" are both unspellable — a driver's `flush()` is

@@ -109,6 +109,17 @@ completed items.
 > keeps serials monotonic so old handles stay stale across id reuse, and leaves
 > ordinary resize as placement-only. `SIGCONT` is captured with prior/newer
 > handler ownership, and trace schema 3 replays the same lifecycle transition.
+>
+> **2026-08-15 — correlated image replies.** **#165** keeps Kitty APC replies
+> on the control plane and correlates opaque uploads by image id and generation.
+> Rejection and timeout roll back the relevant belief and quarantine late-reply
+> ids; trace schema 4 records normalized replies.
+>
+> **2026-08-15 — driver-accounted image residency.** **#112** exposes committed
+> region-cache/pinned counts and exact source payload bytes through the driver
+> interface. Kitty applies ordered, generation-qualified changes only after an
+> accepted frame write and reconciles later opaque rejection/timeout without
+> claiming to know terminal memory capacity.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
@@ -128,6 +139,10 @@ completed items.
 - Resident-image invalidation (#113) — explicit suspend/reattach/reset events,
   payload-free Kitty state reset, stale-handle refusal, and automatic
   Persistent-region recreation while resize retains payloads
+- Correlated Kitty replies (#165) — opaque transmit/edit acknowledgement,
+  rejection rollback, timeout quarantine and control-plane trace replay
+- Driver-accounted residency (#112) — per-session committed region/pin counts
+  and exact source payload bytes, including sink and reply rollback
 - forge-top (#16, #230, #231) — live `/proc` monitor, deterministic all-tier
   harness, and top-compatible controls and information hierarchy
 - forge-top CPU grid (#238) — separator-aware per-core layout with

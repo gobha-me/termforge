@@ -90,7 +90,7 @@ auto TerminalDriver::shutdown() -> void {
 constexpr std::string_view kSyncBegin = "\033[?2026h";
 constexpr std::string_view kSyncEnd = "\033[?2026l";
 
-auto TerminalDriver::emit_frame(std::string_view bytes) -> void {
+auto TerminalDriver::emit_frame(std::string_view bytes) -> bool {
   // #148: the synchronized-output wrap. ONE write either way -- a driver
   // never calls emit_frame() for the begin and end separately, so the
   // contract cannot be split around itself. The bytes are prepended and
@@ -106,11 +106,14 @@ auto TerminalDriver::emit_frame(std::string_view bytes) -> void {
     wrapped += kSyncEnd;
     frame = wrapped;
   }
+  bool accepted = true;
   if (m_sink != nullptr) {
     if (auto r = m_sink->write(std::span<const char>{frame.data(),
                                                      frame.size()});
-        !r && !m_output_error.has_value()) {
-      m_output_error = std::move(r.error());  // first failure wins
+        !r) {
+      accepted = false;
+      if (!m_output_error.has_value())
+        m_output_error = std::move(r.error());  // first failure wins
     }
   } else {
     std::fwrite(frame.data(), 1, frame.size(), stdout);
@@ -122,6 +125,7 @@ auto TerminalDriver::emit_frame(std::string_view bytes) -> void {
   // and tally_frame's remainder puts them in cells, which is the honest
   // answer -- they are not image traffic.
   tally_frame(frame.size());
+  return accepted;
 }
 
 }  // namespace termforge

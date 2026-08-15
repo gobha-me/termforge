@@ -666,11 +666,21 @@ auto draw_pinned(Rect cells, PinnedImage, PlacementFit) -> std::expected<...>;
 auto draw_pinned(Rect cells, PinnedImage) -> std::expected<...>;  // Stretch
 auto unpin_image(PinnedImage) -> std::expected<void, ErrorEvent>;
 [[nodiscard]] auto max_pinned_images() const noexcept -> std::size_t;
+[[nodiscard]] auto residency() const noexcept -> ImageResidency;
 ```
 
 `max_pinned_images()` is the capability query *and* the budget: a tier that
 cannot pin answers 0, so there is no `supports_pinning()` that could disagree
 with what `pin_image` actually does. Ask before committing to an art set.
+
+`residency()` is the driver's accepted-write snapshot. It splits region-cache
+and pinned image counts and reports their combined source payload bytes. Those
+bytes are exact inputs — raw RGBA bytes or the compressed PNG payload — rather
+than an estimate of decoded terminal memory. Queueing a draw does not change the
+snapshot; its frame must first be accepted by the sink. Opaque uploads are then
+counted as believed resident while their reply is pending, and a later rejection
+or timeout reconciles that belief. The default is empty for non-resident and
+legacy third-party tiers.
 
 ### Mutable content keeps the handle and placement (#196, #261)
 
@@ -752,7 +762,8 @@ retransmit because nothing was discarded.
 ### The budget is 256 images, as a compatibility policy
 
 Not terminal memory — per-operation replies say whether one request succeeded,
-not how much capacity remains, and reporting that is #112's job. The original
+not how much capacity remains, and `ImageResidency` deliberately reports source
+payload usage rather than inventing that capacity. The original
 ceiling was attributed to `emit_id_as_sgr`: the 24-bit `38;2` form appeared to be
 ignored. #199 isolated the variables on real kitty and disproved that finding.
 With the correct U+10EEEE placeholder, both `38;5` and `38;2` render, including
@@ -762,8 +773,9 @@ nothing about the colour encoding.
 #205 gives that finite policy a concrete contract: the flagship tier guarantees
 256 pinned images. That covers GLOAM's frozen 246-image art inventory with ten
 slots of headroom without claiming to know the terminal's byte capacity; byte
-accounting remains #112. Ids come from two adjacent pools: regions allocate
-upward in `[1, 16]`; pins allocate downward in `[17, 272]`, giving
+accounting is available separately through `residency()`. Ids come from two
+adjacent pools: regions allocate upward in `[1, 16]`; pins allocate downward in
+`[17, 272]`, giving
 `KittyDriver::kMaxPinnedImages == 256`.
 
 **The pools are disjoint by construction, and neither allocator reads the
@@ -812,10 +824,10 @@ a monotonic `serial`. All three are load-bearing:
 
 ### What this does not deliver
 
-**More than 256 resident images.** The fixed compatibility floor is an
-application-visible guarantee, not a terminal-memory measurement. Raising it
-again or making it configurable belongs with residency accounting in #112; a
-caller-owned id range remains #110.
+**More than 256 pinned images.** The fixed compatibility floor is an
+application-visible guarantee, not a terminal-memory measurement. Residency
+accounting makes current usage visible but does not raise or configure the
+policy; a caller-owned id range remains #110.
 
 **Two live placements of one pinned image under `UnicodePlaceholders`.** A
 placeholder cell encodes the image id and no placement id, so two of them are
@@ -824,8 +836,9 @@ are two ids — so pinning is what owes the refusal, and it refuses with a
 `Warning` rather than rendering something arbitrary. Classic placements carry
 `p=` on the wire and are unaffected.
 
-**Residency accounting.** How many bytes the terminal is holding, and how close
-to its limit, is #112.
+**Terminal memory capacity.** `source_payload_bytes` is intentionally not the
+terminal's decoded allocation, and the protocol has supplied no capacity to
+compare it with.
 
 **Deduplication between handles.** Two `pin_image` calls on identical pixels
 are two handles, two ids and two uploads. Collapsing them would make
