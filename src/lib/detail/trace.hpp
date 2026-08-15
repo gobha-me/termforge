@@ -13,7 +13,7 @@
 
 namespace termforge::detail {
 
-inline constexpr std::uint16_t kTraceSchemaVersion{3};
+inline constexpr std::uint16_t kTraceSchemaVersion{4};
 
 enum class TraceKind : std::uint8_t {
   Frame = 1,
@@ -24,6 +24,7 @@ enum class TraceKind : std::uint8_t {
   Source = 6,
   InputCapabilities = 7,
   ImageInvalidation = 8,
+  TerminalReply = 9,
 };
 
 enum class TracePhase : std::uint8_t {
@@ -80,6 +81,10 @@ auto encode_input_capabilities(InputCapabilities capabilities)
     -> std::vector<std::uint8_t>;
 auto decode_input_capabilities(const TraceRecord& record)
     -> std::expected<InputCapabilities, ErrorEvent>;
+auto encode_terminal_reply(const TerminalReplyRecord& reply)
+    -> std::vector<std::uint8_t>;
+auto decode_terminal_reply(const TraceRecord& record)
+    -> std::expected<TerminalReplyRecord, ErrorEvent>;
 auto encode_end(TraceEnd end) -> std::vector<std::uint8_t>;
 auto decode_end(const TraceRecord& record) -> std::expected<TraceEnd, ErrorEvent>;
 

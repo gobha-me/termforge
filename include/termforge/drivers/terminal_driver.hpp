@@ -16,6 +16,7 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <expected>
 #include <memory>
 #include <optional>
@@ -517,6 +518,14 @@ class TerminalDriver {
   virtual auto flush() -> void = 0;
   [[nodiscard]] virtual auto capabilities() const noexcept -> Capabilities = 0;
 
+  // Consume a terminal control-plane acknowledgement (#165). NON-PURE so an
+  // out-of-tree driver written before reply handling keeps compiling; a tier
+  // with no asynchronous protocol has nothing to do. Driver-generated
+  // failures are queued in base-owned state and drained by App before ordinary
+  // input, keeping them on the normal ErrorEvent path.
+  virtual auto consume_reply(const TerminalReply& /*reply*/) -> void {}
+  [[nodiscard]] auto take_driver_events() noexcept -> std::deque<ErrorEvent>;
+
   // Bytes emitted by the most recent flush(), and since construction (#139).
   //
   // Instance state, never static (#147): one driver is one session, so a
@@ -666,6 +675,7 @@ class TerminalDriver {
   [[nodiscard]] auto sync_updates() const noexcept -> bool { return m_sync_updates; }
 
  protected:
+  auto push_driver_event(ErrorEvent event) -> void;
   // The per-tier terminal cleanup run by shutdown(). Default: none -- most
   // tiers owe the terminal nothing at end of session. Bytes emitted here go
   // through emit_frame, so they are metered and sink-routed like a frame.
@@ -755,6 +765,7 @@ class TerminalDriver {
   ByteSink* m_sink{nullptr};
   StringSink m_string_sink{};
   std::optional<ErrorEvent> m_output_error{};
+  std::deque<ErrorEvent> m_driver_events;
   // Latched by shutdown() after per-tier cleanup, immediately before the
   // borrowed output sink is detached.
   bool m_shutdown{false};

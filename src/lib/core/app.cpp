@@ -439,6 +439,21 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
         }
         last_phase = record.phase;
         break;
+      case detail::TraceKind::TerminalReply:
+        if ((record.phase != detail::TracePhase::InputPump &&
+             record.phase != detail::TracePhase::Wait) ||
+            record.frame >= expected_frame) {
+          return std::unexpected{
+              trace_warning("play: terminal-reply record phase is invalid")};
+        }
+        if (record.phase < last_phase) {
+          return std::unexpected{
+              trace_warning("play: record phases are out of order")};
+        }
+        last_phase = record.phase;
+        if (auto reply = detail::decode_terminal_reply(record); !reply)
+          return std::unexpected{std::move(reply.error())};
+        break;
       case detail::TraceKind::Source:
         if ((record.phase != detail::TracePhase::InputPump &&
              record.phase != detail::TracePhase::Wait) ||
@@ -567,6 +582,7 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
   const bool prior_frame_active = m_frame_active;
   const bool prior_render_requested = m_render_requested;
   auto prior_source_events = std::move(m_source_events);
+  auto prior_terminal_replies = std::move(m_terminal_replies);
   auto prior_source_held = std::move(m_source_held);
   const bool prior_source_woke = m_source_woke;
 
@@ -579,6 +595,7 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
   m_esc_waited = false;
   m_got_bytes = false;
   m_source_events.clear();
+  m_terminal_replies.clear();
   m_source_held.clear();
   m_source_woke = false;
   m_playback = std::move(playback);
@@ -597,6 +614,7 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
     m_frame_active = prior_frame_active;
     m_render_requested = prior_render_requested;
     m_source_events = std::move(prior_source_events);
+    m_terminal_replies = std::move(prior_terminal_replies);
     m_source_held = std::move(prior_source_held);
     m_source_woke = prior_source_woke;
     m_playback.reset();
@@ -749,6 +767,11 @@ auto App::record_input_capabilities(InputCapabilities capabilities) -> void {
       m_trace_point, detail::encode_input_capabilities(capabilities));
 }
 
+auto App::record_terminal_reply(const TerminalReplyRecord& reply) -> void {
+  record_payload(static_cast<std::uint8_t>(detail::TraceKind::TerminalReply),
+                 m_trace_point, detail::encode_terminal_reply(reply));
+}
+
 auto App::playback_begin_frame() -> void {
   if (!m_playback || m_playback->failure) return;
   if (m_playback->next >= m_playback->trace.records.size()) {
@@ -827,7 +850,8 @@ auto App::playback_feed(TracePoint point) -> int {
     const bool feed_kind =
         record.kind == detail::TraceKind::Input ||
         record.kind == detail::TraceKind::Source ||
-        record.kind == detail::TraceKind::InputCapabilities;
+        record.kind == detail::TraceKind::InputCapabilities ||
+        record.kind == detail::TraceKind::TerminalReply;
     if (!feed_kind || record.phase != wanted || record.frame != m_frame_index) {
       break;
     }
@@ -841,6 +865,7 @@ auto App::playback_feed(TracePoint point) -> int {
     if (record.kind == detail::TraceKind::Input) {
       const auto* chars = reinterpret_cast<const char*>(record.payload.data());
       m_input.feed(std::string_view{chars, record.payload.size()});
+      collect_terminal_replies(false);
       fed_terminal_bytes = fed_terminal_bytes || !record.payload.empty();
       if (record.payload.size() >
           static_cast<std::size_t>(std::numeric_limits<int>::max() - total)) {
@@ -848,6 +873,15 @@ auto App::playback_feed(TracePoint point) -> int {
       } else {
         total += static_cast<int>(record.payload.size());
       }
+    } else if (record.kind == detail::TraceKind::TerminalReply) {
+      auto reply = detail::decode_terminal_reply(record);
+      if (!reply) {
+        m_playback->failure = std::move(reply.error());
+        quit();
+        return total;
+      }
+      m_terminal_replies.push_back(std::move(*reply));
+      if (total < std::numeric_limits<int>::max()) ++total;
     } else if (record.kind == detail::TraceKind::Source) {
       auto event = detail::decode_event(record);
       if (!event) {
@@ -1132,14 +1166,40 @@ auto App::dispatch_source_events() -> void {
   for (const auto& event : ready) dispatch_event(event);
 }
 
+auto App::collect_terminal_replies(bool record_normalized) -> void {
+  auto replies = m_input.poll_replies();
+  for (auto& reply : replies) {
+    if (record_normalized) record_terminal_reply(reply);
+    m_terminal_replies.push_back(std::move(reply));
+  }
+}
+
+auto App::dispatch_terminal_replies() -> void {
+  std::deque<TerminalReplyRecord> ready;
+  ready.swap(m_terminal_replies);
+  for (auto& record : ready) {
+    if (auto* reply = std::get_if<TerminalReply>(&record)) {
+      if (m_driver) m_driver->consume_reply(*reply);
+    } else {
+      dispatch_event(std::get<ErrorEvent>(record));
+    }
+  }
+  if (!m_driver) return;
+  for (auto& error : m_driver->take_driver_events()) dispatch_event(error);
+}
+
 auto App::discard_terminal_input() -> int {
   char buf[256];
   int total{0};
   while (true) {
     const int n = read_available(buf, sizeof(buf));
     if (n <= 0) break;
+    m_input.feed(std::string_view{buf, static_cast<std::size_t>(n)});
+    collect_terminal_replies(true);
+    (void)m_input.poll();
     total += n;
   }
+  if (total > 0) m_got_bytes = true;
   return total;
 }
 
@@ -1522,6 +1582,8 @@ auto App::frame_step() -> void {
     auto output_error = m_driver->take_output_error();
     finish_pixel_frame(!output_error.has_value());
     if (output_error) m_input.push_error(std::move(*output_error));
+    for (auto& error : m_driver->take_driver_events())
+      m_input.push_error(std::move(error));
   }
   m_trace_point = TracePoint::Wait;
   wait_frame(frame_start, rendered);
@@ -1694,6 +1756,7 @@ auto App::drain_input() -> int {
     const std::string_view bytes{buf, static_cast<std::size_t>(n)};
     record_input(bytes);
     m_input.feed(bytes);
+    collect_terminal_replies(false);
     total += n;
   }
   if (total > 0) m_got_bytes = true;
@@ -1877,12 +1940,19 @@ auto App::stop_app() noexcept -> void {
 }
 
 auto App::pump_input() -> void {
-  if (!m_playback && m_event_source &&
-      m_event_source_mode == EventSourceMode::ReplaceTerminal)
+  const bool replacing_terminal =
+      !m_playback && m_event_source &&
+      m_event_source_mode == EventSourceMode::ReplaceTerminal;
+  // Errors queued by the framework (sink refusal, requirement transitions,
+  // driver warnings) share Input's Event queue but are not terminal
+  // keystrokes. Preserve them before the replacement route discards decoded
+  // terminal Events below.
+  std::deque<Event> preserved_events;
+  if (replacing_terminal) preserved_events = m_input.poll();
+  if (replacing_terminal)
     (void)discard_terminal_input();
   else
     (void)drain_input();
-  (void)poll_event_source();
 
   // Only flush at a true input boundary, and never while an escape sequence
   // may still be in flight — flushing a lone ESC commits it as an Escape
@@ -1896,6 +1966,10 @@ auto App::pump_input() -> void {
     m_got_bytes = false;
   }
   if (!m_input.esc_pending()) m_esc_waited = false;
+  if (replacing_terminal) (void)m_input.poll();
+  (void)poll_event_source();
+  dispatch_terminal_replies();
+  for (auto& ev : preserved_events) dispatch_event(ev);
   for (auto& ev : m_input.poll()) dispatch_event(ev);
   dispatch_source_events();
 }

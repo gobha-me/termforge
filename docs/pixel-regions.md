@@ -610,15 +610,33 @@ Keying on the declared extent alone is the other tempting shortcut, and it is
 worse: every plate an application bakes to a fixed size hashes identically, so
 only the first one ever uploads.
 
-### The blind spot: `q=2`
+### Opaque success is correlated (#165)
 
-TermForge emits `q=2`, which suppresses the terminal's responses. Until now the
-payload was RGBA the library built itself and could not be malformed. An
-opaque application-supplied payload can be — and a terminal that rejects it
-says so on a channel nobody is reading, so `draw_image` returns success and
-nothing renders. Fixing it needs a response reader, which the driver does not
-have; `tools/png_repro.sh` runs the same sequences under `q=0` so a human can
-see what a real terminal actually says.
+Raw RGBA remains locally length-validated and uses `q=2`: there is no decoder
+failure left for the terminal to reveal. PNG is opaque, so each transmit or
+root-frame edit uses `q=2` on intermediate chunks and `q=0` on the final chunk.
+`Input` recognizes the returned Kitty APC as control-plane traffic, keeps it
+out of application `Event`s, and `App` offers it to the selected driver before
+ordinary input.
+
+The drawing APIs remain asynchronous: immediate success means the request was
+validated and queued, while a later terminal rejection arrives as an
+`ErrorEvent`. An opaque PNG pin returns its handle immediately, but that handle
+refuses draw, retain and replace operations until the initial transmit says
+`OK`; a rejection makes the handle stale.
+
+Kitty keys one pending operation by image id, generation, operation kind and
+candidate content hash. `OK` commits the candidate. An error produces a
+`Warning`: a region forgets the rejected content and retries, a rejected pin
+invalidates its handle, and a rejected root edit retains the last accepted
+frame. Different work for an id that is still pending refuses before wire or
+state mutation. An unanswered operation times out after 120 driver flushes;
+the driver rolls it back and quarantines the numeric id until the late reply
+arrives, preventing that reply from committing a later image that reused it.
+
+`tools/png_repro.sh` remains the empirical protocol check: it lets a human
+compare the exact bytes and terminal replies across real emulators without
+adding a PNG parser to the library.
 
 ### What this does not deliver
 
@@ -733,9 +751,9 @@ retransmit because nothing was discarded.
 
 ### The budget is 256 images, as a compatibility policy
 
-Not terminal memory — the terminal's real capacity is unknowable under `q=2`
-with no response reader, and reporting it is #112's job. The original ceiling
-was attributed to `emit_id_as_sgr`: the 24-bit `38;2` form appeared to be
+Not terminal memory — per-operation replies say whether one request succeeded,
+not how much capacity remains, and reporting that is #112's job. The original
+ceiling was attributed to `emit_id_as_sgr`: the 24-bit `38;2` form appeared to be
 ignored. #199 isolated the variables on real kitty and disproved that finding.
 With the correct U+10EEEE placeholder, both `38;5` and `38;2` render, including
 an image id of 300. The previous runs used U+10FEEE, so their blank output said

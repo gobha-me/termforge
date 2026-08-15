@@ -165,12 +165,90 @@ class SourceProbe : public App {
 class TerminalAndSourceProbe final : public SourceProbe {
  public:
   std::string terminal_bytes;
+  std::deque<std::string> terminal_reads;
+
+ protected:
+  auto read_available(char* out, int max) -> int override {
+    if (m_read_boundary) {
+      m_read_boundary = false;
+      return 0;
+    }
+    if (!terminal_reads.empty()) {
+      auto& bytes = terminal_reads.front();
+      if (bytes.empty() || max <= 0) return 0;
+      const int count = std::min(max, static_cast<int>(bytes.size()));
+      std::copy_n(bytes.data(), count, out);
+      bytes.erase(0, static_cast<std::size_t>(count));
+      if (bytes.empty()) {
+        terminal_reads.pop_front();
+        m_read_boundary = true;
+      }
+      return count;
+    }
+    if (terminal_bytes.empty() || max <= 0) return 0;
+    const int count =
+        std::min(max, static_cast<int>(terminal_bytes.size()));
+    std::copy_n(terminal_bytes.data(), count, out);
+    terminal_bytes.erase(0, static_cast<std::size_t>(count));
+    return count;
+  }
+
+ private:
+  bool m_read_boundary{false};
+};
+
+class ReplyDriver final : public TerminalDriver {
+ public:
+  explicit ReplyDriver(std::string* order, bool warn_on_flush = false)
+      : m_order(order), m_warn_on_flush(warn_on_flush) {}
+  auto init() -> std::expected<void, ErrorEvent> override { return {}; }
+  auto draw_text(int, int, std::string_view, Rgb, Rgb, Attr) -> void override {}
+  auto draw_image(Rect, const Image&)
+      -> std::expected<void, ErrorEvent> override {
+    return {};
+  }
+  [[nodiscard]] auto preferred_pixel_extent(Rect cells) const noexcept
+      -> Extent override {
+    return Extent{cells.w, cells.h};
+  }
+  auto flush() -> void override {
+    emit_frame({});
+    if (std::exchange(m_warn_on_flush, false)) {
+      push_driver_event(ErrorEvent{Severity::Warning, "flush-driver",
+                                   "asynchronous driver warning"});
+    }
+  }
+  [[nodiscard]] auto capabilities() const noexcept -> Capabilities override {
+    return {};
+  }
+  auto consume_reply(const TerminalReply& reply) -> void override {
+    *m_order += 'R';
+    push_driver_event(ErrorEvent{Severity::Warning, "reply-driver",
+                                 reply.status});
+  }
+
+ private:
+  std::string* m_order;
+  bool m_warn_on_flush{false};
+};
+
+class ReplyOrderProbe final : public App {
+ public:
+  auto on_render(Screen&) -> void override {}
+  auto on_event(const Event& event) -> void override {
+    if (std::holds_alternative<ErrorEvent>(event)) order += 'E';
+    if (const auto* key_event = std::get_if<KeyEvent>(&event);
+        key_event && key_event->key == Key::Char) {
+      order += static_cast<char>(key_event->ch);
+    }
+  }
+  std::string terminal_bytes;
+  std::string order;
 
  protected:
   auto read_available(char* out, int max) -> int override {
     if (terminal_bytes.empty() || max <= 0) return 0;
-    const int count =
-        std::min(max, static_cast<int>(terminal_bytes.size()));
+    const int count = std::min(max, static_cast<int>(terminal_bytes.size()));
     std::copy_n(terminal_bytes.data(), count, out);
     terminal_bytes.erase(0, static_cast<std::size_t>(count));
     return count;
@@ -189,6 +267,7 @@ class SocketPair {
 
   [[nodiscard]] auto ok() const noexcept -> bool { return m_ok; }
   [[nodiscard]] auto app_fd() const noexcept -> int { return m_fd[0]; }
+  [[nodiscard]] auto peer_fd() const noexcept -> int { return m_fd[1]; }
 
  private:
   int m_fd[2]{-1, -1};
@@ -300,6 +379,69 @@ TEST_CASE("replacement drains terminal input while composition orders it first",
       REQUIRE(observed[1].ch == U's');
     }
   }
+}
+
+TEST_CASE("replacement still routes terminal replies before source events",
+          "[event-source][mode][order][kitty-reply]") {
+  auto state = make_source_state();
+  queue_events(state, {key(Key::Char, KeyAction::Press, U's')});
+  ReplyOrderProbe app;
+  app.terminal_bytes = "t\033_Gi=7;OK\033\\";
+  app.set_frame_ms(0);
+  REQUIRE(app.set_event_source(std::make_unique<PipeSource>(state),
+                               EventSourceMode::ReplaceTerminal));
+  std::string wire;
+  auto driver = std::make_unique<ReplyDriver>(&app.order);
+  app.test_run_frames(1, 20, 5, &wire, std::move(driver));
+
+  CHECK(app.order == "REs");
+  CHECK(app.terminal_bytes.empty());
+}
+
+TEST_CASE("replacement discards a held Escape without swallowing a later reply",
+          "[event-source][mode][order][kitty-reply][failure]") {
+  auto state = make_source_state();
+  queue_events(state, {key(Key::Char, KeyAction::Press, U's')});
+  TerminalAndSourceProbe app;
+  app.terminal_reads = {"\033", "\033_Gi=7;OK\033\\"};
+  app.set_frame_ms(0);
+  REQUIRE(app.set_event_source(std::make_unique<PipeSource>(state),
+                               EventSourceMode::ReplaceTerminal));
+  std::string wire;
+  std::string reply_order;
+  auto driver = std::make_unique<ReplyDriver>(&reply_order);
+  app.test_run_frames(2, 20, 5, &wire, std::move(driver));
+
+  CHECK(reply_order == "R");
+  const auto observed = key_events(app.events);
+  REQUIRE(observed.size() == 1);
+  CHECK(observed.front().ch == U's');
+  REQUIRE(errors(app.events).size() == 1);
+  CHECK(app.terminal_reads.empty());
+}
+
+TEST_CASE("replacement preserves driver warnings queued by the prior flush",
+          "[event-source][mode][order][kitty-reply][failure]") {
+  auto state = make_source_state();
+  queue_events(state, {key(Key::Char, KeyAction::Press, U's')});
+  TerminalAndSourceProbe app;
+  app.terminal_bytes = "t";
+  app.set_frame_ms(0);
+  REQUIRE(app.set_event_source(std::make_unique<PipeSource>(state),
+                               EventSourceMode::ReplaceTerminal));
+  std::string wire;
+  std::string reply_order;
+  auto driver = std::make_unique<ReplyDriver>(&reply_order, true);
+  app.test_run_frames(2, 20, 5, &wire, std::move(driver));
+
+  const auto observed = errors(app.events);
+  REQUIRE(std::ranges::any_of(observed, [](const ErrorEvent& error) {
+    return error.source == "flush-driver" &&
+           error.severity == Severity::Warning;
+  }));
+  const auto keys = key_events(app.events);
+  REQUIRE(keys.size() == 1);
+  CHECK(keys.front().ch == U's');
 }
 
 TEST_CASE("a malformed source batch is rejected atomically",
@@ -482,7 +624,7 @@ TEST_CASE("source readiness wakes an idle demand loop",
   REQUIRE(state->stops == 1);
 }
 
-TEST_CASE("trace schema 3 replays source events and their input floor",
+TEST_CASE("trace schema 4 replays source events, replies, and their input floor",
           "[event-source][trace]") {
   SocketPair recording_socket;
   REQUIRE(recording_socket.ok());
@@ -494,6 +636,9 @@ TEST_CASE("trace schema 3 replays source events and their input floor",
   recording.require(AppRequirements{.key_release = true});
   REQUIRE(recording.set_event_source(std::make_unique<PipeSource>(state),
                                      EventSourceMode::ReplaceTerminal));
+  constexpr std::string_view terminal{"x\033_Gi=7;OK\033\\"};
+  REQUIRE(::write(recording_socket.peer_fd(), terminal.data(), terminal.size()) ==
+          static_cast<ssize_t>(terminal.size()));
   std::stringstream trace;
   recording.start_recording(trace);
   REQUIRE(recording.run() == 0);
@@ -506,6 +651,9 @@ TEST_CASE("trace schema 3 replays source events and their input floor",
           InputCapabilities{true, true, true, true});
   REQUIRE(std::ranges::any_of(decoded->records, [](const auto& record) {
     return record.kind == detail::TraceKind::Source;
+  }));
+  REQUIRE(std::ranges::any_of(decoded->records, [](const auto& record) {
+    return record.kind == detail::TraceKind::TerminalReply;
   }));
 
   SocketPair playback_socket;

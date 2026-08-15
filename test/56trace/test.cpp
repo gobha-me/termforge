@@ -412,6 +412,30 @@ TEST_CASE("posted modifier keys round-trip through the current trace schema (#20
   REQUIRE(refused.error().message.find("posted key event") != std::string::npos);
 }
 
+TEST_CASE("terminal reply records round-trip without becoming Events",
+          "[trace][kitty-reply]") {
+  for (const TerminalReplyRecord& original : {
+           TerminalReplyRecord{TerminalReply{42, 7, "OK"}},
+           TerminalReplyRecord{ErrorEvent{Severity::Warning, "input",
+                                          "malformed kitty reply"}}}) {
+    detail::TraceRecord record{detail::TraceKind::TerminalReply,
+                               detail::TracePhase::InputPump, 0, 0,
+                               detail::encode_terminal_reply(original)};
+    const auto decoded = detail::decode_terminal_reply(record);
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->index() == original.index());
+    if (const auto* reply = std::get_if<TerminalReply>(&original)) {
+      CHECK(std::get<TerminalReply>(*decoded).image_id == reply->image_id);
+      CHECK(std::get<TerminalReply>(*decoded).placement_id ==
+            reply->placement_id);
+      CHECK(std::get<TerminalReply>(*decoded).status == reply->status);
+    } else {
+      CHECK(std::get<ErrorEvent>(*decoded).message ==
+            std::get<ErrorEvent>(original).message);
+    }
+  }
+}
+
 TEST_CASE("image invalidation records and replays at its frame boundary (#113)",
           "[trace][image][lifecycle]") {
   QuietPipe pipe;
@@ -469,7 +493,7 @@ TEST_CASE("malformed traces are rejected before the App starts", "[trace][failur
   SECTION("unknown schema") {
     std::string broken = artifact.trace;
     REQUIRE(broken.size() > 9);
-    broken[8] = 4;
+    broken[8] = 5;
     const auto [wire, error] = play_bytes(std::move(broken));
     REQUIRE(wire.empty());
     REQUIRE(error.message.find("schema") != std::string::npos);
@@ -521,6 +545,31 @@ TEST_CASE("schema 2 traces remain readable after image invalidation was added",
   std::istringstream input{v2, std::ios::binary};
   const auto decoded = detail::read_trace(input);
   REQUIRE(decoded.has_value());
+}
+
+TEST_CASE("schema 3 traces remain readable after terminal replies were added",
+          "[trace][compatibility]") {
+  const Artifact artifact = make_artifact();
+  std::string v3 = artifact.trace;
+  REQUIRE(v3.size() > 56);
+  v3[8] = 3;
+  v3[9] = 0;
+  std::istringstream input{v3, std::ios::binary};
+  REQUIRE(detail::read_trace(input).has_value());
+}
+
+TEST_CASE("schema 3 refuses terminal replies introduced by schema 4",
+          "[trace][compatibility][failure]") {
+  const Artifact artifact = make_artifact();
+  std::string v3 = artifact.trace;
+  REQUIRE(v3.size() > 56);
+  v3[8] = 3;
+  v3[9] = 0;
+  v3[56] = static_cast<char>(detail::TraceKind::TerminalReply);
+  std::istringstream input{v3, std::ios::binary};
+  const auto decoded = detail::read_trace(input);
+  REQUIRE_FALSE(decoded.has_value());
+  CHECK(decoded.error().message.find("record") != std::string::npos);
 }
 
 TEST_CASE("schema 2 refuses image-invalidation records introduced by schema 3",

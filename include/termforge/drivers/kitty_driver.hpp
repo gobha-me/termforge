@@ -11,18 +11,20 @@
 // does not refresh an existing classic placement when data is replaced).
 // Stale regions are deleted (a=d,d=I) two ways: by LRU eviction when the
 // slot cap is reached, and by the collection in flush() when a region stops
-// being drawn. Both paths give the id back — the eviction reuses it on the
-// spot, the collection returns it to the pool for the next rect that needs
-// one — so ids stay inside the driver's current compatibility budget.
+// being drawn. Both paths normally give the id back — the eviction reuses it
+// on the spot, the collection returns it to the pool for the next rect that
+// needs one. #165's one exception is a timed-out operation: its id stays
+// quarantined until the late reply arrives, so that reply cannot bless a new
+// image that inherited the number.
 //
 // Ids come from two pools and the split is the id budget (#109). Regions
 // allocate upward from 1 and pinned images take the configured range beginning
 // at kFirstPinnedImageId. THE POOLS ARE DISJOINT BY CONSTRUCTION (#190): each
-// allocator DERIVES a free id from its own live map — region_slot walks up from
-// 1 and stops at kMaxRegionSlots, pin_payload walks down from the configured
-// ceiling and stops at kFirstPinnedImageId — and the static_assert in the .cpp
-// orders the two ranges. So neither allocator reads the other's map; there is
-// nothing to step over. Before #190 the region side was a monotonic counter
+// allocator DERIVES a free id from its own live map plus the shared quarantine
+// — region_slot walks up from 1 and stops at kMaxRegionSlots, pin_payload walks
+// down from the configured ceiling and stops at kFirstPinnedImageId — and the
+// static_assert in the .cpp orders the two ranges. So neither allocator reads
+// the other's live map. Before #190 the region side was a monotonic counter
 // that never gave a collected id back, a region that MOVED cost an id per
 // frame, and the ranges met in about four seconds.
 //
@@ -61,6 +63,7 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace termforge {
@@ -158,6 +161,7 @@ class KittyDriver final : public TerminalDriver {
       -> Extent override;
   auto flush() -> void override;
   [[nodiscard]] auto capabilities() const noexcept -> Capabilities override;
+  auto consume_reply(const TerminalReply& reply) -> void override;
 
   // How images are placed (see file comment). Default: Classic. Switching
   // modes resets every region's placement state (classic placements are
@@ -210,6 +214,7 @@ class KittyDriver final : public TerminalDriver {
     std::uint32_t image_id{0};
     std::uint64_t content_hash{0};  // 0 = nothing transmitted yet
     std::uint64_t last_used{0};     // per-draw LRU clock (strictly increasing)
+    std::uint32_t serial{0};        // never reused while a reply can name it
     bool placed{false};             // placement command already emitted
     // Placement state, not content (#137). A fit change invalidates `placed`
     // exactly as a content change does; without it the same image redrawn to
@@ -227,6 +232,7 @@ class KittyDriver final : public TerminalDriver {
     Extent px{};  // the declared extent -- what Exact is enforced against
     int format_code{0};
     std::uint64_t content_hash{0};
+    bool accepted{true};
     // Monotonic per driver and NEVER reused, unlike the map key. Terminal-side
     // image ids are recycled inside the finite public budget, so
     // the key alone cannot tell "this handle's image" from "a later image that
@@ -255,6 +261,16 @@ class KittyDriver final : public TerminalDriver {
     PlacementFit fit{PlacementFit::Stretch};
   };
 
+  enum class PendingKind { RegionTransmit, PinTransmit, PinnedReplace };
+
+  struct PendingReply {
+    PendingKind kind{PendingKind::RegionTransmit};
+    std::uint64_t region_key{0};
+    std::uint32_t serial{0};
+    std::uint64_t candidate_hash{0};
+    std::uint64_t issued_flush{0};
+  };
+
   // RAII byte attribution for a draw path (#139). Everything appended to
   // m_buf during its lifetime is image traffic, split into the payload that
   // was uploaded and everything else. ONE struct rather than one per call
@@ -279,7 +295,8 @@ class KittyDriver final : public TerminalDriver {
 
   // Everything both pin_image overloads share once the payload is in hand.
   auto pin_payload(std::span<const std::byte> payload, int format_code,
-                   Extent px) -> std::expected<PinnedImage, ErrorEvent>;
+                   Extent px, bool request_reply)
+      -> std::expected<PinnedImage, ErrorEvent>;
 
   // Replace the root frame of a pinned image through kitty's animation-frame
   // edit action. Normal a=t retransmission under an existing id deletes that
@@ -288,7 +305,7 @@ class KittyDriver final : public TerminalDriver {
   // before this queues anything so refusal preserves the last good frame.
   auto replace_payload(std::uint32_t id, PinnedEntry& entry,
                        std::span<const std::byte> payload, int format_code,
-                       Extent px)
+                       Extent px, bool request_reply)
       -> std::expected<void, ErrorEvent>;
 
   // The pinned entry `image` names, or a Warning saying which way it is
@@ -309,12 +326,13 @@ class KittyDriver final : public TerminalDriver {
   // the declared pixel extent, emitted as s=/v=. Retransmit with an existing
   // id replaces that image's data on the terminal.
   auto transmit(std::span<const std::byte> payload, int format_code, Extent px,
-                std::uint32_t id) -> void;
+                std::uint32_t id, bool request_reply) -> void;
 
   // Edit the existing root frame in place. This is data transmission, not an
   // image delete/recreate and not a placement edit.
   auto replace_root_frame(std::span<const std::byte> payload, int format_code,
-                          Extent px, std::uint32_t id) -> void;
+                          Extent px, std::uint32_t id,
+                          bool request_reply) -> void;
 
   // Everything both public draw_image overloads share once the payload is in
   // hand: the placeholder clamp, byte attribution, slot keying and LRU, the
@@ -323,7 +341,8 @@ class KittyDriver final : public TerminalDriver {
   // makes "the format participates in image identity" impossible to forget at
   // a call site.
   auto draw_payload(Rect cells, std::span<const std::byte> payload,
-                    int format_code, Extent px, PlacementFit fit)
+                    int format_code, Extent px, PlacementFit fit,
+                    bool request_reply)
       -> std::expected<void, ErrorEvent>;
 
   // Classic placement: position the cursor and place (a=p, C=1), scaled to
@@ -356,9 +375,18 @@ class KittyDriver final : public TerminalDriver {
       -> Rect;
 
   // Fetch (or create, evicting LRU past the cap) the slot for a region. A
-  // created slot's image id is DERIVED from the live map -- the smallest free
-  // id in [1, kMaxRegionSlots] -- never taken from a counter (#190).
-  auto region_slot(Rect dest) -> RegionSlot&;
+  // created slot's image id is DERIVED from the live map and late-reply
+  // quarantine -- the smallest safe id in [1, kMaxRegionSlots] -- never taken
+  // from a counter (#190/#165).
+  auto region_slot(Rect dest) -> std::expected<RegionSlot*, ErrorEvent>;
+
+  auto finish_pending(std::uint32_t image_id, const PendingReply& pending,
+                      bool success, std::string_view status,
+                      bool timed_out) -> void;
+  auto expire_pending_replies() -> void;
+  [[nodiscard]] auto pending_warning(std::string_view operation,
+                                     std::uint32_t image_id) const
+      -> ErrorEvent;
 
   // Retire the text-grid half of a Unicode-placeholder placement (#201).
   // A stale placement is discovered after the frame's cell diff has already
@@ -423,12 +451,14 @@ class KittyDriver final : public TerminalDriver {
 
   PlacementMode m_mode{PlacementMode::Classic};
   // There are deliberately no image-id or placement-id counters here. Image
-  // ids are DERIVED from their live maps (#190): region_slot walks up from 1
-  // and pin_payload walks down from the configured ceiling. Placement ids are
+  // ids are DERIVED from their live maps (#190) plus #165's late-reply
+  // quarantine: region_slot walks up from 1 and pin_payload walks down from
+  // the configured ceiling. Placement ids are
   // scoped per image on the kitty wire (#200): a region owns its image id and
   // always uses p=1, while a pin derives the smallest free positive p= from
   // m_pin_places. The containers own the facts, so collection returns ids
-  // without a second counter or free list having to agree with each erase.
+  // without a counter or free list having to agree with each erase; a timeout
+  // deliberately withholds its id in m_quarantined_ids.
   // Monotonic per-draw clock, advanced ONLY where a draw stamps a slot. It is
   // not a frame counter and not a flush counter: every draw bumps it, so slots
   // drawn within one flush get distinct timestamps and a 17th region evicts the
@@ -445,6 +475,8 @@ class KittyDriver final : public TerminalDriver {
   // Region key (packed x,y,w,h) -> slot. Bounded: LRU-evicted past
   // kMaxRegionSlots, freeing the terminal-side image data too.
   std::unordered_map<std::uint64_t, RegionSlot> m_regions;
+  std::unordered_map<std::uint32_t, PendingReply> m_pending_replies;
+  std::unordered_set<std::uint32_t> m_quarantined_ids;
   // Resident images (#109), keyed on the terminal-side image id. Nothing in
   // gc_regions or region_slot can reach this map -- that is the feature.
   std::unordered_map<std::uint32_t, PinnedEntry> m_pinned;
@@ -457,6 +489,8 @@ class KittyDriver final : public TerminalDriver {
   // handle carries so that an unpinned handle stays refused after its id has
   // been recycled -- see PinnedEntry::serial.
   std::uint32_t m_next_pin_serial{0};
+  std::uint32_t m_next_region_serial{0};
+  std::uint64_t m_flush_count{0};
   // Whether anything was ever uploaded, asked at the transmit path itself.
   // on_shutdown needs the answer and neither map can give it: an unpin queues
   // its delete into m_buf, so an unflushed one leaves the image resident with

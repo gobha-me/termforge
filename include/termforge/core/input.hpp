@@ -38,6 +38,12 @@ class Input {
   // Pop the next decoded event, or nullptr-variant if none pending.
   [[nodiscard]] auto poll() -> std::deque<Event>;
 
+  // Drain terminal control-plane replies separately from application Events
+  // (#165). A malformed Kitty APC is an ErrorEvent in this queue, never a run
+  // of fabricated keypresses. The variant keeps that parser failure on the
+  // same ordered channel as valid replies.
+  [[nodiscard]] auto poll_replies() -> std::deque<TerminalReplyRecord>;
+
   // True while a lone ESC is held awaiting the flush() boundary. The event
   // loop uses this to decide whether it must pay a grace read (giving a
   // split sequence's remainder a chance to arrive) before committing the
@@ -65,9 +71,11 @@ class Input {
 
  private:
   std::deque<Event> m_events;
+  std::deque<TerminalReplyRecord> m_replies;
   std::string m_pending;     // incomplete sequence carried across feed() calls
   bool m_esc_pending{false};  // held lone ESC awaiting the flush() boundary
   bool m_in_paste{false};     // inside a bracketed paste (ESC[200~ .. ESC[201~)
+  bool m_discard_apc{false};  // oversized APC: discard through its ST
   std::string m_paste_buf;    // paste body accumulated until the close bracket
 
   // Decode one unit from the front of `buf`; returns bytes consumed (0 =
@@ -76,6 +84,8 @@ class Input {
 
   auto parse_csi(std::string_view buf) -> std::size_t;  // after ESC [
   auto parse_ss3(std::string_view buf) -> std::size_t;  // after ESC O
+  auto parse_apc(std::string_view buf) -> std::size_t;  // after ESC _
+  auto discard_apc(std::string_view buf) -> std::size_t;
   auto consume_paste(std::string_view buf) -> std::size_t;  // inside a paste
   auto flush_esc() -> void;  // held lone ESC -> Escape keypress
 };
