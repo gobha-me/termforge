@@ -654,7 +654,7 @@ auto unpin_image(PinnedImage) -> std::expected<void, ErrorEvent>;
 cannot pin answers 0, so there is no `supports_pinning()` that could disagree
 with what `pin_image` actually does. Ask before committing to an art set.
 
-### Mutable content keeps the handle and placement (#196)
+### Mutable content keeps the handle and placement (#196, #261)
 
 `replace_pinned` changes the data attached to a handle without allocating a
 new image id or recreating its live placements. On Kitty this is not an
@@ -665,6 +665,13 @@ with `a=f,r=1,X=1`, a full-canvas simple replacement. The initial
 same id, and `draw_pinned` continues to touch the same placement each frame.
 Those keys are the protocol's documented animation-frame edit path:
 <https://sw.kovidgoyal.net/kitty/graphics-protocol/#animation>.
+
+For a chunked edit, every continuation repeats both `a=f` and `r=1`. Kitty's
+loader chooses whether a continuation targets an existing frame before it
+restores the opener's saved control data; repeating only the documented
+`a=f` therefore turns the completed transfer into a new frame 2 and leaves
+the displayed root on frame 1. This is a compatibility workaround for that
+ordering, not a second frame or a terminal-driven animation.
 
 The handle's declared extent and wire format are immutable. A mismatch returns
 a `Warning` before any bytes or bookkeeping change, leaving the last

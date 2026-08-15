@@ -36,9 +36,9 @@
 #      changing KittyDriver.
 #   9  #201 — clear a retired placeholder grid BEFORE same-frame replacement
 #      text, then reuse its id at a new rect. Self-contained.
-#  10  #196 — edit a pinned image's root frame with a=f,r=1,X=1 and verify
-#      that its existing classic placement refreshes without re-placement.
-#      Self-contained.
+#  10  #261 — edit a pinned image's root frame over MULTIPLE chunks with
+#      a=f,r=1,X=1 and verify that its existing classic placement refreshes
+#      without re-placement. Self-contained and crosses the game's protocol seam.
 #
 # All commands use q=0 so kitty REPORTS errors; every response the terminal
 # sends is captured and echoed in readable form. A response of "_Gi=42;OK"
@@ -449,19 +449,46 @@ stanza_9() {
 
 stanza_10() {
   say ""
-  say "== Stanza 10: #196 root-frame edit preserves a classic placement =="
-  say "A RED block appears. After the pause, a=f edits root frame 1 with"
-  say "simple replacement (X=1), with NO delete and NO second placement."
-  send "transmit(red)" \
-    "${ESC}_Ga=t,t=d,f=32,i=47,s=2,v=2,m=0,q=0;${red_b64}${ST}"
+  say "== Stanza 10: #261 chunked root refreshes a classic placement =="
+  say "A RED block appears. Both payloads exceed kitty's 4096-byte encoded"
+  say "chunk limit. The corrected production sequence keeps every edit chunk"
+  say "on root frame 1. There is NO delete and NO second placement."
+
+  # 32x32 RGBA is 4096 raw / 5464 encoded bytes: exactly two APC chunks. The
+  # old 2x2 version stayed below the boundary and therefore could not reproduce
+  # the game freezing on frame 1. Generate the solids here instead of checking
+  # in opaque blobs; the observer can still answer the result by color alone.
+  local red32_b64 green32_b64 pixel
+  red32_b64=$(
+    for ((pixel=0; pixel<1024; pixel++)); do
+      printf '\xff\x00\x00\xff'
+    done |
+      base64 | tr -d '\n'
+  )
+  green32_b64=$(
+    for ((pixel=0; pixel<1024; pixel++)); do
+      printf '\x00\xff\x00\xff'
+    done |
+      base64 | tr -d '\n'
+  )
+
+  local red_wire green_wire
+  red_wire="${ESC}_Ga=t,t=d,f=32,i=47,s=32,v=32,m=1,q=0;${red32_b64:0:4096}${ST}"
+  red_wire+="${ESC}_Gm=0;${red32_b64:4096}${ST}"
+  green_wire="${ESC}_Ga=f,t=d,f=32,i=47,s=32,v=32,r=1,X=1,m=1,q=0;${green32_b64:0:4096}${ST}"
+  # r=1 on the continuation is load-bearing. Kitty decides whether this is a
+  # new or existing frame before restoring the opener's saved control block.
+  green_wire+="${ESC}_Ga=f,r=1,m=0;${green32_b64:4096}${ST}"
+
+  send "transmit(red)" "$red_wire"
   place_below "place(red)   " \
-    "${ESC}_Ga=p,i=47,p=1,c=2,r=2,C=1,q=0${ST}" 2
+    "${ESC}_Ga=p,i=47,p=1,c=4,r=3,C=1,q=0${ST}" 3
   pause "Press Enter to replace the root frame with GREEN..."
-  send "frame(green) " \
-    "${ESC}_Ga=f,t=d,f=32,i=47,s=2,v=2,r=1,X=1,m=0,q=0;${green_b64}${ST}"
-  say "Report: (a) the existing block turned GREEN without a new placement,"
-  say "and (b) whether any response contains ';E'. A block that stays red or"
-  say "disappears is a failure, even if the frame command reports OK."
+  send "frame(green) " "$green_wire"
+  say "Report: (a) the existing block turned GREEN without disappearing or"
+  say "flickering, and (b) whether any response contains ';E'. A block that"
+  say "stays red is the exact #261 failure, even if the command reports OK."
+  say "This stanza now exercises the same multi-chunk path as the game."
 }
 
 if (( ${#stanzas[@]} )); then

@@ -4,41 +4,51 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-14, latest)
+## Where we are (2026-08-15, latest)
 
-**Pending release: v0.29.2 — Kitty image lifecycle contract.** The first,
-offline phase of #113 documents what TermForge currently promises across
-alternate-screen entry and exit, in-session resize, suspend/resume,
-detach/reattach and process death. `test/61imagelifecycle` observes the
-production App cadence: resident payloads survive resize, Unicode placement is
-refreshed without retransmission, normal shutdown sends Kitty `a=d,d=A` through
-the still-live borrowed sink, and retiring a pinned placement uses lowercase
-`d=i` without deleting the image it does not own.
+**Pending release: v0.31.2 — keep chunked Kitty edits on root frame 1.** #261
+was introduced by #259's otherwise necessary continuation fix. Multi-chunk
+`a=f,r=1,X=1` edits repeated `a=f` but not `r=1` after the opener. Kitty
+chooses new-vs-existing frame from each continuation before restoring the
+opener's saved controls, so the successful transfer became new frame 2 and the
+displayed root remained frame 1. The application and driver counters advanced
+normally while the game and Apsis Drift looked frozen.
 
-Review merged current main and fixed the new App case to use the nested
-`App::Size` type. It also narrowed the prose to Kitty's actual one-way mode-1049
-rule (main → alternate clears the alternate buffer; the main buffer preserves
-its images), described the exact conditional cleanup scope of uppercase
-`d=A`, and removed a variant-size assertion that froze the intended absence of
-`ImageInvalidatedEvent` instead of testing behaviour. Removing resize repaint,
-the region delete, or the shutdown uppercase delete makes the focused suite
-fail.
+Every animation-frame continuation now repeats `a=f,r=1`. This preserves
+#259's required action on every chunk while keeping every chunk in the root
+edit operation. It also preserves #196's already live-accepted contract: the
+existing classic placement follows a correct root edit without delete or
+re-placement. The first #262 draft added placement refreshes based on the wrong
+hypothesis; the owner's failed game run and the Kitty handler's ordering
+invalidated that draft, and the extra lifecycle traffic has been removed.
 
-The integration passes 66/66 CTest targets with GCC 14.2 Release `-Werror`
-(including benchmark smoke and the production game benchmark CLI) and 65/65
-with Clang 20.1.8 Release `-Werror`. GCC and Clang each pass the subdirectory,
-installed-package and plain-vendored consumer paths. GCC ASan+UBSan with leak
-detection passes 65/65. No public API or terminal bytes change, so no
-live-emulator gate applies.
+Stanza 10 now uses 32x32 RGBA payloads so both the initial transmission and
+root edit cross the 4096-byte encoded chunk boundary. The offline regression
+requires `r=1` on every replacement chunk and continues to require one image
+id, one placement, no placement/data deletes, verbatim reassembly, and correct
+metering.
 
-**How it got picked:** task #166 gives open contributor PRs priority. #250 is
-the older of the two priority-1 submissions and covers a bounded prerequisite
-for #113; its only compile failure was reviewable locally. #113 stays open:
-the invalidation hook/event, suspend/reattach behaviour and real-pty acceptance
-remain future work.
+Fresh Release `-Werror` builds pass 67/67 GCC 14.2 tests and 66/66 Clang 20.1
+tests; GCC ASan+UBSan with leak detection passes 66/66. Removing `r=1` from
+the continuation kills the focused regression. The 180-frame production game
+workload returns to the intended lifecycle: one image id, one upload, 174 root
+updates, one placement, no deletes, and zero image bytes on all five clean
+frames. The response-enabled stanza dump has 4096/1368-byte edit chunks and no
+delete or second placement.
 
-**Next:** finish hosted validation and release v0.29.2, then review #251 before
-the lower-priority #245 and #249 submissions.
+**Validation complete:** all ten hosted jobs pass. In direct Kitty 0.32.2,
+response-enabled stanza 10 changed the existing red placement to green and the
+60-second production game visibly advanced. The capture sustained 30.12 FPS
+over 1,808 frames with one image id, one upload, 1,747 root updates, one
+placement, no deletes, and zero image bytes on all 60 clean frames. This closes
+#225's deferred direct-Kitty lifecycle and cadence evidence as well as #261's
+presentation gate.
+
+The project owner approved merge after that live gate. Apsis Drift's owning
+session will repin to v0.31.2 and independently confirm the application against
+the release tag; that downstream repin is not a TermForge merge blocker.
+
+**Next:** merge #262 and publish v0.31.2, then refresh the open PR/issue queue.
 
 ## Previous release: v0.29.1
 

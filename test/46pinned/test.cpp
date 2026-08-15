@@ -178,7 +178,7 @@ TEST_CASE("pinned: 1800 changed frames replace one root without re-placement",
   CHECK(placement_deletes_of(out, pinned->id) == 0);
 }
 
-TEST_CASE("pinned: a chunked root replacement reassembles verbatim",
+TEST_CASE("pinned: every chunk keeps a root replacement on frame one",
           "[pinned][kitty][replacement][encoded]") {
   KittyDriver d;
   std::string out;
@@ -202,12 +202,17 @@ TEST_CASE("pinned: a chunked root replacement reassembles verbatim",
   REQUIRE(chunks.size() >= 2);  // 5,000 raw bytes exceed 4,096 encoded bytes.
   for (const auto& chunk : chunks) {
     CHECK(tfsupport::key_value(chunk, "a") == "f");
+    // Kitty chooses new-vs-existing frame from each continuation before it
+    // restores the opener's saved command. Without r=1 here, the final chunk
+    // creates frame 2 and the displayed root remains the first image (#261).
+    CHECK(tfsupport::key_value(chunk, "r") == "1");
   }
 
   CHECK(tfsupport::reassemble(out) == second);
   CHECK(frame_updates_of(out, pinned->id) == 1);
   CHECK(total_data_transmits(out) == 1);
-  CHECK(tfsupport::count_of(out, "\033_Ga=f,m=") >= 1);
+  CHECK(tfsupport::count_of(out, "\033_Ga=f,r=1,m=") >= 1);
+  CHECK(tfsupport::count_of(out, "\033_Ga=f,m=") == 0);
   CHECK(tfsupport::count_of(out, "\033_Gm=") == 0);
   CHECK(d.last_frame_bytes().image_transmit == out.size());
   CHECK(d.last_frame_bytes().image_edit == 0);
