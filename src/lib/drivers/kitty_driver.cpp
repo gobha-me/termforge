@@ -161,9 +161,9 @@ auto region_key(int x, int y, int w, int h) -> std::uint64_t {
 // Both ordinary image transmission and root-frame replacement have identical
 // base64/chunk framing, but kitty gives their continuation APCs different
 // action spelling: an ordinary a=t transfer inherits through bare m= chunks,
-// while every animation-frame chunk must repeat a=f (#259). Keeping that
-// distinction explicit here means a new caller cannot silently inherit the
-// wrong continuation wire.
+// while every root-edit chunk repeats a=f,r=1 (#259, #261). Keeping that
+// distinction explicit here means a new caller cannot silently inherit either
+// the wrong action or the continuation's wrong default frame number.
 enum class ChunkTransfer { DirectImage, AnimationFrame };
 
 template <typename FirstChunk>
@@ -189,8 +189,12 @@ auto append_chunked(std::string& out, std::span<const std::byte> payload,
           out += std::format("\033_Gm={};{}\033\\", more ? 1 : 0, chunk);
           break;
         case ChunkTransfer::AnimationFrame:
-          // Kitty requires the animation action on every frame-data APC.
-          out += std::format("\033_Ga=f,m={};{}\033\\", more ? 1 : 0,
+          // Kitty requires the animation action on every frame-data APC. Keep
+          // r=1 there too: kitty selects new-vs-existing frame from each
+          // continuation before restoring the opener's saved control data, so
+          // a bare a=f continuation finalizes a chunked root edit as a new
+          // frame and leaves the displayed root unchanged (#261).
+          out += std::format("\033_Ga=f,r=1,m={};{}\033\\", more ? 1 : 0,
                              chunk);
           break;
       }

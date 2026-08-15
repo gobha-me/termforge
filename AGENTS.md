@@ -160,10 +160,15 @@ file is the tactical version.
 - **Mutable resident content edits the root frame; it does not retransmit the
   image** (#196). A normal `a=t` under an existing id invalidates the image's
   placements, so `replace_pinned` uses `a=f,r=1,X=1` to replace root-frame data
-  under the stable id. Extent and wire format are immutable for the handle: a
-  mismatch is a `Warning` emitted before wire or hash state changes, preserving
-  the last successful frame. The payload remains subject to the same raw-length
-  and opaque-encoded rules as `pin_image`.
+  under the stable id. **Every chunk stays an edit of root frame 1** (#261):
+  animation continuations repeat both `a=f` and `r=1`. Repeating only the
+  documented action lets Kitty decide “new frame” from the continuation's
+  default `r=0` before it restores the opener, so the transfer succeeds into
+  frame 2 while the live placement remains on frame 1. Extent and wire format
+  are immutable for the handle: a mismatch is a `Warning` emitted before wire
+  or hash state changes, preserving the last successful frame. The payload
+  remains subject to the same raw-length and opaque-encoded rules as
+  `pin_image`.
 - **Raw mode is RAII** — `Terminal` restores termios on destruction. Never
   leave the terminal in raw mode on any exit path, **including one an exception
   takes**: a destructor is not a guarantee (an exception escaping `main`

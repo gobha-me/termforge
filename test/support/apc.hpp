@@ -158,7 +158,7 @@ inline auto reassemble(std::string_view out) -> std::vector<std::byte> {
     stream.clear();
   };
   for (const Apc& a : transmit_chunks(apcs(out))) {
-    // Only the first chunk names i=. Animation-frame continuations repeat a=f,
+    // Only the first chunk names i=. Root-frame continuations repeat a=f,r=1,
     // so treating every action key as an opener would split one base64 stream
     // into several independently padded transmissions.
     if (has_key(a, "i")) finish();
@@ -245,7 +245,8 @@ inline auto total_transmits(std::string_view out) -> int {
 }
 
 // Initial image transmissions plus root-frame updates, counted once at each
-// opener. Animation-frame continuation chunks repeat a=f but never i= (#259).
+// opener. Root-frame continuation chunks repeat a=f,r=1 but never i=
+// (#259, #261).
 inline auto total_data_transmits(std::string_view out) -> int {
   int n = 0;
   for (const Apc& c : apcs(out)) {
