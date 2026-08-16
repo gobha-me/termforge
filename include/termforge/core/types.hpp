@@ -524,6 +524,16 @@ enum class KeyAction { Press, Repeat, Release };
 // is enabled with any non-None mode.
 enum class MouseMode { None, Click, Drag, Motion };
 
+// What happened to the pointer (#267). `pressed` remains on MouseEvent as the
+// compatibility projection existing widgets use: it is true only for Press.
+// `MouseEvent::action()` is the lossless spelling for new code:
+//   Press   — a button went down.
+//   Drag    — the pointer moved while `button` remained held.
+//   Release — a button came up.
+//   Wheel   — one scroll-wheel step; direction remains in scroll_up/down.
+//   Move    — buttonless pointer motion under MouseMode::Motion.
+enum class MouseAction { Press, Drag, Release, Wheel, Move };
+
 // How much of the kitty keyboard protocol the terminal is asked for (#60).
 // Progressive enhancement: TermForge pushes a flag set on enter_screen and
 // pops it on leave_screen, and a terminal that does not implement it ignores
@@ -563,6 +573,20 @@ struct MouseEvent {
   bool pressed{false};
   bool scroll_up{false}, scroll_down{false};
   bool ctrl{false}, alt{false}, shift{false};
+
+  // Appended so every pre-#267 positional aggregate initializer keeps its
+  // field mapping. The SGR motion bit distinguishes a drag from the release
+  // that shared the same button/pressed values before #267. Buttonless motion
+  // remains derivable from button == 3 so old synthetic events and schema 1-4
+  // traces retain their meaning.
+  bool motion{false};
+
+  [[nodiscard]] constexpr auto action() const noexcept -> MouseAction {
+    if (scroll_up || scroll_down) return MouseAction::Wheel;
+    if (button == 3) return MouseAction::Move;
+    if (motion) return MouseAction::Drag;
+    return pressed ? MouseAction::Press : MouseAction::Release;
+  }
 };
 
 struct ResizeEvent {

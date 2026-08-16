@@ -465,6 +465,32 @@ TEST_CASE("a malformed source batch is rejected atomically",
   REQUIRE_FALSE(app.event_source_active());
 }
 
+TEST_CASE("contradictory source mouse motion is rejected atomically",
+          "[event-source][mouse][failure]") {
+  for (const MouseEvent malformed : {
+           MouseEvent{.button = -1,
+                      .scroll_up = true,
+                      .motion = true},
+           MouseEvent{.button = 0, .pressed = true, .motion = true},
+       }) {
+    auto state = make_source_state();
+    queue_events(state, {malformed, KeyEvent{Key::Char, U'a'}});
+    SourceProbe app;
+    app.set_frame_ms(0);
+    REQUIRE(app.set_event_source(std::make_unique<PipeSource>(state),
+                                 EventSourceMode::ReplaceTerminal));
+    std::string wire;
+    app.test_run_frames(1, 20, 5, &wire);
+
+    REQUIRE(key_events(app.events).empty());
+    const auto failures = errors(app.events);
+    REQUIRE(failures.size() == 1);
+    CHECK(failures[0].message.find("malformed mouse event") !=
+          std::string::npos);
+    CHECK_FALSE(app.event_source_active());
+  }
+}
+
 TEST_CASE("an image invalidation cannot masquerade as source input (#113)",
           "[event-source][failure][image]") {
   auto state = make_source_state();
@@ -624,12 +650,14 @@ TEST_CASE("source readiness wakes an idle demand loop",
   REQUIRE(state->stops == 1);
 }
 
-TEST_CASE("trace schema 4 replays source events, replies, and their input floor",
+TEST_CASE("trace schema 5 replays source events, replies, and their input floor",
           "[event-source][trace]") {
   SocketPair recording_socket;
   REQUIRE(recording_socket.ok());
   auto state = make_source_state();
-  queue_events(state, {key(Key::Char, KeyAction::Press, U'q')});
+  queue_events(state,
+               {MouseEvent{.x = 4, .y = 3, .button = 0, .motion = true},
+                key(Key::Char, KeyAction::Press, U'q')});
 
   LiveSourceProbe recording;
   REQUIRE(recording.configure(recording_socket.app_fd()));
@@ -643,6 +671,14 @@ TEST_CASE("trace schema 4 replays source events, replies, and their input floor"
   recording.start_recording(trace);
   REQUIRE(recording.run() == 0);
   REQUIRE(key_events(recording.events).size() == 1);
+  const auto recorded_mouse_it = std::ranges::find_if(
+      recording.events, [](const Event& event) {
+        return std::holds_alternative<MouseEvent>(event);
+      });
+  REQUIRE(recorded_mouse_it != recording.events.end());
+  const auto* recorded_mouse = std::get_if<MouseEvent>(&*recorded_mouse_it);
+  REQUIRE(recorded_mouse != nullptr);
+  CHECK(recorded_mouse->action() == MouseAction::Drag);
 
   std::stringstream inspection{trace.str()};
   auto decoded = detail::read_trace(inspection);
@@ -672,6 +708,14 @@ TEST_CASE("trace schema 4 replays source events, replies, and their input floor"
   const auto replayed = key_events(playback.events);
   REQUIRE(replayed.size() == 1);
   REQUIRE(replayed[0].ch == U'q');
+  const auto replayed_mouse_it = std::ranges::find_if(
+      playback.events, [](const Event& event) {
+        return std::holds_alternative<MouseEvent>(event);
+      });
+  REQUIRE(replayed_mouse_it != playback.events.end());
+  const auto* replayed_mouse = std::get_if<MouseEvent>(&*replayed_mouse_it);
+  REQUIRE(replayed_mouse != nullptr);
+  CHECK(replayed_mouse->action() == MouseAction::Drag);
   REQUIRE(ignored_live_state->starts == 0);
   REQUIRE(ignored_live_state->polls == 0);
   REQUIRE(ignored_live_state->stops == 0);

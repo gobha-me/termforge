@@ -89,9 +89,17 @@ class InputApp final : public App {
 
   auto handle(const MouseEvent& m) -> void {
     m_mouse_pos = std::format("({}, {})", m.x, m.y);
-    if (m.scroll_up) m_mouse_btn = "scroll up";
-    else if (m.scroll_down) m_mouse_btn = "scroll down";
-    else m_mouse_btn = std::format("{} {}", m.pressed ? "press" : "release", m.button);
+    switch (m.action()) {
+      case MouseAction::Press: m_mouse_btn = std::format("press {}", m.button); break;
+      case MouseAction::Drag: m_mouse_btn = std::format("drag {}", m.button); break;
+      case MouseAction::Release:
+        m_mouse_btn = std::format("release {}", m.button);
+        break;
+      case MouseAction::Wheel:
+        m_mouse_btn = m.scroll_up ? "scroll up" : "scroll down";
+        break;
+      case MouseAction::Move: m_mouse_btn = "move"; break;
+    }
   }
 
   auto handle(const PasteEvent& p) -> void {

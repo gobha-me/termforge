@@ -7,6 +7,7 @@ using termforge::Input;
 using termforge::Key;
 using termforge::KeyAction;
 using termforge::KeyEvent;
+using termforge::MouseAction;
 using termforge::MouseEvent;
 using termforge::PasteEvent;
 using termforge::ResizeEvent;
@@ -204,6 +205,8 @@ TEST_CASE("Input: SGR mouse press decodes", "[input][mouse]") {
   auto* m = std::get_if<MouseEvent>(&ev.front());
   REQUIRE(m != nullptr);
   REQUIRE(m->pressed);
+  REQUIRE_FALSE(m->motion);
+  REQUIRE(m->action() == MouseAction::Press);
   REQUIRE(m->button == 0);
   REQUIRE(m->x == 9);   // 1-based → 0-based
   REQUIRE(m->y == 4);
@@ -216,6 +219,8 @@ TEST_CASE("Input: SGR mouse release decodes", "[input][mouse]") {
   auto* m = std::get_if<MouseEvent>(&ev.front());
   REQUIRE(m != nullptr);
   REQUIRE_FALSE(m->pressed);
+  REQUIRE_FALSE(m->motion);
+  REQUIRE(m->action() == MouseAction::Release);
 }
 
 TEST_CASE("Input: drag motion is not a press", "[input][mouse]") {
@@ -228,6 +233,8 @@ TEST_CASE("Input: drag motion is not a press", "[input][mouse]") {
   auto* m = std::get_if<MouseEvent>(&ev.front());
   REQUIRE(m != nullptr);
   REQUIRE_FALSE(m->pressed);
+  REQUIRE(m->motion);
+  REQUIRE(m->action() == MouseAction::Drag);
   REQUIRE(m->button == 0);
   REQUIRE(m->x == 4);
   REQUIRE(m->y == 2);
@@ -242,6 +249,7 @@ TEST_CASE("Input: SGR mouse scroll wheel decodes", "[input][mouse]") {
   REQUIRE(m != nullptr);
   REQUIRE(m->scroll_up);
   REQUIRE_FALSE(m->scroll_down);
+  REQUIRE(m->action() == MouseAction::Wheel);
   REQUIRE(m->x == 14);
   REQUIRE(m->y == 7);
 }
@@ -254,6 +262,30 @@ TEST_CASE("Input: SGR mouse scroll down decodes", "[input][mouse]") {
   REQUIRE(m != nullptr);
   REQUIRE(m->scroll_down);
   REQUIRE_FALSE(m->scroll_up);
+  REQUIRE(m->action() == MouseAction::Wheel);
+}
+
+TEST_CASE("Input: press drag and release remain distinct", "[input][mouse]") {
+  Input in;
+  const auto events = in.decode(
+      "\033[<0;5;3M"   // left press
+      "\033[<32;6;3M"  // left drag
+      "\033[<0;6;3m"); // left release
+  REQUIRE(events.size() == 3);
+  CHECK(std::get<MouseEvent>(events[0]).action() == MouseAction::Press);
+  CHECK(std::get<MouseEvent>(events[1]).action() == MouseAction::Drag);
+  CHECK(std::get<MouseEvent>(events[2]).action() == MouseAction::Release);
+  CHECK(std::get<MouseEvent>(events[0]).pressed);
+  CHECK_FALSE(std::get<MouseEvent>(events[1]).pressed);
+  CHECK_FALSE(std::get<MouseEvent>(events[2]).pressed);
+}
+
+TEST_CASE("MouseEvent keeps the pre-267 aggregate and pressed projection",
+          "[input][mouse][compatibility]") {
+  const MouseEvent old_press{4, 3, 0, true};
+  const MouseEvent old_release{4, 3, 0, false};
+  CHECK(old_press.action() == MouseAction::Press);
+  CHECK(old_release.action() == MouseAction::Release);
 }
 
 TEST_CASE("Input: scroll wheel events are not button presses",

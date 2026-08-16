@@ -49,8 +49,11 @@ configured live source. Schema 4 adds normalized Kitty graphics replies for a
 replacement-source session: terminal keystrokes are still suppressed, while
 the acknowledgements needed by the output driver remain deterministic. In a
 terminal or composed session the raw byte record already contains those APCs,
-so they are not duplicated. Schema-1 through schema-3 traces remain readable;
-schema 1 implies the historical press-only route.
+so they are not duplicated. Schema 5 preserves the SGR motion bit on posted
+and structured-source `MouseEvent`s, which keeps a drag distinct from its
+matching release; raw terminal records already preserve that bit in their
+original bytes. Schema-1 through schema-4 traces remain readable; schema 1
+implies the historical press-only route.
 
 The trace also records:
 

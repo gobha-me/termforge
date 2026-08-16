@@ -111,11 +111,13 @@ resident-image invalidation boundaries; this does not widen what an
 `EventSource` may emit. Schema 4 records normalized terminal control replies
 while replacement mode suppresses terminal keystrokes; output acknowledgements
 therefore still reach the selected driver and replay in their original phase.
-Playback does not start or poll a configured live
+Schema 5 records the SGR motion bit on semantic mouse events so drag and
+release survive a source-recording round trip as different actions. Playback
+does not start or poll a configured live
 source: it replays source records through the same event boundary and uses the
 recorded capabilities for `AppRequirements`. Schema-1 and schema-2 traces
-remain readable, as does schema 3; schema 1 implies the historical press-only
-terminal route.
+remain readable, as do schemas 3 and 4; schema 1 implies the historical
+press-only terminal route.
 
 ## Raw evdev is an adapter policy, not a core feature
 
