@@ -35,7 +35,7 @@ auto parse_options(int argc, char **argv)
       if (name == "kitty")
         choice = DriverChoice::Kitty;
       else if (name == "ansi")
-        choice = DriverChoice::Ansi;
+        choice = DriverChoice::AnsiRgb;
       else if (name == "fallback")
         choice = DriverChoice::Fallback;
       else

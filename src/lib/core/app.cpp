@@ -123,6 +123,18 @@ auto trace_warning(std::string message) -> ErrorEvent {
   return true;
 }
 
+[[nodiscard]] constexpr auto valid_builtin_driver(
+    BuiltinDriver driver) noexcept -> bool {
+  switch (driver) {
+  case BuiltinDriver::Automatic:
+  case BuiltinDriver::Kitty:
+  case BuiltinDriver::AnsiRgb:
+  case BuiltinDriver::Fallback:
+    return true;
+  }
+  return false;
+}
+
 [[nodiscard]] constexpr auto combine_input_capabilities(
     InputCapabilities a, InputCapabilities b) noexcept -> InputCapabilities {
   return {a.key_press || b.key_press, a.key_repeat || b.key_repeat,
@@ -266,6 +278,22 @@ struct App::PlaybackState {
 App::App() = default;
 
 App::~App() { teardown(); }
+
+auto App::set_builtin_driver(BuiltinDriver driver)
+    -> std::expected<void, ErrorEvent> {
+  if (!valid_builtin_driver(driver)) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "set_builtin_driver: invalid built-in tier"}};
+  }
+  if (m_in_screen || m_loop_active) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "set_builtin_driver: cannot replace an active session's driver"}};
+  }
+  m_builtin_driver = driver;
+  return {};
+}
 
 auto App::input_capabilities() const noexcept -> InputCapabilities {
   if (m_playback) return m_playback->trace.header.input_capabilities;
@@ -1311,7 +1339,7 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
   m_caps = {};
   m_persistent_pixels.clear();
   if (auto r = m_term.query_capabilities(); r) m_caps = *r;
-  m_driver = m_term.select_driver(m_caps);
+  m_driver = m_term.select_driver(m_caps, m_builtin_driver);
   if (auto r = m_driver->init(); !r) return r;
 
   const auto size = current_size();

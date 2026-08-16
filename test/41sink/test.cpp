@@ -547,6 +547,7 @@ TEST_CASE("sink: a driver written before #178 still compiles and upgrades",
   static_assert(termforge::DriverImpl<LegacyDriver>);
   LegacyDriver legacy;
   TerminalDriver& base = legacy;
+  CHECK(base.name() == "custom");
   std::string out;
   base.set_output(&out);
   CHECK(base.has_output());

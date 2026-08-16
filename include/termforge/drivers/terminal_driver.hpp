@@ -29,6 +29,13 @@
 
 namespace termforge {
 
+// Which built-in rendering tier an application wants App/Terminal to select.
+// Automatic preserves capability-based selection; the concrete values are an
+// explicit diagnostic/recovery request and do not rewrite the terminal facts
+// returned by query_capabilities(). Runtime dispatch remains open through
+// TerminalDriver -- this enum names only the drivers TermForge itself ships.
+enum class BuiltinDriver { Automatic, Kitty, AnsiRgb, Fallback };
+
 // Bytes emitted, split by what produced them (#139). An application with a
 // hard bandwidth budget measures a frame with this; before it, the only
 // instrument was `ssh -v` and vibes, and every claim about what an image path
@@ -584,6 +591,13 @@ class TerminalDriver {
   // time, which the rule against that forbids.
   virtual auto flush() -> void = 0;
   [[nodiscard]] virtual auto capabilities() const noexcept -> Capabilities = 0;
+
+  // Stable diagnostic identity for the selected rendering tier (#257).
+  // NON-PURE: an out-of-tree driver written before this API keeps compiling
+  // unchanged and reports the only honest identity the base can provide.
+  [[nodiscard]] virtual auto name() const noexcept -> std::string_view {
+    return "custom";
+  }
 
   // Consume a terminal control-plane acknowledgement (#165). NON-PURE so an
   // out-of-tree driver written before reply handling keeps compiling; a tier

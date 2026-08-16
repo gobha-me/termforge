@@ -272,6 +272,20 @@ class App {
     return m_term.keyboard_mode();
   }
 
+  // Select one of TermForge's built-in rendering tiers (#257). Automatic is
+  // the default and preserves probe-based Kitty -> ANSI RGB -> fallback
+  // selection. A concrete choice is a diagnostic/recovery override: setup
+  // still probes the terminal, capabilities() still reports those real facts,
+  // and only the driver construction changes.
+  //
+  // Set before run() or between runs. A request made while a screen/session is
+  // active is refused in full; the live driver is never swapped mid-frame.
+  auto set_builtin_driver(BuiltinDriver driver)
+      -> std::expected<void, ErrorEvent>;
+  [[nodiscard]] auto builtin_driver() const noexcept -> BuiltinDriver {
+    return m_builtin_driver;
+  }
+
   // What the startup probe found. Empty until setup() has run.
   [[nodiscard]] auto capabilities() const noexcept -> const Capabilities& {
     return m_caps;
@@ -1161,6 +1175,7 @@ class App {
   // "did the terminal answer the keyboard query" has to outlive the probe to
   // be reportable, and an app has legitimate reasons to ask later too.
   Capabilities m_caps;
+  BuiltinDriver m_builtin_driver{BuiltinDriver::Automatic};
   AppRequirements m_requirements{};
   // Starts true so empty requirements and headless seams need no special case.
   // setup() sets it from the startup evaluation; frame_step updates it on

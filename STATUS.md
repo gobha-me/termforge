@@ -6,28 +6,35 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-16, latest)
 
-**Release candidate: v0.37.1 — bounded synchronized output.** #269 keeps each
-DEC mode 2026 pending transaction at or below one MiB. `emit_frame` already
-holds the complete frame at the sole sink/meter boundary, so it can decide
-before writing: an oversized frame is emitted byte-for-byte, unwrapped, in the
-same single write and its actual bytes are metered. The lesser route emits one
-`Severity::Info` per driver session rather than replacing Kitty's stderr flood
-with an application-event flood. Synchronization remains negotiated, so the
-next small frame is wrapped normally.
+**Release candidate: v0.38.0 — first-class built-in driver selection.** #257
+adds `BuiltinDriver::{Automatic,Kitty,AnsiRgb,Fallback}` and lets an `App`
+request an exact shipped tier before `run()`. Selection changes only driver
+construction: capability probing still runs, `App::capabilities()` remains the
+terminal truth, and synchronized-output support still follows those real wire
+facts. A mid-session or invalid request is a total `Severity::Warning` refusal.
 
-The bound matches Kitty 0.32.2's one-MiB pending queue without detecting an
-emulator or version, and it also avoids inventing a capacity field the DEC 2026
-query cannot report. Exact-boundary, first/repeated oversized, resumed-small,
-one-write, event and meter cases live in `test/50onewrite`.
+`TerminalDriver::name()` reports the resolved tier for diagnostics. Its
+non-pure `custom` default keeps existing out-of-tree drivers source-compatible,
+while the three shipped drivers return stable names. `forge-top --driver`
+now uses the shared API and deletes its private fabricated-capability mapping.
 
-GCC 14.2 and Clang 20.1 Release builds with warnings as errors, plus GCC
-ASan+UBSan with leak detection, each pass all 68 tests. Both compilers pass the
-`subdir`, `install` and `vendored` consumer acceptance paths. Five focused
-mutations prove the suite fails if the size guard, one-shot event latch,
-accepted-write event boundary, per-frame recovery or actual-byte metering
-regresses. All ten hosted PR jobs pass. The original 60-second Apsis Drift
-`remote` capture on Kitty 0.32.2 over RDP completed without a pending-mode stop
-diagnostic. Exact-main CI remains required before release.
+GCC 14.2 and Clang 20.1 Release `-Werror` builds, plus GCC ASan+UBSan with leak
+detection, each pass all 68 tests. Both compilers pass the `subdir`, `install`
+and `vendored` consumer acceptance paths. Three focused mutations prove the
+suite rejects an ignored override, overwritten probe facts and a pure legacy
+driver diagnostic. All ten hosted PR jobs pass; exact-main CI remains required
+before release. No terminal-protocol bytes changed, so no live-emulator gate
+applies.
+
+## Previous stable release: v0.37.1
+
+**v0.37.1 — bounded synchronized output.** #269 keeps each DEC mode 2026
+pending transaction at or below one MiB. An oversized frame is emitted whole,
+unwrapped and in one write, with one `Severity::Info` per driver session; the
+next small frame is synchronized normally. The bound matches Kitty 0.32.2's
+pending queue without version detection or invented capability fields. The
+release shipped from merge commit `5b41370` after local, hosted, exact-main and
+real-Kitty validation.
 
 ## Previous stable release: v0.37.0
 

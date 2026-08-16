@@ -16,24 +16,11 @@
 namespace termforge::forge_top {
 namespace {
 
-auto capabilities_for(DriverChoice choice) -> Capabilities {
-  Capabilities caps;
-  if (choice == DriverChoice::Kitty) {
-    caps.kitty_graphics = true;
-    caps.truecolor = true;
-    caps.color_levels = 24;
-  } else if (choice == DriverChoice::Ansi) {
-    caps.truecolor = true;
-    caps.color_levels = 24;
-  }
-  return caps;
-}
-
 auto make_driver(DriverChoice choice) -> std::unique_ptr<TerminalDriver> {
   switch (choice) {
   case DriverChoice::Kitty:
     return std::make_unique<KittyDriver>();
-  case DriverChoice::Ansi:
+  case DriverChoice::AnsiRgb:
     return std::make_unique<AnsiRgbDriver>();
   case DriverChoice::Fallback:
     return std::make_unique<FallbackDriver>();
@@ -114,9 +101,7 @@ ForgeTopApp::ForgeTopApp(std::unique_ptr<SystemReader> reader)
 
 auto ForgeTopApp::force_driver(DriverChoice choice)
     -> std::expected<void, ErrorEvent> {
-  if (choice == DriverChoice::Automatic)
-    return {};
-  return terminal().set_capabilities(capabilities_for(choice));
+  return set_builtin_driver(choice);
 }
 
 auto ForgeTopApp::run_headless(int frames, int cols, int rows,

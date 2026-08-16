@@ -43,6 +43,7 @@
 #include "termforge/core/terminal.hpp"
 
 using termforge::App;
+using termforge::BuiltinDriver;
 using termforge::Capabilities;
 using termforge::ErrorEvent;
 using termforge::Severity;
@@ -463,6 +464,9 @@ TEST_CASE("App: setup selects the driver from pushed capabilities", "[identity][
     // capabilities() returns by value; the wrapper copies rather than bind a
     // reference to the temporary.
     [[nodiscard]] auto selected() -> Capabilities { return driver().capabilities(); }
+    [[nodiscard]] auto selected_name() -> std::string_view {
+      return driver().name();
+    }
 
    protected:
     auto on_render(termforge::Screen&) -> void override {}
@@ -479,8 +483,100 @@ TEST_CASE("App: setup selects the driver from pushed capabilities", "[identity][
   REQUIRE(app.capabilities().truecolor);
   REQUIRE(app.selected().truecolor);
   REQUIRE_FALSE(app.selected().kitty_graphics);
+  REQUIRE(app.selected_name() == "ansi-rgb");
   // And no probe bytes reached the session: the push is what skipped them.
   REQUIRE(sp.drain_peer().find(kKittyQuery) == std::string::npos);
+}
+
+TEST_CASE("App: a built-in override changes only the selected rendering tier",
+          "[identity][app][drivers]") {
+  struct Tier {
+    BuiltinDriver choice;
+    std::string_view name;
+    bool kitty;
+    bool truecolor;
+  };
+
+  for (const Tier tier : {
+           Tier{BuiltinDriver::Kitty, "kitty", true, true},
+           Tier{BuiltinDriver::AnsiRgb, "ansi-rgb", false, true},
+           Tier{BuiltinDriver::Fallback, "fallback", false, false},
+       }) {
+    SocketPair sp;
+    REQUIRE(sp.ok());
+
+    class Probe final : public App {
+     public:
+      auto inject(TerminalIo io) -> bool {
+        return terminal().set_io(io).has_value();
+      }
+      auto push_caps(Capabilities caps) -> bool {
+        return terminal().set_capabilities(caps).has_value();
+      }
+      [[nodiscard]] auto selected_name() -> std::string_view {
+        return driver().name();
+      }
+      [[nodiscard]] auto selected_caps() -> Capabilities {
+        return driver().capabilities();
+      }
+      [[nodiscard]] auto selected_sync() -> bool {
+        return driver().sync_updates();
+      }
+
+     protected:
+      auto on_render(termforge::Screen&) -> void override {}
+    };
+
+    Probe app;
+    REQUIRE(app.inject(TerminalIo{sp.app(), sp.app()}));
+    Capabilities terminal_facts;
+    terminal_facts.kitty_graphics = true;
+    terminal_facts.truecolor = true;
+    terminal_facts.color_levels = 24;
+    terminal_facts.sync_updates = true;
+    REQUIRE(app.push_caps(terminal_facts));
+    REQUIRE(app.set_builtin_driver(tier.choice));
+    REQUIRE(app.builtin_driver() == tier.choice);
+    REQUIRE(app.test_setup());
+
+    // The push remains the terminal truth even when the requested renderer is
+    // less capable. Before #257 forge-top fabricated this value to force a
+    // tier, making these assertions impossible to satisfy together.
+    CHECK(app.capabilities().kitty_graphics);
+    CHECK(app.capabilities().truecolor);
+    CHECK(app.capabilities().sync_updates);
+    CHECK(app.selected_name() == tier.name);
+    CHECK(app.selected_caps().kitty_graphics == tier.kitty);
+    CHECK(app.selected_caps().truecolor == tier.truecolor);
+    CHECK(app.selected_sync());
+
+    // Selection is a startup decision. A mid-session change is a total
+    // refusal and cannot make the configuration disagree with the live tier.
+    const auto refused = app.set_builtin_driver(BuiltinDriver::Automatic);
+    REQUIRE_FALSE(refused);
+    CHECK(refused.error().severity == Severity::Warning);
+    CHECK(refused.error().source == "driver");
+    CHECK(app.builtin_driver() == tier.choice);
+    CHECK(app.selected_name() == tier.name);
+    app.test_teardown();
+  }
+}
+
+TEST_CASE("App: an invalid built-in driver request is a total warning refusal",
+          "[identity][app][failure]") {
+  class Probe final : public App {
+   protected:
+    auto on_render(termforge::Screen&) -> void override {}
+  };
+
+  Probe app;
+  REQUIRE(app.builtin_driver() == BuiltinDriver::Automatic);
+  const auto refused =
+      app.set_builtin_driver(static_cast<BuiltinDriver>(99));
+  REQUIRE_FALSE(refused);
+  CHECK(refused.error().severity == Severity::Warning);
+  CHECK(refused.error().source == "driver");
+  CHECK(app.builtin_driver() == BuiltinDriver::Automatic);
 }
 
 TEST_CASE("App: setup probes when no capabilities were pushed", "[identity][app]") {

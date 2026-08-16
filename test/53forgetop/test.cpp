@@ -800,14 +800,14 @@ TEST_CASE("forge-top popups close before q quits and global releases do nothing"
 TEST_CASE("forge-top runs the real frame shape on every forced tier",
           "[forge-top][drivers]") {
   for (const DriverChoice choice :
-       {DriverChoice::Fallback, DriverChoice::Ansi, DriverChoice::Kitty}) {
+       {DriverChoice::Fallback, DriverChoice::AnsiRgb, DriverChoice::Kitty}) {
     ForgeTopApp app{make_fake_reader()};
     std::string wire;
     app.run_headless(2, 120, 40, &wire, choice);
     REQUIRE_FALSE(wire.empty());
     if (choice == DriverChoice::Fallback) {
       REQUIRE(wire.find("\033_G") == std::string::npos);
-    } else if (choice == DriverChoice::Ansi) {
+    } else if (choice == DriverChoice::AnsiRgb) {
       REQUIRE(wire.find("\033[38;2;") != std::string::npos);
       REQUIRE(wire.find("\033_G") == std::string::npos);
     } else {
@@ -831,7 +831,7 @@ TEST_CASE(
 TEST_CASE("forge-top tiny layouts stay total on every tier",
           "[forge-top][failure]") {
   for (const DriverChoice choice :
-       {DriverChoice::Fallback, DriverChoice::Ansi, DriverChoice::Kitty}) {
+       {DriverChoice::Fallback, DriverChoice::AnsiRgb, DriverChoice::Kitty}) {
     ForgeTopApp app{make_fake_reader()};
     std::string wire;
     REQUIRE_NOTHROW(app.run_headless(1, 1, 1, &wire, choice));

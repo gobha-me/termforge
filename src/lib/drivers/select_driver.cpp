@@ -11,6 +11,22 @@ namespace termforge {
 
 auto select_driver_for(const Capabilities& caps)
     -> std::unique_ptr<TerminalDriver> {
+  return select_driver_for(caps, BuiltinDriver::Automatic);
+}
+
+auto select_driver_for(const Capabilities& caps, BuiltinDriver choice)
+    -> std::unique_ptr<TerminalDriver> {
+  switch (choice) {
+  case BuiltinDriver::Kitty:
+    return std::make_unique<KittyDriver>();
+  case BuiltinDriver::AnsiRgb:
+    return std::make_unique<AnsiRgbDriver>();
+  case BuiltinDriver::Fallback:
+    return std::make_unique<FallbackDriver>();
+  case BuiltinDriver::Automatic:
+    break;
+  }
+
   // Sixel driver lands in a later phase; kitty + half-blocks bracket the
   // matrix for now.
   // if (caps.sixel)          return std::make_unique<SixelDriver>();
