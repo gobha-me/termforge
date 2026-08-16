@@ -530,7 +530,7 @@ stanza_11() {
 stanza_12() {
   say ""
   say "== Stanza 12: #114 named image layers around text/background =="
-  say "Three 8x3-cell plates share the same authored text geometry. Expected:"
+  say "Two 8x3 text plates and one 8x1 background plate. Expected:"
   say "RED at z=1 hides its text; BLUE at z=-1 keeps white TEXT visible;"
   say "GREEN below the background boundary is hidden by MAGENTA cells."
 
@@ -547,7 +547,7 @@ stanza_12() {
   printf '%s8%s[10C' "$ESC" "$ESC"
   send_quiet "${ESC}_Ga=p,i=50,p=1,c=8,r=3,C=1,z=-1,q=0${ST}"; bp=$reply_out
   printf '%s8%s[20C' "$ESC" "$ESC"
-  send_quiet "${ESC}_Ga=p,i=51,p=1,c=8,r=3,C=1,z=-1073741825,q=0${ST}"; gp=$reply_out
+  send_quiet "${ESC}_Ga=p,i=51,p=1,c=8,r=1,C=1,z=-1073741825,q=0${ST}"; gp=$reply_out
 
   for row in 0 1 2; do
     printf '%s8%s[%dB%s[0m%s[38;2;255;255;255m' \
@@ -557,11 +557,13 @@ stanza_12() {
     printf '%s8%s[%dB%s[10C%s[0m%s[38;2;255;255;255m' \
       "$ESC" "$ESC" "$row" "$ESC" "$ESC" "$ESC"
     if ((row == 1)); then printf '  TEXT  '; else printf '        '; fi
-
-    printf '%s8%s[%dB%s[20C%s[48;2;255;0;255m%s[38;2;255;255;255m' \
-      "$ESC" "$ESC" "$row" "$ESC" "$ESC" "$ESC"
-    if ((row == 1)); then printf '  TEXT  '; else printf '        '; fi
   done
+
+  # ECH paints eight complete cells with the current non-default background
+  # without advancing the cursor. Keeping this case to one row removes image
+  # scaling/row-alignment ambiguity from the z<-2^30 protocol check.
+  printf '%s8%s[20C%s[48;2;255;0;255m%s[8X' \
+    "$ESC" "$ESC" "$ESC" "$ESC"
   printf '%s[0m%s8%s[4B\r' "$ESC" "$ESC" "$ESC"
 
   say "$(printf 'transmit(red/blue/green) responses: %q / %q / %q' "$rt" "$bt" "$gt")"
