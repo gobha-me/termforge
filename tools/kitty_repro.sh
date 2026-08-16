@@ -2,8 +2,8 @@
 # kitty_repro.sh — minimal standalone repros for the kitty graphics paths that
 # KittyDriver emits. Run inside a real kitty (>= 0.28) terminal:
 #
-#   ./tools/kitty_repro.sh          # all ten stanzas, with a pause between each
-#   ./tools/kitty_repro.sh 10       # ONLY stanza 10
+#   ./tools/kitty_repro.sh          # all eleven stanzas, with pauses
+#   ./tools/kitty_repro.sh 11       # ONLY stanza 11
 #   ./tools/kitty_repro.sh 3 4      # a subset, in the order given
 #   ./tools/kitty_repro.sh --dump   # emit the wire bytes, touch no terminal
 #
@@ -39,6 +39,8 @@
 #  10  #261 — edit a pinned image's root frame over MULTIPLE chunks with
 #      a=f,r=1,X=1 and verify that its existing classic placement refreshes
 #      without re-placement. Self-contained and crosses the game's protocol seam.
+#  11  #140 — overwrite and alpha-compose two pixel-offset blocks into one
+#      resident root without retransmitting or replacing its placement.
 #
 # All commands use q=0 so kitty REPORTS errors; every response the terminal
 # sends is captured and echoed in readable form. A response of "_Gi=42;OK"
@@ -53,9 +55,9 @@ stanzas=()
 for arg in "$@"; do
   case $arg in
     --dump) dump=1 ;;
-    [1-9]|10) stanzas+=("$arg") ;;
+    [1-9]|10|11) stanzas+=("$arg") ;;
     *)
-      echo "usage: $0 [--dump] [1-9|10]..." >&2
+      echo "usage: $0 [--dump] [1-9|10|11]..." >&2
       exit 2
       ;;
   esac
@@ -491,16 +493,49 @@ stanza_10() {
   say "This stanza now exercises the same multi-chunk path as the game."
 }
 
+stanza_11() {
+  say ""
+  say "== Stanza 11: #140 pixel-offset resident block edits =="
+  say "A RED 4x4-pixel image is placed once. Its top-left 2x2 pixels are"
+  say "overwritten GREEN, then its bottom-right 2x2 pixels receive a 50%"
+  say "BLUE source-over edit. No a=t retransmit or second placement follows."
+
+  local red4_b64 blue_half_b64 pixel
+  red4_b64=$(
+    for ((pixel=0; pixel<16; pixel++)); do printf '\xff\x00\x00\xff'; done |
+      base64 | tr -d '\n'
+  )
+  blue_half_b64=$(
+    for ((pixel=0; pixel<4; pixel++)); do printf '\x00\x00\xff\x80'; done |
+      base64 | tr -d '\n'
+  )
+
+  send "transmit(red)" \
+    "${ESC}_Ga=t,t=d,f=32,i=48,s=4,v=4,m=0,q=0;${red4_b64}${ST}"
+  place_below "place(red)   " \
+    "${ESC}_Ga=p,i=48,p=1,c=8,r=4,C=1,q=0${ST}" 4
+  pause "Press Enter to apply the GREEN overwrite block..."
+  send "edit(green) " \
+    "${ESC}_Ga=f,t=d,f=32,i=48,s=2,v=2,r=1,x=0,y=0,X=1,m=0,q=0;${green_b64}${ST}"
+  pause "Press Enter to apply the translucent BLUE source-over block..."
+  send "edit(alpha) " \
+    "${ESC}_Ga=f,t=d,f=32,i=48,s=2,v=2,r=1,x=2,y=2,m=0,q=0;${blue_half_b64}${ST}"
+  say "Report: (a) top-left is GREEN, (b) bottom-right is the expected"
+  say "red/blue blend rather than opaque blue, (c) the other pixels remain"
+  say "RED, and (d) whether any response contains ';E'."
+}
+
 if (( ${#stanzas[@]} )); then
   run_all=0
   for n in "${stanzas[@]}"; do "stanza_$n"; done
 else
-  for n in 1 2 3 4 5 6 7 8 9 10; do "stanza_$n"; done
+  for n in 1 2 3 4 5 6 7 8 9 10 11; do "stanza_$n"; done
   say ""
   say "Report: (a) stanza 1 red block, (b) green after stanza 2, (c) stanza 3"
   say "blue block, (d) YELLOW block after stanza 4, (e) stanza 5 shows a"
   say "green 2x2 block, (f) stanza 6 as described above, (g) stanza 7's three"
   say "questions, (h) stanza 8's six labelled blocks, (i) any response"
   say "containing ';E' (an error), (j) stanza 9's three requested results,"
-  say "and (k) stanza 10's existing block turns green without re-placement."
+  say "(k) stanza 10's existing block turns green without re-placement, and"
+  say "(l) stanza 11's offset overwrite/alpha quadrants match its description."
 fi

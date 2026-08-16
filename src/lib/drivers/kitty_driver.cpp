@@ -691,6 +691,38 @@ auto KittyDriver::replace_pinned(PinnedImage image, const EncodedImage& frame)
                          frame.format == ImageFormat::Png);
 }
 
+auto KittyDriver::edit_pinned(PinnedImage image, PixelPoint destination,
+                              const Image& block,
+                              ImageComposition composition)
+    -> std::expected<void, ErrorEvent> {
+  auto entry = resolve_pin(image, "edit_pinned");
+  if (!entry) return std::unexpected{entry.error()};
+  if (block.empty()) {
+    return std::unexpected{
+        ErrorEvent{Severity::Warning, "kitty", "edit_pinned: empty image"}};
+  }
+  return edit_payload(image.id, **entry, destination,
+                      std::as_bytes(block.pixels()), kFormatRgba32,
+                      Extent{block.width(), block.height()}, composition,
+                      false);
+}
+
+auto KittyDriver::edit_pinned(PinnedImage image, PixelPoint destination,
+                              const EncodedImage& block,
+                              ImageComposition composition)
+    -> std::expected<void, ErrorEvent> {
+  auto entry = resolve_pin(image, "edit_pinned");
+  if (!entry) return std::unexpected{entry.error()};
+  if (auto ok =
+          detail::validate_payload(block, *this, "kitty", "edit_pinned");
+      !ok) {
+    return std::unexpected{ok.error()};
+  }
+  return edit_payload(image.id, **entry, destination, block.bytes,
+                      wire_format(block.format), block.pixels, composition,
+                      block.format == ImageFormat::Png);
+}
+
 auto KittyDriver::replace_payload(std::uint32_t id, PinnedEntry& entry,
                                   std::span<const std::byte> payload,
                                   int format_code, Extent px,
@@ -727,14 +759,13 @@ auto KittyDriver::replace_payload(std::uint32_t id, PinnedEntry& entry,
     }
     return std::unexpected{pending_warning("replace_pinned", id)};
   }
-  if (entry.content_hash == hash) return {};
+  if (projected_content_hash(id, entry) == hash) return {};
 
-  const auto accounted = m_accounted_images.find(id);
-  const bool previously_accounted =
-      accounted != m_accounted_images.end() &&
-      accounted->second.serial == entry.serial;
   const std::uint64_t previous_source_payload_bytes =
-      previously_accounted ? accounted->second.source_payload_bytes : 0;
+      projected_source_payload_bytes(id, entry.serial);
+  const bool previously_accounted = previous_source_payload_bytes != 0;
+  const std::uint64_t previous_content_hash =
+      projected_content_hash(id, entry);
 
   const std::size_t before = m_buf.size();
   replace_root_frame(payload, format_code, px, id, request_reply);
@@ -744,9 +775,75 @@ auto KittyDriver::replace_payload(std::uint32_t id, PinnedEntry& entry,
     m_pending_replies.emplace(
         id, PendingReply{PendingKind::PinnedReplace, 0, entry.serial, hash,
                          m_flush_count, previous_source_payload_bytes,
-                         previously_accounted});
+                         previously_accounted, previous_content_hash});
   } else {
-    entry.content_hash = hash;
+    stage_content_hash(id, entry.serial, hash);
+  }
+  return {};
+}
+
+auto KittyDriver::edit_payload(std::uint32_t id, PinnedEntry& entry,
+                               PixelPoint destination,
+                               std::span<const std::byte> payload,
+                               int format_code, Extent px,
+                               ImageComposition composition,
+                               bool request_reply)
+    -> std::expected<void, ErrorEvent> {
+  if (!entry.accepted)
+    return std::unexpected{pending_warning("edit_pinned", id)};
+  if (m_pending_replies.contains(id))
+    return std::unexpected{pending_warning("edit_pinned", id)};
+
+  switch (composition) {
+    case ImageComposition::AlphaBlend:
+    case ImageComposition::Overwrite: break;
+    default:
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "kitty",
+          "edit_pinned: invalid image composition mode"}};
+  }
+
+  using i64 = std::int64_t;
+  if (destination.x < 0 || destination.y < 0 ||
+      i64{destination.x} + px.w > entry.px.w ||
+      i64{destination.y} + px.h > entry.px.h) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        std::format("edit_pinned: {}x{} block at {},{} is outside the pinned "
+                    "{}x{} image",
+                    px.w, px.h, destination.x, destination.y, entry.px.w,
+                    entry.px.h)}};
+  }
+
+  const std::uint64_t previous_source_payload_bytes =
+      projected_source_payload_bytes(id, entry.serial);
+  if (payload.size() >
+      std::numeric_limits<std::uint64_t>::max() -
+          previous_source_payload_bytes) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        "edit_pinned: source payload byte accounting would overflow"}};
+  }
+  const std::uint64_t previous_content_hash =
+      projected_content_hash(id, entry);
+  const bool previously_accounted = previous_source_payload_bytes != 0;
+
+  const std::size_t before = m_buf.size();
+  edit_root_frame(payload, format_code, px, id, destination, composition,
+                  request_reply);
+  tally_image_edit(m_buf.size() - before);
+  stage_content_hash(id, entry.serial, 0);
+  stage_residency_add(id, entry.serial, payload.size());
+  if (request_reply) {
+    m_pending_replies.emplace(
+        id, PendingReply{PendingKind::PinnedEdit,
+                         0,
+                         entry.serial,
+                         0,
+                         m_flush_count,
+                         previous_source_payload_bytes,
+                         previously_accounted,
+                         previous_content_hash});
   }
   return {};
 }
@@ -859,6 +956,7 @@ auto KittyDriver::invalidate_images() noexcept -> void {
   m_pin_places.clear();
   m_accounted_images.clear();
   m_residency_mutations.clear();
+  m_content_mutations.clear();
   m_placeholder_clears.clear();
   m_transmitted = false;
 
@@ -1171,6 +1269,16 @@ auto KittyDriver::stage_residency_set(std::uint32_t image_id,
                         AccountedImage{serial, kind, source_payload_bytes}});
 }
 
+auto KittyDriver::stage_residency_add(std::uint32_t image_id,
+                                      std::uint32_t serial,
+                                      std::size_t source_payload_bytes)
+    -> void {
+  m_residency_mutations.push_back(
+      ResidencyMutation{ResidencyMutationKind::Add, image_id,
+                        AccountedImage{serial, ResidencyKind::Pinned,
+                                       source_payload_bytes}});
+}
+
 auto KittyDriver::stage_residency_erase(std::uint32_t image_id,
                                         std::uint32_t serial) -> void {
   m_residency_mutations.push_back(
@@ -1178,13 +1286,49 @@ auto KittyDriver::stage_residency_erase(std::uint32_t image_id,
                         AccountedImage{serial, ResidencyKind::Region, 0}});
 }
 
+auto KittyDriver::projected_source_payload_bytes(
+    std::uint32_t image_id, std::uint32_t serial) const noexcept
+    -> std::uint64_t {
+  std::uint64_t result = 0;
+  if (const auto current = m_accounted_images.find(image_id);
+      current != m_accounted_images.end() &&
+      current->second.serial == serial) {
+    result = current->second.source_payload_bytes;
+  }
+  for (const auto& change : m_residency_mutations) {
+    if (change.image_id != image_id || change.image.serial != serial) continue;
+    switch (change.mutation) {
+      case ResidencyMutationKind::Set:
+        result = change.image.source_payload_bytes;
+        break;
+      case ResidencyMutationKind::Add:
+        result += change.image.source_payload_bytes;
+        break;
+      case ResidencyMutationKind::Erase: result = 0; break;
+    }
+  }
+  return result;
+}
+
 auto KittyDriver::finish_residency_frame(bool accepted) -> void {
   if (accepted) {
     for (const auto& change : m_residency_mutations) {
-      if (change.mutation == ResidencyMutationKind::Set) {
-        m_accounted_images.insert_or_assign(change.image_id, change.image);
-      } else {
-        erase_accounted(change.image_id, change.image.serial);
+      switch (change.mutation) {
+        case ResidencyMutationKind::Set:
+          m_accounted_images.insert_or_assign(change.image_id, change.image);
+          break;
+        case ResidencyMutationKind::Add: {
+          const auto it = m_accounted_images.find(change.image_id);
+          if (it != m_accounted_images.end() &&
+              it->second.serial == change.image.serial) {
+            it->second.source_payload_bytes +=
+                change.image.source_payload_bytes;
+          }
+          break;
+        }
+        case ResidencyMutationKind::Erase:
+          erase_accounted(change.image_id, change.image.serial);
+          break;
       }
     }
   }
@@ -1209,6 +1353,35 @@ auto KittyDriver::restore_accounted(std::uint32_t image_id,
   const auto it = m_accounted_images.find(image_id);
   if (it != m_accounted_images.end() && it->second.serial == serial)
     it->second.source_payload_bytes = source_payload_bytes;
+}
+
+auto KittyDriver::stage_content_hash(std::uint32_t image_id,
+                                     std::uint32_t serial,
+                                     std::uint64_t content_hash) -> void {
+  m_content_mutations.push_back(
+      ContentMutation{image_id, serial, content_hash});
+}
+
+auto KittyDriver::projected_content_hash(std::uint32_t image_id,
+                                         const PinnedEntry& entry) const
+    noexcept -> std::uint64_t {
+  std::uint64_t result = entry.content_hash;
+  for (const auto& change : m_content_mutations) {
+    if (change.image_id == image_id && change.serial == entry.serial)
+      result = change.content_hash;
+  }
+  return result;
+}
+
+auto KittyDriver::finish_content_frame(bool accepted) -> void {
+  if (accepted) {
+    for (const auto& change : m_content_mutations) {
+      const auto it = m_pinned.find(change.image_id);
+      if (it != m_pinned.end() && it->second.serial == change.serial)
+        it->second.content_hash = change.content_hash;
+    }
+  }
+  m_content_mutations.clear();
 }
 
 auto KittyDriver::finish_pending(std::uint32_t image_id,
@@ -1253,6 +1426,24 @@ auto KittyDriver::finish_pending(std::uint32_t image_id,
         it->second.content_hash = pending.candidate_hash;
       }
       if (!success) {
+        if (it != m_pinned.end() && it->second.serial == pending.serial)
+          it->second.content_hash = pending.previous_content_hash;
+        restore_accounted(image_id, pending.serial,
+                          pending.previous_source_payload_bytes,
+                          pending.previously_accounted);
+      }
+      break;
+    }
+    case PendingKind::PinnedEdit: {
+      const auto it = m_pinned.find(image_id);
+      if (it != m_pinned.end() && it->second.serial == pending.serial) {
+        if (success) {
+          it->second.content_hash = 0;
+        } else {
+          it->second.content_hash = pending.previous_content_hash;
+        }
+      }
+      if (!success) {
         restore_accounted(image_id, pending.serial,
                           pending.previous_source_payload_bytes,
                           pending.previously_accounted);
@@ -1272,6 +1463,23 @@ auto KittyDriver::finish_pending(std::uint32_t image_id,
                           status)});
   }
   if (timed_out) m_quarantined_ids.insert(image_id);
+}
+
+auto KittyDriver::discard_unwritten_edits() -> void {
+  // An opaque edit installs its reply correlation while queueing, before the
+  // frame reaches the sink. If that write is refused, no terminal can answer
+  // it and leaving the correlation live would block the handle for 120 flushes
+  // before reporting a fictitious terminal timeout. Content and residency
+  // mutations are discarded separately at this same boundary; retire only the
+  // edit operation issued for the frame that just failed.
+  for (auto it = m_pending_replies.begin(); it != m_pending_replies.end();) {
+    if (it->second.kind == PendingKind::PinnedEdit &&
+        it->second.issued_flush + 1 == m_flush_count) {
+      it = m_pending_replies.erase(it);
+    } else {
+      ++it;
+    }
+  }
 }
 
 auto KittyDriver::expire_pending_replies() -> void {
@@ -1344,7 +1552,9 @@ void KittyDriver::flush() {
   // guarantees collection precedes wrap. emit_frame stays AFTER gc_regions()
   // above, or the deletions land in the next frame.
   const bool accepted = emit_frame(m_buf);
+  if (!accepted) discard_unwritten_edits();
   finish_residency_frame(accepted);
+  finish_content_frame(accepted);
   m_buf.clear();
   m_cursor_known = false;
   m_frame_start_fg = m_cur_fg;
@@ -1606,6 +1816,28 @@ auto KittyDriver::replace_root_frame(std::span<const std::byte> payload,
                  });
 }
 
+auto KittyDriver::edit_root_frame(std::span<const std::byte> payload,
+                                  int format_code, Extent px,
+                                  std::uint32_t id, PixelPoint destination,
+                                  ImageComposition composition,
+                                  bool request_reply) -> void {
+  m_transmitted = true;
+  append_chunked(m_buf, payload, ChunkTransfer::AnimationFrame, request_reply,
+                 [&](std::string_view chunk, bool more, int quiet) {
+                   // x=/y= locate this block in the existing root canvas;
+                   // s=/v= describe only the transmitted block. AlphaBlend is
+                   // the protocol default, while X=1 requests a byte-for-byte
+                   // overwrite including the source alpha channel.
+                   const std::string overwrite =
+                       composition == ImageComposition::Overwrite ? ",X=1" : "";
+                   m_buf += std::format(
+                       "\033_Ga=f,t=d,f={},i={},s={},v={},r=1,x={},y={}{}"
+                       ",m={},q={};{}\033\\",
+                       format_code, id, px.w, px.h, destination.x,
+                       destination.y, overwrite, more ? 1 : 0, quiet, chunk);
+                 });
+}
+
 auto KittyDriver::place_classic(std::uint32_t image_id,
                                 std::uint32_t placement_id, int x, int y,
                                 int cols, int rows, PlacementFit fit) -> void {
@@ -1756,6 +1988,7 @@ auto KittyDriver::on_shutdown() -> void {
   const bool accepted = emit_frame(m_buf);
   if (accepted) m_accounted_images.clear();
   m_residency_mutations.clear();
+  m_content_mutations.clear();
   m_buf.clear();
 }
 

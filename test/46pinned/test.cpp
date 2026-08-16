@@ -34,6 +34,7 @@
 #include <cstdio>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -47,9 +48,11 @@
 using termforge::EncodedImage;
 using termforge::Extent;
 using termforge::Image;
+using termforge::ImageComposition;
 using termforge::ImageFormat;
 using termforge::KittyDriver;
 using termforge::Pixel;
+using termforge::PixelPoint;
 using termforge::PinnedImage;
 using termforge::PlacementFit;
 using termforge::Rect;
@@ -290,6 +293,194 @@ TEST_CASE("pinned: replacement rejects empty, foreign, and stale handles",
   REQUIRE_FALSE(stale.has_value());
   CHECK(stale.error().message ==
         "replace_pinned: handle is stale -- the image was already unpinned");
+}
+
+// ── partial resident-frame edits (#140) ────────────────────────────────────
+
+TEST_CASE("pinned: a 32x32 block edits one root without a full transmit",
+          "[pinned][kitty][edit][bytes]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+
+  const Image root =
+      tfsupport::solid(240, 160, Pixel{12, 24, 48, 255});
+  const auto pinned = d.pin_image(root);
+  REQUIRE(pinned);
+  REQUIRE(d.draw_pinned(Rect{0, 0, 30, 10}, *pinned));
+  d.flush();
+  out.clear();
+
+  const Image block =
+      tfsupport::solid(32, 32, Pixel{220, 40, 80, 128});
+  REQUIRE(d.retain_pinned(Rect{0, 0, 30, 10}, *pinned));
+  REQUIRE(d.edit_pinned(*pinned, PixelPoint{17, 23}, block,
+                        ImageComposition::Overwrite));
+  d.flush();
+
+  CHECK(transmits_of(out, pinned->id) == 0);
+  CHECK(frame_updates_of(out, pinned->id) == 1);
+  CHECK(placements_of(out, pinned->id) == 0);
+  CHECK(data_deletes_of(out, pinned->id) == 0);
+  CHECK(placement_deletes_of(out, pinned->id) == 0);
+
+  const auto commands = tfsupport::apcs(out);
+  const auto edit =
+      std::find_if(commands.begin(), commands.end(), [](const auto& command) {
+        return tfsupport::key_value(command, "a") == "f" &&
+               tfsupport::has_key(command, "i");
+      });
+  REQUIRE(edit != commands.end());
+  CHECK(tfsupport::key_value(*edit, "r") == "1");
+  CHECK(tfsupport::key_value(*edit, "x") == "17");
+  CHECK(tfsupport::key_value(*edit, "y") == "23");
+  CHECK(tfsupport::key_value(*edit, "s") == "32");
+  CHECK(tfsupport::key_value(*edit, "v") == "32");
+  CHECK(tfsupport::key_value(*edit, "X") == "1");
+
+  const auto raw = std::as_bytes(block.pixels());
+  CHECK(tfsupport::reassemble(out) ==
+        std::vector<std::byte>{raw.begin(), raw.end()});
+  CHECK(tfsupport::reassemble(out).size() == 32U * 32U * 4U);
+  CHECK(out.size() < 8U * 1024U);  // not the 240x160 root's ~205 KB wire
+  CHECK(d.last_frame_bytes().image_transmit == 0);
+  CHECK(d.last_frame_bytes().image_edit == out.size());
+  CHECK(d.last_frame_bytes().cells == 0);
+}
+
+TEST_CASE("pinned: encoded alpha edits stay on root across every chunk",
+          "[pinned][kitty][edit][encoded][reply]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const auto pinned = d.pin_image(
+      tfsupport::solid(64, 64, Pixel{10, 20, 30, 255}));
+  REQUIRE(pinned);
+  d.flush();
+  out.clear();
+
+  const std::vector<std::byte> png(5000, std::byte{0x89});
+  REQUIRE(d.edit_pinned(
+      *pinned, PixelPoint{3, 5},
+      EncodedImage{ImageFormat::Png, png, Extent{32, 32}},
+      ImageComposition::AlphaBlend));
+
+  const auto competing = d.edit_pinned(
+      *pinned, PixelPoint{0, 0}, Image{1, 1, {Pixel{}}},
+      ImageComposition::Overwrite);
+  REQUIRE_FALSE(competing);
+  CHECK(competing.error().message.find("awaiting a terminal acknowledgement") !=
+        std::string::npos);
+
+  d.flush();
+  const auto chunks = tfsupport::transmit_chunks(tfsupport::apcs(out));
+  REQUIRE(chunks.size() >= 2);
+  for (std::size_t i = 0; i < chunks.size(); ++i) {
+    const auto& chunk = chunks[i];
+    CHECK(tfsupport::key_value(chunk, "a") == "f");
+    CHECK(tfsupport::key_value(chunk, "r") == "1");
+    CHECK(tfsupport::key_value(chunk, "q") ==
+          (i + 1 == chunks.size() ? "0" : "2"));
+  }
+  CHECK(tfsupport::key_value(chunks.front(), "x") == "3");
+  CHECK(tfsupport::key_value(chunks.front(), "y") == "5");
+  CHECK_FALSE(tfsupport::has_key(chunks.front(), "X"));
+  CHECK(tfsupport::reassemble(out) == png);
+  CHECK(d.last_frame_bytes().image_transmit == 0);
+  CHECK(d.last_frame_bytes().image_edit == out.size());
+
+  d.consume_reply(TerminalReply{pinned->id, std::nullopt, "OK"});
+  CHECK(d.take_driver_events().empty());
+  REQUIRE(d.edit_pinned(*pinned, PixelPoint{0, 0},
+                        Image{1, 1, {Pixel{}}},
+                        ImageComposition::Overwrite));
+}
+
+TEST_CASE("pinned: edit guards refuse before wire or accepted identity changes",
+          "[pinned][kitty][edit][failure]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const Image original =
+      tfsupport::solid(4, 4, Pixel{1, 2, 3, 255});
+  const auto pinned = d.pin_image(original);
+  REQUIRE(pinned);
+  d.flush();
+  out.clear();
+
+  const Image block = tfsupport::solid(2, 2, Pixel{9, 8, 7, 128});
+  const auto negative = d.edit_pinned(
+      *pinned, PixelPoint{-1, 0}, block, ImageComposition::Overwrite);
+  REQUIRE_FALSE(negative);
+  CHECK(negative.error().message.find("outside") != std::string::npos);
+
+  const auto outside = d.edit_pinned(
+      *pinned, PixelPoint{3, 3}, block, ImageComposition::Overwrite);
+  REQUIRE_FALSE(outside);
+  CHECK(outside.error().message ==
+        "edit_pinned: 2x2 block at 3,3 is outside the pinned 4x4 image");
+
+  const auto empty = d.edit_pinned(
+      *pinned, PixelPoint{}, Image{}, ImageComposition::Overwrite);
+  REQUIRE_FALSE(empty);
+  CHECK(empty.error().message == "edit_pinned: empty image");
+
+  const auto invalid = d.edit_pinned(
+      *pinned, PixelPoint{}, block,
+      static_cast<ImageComposition>(99));
+  REQUIRE_FALSE(invalid);
+  CHECK(invalid.error().message ==
+        "edit_pinned: invalid image composition mode");
+
+  const std::array<std::byte, 15> short_rgba{};
+  const auto malformed = d.edit_pinned(
+      *pinned, PixelPoint{},
+      EncodedImage{ImageFormat::Rgba32, short_rgba, Extent{2, 2}},
+      ImageComposition::Overwrite);
+  REQUIRE_FALSE(malformed);
+  CHECK(malformed.error().message.find("edit_pinned: Rgba32 payload") == 0);
+
+  d.flush();
+  CHECK(out.empty());
+
+  REQUIRE(d.edit_pinned(*pinned, PixelPoint{1, 1}, block,
+                        ImageComposition::Overwrite));
+  d.flush();
+  out.clear();
+
+  // A partial edit makes the complete root hash unknown. Replacing it with
+  // the original bytes must therefore emit; deduplicating against the pin's
+  // pre-edit hash would preserve the edited pixels by mistake.
+  REQUIRE(d.replace_pinned(*pinned, original));
+  d.flush();
+  CHECK(frame_updates_of(out, pinned->id) == 1);
+  CHECK(d.last_frame_bytes().image_transmit > 0);
+}
+
+TEST_CASE("pinned: partial edits reject empty, foreign, and stale handles",
+          "[pinned][kitty][edit][failure]") {
+  KittyDriver a;
+  KittyDriver b;
+  const Image block{1, 1, {Pixel{}}};
+
+  const auto empty = b.edit_pinned(PinnedImage{}, PixelPoint{}, block,
+                                   ImageComposition::Overwrite);
+  REQUIRE_FALSE(empty);
+  CHECK(empty.error().message ==
+        "edit_pinned: handle is empty -- it was never returned by pin_image");
+
+  const auto pinned = a.pin_image(art(77));
+  REQUIRE(pinned);
+  const auto foreign = b.edit_pinned(*pinned, PixelPoint{}, block,
+                                     ImageComposition::Overwrite);
+  REQUIRE_FALSE(foreign);
+  CHECK(foreign.error().message.find("different driver") != std::string::npos);
+
+  REQUIRE(a.unpin_image(*pinned));
+  const auto stale = a.edit_pinned(*pinned, PixelPoint{}, block,
+                                   ImageComposition::Overwrite);
+  REQUIRE_FALSE(stale);
+  CHECK(stale.error().message.find("handle is stale") != std::string::npos);
 }
 
 // ── the acceptance test (#109) ──────────────────────────────────────────────
@@ -1015,6 +1206,21 @@ TEST_CASE("pinned: a driver that never heard of pinning refuses honestly",
   REQUIRE_FALSE(r2.has_value());
   CHECK(r2.error().message ==
         "replace_pinned: this tier cannot replace a resident image");
+
+  const auto e1 = base.edit_pinned(PinnedImage{1, 1}, PixelPoint{},
+                                   Image{1, 1, {Pixel{}}},
+                                   ImageComposition::Overwrite);
+  REQUIRE_FALSE(e1);
+  CHECK(e1.error().severity == Severity::Warning);
+  CHECK(e1.error().message ==
+        "edit_pinned: this tier cannot edit a resident image in place");
+  const auto e2 = base.edit_pinned(
+      PinnedImage{1, 1}, PixelPoint{},
+      EncodedImage{ImageFormat::Rgba32, bytes, Extent{1, 1}},
+      ImageComposition::AlphaBlend);
+  REQUIRE_FALSE(e2);
+  CHECK(e2.error().message ==
+        "edit_pinned: this tier cannot edit a resident image in place");
 
   // The two-argument convenience is non-virtual and delegates, so it produces
   // the THREE-argument message — which is what proves the delegation runs.
