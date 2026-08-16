@@ -616,6 +616,8 @@ TEST_CASE("Decoder round-trip: the event builders emit what the decoder emits (#
   REQUIRE(bm.y == dm->y);
   REQUIRE(bm.button == dm->button);    // 3 == 3, not the old 0 or the hand-rolled -1
   REQUIRE(bm.pressed == dm->pressed);
+  REQUIRE(bm.motion == dm->motion);
+  REQUIRE(bm.action() == termforge::MouseAction::Move);
   REQUIRE(bm.scroll_up == dm->scroll_up);
   REQUIRE(bm.scroll_down == dm->scroll_down);
 
@@ -630,6 +632,22 @@ TEST_CASE("Decoder round-trip: the event builders emit what the decoder emits (#
   REQUIRE(bp.y == dm->y);
   REQUIRE(bp.button == dm->button);
   REQUIRE(bp.pressed == dm->pressed);
+  REQUIRE(bp.motion == dm->motion);
+  REQUIRE(bp.action() == termforge::MouseAction::Press);
+
+  // Left drag at (6, 1) 0-based = SGR (7, 2) 1-based, btn 32.
+  decoded = in.decode("\x1b[<32;7;2M");
+  REQUIRE(decoded.size() == 1);
+  dm = std::get_if<MouseEvent>(&decoded.front());
+  REQUIRE(dm != nullptr);
+  const auto built_drag = drag(6, 1, 0);
+  const auto& bd = std::get<MouseEvent>(built_drag);
+  REQUIRE(bd.x == dm->x);
+  REQUIRE(bd.y == dm->y);
+  REQUIRE(bd.button == dm->button);
+  REQUIRE(bd.pressed == dm->pressed);
+  REQUIRE(bd.motion == dm->motion);
+  REQUIRE(bd.action() == termforge::MouseAction::Drag);
 
   // Wheel-down at (2, 2) 0-based = SGR (3, 3) 1-based, btn 64|1 = 65.
   decoded = in.decode("\x1b[<65;3;3M");
@@ -641,6 +659,8 @@ TEST_CASE("Decoder round-trip: the event builders emit what the decoder emits (#
   REQUIRE(bw.x == dm->x);
   REQUIRE(bw.y == dm->y);
   REQUIRE(bw.button == dm->button);  // -1 == -1
+  REQUIRE(bw.motion == dm->motion);
+  REQUIRE(bw.action() == termforge::MouseAction::Wheel);
   REQUIRE(bw.scroll_down == dm->scroll_down);
   REQUIRE(bw.scroll_up == dm->scroll_up);
 }

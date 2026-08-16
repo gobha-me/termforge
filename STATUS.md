@@ -6,31 +6,36 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-16, latest)
 
-**Release candidate: v0.36.0 — partial pinned-image edits.** #140 adds
-`PixelPoint`, `ImageComposition` and non-pure raw/encoded `edit_pinned`
-overloads. Kitty applies a block to root frame 1 with pixel offsets and explicit
-source-over/overwrite semantics; it keeps the image id and placement, emits no
-`a=t`, and bills the complete command plus payload to `image_edit`.
+**Release candidate: v0.37.0 — semantic mouse actions.** #267 preserves the
+SGR motion bit on `MouseEvent`, adds the compatibility-conscious
+`MouseEvent::action()` projection (`Press`, `Drag`, `Release`, `Wheel`, or
+`Move`), and keeps the legacy `pressed` field true only for presses. Existing
+positional aggregate initializers retain their field mapping because the new
+state is appended.
 
-Validation proves the block fits the pinned extent before wire or state. Edit
-content identity and source-byte residency commit only at an accepted frame
-write. Opaque PNG edits reuse #165's correlated reply path; rejection and
-timeout restore the prior root belief, and a sink refusal discards the pending
-correlation because no terminal can acknowledge bytes it never received.
-Legacy and non-Kitty tiers return a `Warning` rather than silently
-retransmitting the full image.
+Structured sources reject contradictory motion states atomically. Trace schema
+5 records the motion bit so source-posted drags survive recording and playback;
+schemas 1-4 remain readable and retain every action they could represent. The
+input example now displays semantic actions rather than inferring releases from
+`pressed`.
 
-Focused offline tests cover raw/PNG blocks, both composition modes, multi-chunk
-root targeting and reply quietness, the 32x32-in-240x160 bandwidth claim, meter
-buckets, invalid geometry/handles, accepted/refused writes and opaque
-rejection/timeout. GCC 14.2 and Clang 20.1 Release `-Werror` builds each pass all
-68 tests; ASan+UBSan passes the same matrix, and both compilers pass `subdir`,
-`install` and `vendored` consumer acceptance. Mutations of the root action,
-meter bucket, accepted residency addition and rejection/timeout rollback all
-fail their focused suites. Hosted PR/exact-main CI and stanza 11 live-emulator
-evidence remain required before release.
+GCC 14.2, Clang 20.1 and GCC ASan+UBSan with leak detection each pass all 68
+tests. Both compilers pass `subdir`, `install` and `vendored` consumer
+acceptance. Four focused mutations prove the suites fail if parsing drops the
+motion bit, action mapping collapses drag to release, trace encoding loses
+motion, or source validation accepts motion plus press. Hosted PR/exact-main CI
+and a real-Kitty press/drag/release check remain required before release.
 
-**Next:** after #140 ships, take priority:2 bug #267 unless an open PR appears.
+**Next:** after #267 ships, reassess the open queue; #269 remains the only
+unlabelled open feature and needs a bounded pending-mode design before code.
+
+## Previous stable release: v0.36.0
+
+**v0.36.0 — partial pinned-image edits.** #140 adds `PixelPoint`,
+`ImageComposition` and non-pure raw/encoded `edit_pinned` overloads. Kitty
+applies a block to root frame 1 with pixel offsets and explicit
+source-over/overwrite semantics while retaining the image id and placement.
+The release shipped from merge commit `596c1cc` after all hosted checks passed.
 
 ## Previous stable release: v0.35.0
 

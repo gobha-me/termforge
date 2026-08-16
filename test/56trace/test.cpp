@@ -412,6 +412,50 @@ TEST_CASE("posted modifier keys round-trip through the current trace schema (#20
   REQUIRE(refused.error().message.find("posted key event") != std::string::npos);
 }
 
+TEST_CASE("posted mouse actions round-trip through trace schema 5 (#267)",
+          "[trace][mouse]") {
+  for (const MouseEvent original : {
+           MouseEvent{.x = 3, .y = 4, .button = 0, .motion = true},
+           MouseEvent{.x = 5, .y = 6, .button = 3, .motion = true},
+       }) {
+    detail::TraceRecord record{
+        detail::TraceKind::Posted, detail::TracePhase::Posted, 0, 0,
+        detail::encode_event(Event{original})};
+    const auto decoded = detail::decode_event(record);
+    REQUIRE(decoded.has_value());
+    const auto& mouse = std::get<MouseEvent>(*decoded);
+    CHECK(mouse.x == original.x);
+    CHECK(mouse.y == original.y);
+    CHECK(mouse.button == original.button);
+    CHECK(mouse.motion);
+    CHECK(mouse.action() == original.action());
+
+    REQUIRE_FALSE(record.payload.empty());
+    record.payload.back() |= std::uint8_t{0x80};
+    const auto refused = detail::decode_event(record);
+    REQUIRE_FALSE(refused.has_value());
+    CHECK(refused.error().message.find("posted mouse event") !=
+          std::string::npos);
+  }
+}
+
+TEST_CASE("pre-schema-5 mouse payloads retain their representable actions",
+          "[trace][mouse][compatibility]") {
+  for (const MouseEvent original : {
+           MouseEvent{.x = 1, .y = 2, .button = 0, .pressed = false},
+           MouseEvent{.x = 3, .y = 4, .button = 3, .pressed = false},
+       }) {
+    detail::TraceRecord record{
+        detail::TraceKind::Posted, detail::TracePhase::Posted, 0, 0,
+        detail::encode_event(Event{original})};
+    const auto decoded = detail::decode_event(record);
+    REQUIRE(decoded.has_value());
+    const auto& mouse = std::get<MouseEvent>(*decoded);
+    CHECK_FALSE(mouse.motion);
+    CHECK(mouse.action() == original.action());
+  }
+}
+
 TEST_CASE("terminal reply records round-trip without becoming Events",
           "[trace][kitty-reply]") {
   for (const TerminalReplyRecord& original : {
@@ -493,7 +537,7 @@ TEST_CASE("malformed traces are rejected before the App starts", "[trace][failur
   SECTION("unknown schema") {
     std::string broken = artifact.trace;
     REQUIRE(broken.size() > 9);
-    broken[8] = 5;
+    broken[8] = 6;
     const auto [wire, error] = play_bytes(std::move(broken));
     REQUIRE(wire.empty());
     REQUIRE(error.message.find("schema") != std::string::npos);
@@ -555,6 +599,17 @@ TEST_CASE("schema 3 traces remain readable after terminal replies were added",
   v3[8] = 3;
   v3[9] = 0;
   std::istringstream input{v3, std::ios::binary};
+  REQUIRE(detail::read_trace(input).has_value());
+}
+
+TEST_CASE("schema 4 traces remain readable after mouse motion was added",
+          "[trace][compatibility]") {
+  const Artifact artifact = make_artifact();
+  std::string v4 = artifact.trace;
+  REQUIRE(v4.size() > 56);
+  v4[8] = 4;
+  v4[9] = 0;
+  std::istringstream input{v4, std::ios::binary};
   REQUIRE(detail::read_trace(input).has_value());
 }
 

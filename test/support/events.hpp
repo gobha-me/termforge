@@ -57,6 +57,17 @@ inline auto press(int x, int y, int button = 0) -> Event {
   return Event{e};
 }
 
+// Motion while a button is held. The compatibility `pressed` projection is
+// false so widgets do not re-fire clicks, while action() remains Drag.
+inline auto drag(int x, int y, int button = 0) -> Event {
+  MouseEvent e;
+  e.x = x;
+  e.y = y;
+  e.button = button;
+  e.motion = true;
+  return Event{e};
+}
+
 // Buttonless pointer motion: ?1003 reports btn = 32 | 3 = 35, which decodes
 // to button = btn & 0x03 = **3** (input.cpp:226-230) -- NOT 0 (a press's
 // button) and NOT -1 (a wheel). Functionally inert today (hover paths gate
@@ -68,6 +79,7 @@ inline auto motion(int x, int y) -> Event {
   e.y = y;
   e.button = 3;  // buttonless motion, exactly as the decoder emits it
   e.pressed = false;
+  e.motion = true;
   return Event{e};
 }
 

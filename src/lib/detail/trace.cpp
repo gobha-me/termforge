@@ -408,6 +408,7 @@ auto encode_event(const Event& event) -> std::vector<std::uint8_t> {
           if (value.ctrl) flags |= 1U << 3;
           if (value.alt) flags |= 1U << 4;
           if (value.shift) flags |= 1U << 5;
+          if (value.motion) flags |= 1U << 6;
           append_le(bytes, flags);
         } else if constexpr (std::same_as<T, PasteEvent>) {
           append_le(bytes, std::uint8_t{2});
@@ -453,13 +454,13 @@ auto decode_event(const TraceRecord& record) -> std::expected<Event, ErrorEvent>
     const auto button = take_le<std::int32_t>(bytes);
     const auto flags = take_le<std::uint8_t>(bytes);
     if (!x || !y || !button || !flags || !bytes.empty() ||
-        (*flags & ~std::uint8_t{0x3F}) != 0) {
+        (*flags & ~std::uint8_t{0x7F}) != 0) {
       return trace_error("posted mouse event is invalid");
     }
     return Event{MouseEvent{*x, *y, *button, (*flags & 1U) != 0,
                             (*flags & 2U) != 0, (*flags & 4U) != 0,
                             (*flags & 8U) != 0, (*flags & 16U) != 0,
-                            (*flags & 32U) != 0}};
+                            (*flags & 32U) != 0, (*flags & 64U) != 0}};
   }
   if (*type == 2) {
     auto text = take_string(bytes);
