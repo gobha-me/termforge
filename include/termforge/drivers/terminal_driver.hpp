@@ -738,6 +738,14 @@ class TerminalDriver {
   // narrowed -- see select_driver.cpp), and for the application the
   // terminal pushing it via #181 is the probe's answer to the same
   // question.
+  //
+  // #269 bounds each synchronized transaction to one MiB of pending bytes.
+  // Older terminals can abandon a larger transaction before its matching
+  // reset, which turns that otherwise-correct reset into a repeated terminal
+  // diagnostic. An oversized frame still crosses the same one-write boundary,
+  // but without the begin/end pair, and the driver reports that lesser route
+  // once through take_driver_events(). The decision is per-frame: a later
+  // small frame is synchronized normally.
   auto set_sync_updates(bool enabled) noexcept -> void { m_sync_updates = enabled; }
   [[nodiscard]] auto sync_updates() const noexcept -> bool { return m_sync_updates; }
 
@@ -822,9 +830,12 @@ class TerminalDriver {
 
  private:
   // Set by set_sync_updates (#148); read by emit_frame(), which wraps the
-  // frame in 2026 begin/end when it is set and leaves the bytes
-  // byte-identical when it is not.
+  // frame in 2026 begin/end when it is set and within #269's transaction
+  // budget, and leaves the bytes byte-identical when it is not.
   bool m_sync_updates{false};
+  // One driver is one session. Repeating this Info every oversized frame would
+  // replace kitty's stderr flood with an application-event flood.
+  bool m_warned_sync_limit{false};
 
   FrameBytes m_pending{};  // this frame, so far
   FrameBytes m_last_frame_bytes{};

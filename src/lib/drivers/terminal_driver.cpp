@@ -89,6 +89,18 @@ auto TerminalDriver::shutdown() -> void {
 // splitting the frame back into three writes -- begin / frame / end.
 constexpr std::string_view kSyncBegin = "\033[?2026h";
 constexpr std::string_view kSyncEnd = "\033[?2026l";
+// Kitty 0.32's pending parser abandons a transaction when a parse pass begins
+// with one MiB already queued and no stop seen. The begin marker is consumed
+// before pending mode starts. Reserve the stop marker's wire size inside a
+// one-MiB post-begin transaction so the stop can never land beyond the safety
+// bound, regardless of how the stream is split across reads. The DEC 2026
+// protocol standardizes no portable capacity/timeout query, so this is
+// deliberately sender policy, not a fabricated Capabilities field or an
+// emulator-version check.
+constexpr std::size_t kSyncPendingBudget = 1024U * 1024U;
+static_assert(kSyncEnd.size() < kSyncPendingBudget);
+constexpr std::size_t kMaxSyncFrameBytes =
+    kSyncPendingBudget - kSyncEnd.size();
 
 auto TerminalDriver::emit_frame(std::string_view bytes) -> bool {
   // #148: the synchronized-output wrap. ONE write either way -- a driver
@@ -99,7 +111,9 @@ auto TerminalDriver::emit_frame(std::string_view bytes) -> bool {
   // across the three (or N) drivers.
   std::string wrapped;
   std::string_view frame = bytes;
-  if (m_sync_updates) {
+  const bool oversized_sync_frame =
+      m_sync_updates && bytes.size() > kMaxSyncFrameBytes;
+  if (m_sync_updates && bytes.size() <= kMaxSyncFrameBytes) {
     wrapped.reserve(kSyncBegin.size() + bytes.size() + kSyncEnd.size());
     wrapped += kSyncBegin;
     wrapped += bytes;
@@ -118,6 +132,17 @@ auto TerminalDriver::emit_frame(std::string_view bytes) -> bool {
   } else {
     std::fwrite(frame.data(), 1, frame.size(), stdout);
     std::fflush(stdout);
+  }
+  if (accepted && oversized_sync_frame && !m_warned_sync_limit) {
+    // Info, not Warning: the complete frame was accepted, just by the lesser
+    // unsynchronized route. Latch per driver session so a sustained image
+    // stream reports the tier change without flooding the event bus. A refused
+    // write cannot consume the report because no route was honoured.
+    m_warned_sync_limit = true;
+    push_driver_event(ErrorEvent{
+        Severity::Info, "driver",
+        "synchronized output skipped: frame exceeds the 1-MiB "
+        "pending-transaction safety limit"});
   }
   // Deliberately outside the branch -- see the header. It closes the frame and
   // resets the pending image tallies whether or not the sink accepted it. The
