@@ -6,6 +6,7 @@
 // Degradation and failure are modeled as *events* (see Event / ErrorEvent)
 // rather than silent downgrade, per the project design.
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -383,6 +384,39 @@ struct EncodedImage {
   }
 };
 
+// One frame in a terminal-driven image animation (#116).
+//
+// The payload is BORROWED for register_animation's call only. An Image is
+// referenced rather than copied; an EncodedImage is already a pair of borrowed
+// bytes plus caller-declared geometry and is therefore cheap to retain in this
+// descriptor. The descriptor itself may live in a vector/span for the call,
+// but neither it nor either payload is retained by the driver afterwards.
+//
+// `gap` is how long this frame remains current before the next frame. Zero is
+// the API spelling of a protocol GAPLESS frame (wire z=-1), not "use kitty's
+// default"; negative durations have no meaning and are refused before wire.
+class AnimationFrame {
+ public:
+  AnimationFrame(const Image& image, std::chrono::milliseconds gap) noexcept
+      : m_payload(&image), m_gap(gap) {}
+  AnimationFrame(Image&&, std::chrono::milliseconds) = delete;
+  AnimationFrame(EncodedImage image, std::chrono::milliseconds gap) noexcept
+      : m_payload(image), m_gap(gap) {}
+
+  using Payload = std::variant<const Image*, EncodedImage>;
+
+  [[nodiscard]] auto payload() const noexcept -> const Payload& {
+    return m_payload;
+  }
+  [[nodiscard]] auto gap() const noexcept -> std::chrono::milliseconds {
+    return m_gap;
+  }
+
+ private:
+  Payload m_payload;
+  std::chrono::milliseconds m_gap;
+};
+
 // ── image placement ──────────────────────────────────────────────────────
 // Kitty's image stacking order is one signed 32-bit z-index, but exposing the
 // integer alone makes every application rediscover the two terminal-owned
@@ -570,6 +604,24 @@ struct PinnedImage {
   constexpr auto operator==(const PinnedImage&) const -> bool = default;
 };
 
+// Opaque handle to one registered terminal-driven animation (#116).
+//
+// It carries the same three-part identity as PinnedImage for the same reasons:
+// ids overlap between driver instances and are recycled inside one instance,
+// while a handle must never start naming a later resident object by accident.
+// Animation playback/control is #117; #116 establishes the independently
+// owned resident sequence that those operations will address.
+struct AnimationHandle {
+  std::uint32_t id{0};
+  std::uint32_t owner{0};
+  std::uint32_t serial{0};
+
+  [[nodiscard]] constexpr explicit operator bool() const noexcept {
+    return id != 0;
+  }
+  constexpr auto operator==(const AnimationHandle&) const -> bool = default;
+};
+
 // ── capabilities ─────────────────────────────────────────────────────────
 // Result of probing the *terminal* (never the display server). Drives driver
 // selection.
@@ -592,6 +644,12 @@ struct Capabilities {
   // property: it describes the wire, so like kitty_graphics it is probed by
   // Terminal and read by the drivers, and it does not affect driver selection.
   bool sync_updates{false};
+  // The terminal accepted an action-level a=f animation-frame probe (#116).
+  // A basic kitty_graphics query proves transmit/place/delete only; terminals
+  // such as Konsole can answer that query while ignoring animation actions.
+  // Appended so every existing positional aggregate initializer keeps its
+  // field mapping. Pushed capabilities carry this fact without probe traffic.
+  bool kitty_animation{false};
 };
 
 // ── events ───────────────────────────────────────────────────────────────

@@ -108,7 +108,8 @@ auto restore_continue_handler() noexcept -> void {
   return a.kitty_graphics == b.kitty_graphics && a.sixel == b.sixel &&
          a.truecolor == b.truecolor && a.color_levels == b.color_levels &&
          a.kitty_keyboard == b.kitty_keyboard &&
-         a.sync_updates == b.sync_updates;
+         a.sync_updates == b.sync_updates &&
+         a.kitty_animation == b.kitty_animation;
 }
 
 auto trace_warning(std::string message) -> ErrorEvent {

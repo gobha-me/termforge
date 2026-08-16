@@ -20,6 +20,7 @@
 #include <expected>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -393,9 +394,39 @@ class TerminalDriver {
   // Driver-accounted resident image usage (#112). NON-PURE so a third-party
   // driver written before the query keeps compiling; a tier with no resident
   // image channel has exactly the empty snapshot returned here. Drivers that
-  // cache or pin terminal-side data override it.
+  // cache, pin, or register terminal-side animation roots override it. An
+  // animation counts as one pinned/application-resident image, while its byte
+  // total includes every frame payload (#116).
   [[nodiscard]] virtual auto residency() const noexcept -> ImageResidency {
     return {};
+  }
+
+  // Whether the selected terminal session has proved the image-animation
+  // action, not merely the basic kitty graphics query (#116). This is
+  // base-owned, non-virtual STATE for the same reason sync_updates is: the
+  // terminal probe supplies one session fact through the unique_ptr held by
+  // App, while the registration BEHAVIOUR below remains per-driver virtual.
+  auto set_image_animation_support(bool enabled) noexcept -> void {
+    m_image_animation_support = enabled;
+  }
+  [[nodiscard]] auto supports_image_animation() const noexcept -> bool {
+    return m_image_animation_support;
+  }
+
+  // Register one ordered terminal-resident image animation. Payloads are
+  // borrowed only for this call and are transmitted once; the opaque handle
+  // is the independently-owned sequence #117 will later control.
+  //
+  // NON-PURE: an out-of-tree driver written before #116 must keep compiling.
+  // A tier without a terminal-side animation channel refuses honestly and
+  // emits nothing. There is deliberately no default argument and no implicit
+  // client-driven fallback, which would change the requested bandwidth class.
+  virtual auto register_animation(std::span<const AnimationFrame> /*frames*/)
+      -> std::expected<AnimationHandle, ErrorEvent> {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "register_animation: this tier cannot register terminal-driven "
+        "image animations"}};
   }
 
   // Transmit `image` and hold it resident. The returned handle is the
@@ -965,6 +996,10 @@ class TerminalDriver {
   // frame in 2026 begin/end when it is set and within #269's transaction
   // budget, and leaves the bytes byte-identical when it is not.
   bool m_sync_updates{false};
+  // Set from the probed/pushed Capabilities by Terminal::select_driver. Kept
+  // beside synchronized-output state because both are session wire facts, not
+  // properties a concrete driver may infer from an emulator name.
+  bool m_image_animation_support{false};
   // One driver is one session. Repeating this Info every oversized frame would
   // replace kitty's stderr flood with an application-event flood.
   bool m_warned_sync_limit{false};

@@ -104,6 +104,33 @@ namespace termforge::detail {
   return da1 == std::string_view::npos || g < da1;
 }
 
+// Kitty image-animation actions are supported: the terminal accepted the
+// dedicated a=f probe under an id outside every TermForge driver pool. This is
+// deliberately separate from probe_kitty_ok -- a terminal can implement the
+// basic transmit/place subset and still ignore animation-frame commands.
+//
+// Scan every APC rather than only the first because the ordinary i=31 graphics
+// query intentionally precedes this one in the same startup response stream.
+[[nodiscard]] inline auto probe_kitty_animation(
+    std::string_view reply) -> bool {
+  constexpr std::string_view kProbeId{"i=4294967295"};
+  const auto da1 = find_da1(reply);
+  std::size_t search_from = 0;
+  while (true) {
+    const auto g = reply.find("\033_G", search_from);
+    if (g == std::string_view::npos) break;
+    const auto st = reply.find("\033\\", g);
+    if (st == std::string_view::npos) return false;
+    const auto apc = reply.substr(g, st - g);
+    if (apc.find(kProbeId) != std::string_view::npos &&
+        apc.find(";OK") != std::string_view::npos) {
+      return da1 == std::string_view::npos || g < da1;
+    }
+    search_from = st + 2;
+  }
+  return false;
+}
+
 // Sixel is advertised in the DA1 attribute list (attribute "4").
 [[nodiscard]] inline auto probe_sixel(std::string_view reply) -> bool {
   return reply.find(";4;") != std::string_view::npos ||

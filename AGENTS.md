@@ -246,6 +246,22 @@ file is the tactical version.
   is `image_edit`, never `image_transmit`. Accepted edits add their exact source
   payload bytes to residency and make the full-frame hash unknown; sink refusal
   discards both, while opaque rejection/timeout restores the prior belief.
+- **Animation registration creates frames; it never edits them** (#116).
+  `register_animation` validates the complete borrowed sequence before wire,
+  creates the root with `a=t`, then emits every later full frame as `a=f,X=1`
+  with **no `r=`**. New-frame continuations repeat `a=f` and still omit `r=`;
+  `r=1` belongs to #196/#140's existing-root edit primitive above. Per-frame
+  gaps are signed-32-bit milliseconds: zero means protocol gapless (`z=-1`) for
+  later frames, while the root already defaults gapless and needs `a=a,r=1,z=`
+  only for a positive gap. Mixed extents/formats refuse before any partial
+  sequence; PNG bytes stay opaque/verbatim and every PNG transfer awaits its
+  ordered reply. A registration owns one id in the shared 256-slot
+  application-resident pool, is never implicitly deduplicated, and counts as
+  one pinned residency root whose bytes sum every frame payload. Sink refusal,
+  rejection, timeout, invalidation and shutdown follow the same accepted-write,
+  rollback, quarantine and cleanup boundaries as pins. Basic `kitty_graphics`
+  is insufficient: the base-owned support bit comes from the action-level
+  probe or a pushed capability, and the non-pure default refuses with Warning.
 - **Raw mode is RAII** — `Terminal` restores termios on destruction. Never
   leave the terminal in raw mode on any exit path, **including one an exception
   takes**: a destructor is not a guarantee (an exception escaping `main`

@@ -2,8 +2,8 @@
 # kitty_repro.sh — minimal standalone repros for the kitty graphics paths that
 # KittyDriver emits. Run inside a real kitty (>= 0.28) terminal:
 #
-#   ./tools/kitty_repro.sh          # all thirteen stanzas, with pauses
-#   ./tools/kitty_repro.sh 13       # ONLY stanza 13
+#   ./tools/kitty_repro.sh          # all fourteen stanzas, with pauses
+#   ./tools/kitty_repro.sh 14       # ONLY stanza 14
 #   ./tools/kitty_repro.sh 3 4      # a subset, in the order given
 #   ./tools/kitty_repro.sh --dump   # emit the wire bytes, touch no terminal
 #
@@ -45,6 +45,8 @@
 #      below-non-default-background named layers. Self-contained.
 #  13  #115 — one transmitted quadrant image is source-cropped and sub-cell
 #      offset through Classic Stretch and Classic Exact placements.
+#  14  #116 — the exact non-displayed root/new-frame/delete action probe used
+#      to gate terminal-driven animation registration. Self-contained.
 #
 # All commands use q=0 so kitty REPORTS errors; every response the terminal
 # sends is captured and echoed in readable form. A response of "_Gi=42;OK"
@@ -59,9 +61,9 @@ stanzas=()
 for arg in "$@"; do
   case $arg in
     --dump) dump=1 ;;
-    [1-9]|10|11|12|13) stanzas+=("$arg") ;;
+    [1-9]|10|11|12|13|14) stanzas+=("$arg") ;;
     *)
-      echo "usage: $0 [--dump] [1-9|10|11|12|13]..." >&2
+      echo "usage: $0 [--dump] [1-9|10|11|12|13|14]..." >&2
       exit 2
       ;;
   esac
@@ -611,11 +613,26 @@ stanza_13() {
   say "(d) whether any response contains ';E'."
 }
 
+stanza_14() {
+  say ""
+  say "== Stanza 14: #116 terminal-driven animation action probe =="
+  say "The startup probe's exact quiet root/new-frame/delete bytes are sent."
+  say "Expected: the dedicated new-frame command reports OK and no error."
+
+  local response
+  send_quiet "${ESC}_Ga=t,t=d,f=24,i=4294967295,s=1,v=1,q=2;AAAA${ST}${ESC}_Ga=f,t=d,f=24,i=4294967295,s=1,v=1,z=-1,X=1,q=0;AAAA${ST}${ESC}_Ga=d,d=I,i=4294967295,q=2${ST}"
+  response=$reply_out
+
+  say "$(printf 'new-frame response: %q' "$response")"
+  say "Report it verbatim. The release gate is a response containing"
+  say "'i=4294967295;OK' before any error."
+}
+
 if (( ${#stanzas[@]} )); then
   run_all=0
   for n in "${stanzas[@]}"; do "stanza_$n"; done
 else
-  for n in 1 2 3 4 5 6 7 8 9 10 11 12 13; do "stanza_$n"; done
+  for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do "stanza_$n"; done
   say ""
   say "Report: (a) stanza 1 red block, (b) green after stanza 2, (c) stanza 3"
   say "blue block, (d) YELLOW block after stanza 4, (e) stanza 5 shows a"
@@ -625,5 +642,6 @@ else
   say "(k) stanza 10's existing block turns green without re-placement, and"
   say "(l) stanza 11's offset overwrite/alpha quadrants match, and (m)"
   say "stanza 12's three named-layer visibility results match, and (n) stanza"
-  say "13's Classic Stretch/Exact crop and offset results match its description."
+  say "13's Classic Stretch/Exact crop and offset results match its description,"
+  say "and (o) stanza 14's dedicated new-frame response is OK."
 fi
