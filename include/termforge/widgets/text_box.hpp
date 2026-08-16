@@ -4,8 +4,9 @@
 // style). Lines are appended; the view shows the most recent lines that fit
 // its rect, auto-scrolling to the bottom on new content unless the user has
 // scrolled up. Supports manual scroll (PageUp/PageDown / scroll wheel) and
-// simple character-wrap across styled spans (#25). This is the foundation of
-// a chat message view. Word-aware wrapping is #24.
+// display-width-aware word wrapping across styled spans (#24/#25), with hard
+// wrapping only for an unbroken run wider than the widget. This is the
+// foundation of a chat message view.
 
 #include <string>
 #include <vector>
@@ -21,10 +22,11 @@ class TextBox final : public Widget {
  public:
   TextBox() = default;
 
-  // Append a logical line (a chat message, a log entry). Long lines wrap to
-  // the widget width at draw time. Marks the widget dirty and auto-scrolls
-  // to the bottom if the user is already at the bottom. Plain text becomes a
-  // single span in the default content colours; sanitization runs here (#25).
+  // Append a logical line (a chat message, a log entry). Long lines wrap at
+  // the last fitting space, falling back to a display-width-safe hard split
+  // for an overlong word. Source whitespace is preserved. Marks the widget
+  // dirty and auto-scrolls to the bottom if the user is already at the bottom.
+  // Plain text becomes one default-colour span; sanitization runs here (#25).
   auto append(std::string line) -> void;
 
   // Append a styled logical line. Each span's text is sanitized at this

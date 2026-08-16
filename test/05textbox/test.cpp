@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include "detail/wrap.hpp"
 #include "support/events.hpp"
 #include "termforge/widgets/text_box.hpp"
 #include "termforge/widgets/theme.hpp"
@@ -23,6 +24,19 @@ auto render_row(TextBox& box, int width, int height, int y) -> std::string {
   for (int x = 0; x < width; ++x) row += s.at(x, y).text;
   return row;
 }
+
+auto plain_rows(const std::string& text, int width)
+    -> std::vector<std::string> {
+  std::vector<std::string> rows;
+  termforge::detail::wrap_into(rows, text, width);
+  return rows;
+}
+
+auto styled_text(const termforge::StyledText& row) -> std::string {
+  std::string text;
+  for (const termforge::TextSpan& span : row) text += span.text;
+  return text;
+}
 }
 
 TEST_CASE("TextBox: appends and shows the latest lines pinned to the bottom", "[textbox]") {
@@ -43,6 +57,106 @@ TEST_CASE("TextBox: long lines wrap to the widget width", "[textbox]") {
   REQUIRE(render_row(box, 4, 5, 0) == "abcd");
   REQUIRE(render_row(box, 4, 5, 1) == "efgh");
   REQUIRE(render_row(box, 4, 5, 2) == "ij");
+}
+
+TEST_CASE("TextBox: prose wraps at the last fitting word boundary (#24)",
+          "[textbox][wrap]") {
+  TextBox box;
+  box.append("alpha beta gamma");
+
+  REQUIRE(render_row(box, 8, 5, 0) == "alpha ");
+  REQUIRE(render_row(box, 8, 5, 1) == "beta ");
+  REQUIRE(render_row(box, 8, 5, 2) == "gamma");
+}
+
+TEST_CASE("TextBox: resizing reflows prose through the same word policy (#24)",
+          "[textbox][wrap][resize]") {
+  TextBox box;
+  box.append("alpha beta");
+
+  REQUIRE(render_row(box, 7, 3, 0) == "alpha ");
+  REQUIRE(render_row(box, 7, 3, 1) == "beta");
+  REQUIRE(render_row(box, 10, 3, 0) == "alpha beta");
+}
+
+TEST_CASE("TextBox: word wrapping preserves whitespace exactly (#24)",
+          "[textbox][wrap][failure]") {
+  const auto leading = plain_rows("  hi", 4);
+  REQUIRE(leading == std::vector<std::string>{"  hi"});
+
+  const auto trailing = plain_rows("hi  ", 4);
+  REQUIRE(trailing == std::vector<std::string>{"hi  "});
+
+  const std::string repeated = "aa   bb";
+  const auto rows = plain_rows(repeated, 4);
+  REQUIRE(rows == std::vector<std::string>{"aa  ", " bb"});
+  std::string rebuilt;
+  for (const auto& row : rows) rebuilt += row;
+  REQUIRE(rebuilt == repeated);
+}
+
+TEST_CASE("TextBox: overlong words retain display-width-safe hard wrapping (#24)",
+          "[textbox][wrap][failure]") {
+  REQUIRE(plain_rows("abcde", 2) ==
+          std::vector<std::string>{"ab", "cd", "e"});
+  REQUIRE(plain_rows("word", 4) == std::vector<std::string>{"word"});
+  REQUIRE(plain_rows("ab cd", 1) ==
+          std::vector<std::string>{"a", "b", " ", "c", "d"});
+  REQUIRE(plain_rows("", 4) == std::vector<std::string>{""});
+  REQUIRE(plain_rows("no wrap", 0) ==
+          std::vector<std::string>{"no wrap"});
+
+  const std::string wide = "\xE7\x95\x8C hello";  // 界 is two columns.
+  const auto rows = plain_rows(wide, 4);
+  REQUIRE(rows ==
+          std::vector<std::string>{"\xE7\x95\x8C ", "hell", "o"});
+  std::string rebuilt;
+  for (const auto& row : rows) rebuilt += row;
+  REQUIRE(rebuilt == wide);
+}
+
+TEST_CASE("TextBox: word breaks cross spans without losing style (#24)",
+          "[textbox][styled][wrap]") {
+  using termforge::Attr;
+  using termforge::StyledText;
+  using termforge::TextSpan;
+  using termforge::TextStyle;
+
+  const TextStyle red{Rgb{0xFF, 0, 0}, Rgb{1, 2, 3}, Attr::Bold};
+  const TextStyle gap{Rgb{0, 0xFF, 0}, Rgb{4, 5, 6}, Attr::Underline};
+  const TextStyle blue{Rgb{0, 0, 0xFF}, Rgb{7, 8, 9}, Attr::Italic};
+  const StyledText line{{"red", red}, {" ", gap}, {"blue", blue}};
+
+  std::vector<StyledText> rows;
+  termforge::detail::wrap_styled_into(rows, line, 4);
+  REQUIRE(rows.size() == 2);
+  REQUIRE(styled_text(rows[0]) == "red ");
+  REQUIRE(rows[0].size() == 2);
+  CHECK(rows[0][0].style == red);
+  CHECK(rows[0][1].style == gap);
+  REQUIRE(styled_text(rows[1]) == "blue");
+  REQUIRE(rows[1].size() == 1);
+  CHECK(rows[1][0].style == blue);
+}
+
+TEST_CASE("TextBox: a word split across spans is still one word (#24)",
+          "[textbox][styled][wrap][failure]") {
+  using termforge::StyledText;
+  using termforge::TextSpan;
+  using termforge::TextStyle;
+
+  const TextStyle a{Rgb{1, 0, 0}, {}};
+  const TextStyle b{Rgb{0, 1, 0}, {}};
+  const StyledText line{{"ab", a}, {"cd", b}, {" ef", a}};
+  std::vector<StyledText> rows;
+  termforge::detail::wrap_styled_into(rows, line, 4);
+
+  REQUIRE(rows.size() == 2);
+  CHECK(styled_text(rows[0]) == "abcd");
+  CHECK(rows[0].size() == 2);
+  CHECK(rows[0][0].style == a);
+  CHECK(rows[0][1].style == b);
+  CHECK(styled_text(rows[1]) == " ef");
 }
 
 TEST_CASE("TextBox: scrolling up pauses follow; new content does not yank view", "[textbox]") {
