@@ -13,6 +13,7 @@
 // is not a dispatch mechanism.
 
 #include <atomic>
+#include <chrono>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -427,6 +428,58 @@ class TerminalDriver {
         Severity::Warning, "driver",
         "register_animation: this tier cannot register terminal-driven "
         "image animations"}};
+  }
+
+  // Control and inspect a registered terminal-driven animation (#117).
+  // Time-sensitive operations take the caller's monotonic time explicitly so
+  // App can supply its real or SyntheticClock-backed timeline without hiding
+  // a second clock in the driver. The status is commanded/client-timeline
+  // state: Kitty sends no completion acknowledgement.
+  //
+  // NON-PURE, with no default arguments: adding playback must not break an
+  // out-of-tree driver or make a virtual's defaults bind by static type.
+  virtual auto play_animation(
+      AnimationHandle /*animation*/, AnimationPlayMode /*mode*/,
+      AnimationReplay /*replay*/,
+      std::chrono::steady_clock::time_point /*now*/)
+      -> std::expected<void, ErrorEvent> {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "play_animation: this tier cannot control terminal-driven image "
+        "animations"}};
+  }
+  virtual auto seek_animation(
+      AnimationHandle /*animation*/, std::size_t /*frame_index*/,
+      std::chrono::steady_clock::time_point /*now*/)
+      -> std::expected<void, ErrorEvent> {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "seek_animation: this tier cannot control terminal-driven image "
+        "animations"}};
+  }
+  virtual auto stop_animation(AnimationHandle /*animation*/,
+                              AnimationStopMode /*mode*/)
+      -> std::expected<void, ErrorEvent> {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "stop_animation: this tier cannot control terminal-driven image "
+        "animations"}};
+  }
+  [[nodiscard]] virtual auto animation_status(
+      AnimationHandle /*animation*/,
+      std::chrono::steady_clock::time_point /*now*/) const
+      -> std::expected<AnimationStatus, ErrorEvent> {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "animation_status: this tier cannot inspect terminal-driven image "
+        "animations"}};
+  }
+  virtual auto unregister_animation(AnimationHandle /*animation*/)
+      -> std::expected<void, ErrorEvent> {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "unregister_animation: this tier cannot own terminal-driven image "
+        "animations"}};
   }
 
   // Transmit `image` and hold it resident. The returned handle is the

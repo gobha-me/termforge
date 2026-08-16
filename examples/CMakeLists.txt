@@ -7,6 +7,7 @@ set(EXAMPLES
   image
   sprites
   pinned
+  animation_control
   input
   chat
   low_level

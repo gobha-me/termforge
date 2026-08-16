@@ -4,6 +4,27 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
+## In development (2026-08-16)
+
+**v0.42.0 candidate — terminal-driven animation control.** #117 adds
+payload-free once/loop playback over #116's `AnimationHandle`, explicit
+Restart/Ignore replay, Hold/Finish interruption, zero-based seek, local
+commanded-state/deadline observation and owned-root unregistration. Finish
+stops and selects the final frame, while App forwards its real or synthetic
+monotonic clock so completion tests are deterministic without pretending Kitty
+acknowledges presentation.
+
+The controls commit with the accepted frame write and roll projected state back
+on sink refusal; they are metered as image-edit bytes. Existing out-of-tree
+drivers remain source-compatible through non-pure Warning defaults. A dedicated
+caller-cadence suite covers exact wire, pending/stale/cross-driver failures,
+replay, seek, deadlines, sink rollback, lifecycle and App clock forwarding;
+six direct mutations were killed. Local GCC 14.2 and Clang 20.1 passed all 73
+tests, focused ASan passed registration/control, and both compilers passed the
+subdirectory, installed and vendored consumer paths. Repro stanza 15's dump is
+byte-valid. Hosted CI and the required real-Kitty visible loop/final-frame gate
+remain before merge and release.
+
 ## Where we are (2026-08-16, latest)
 
 **Current stable release: v0.41.0 — terminal-driven animation registration.** #116
@@ -27,8 +48,9 @@ acceptance passed the subdirectory, installed and vendored paths, and all ten
 hosted jobs passed. The byte-exact real-Kitty gate returned
 `i=4294967295,r=2;OK`, proving that the dedicated new-frame action created
 frame 2; the probe intentionally never places the image, so no visual output is
-expected. The release shipped on 2026-08-16 through PR #277. **Next: #117**,
-playback, seek, loop and explicit lifecycle control over `AnimationHandle`.
+expected. The release shipped on 2026-08-16 through PR #277. It left #117 —
+playback, seek, loop and explicit lifecycle control over `AnimationHandle` — as
+the next cut; that is the v0.42.0 candidate above.
 
 ## Previous stable release: v0.40.0
 

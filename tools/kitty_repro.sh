@@ -2,8 +2,8 @@
 # kitty_repro.sh — minimal standalone repros for the kitty graphics paths that
 # KittyDriver emits. Run inside a real kitty (>= 0.28) terminal:
 #
-#   ./tools/kitty_repro.sh          # all fourteen stanzas, with pauses
-#   ./tools/kitty_repro.sh 14       # ONLY stanza 14
+#   ./tools/kitty_repro.sh          # all fifteen stanzas, with pauses
+#   ./tools/kitty_repro.sh 15       # ONLY stanza 15
 #   ./tools/kitty_repro.sh 3 4      # a subset, in the order given
 #   ./tools/kitty_repro.sh --dump   # emit the wire bytes, touch no terminal
 #
@@ -47,6 +47,8 @@
 #      offset through Classic Stretch and Classic Exact placements.
 #  14  #116 — the exact non-displayed root/new-frame/delete action probe used
 #      to gate terminal-driven animation registration. Self-contained.
+#  15  #117 — register/place a two-frame sequence, loop it, then interrupt onto
+#      its final frame with payload-free animation controls. Self-contained.
 #
 # All commands use q=0 so kitty REPORTS errors; every response the terminal
 # sends is captured and echoed in readable form. A response of "_Gi=42;OK"
@@ -61,9 +63,9 @@ stanzas=()
 for arg in "$@"; do
   case $arg in
     --dump) dump=1 ;;
-    [1-9]|10|11|12|13|14) stanzas+=("$arg") ;;
+    [1-9]|10|11|12|13|14|15) stanzas+=("$arg") ;;
     *)
-      echo "usage: $0 [--dump] [1-9|10|11|12|13|14]..." >&2
+      echo "usage: $0 [--dump] [1-9|10|11|12|13|14|15]..." >&2
       exit 2
       ;;
   esac
@@ -628,11 +630,31 @@ stanza_14() {
   say "'i=4294967295;OK' before any error."
 }
 
+stanza_15() {
+  say ""
+  say "== Stanza 15: #117 payload-free loop and finish interruption =="
+  say "Expected: a 2x2 block alternates red/green, then remains green."
+
+  local started finished
+  printf '\n\n\n\n%s[4A%s7' "$ESC" "$ESC"
+  send_quiet "${ESC}_Ga=t,t=d,f=32,i=53,s=2,v=2,m=0,q=2;${red_b64}${ST}${ESC}_Ga=a,i=53,r=1,z=500,q=2${ST}${ESC}_Ga=f,t=d,f=32,i=53,s=2,v=2,z=500,X=1,m=0,q=0;${green_b64}${ST}${ESC}_Ga=p,i=53,c=2,r=2,C=1,q=0${ST}${ESC}_Ga=a,i=53,s=3,v=1,c=1,q=0${ST}"
+  started=$reply_out
+  ((dump)) || sleep 1.2
+  send_quiet "${ESC}_Ga=a,i=53,s=1,c=2,q=0${ST}"
+  finished=$reply_out
+  printf '%s8%s[4B\r' "$ESC" "$ESC"
+
+  say "$(printf 'register/place/loop responses: %q' "$started")"
+  say "$(printf 'finish response: %q' "$finished")"
+  say "Report: (a) the block visibly alternated, (b) it ended green, and"
+  say "(c) whether either response contains ';E'."
+}
+
 if (( ${#stanzas[@]} )); then
   run_all=0
   for n in "${stanzas[@]}"; do "stanza_$n"; done
 else
-  for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do "stanza_$n"; done
+  for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do "stanza_$n"; done
   say ""
   say "Report: (a) stanza 1 red block, (b) green after stanza 2, (c) stanza 3"
   say "blue block, (d) YELLOW block after stanza 4, (e) stanza 5 shows a"
@@ -643,5 +665,6 @@ else
   say "(l) stanza 11's offset overwrite/alpha quadrants match, and (m)"
   say "stanza 12's three named-layer visibility results match, and (n) stanza"
   say "13's Classic Stretch/Exact crop and offset results match its description,"
-  say "and (o) stanza 14's dedicated new-frame response is OK."
+  say "(o) stanza 14's dedicated new-frame response is OK, and (p) stanza"
+  say "15 visibly loops red/green then finishes on green without an error."
 fi

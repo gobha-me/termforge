@@ -123,6 +123,21 @@ class KittyDriver final : public TerminalDriver {
   [[nodiscard]] auto residency() const noexcept -> ImageResidency override;
   auto register_animation(std::span<const AnimationFrame> frames)
       -> std::expected<AnimationHandle, ErrorEvent> override;
+  auto play_animation(AnimationHandle animation, AnimationPlayMode mode,
+                      AnimationReplay replay,
+                      std::chrono::steady_clock::time_point now)
+      -> std::expected<void, ErrorEvent> override;
+  auto seek_animation(AnimationHandle animation, std::size_t frame_index,
+                      std::chrono::steady_clock::time_point now)
+      -> std::expected<void, ErrorEvent> override;
+  auto stop_animation(AnimationHandle animation, AnimationStopMode mode)
+      -> std::expected<void, ErrorEvent> override;
+  [[nodiscard]] auto animation_status(
+      AnimationHandle animation,
+      std::chrono::steady_clock::time_point now) const
+      -> std::expected<AnimationStatus, ErrorEvent> override;
+  auto unregister_animation(AnimationHandle animation)
+      -> std::expected<void, ErrorEvent> override;
   auto pin_image(const Image& image)
       -> std::expected<PinnedImage, ErrorEvent> override;
   auto pin_image(const EncodedImage& image)
@@ -281,12 +296,23 @@ class KittyDriver final : public TerminalDriver {
   // outside m_pinned so a PinnedImage API can never address an animation root
   // merely because both happen to occupy the same terminal id range.
   struct AnimationEntry {
+    struct Playback {
+      AnimationRunState state{AnimationRunState::Stopped};
+      std::optional<std::chrono::steady_clock::time_point> deadline;
+    };
+
     Extent px{};
     int format_code{0};
     std::size_t frame_count{0};
     std::uint32_t serial{0};
     bool written{false};
     bool accepted{false};
+    // Gaps retained as milliseconds so a seek can rebase a one-shot deadline.
+    // The final gap is the last-to-root interval for looping and is excluded
+    // from a one-shot's "final frame became current" deadline.
+    std::vector<std::chrono::milliseconds> gaps;
+    Playback committed;
+    Playback projected;
   };
 
   struct StagedAnimation {
@@ -432,6 +458,19 @@ class KittyDriver final : public TerminalDriver {
   // one per session) and a handle whose image was already unpinned.
   auto resolve_pin(PinnedImage image, std::string_view fn)
       -> std::expected<PinnedEntry*, ErrorEvent>;
+  auto resolve_animation(AnimationHandle animation, std::string_view fn)
+      -> std::expected<AnimationEntry*, ErrorEvent>;
+  auto resolve_animation(AnimationHandle animation, std::string_view fn) const
+      -> std::expected<const AnimationEntry*, ErrorEvent>;
+
+  [[nodiscard]] static auto expected_animation_deadline(
+      const AnimationEntry& entry, std::size_t first_frame,
+      std::chrono::steady_clock::time_point now) noexcept
+      -> std::chrono::steady_clock::time_point;
+  auto stage_animation_control(std::uint32_t image_id) -> void;
+  auto finish_animation_controls(bool accepted) -> void;
+  auto emit_animation_control(std::uint32_t image_id,
+                              std::string_view fields) -> void;
 
   // The smallest positive p= no tracked placement of this image holds.
   // Placement ids are scoped by image id on the kitty wire, so consulting
@@ -642,6 +681,7 @@ class KittyDriver final : public TerminalDriver {
   std::unordered_map<std::uint32_t, PinnedEntry> m_pinned;
   std::unordered_map<std::uint32_t, AnimationEntry> m_animations;
   std::vector<StagedAnimation> m_staged_animations;
+  std::unordered_set<std::uint32_t> m_staged_animation_controls;
   // Committed only at an accepted emit_frame boundary. The mutation vector is
   // ordered because one frame may evict an id and reuse it for a new image.
   std::unordered_map<std::uint32_t, AccountedImage> m_accounted_images;

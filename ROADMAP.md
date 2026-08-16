@@ -291,15 +291,15 @@ completed items.
   AVX2 multiversioning and runtime dispatch after #89's scalar work, measured
   against #88's harness rather than a timing assertion.
 
-- [ ] **6.3 — KittyDriver animation**
+- [x] **6.3 — KittyDriver animation** ✅ **DONE**
   #116 registers an ordered, per-frame-gap raw or encoded sequence under one
-  independently owned resident root. It action-probes `a=f`, accounts all frame
-  payloads at the accepted-write boundary, and preserves opaque reply rollback
-  and invalidation. #117 remains: start/stop/seek/loop control over the returned
-  `AnimationHandle`. The capability is action-level: Konsole's basic TGP query
-  succeeds while its current dispatcher has no animation/edit actions, so
-  emulator identity or the coarse `kitty_graphics` bit is not a sufficient
-  gate.
+  independently owned resident root. #117 adds payload-free once/loop playback,
+  explicit restart/ignore replay, hold/final-frame interruption, zero-based
+  seek, commanded-state/deadline observation and owned-root release. App drives
+  the local deadline from its real or synthetic monotonic clock. The capability
+  remains action-level: Konsole's basic TGP query succeeds while its current
+  dispatcher has no animation/edit actions, so emulator identity or the coarse
+  `kitty_graphics` bit is not a sufficient gate.
 
 - [ ] **6.4 — Doxygen docs + custom-driver guide**
 
