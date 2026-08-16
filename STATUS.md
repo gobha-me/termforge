@@ -26,8 +26,8 @@ the standalone public-header target. GCC ASan+UBSan passes 70/70, and the
 changed paths pass TSan. GCC and Clang each pass the `subdir`, `install` and
 `vendored` consumer acceptance paths. Three focused mutations prove the suites
 reject omitted Kitty `z=`, bypassed App preflight and false legacy-driver
-support. Hosted CI and real-Kitty stanza 12 remain required before merge and
-release.
+support. All ten hosted PR jobs pass. Real-Kitty stanza 12 remains required
+before merge and release.
 
 ## Previous stable release: v0.38.0
 
