@@ -136,6 +136,19 @@ struct PlacementGeometry {
     ImagePlacementOptions options, Rect cells, Extent root,
     const TerminalDriver& driver, std::string_view source, std::string_view fn)
     -> std::expected<PlacementGeometry, ErrorEvent> {
+  // Keep the query and emit paths structural mirrors. In particular, Kitty's
+  // virtual-placement record accepts crop/offset keys but its Unicode
+  // placeholder renderer ignores them and reconstructs from the full image.
+  // A driver that selects that route must refuse before validation, cache
+  // mutation or wire instead of emitting a syntactically valid lie.
+  if (!driver.supports_image_placement(options)) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, std::string{source},
+        std::format("{}: this tier cannot honour the requested image "
+                    "placement -- ask supports_image_placement() before "
+                    "drawing",
+                    fn)}};
+  }
   const PixelPoint offset = options.pixel_offset;
   const Extent cell = driver.preferred_pixel_extent(Rect{0, 0, 1, 1});
   if (offset.x < 0 || offset.y < 0 || offset.x >= cell.w ||

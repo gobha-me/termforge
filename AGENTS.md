@@ -148,13 +148,15 @@ file is the tactical version.
   lookup, mutation or wire, with 64-bit intermediate arithmetic; never parse an
   opaque PNG to check its declaration. The selected crop is the effective
   `Exact` extent and its pixel offset counts toward the containing cell rect.
-  Kitty emits `X=`/`Y=` and `x=`/`y=`/`w=`/`h=` only when requested, so the
-  default wire remains byte-identical. Geometry changes re-place without
-  retransmitting. Under Unicode placeholders, `Exact` omits `c=`/`r=` and
-  paints only `image_cell_extent(offset + crop)` cells at the destination's
-  top-left; clear an old larger grid when that footprint shrinks. Other tiers
-  refuse these fields with a `Warning`, while App keeps the authored Baseline
-  and transition-latches the event before blanking cells.
+  Kitty Classic emits `X=`/`Y=` and `x=`/`y=`/`w=`/`h=` only when requested,
+  so the default wire remains byte-identical. Geometry changes re-place
+  without retransmitting. **Do not emit those fields on a virtual placement:**
+  Kitty stores them but its Unicode-placeholder renderer reconstructs from the
+  full root image and ignores them, exposing neighboring atlas sprites.
+  Unicode placeholders therefore report no support for geometry or `Exact`,
+  and direct calls refuse with a `Warning`; App keeps the authored Baseline and
+  transition-latches the supported-lesser-route `Info` before blanking cells.
+  Other tiers refuse these fields with the same honest split.
 - **A pre-encoded payload is shipped verbatim** (#163). `EncodedImage` carries
   opaque bytes the *terminal* decodes; the library never encodes, decodes,
   inspects or resamples them — that is the application's asset pipeline's job,

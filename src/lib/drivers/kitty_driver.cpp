@@ -232,8 +232,8 @@ constexpr int kFormatPng = 100;
   return kFormatRgba32;
 }
 
-// Image-display keys shared by Classic and virtual placements (#115). Defaults
-// are omitted so ImagePlacementOptions{} remains byte-for-byte historical.
+// Classic image-display keys (#115). Defaults are omitted so
+// ImagePlacementOptions{} remains byte-for-byte historical.
 [[nodiscard]] auto placement_layout(ImagePlacementOptions options)
     -> std::string {
   std::string out;
@@ -300,8 +300,7 @@ KittyDriver::ImageTally::~ImageTally() {
 
 auto KittyDriver::emit_placement(std::uint32_t image_id,
                                  std::uint32_t placement_id, bool& placed,
-                                 Rect dest, Rect grid,
-                                 ImagePlacementOptions options,
+                                 Rect dest, ImagePlacementOptions options,
                                  bool content_changed, bool placement_changed)
     -> void {
   if (m_mode == PlacementMode::Classic) {
@@ -333,7 +332,8 @@ auto KittyDriver::emit_placement(std::uint32_t image_id,
     }
     // Placeholder cells are re-emitted every frame (the cell grid is the
     // placement); the virtual placement itself is created once.
-    place_unicode(image_id, placement_id, placed, grid, options);
+    place_unicode(image_id, placement_id, placed, dest.x, dest.y, dest.w,
+                  dest.h, options);
     placed = true;
   }
 }
@@ -356,33 +356,6 @@ auto KittyDriver::clamp_dest(Rect cells, bool& clamped) const noexcept -> Rect {
     if (dest.h > kDiacriticCount) { dest.h = kDiacriticCount; clamped = true; }
   }
   return dest;
-}
-
-auto KittyDriver::placement_grid(Rect dest, Extent exact_pixels,
-                                 ImagePlacementOptions options,
-                                 std::string_view fn) const
-    -> std::expected<Rect, ErrorEvent> {
-  if (m_mode != PlacementMode::UnicodePlaceholders ||
-      options.fit == PlacementFit::Stretch) {
-    return dest;
-  }
-
-  const Extent footprint = image_cell_extent(exact_pixels);
-  if (footprint.w > dest.w || footprint.h > dest.h) {
-    return std::unexpected{ErrorEvent{
-        Severity::Warning, "kitty",
-        std::format("{}: Exact placeholder footprint needs {}x{} cells but "
-                    "the destination provides {}x{}",
-                    fn, footprint.w, footprint.h, dest.w, dest.h)}};
-  }
-  if (footprint.w > kDiacriticCount || footprint.h > kDiacriticCount) {
-    return std::unexpected{ErrorEvent{
-        Severity::Warning, "kitty",
-        std::format("{}: Exact placeholder footprint {}x{} exceeds the "
-                    "297-cell protocol limit",
-                    fn, footprint.w, footprint.h)}};
-  }
-  return Rect{dest.x, dest.y, footprint.w, footprint.h};
 }
 
 auto KittyDriver::region_slot(Rect dest)
@@ -518,13 +491,13 @@ auto KittyDriver::supports_placement_fit(PlacementFit f) const noexcept
   // Exhaustive switch rather than a ternary, for the same reason
   // supports_image_format is one.
   switch (f) {
-    case PlacementFit::Stretch:
+    case PlacementFit::Stretch: return true;
     case PlacementFit::Exact:
-      // #115 gives the placeholder path a native-resolution footprint: omit
-      // c=/r= from the virtual placement and paint only ceil((offset+crop) /
-      // cell) placeholders inside the caller's containing rect. No scaling,
-      // clipping or overflow is required, so Exact is no longer mode-dependent.
-      return true;
+      // A virtual placement accepts omitted c=/r= on the wire, but Kitty's
+      // placeholder renderer derives the natural footprint from the complete
+      // image and ignores the virtual placement's source crop and cell-pixel
+      // offset. That is not Exact for a selected source, so refuse it.
+      return m_mode == PlacementMode::Classic;
   }
   return false;
 }
@@ -532,10 +505,14 @@ auto KittyDriver::supports_placement_fit(PlacementFit f) const noexcept
 auto KittyDriver::supports_image_placement(
     ImagePlacementOptions options) const noexcept -> bool {
   // This is a capability query, not per-image validation. Crop bounds need a
-  // source extent and therefore belong at draw/collect time; offsets are
-  // validated there alongside them so invalid requests produce the Warning
-  // contract rather than looking like an unsupported-tier fallback.
-  return options.layer.z_index().has_value() &&
+  // source extent and therefore belong at draw/collect time. Kitty's virtual
+  // placement record accepts geometry keys, but create_cell_image ignores
+  // them and renders the full source; claiming support would make a sprite
+  // atlas show neighboring sprites. Keep that route on the authored Baseline.
+  const bool geometry_supported =
+      m_mode == PlacementMode::Classic ||
+      (options.pixel_offset == PixelPoint{} && !options.source);
+  return options.layer.z_index().has_value() && geometry_supported &&
          supports_placement_fit(options.fit);
 }
 
@@ -577,7 +554,7 @@ auto KittyDriver::draw_image(Rect cells, const Image& image,
                                              "kitty", "draw_image");
   if (!geometry) return std::unexpected{geometry.error()};
   return draw_payload(cells, std::as_bytes(image.pixels()), kFormatRgba32,
-                      root, geometry->exact_pixels, options, false);
+                      root, options, false);
 }
 
 auto KittyDriver::draw_image(Rect cells, const EncodedImage& image)
@@ -624,7 +601,7 @@ auto KittyDriver::draw_image(Rect cells, const EncodedImage& image,
                                              *this, "kitty", "draw_image");
   if (!geometry) return std::unexpected{geometry.error()};
   return draw_payload(cells, image.bytes, wire_format(image.format),
-                      image.pixels, geometry->exact_pixels, options,
+                      image.pixels, options,
                       image.format == ImageFormat::Png);
 }
 
@@ -1069,13 +1046,7 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image,
   if (!geometry) return std::unexpected{geometry.error()};
 
   bool clamped = false;
-  const Rect dest = options.fit == PlacementFit::Stretch
-                        ? clamp_dest(cells, clamped)
-                        : cells;
-  auto resolved_grid = placement_grid(dest, geometry->exact_pixels, options,
-                                      "draw_pinned");
-  if (!resolved_grid) return std::unexpected{resolved_grid.error()};
-  const Rect grid = *resolved_grid;
+  const Rect dest = clamp_dest(cells, clamped);
   const std::uint64_t rect_key = region_key(dest.x, dest.y, dest.w, dest.h);
   const PinPlacementKey key{rect_key, image.id};
 
@@ -1144,23 +1115,17 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image,
   ImageTally tally{*this, m_buf.size()};
 
   if (needs_placement_id) {
-    const PinPlacement replacement{grid, image.id, new_placement_id,
+    const PinPlacement replacement{dest, image.id, new_placement_id,
                                    0,    false,    options};
     place_it = m_pin_places.emplace(key, replacement).first;
   }
   auto& place = place_it->second;
-  const bool grid_changed = place.rect != grid;
-  if (m_mode == PlacementMode::UnicodePlaceholders && place.placed &&
-      grid_changed) {
-    queue_placeholder_clear(place.rect, place.last_used);
-  }
-  const bool placement_changed = place.placement != options || grid_changed;
-  place.rect = grid;
+  const bool placement_changed = place.placement != options;
   place.placement = options;
   place.last_used = ++m_clock;
   // A pinned image has no content to change, so stale placement options are
   // the only reason to replace its placement.
-  emit_placement(place.image_id, place.placement_id, place.placed, dest, grid,
+  emit_placement(place.image_id, place.placement_id, place.placed, dest,
                  options, false, placement_changed);
 
   (*entry)->last_place_key = rect_key;
@@ -1208,14 +1173,8 @@ auto KittyDriver::retain_pinned(Rect cells, PinnedImage image,
   if (!geometry) return std::unexpected{geometry.error()};
 
   bool clamped = false;
-  const Rect dest = options.fit == PlacementFit::Stretch
-                        ? clamp_dest(cells, clamped)
-                        : cells;
+  const Rect dest = clamp_dest(cells, clamped);
   (void)clamped; // draw_pinned reported this placement's one-shot warning
-  auto resolved_grid = placement_grid(dest, geometry->exact_pixels, options,
-                                      "retain_pinned");
-  if (!resolved_grid) return std::unexpected{resolved_grid.error()};
-  const Rect grid = *resolved_grid;
   const std::uint64_t rect_key = region_key(dest.x, dest.y, dest.w, dest.h);
   const PinPlacementKey key{rect_key, image.id};
 
@@ -1224,7 +1183,7 @@ auto KittyDriver::retain_pinned(Rect cells, PinnedImage image,
   // the ordinary draw, which creates or edits the placement correctly.
   auto place = m_pin_places.find(key);
   if (place == m_pin_places.end() || !place->second.placed ||
-      place->second.placement != options || place->second.rect != grid) {
+      place->second.placement != options) {
     return draw_pinned(cells, image, options);
   }
 
@@ -1271,18 +1230,12 @@ auto KittyDriver::retain_pinned(Rect cells, PinnedImage image,
 }
 
 auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
-                               int format_code, Extent px, Extent exact_pixels,
+                               int format_code, Extent px,
                                ImagePlacementOptions options,
                                bool request_reply)
     -> std::expected<void, ErrorEvent> {
   bool clamped = false;
-  const Rect dest = options.fit == PlacementFit::Stretch
-                        ? clamp_dest(cells, clamped)
-                        : cells;
-  auto resolved_grid = placement_grid(dest, exact_pixels, options,
-                                      "draw_image");
-  if (!resolved_grid) return std::unexpected{resolved_grid.error()};
-  const Rect grid = *resolved_grid;
+  const Rect dest = clamp_dest(cells, clamped);
 
   // The reciprocal of draw_pinned's guard, and it has to be here as well as
   // there: widget draw order is not something an application controls, so
@@ -1367,21 +1320,12 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   // payload (205,283 bytes, measured) to change a ~30-byte placement escape,
   // and bill those bytes to image_transmit, which lies to the #139 meter built
   // precisely so claims like this could be falsified.
-  const bool grid_changed = slot.rect != grid;
-  if (m_mode == PlacementMode::UnicodePlaceholders && slot.placed &&
-      grid_changed) {
-    // A smaller Exact crop/offset footprint leaves part of the old text grid
-    // outside the new one. Retire those placeholder cells at the same frame
-    // boundary instead of leaving them to name a future reuse of this id.
-    queue_placeholder_clear(slot.rect, slot.last_used);
-  }
-  const bool placement_changed = slot.placement != options || grid_changed;
-  slot.rect = grid;
+  const bool placement_changed = slot.placement != options;
   slot.placement = options;
   slot.last_used = ++m_clock;  // per-draw: strictly increasing within a frame
 
-  emit_placement(slot.image_id, kRegionPlacementId, slot.placed, dest, grid,
-                 options, content_changed, placement_changed);
+  emit_placement(slot.image_id, kRegionPlacementId, slot.placed, dest, options,
+                 content_changed, placement_changed);
 
   if (clamped && !m_warned_clamp) {
     m_warned_clamp = true;
@@ -2010,23 +1954,16 @@ auto KittyDriver::place_classic(std::uint32_t image_id,
 
 auto KittyDriver::place_unicode(std::uint32_t image_id,
                                 std::uint32_t placement_id, bool placed,
-                                Rect grid,
+                                int x, int y, int cols, int rows,
                                 ImagePlacementOptions options) -> void {
-  // Stretch was clamped and Exact was validated by placement_grid, so the
-  // grid is inside the diacritic table's extent in either case.
-
   // Create the virtual placement once per slot.
   if (!placed) {
     // a=p (place), i=<image_id>, p=<placement_id>, U=1 (virtual),
     // c=<cols>, r=<rows>, q=2 (suppress response)
-    const std::string scale = options.fit == PlacementFit::Exact
-                                  ? std::string{}
-                                  : std::format(",c={},r={}", grid.w, grid.h);
-    const std::string layout = placement_layout(options);
     const auto z = *options.layer.z_index();
     const std::string layer = z == 0 ? std::string{} : std::format(",z={}", z);
-    m_buf += std::format("\033_Ga=p,i={},p={},U=1{}{}{},q=2\033\\", image_id,
-                         placement_id, scale, layout, layer);
+    m_buf += std::format("\033_Ga=p,i={},p={},U=1,c={},r={}{},q=2\033\\",
+                         image_id, placement_id, cols, rows, layer);
   }
 
   // Emit the placeholder cell grid. Each cell is:
@@ -2034,18 +1971,18 @@ auto KittyDriver::place_unicode(std::uint32_t image_id,
   //   U+10EEEE + row diacritic + column diacritic
   // The image ID is encoded once per row (SGR persists across cells).
 
-  for (int ry = 0; ry < grid.h; ++ry) {
+  for (int ry = 0; ry < rows; ++ry) {
     // Position cursor at start of this row.
-    detail::append_cursor(m_buf, grid.x, grid.y + ry, m_cursor_known,
+    detail::append_cursor(m_buf, x, y + ry, m_cursor_known,
                           m_cursor_x, m_cursor_y);
 
     // Set SGR foreground to the image ID (24-bit).
     emit_id_as_sgr(image_id);
 
-    for (int cx = 0; cx < grid.w; ++cx) {
+    for (int cx = 0; cx < cols; ++cx) {
       append_placeholder(m_buf, ry, cx);
     }
-    detail::advance_cursor(m_cursor_known, m_cursor_x, grid.w);
+    detail::advance_cursor(m_cursor_known, m_cursor_x, cols);
   }
 
   // Reset SGR to avoid bleeding the ID-as-color into subsequent text.

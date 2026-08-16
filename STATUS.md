@@ -9,28 +9,32 @@ which holds standing conventions, not state).
 **Release candidate: v0.40.0 — sub-cell image placement and source crops.**
 #115 adds pixel-space `PixelRect` and extends `ImagePlacementOptions` with a
 within-cell `pixel_offset` plus an optional root-image `source` crop. Kitty
-emits `X=`/`Y=` and `x=`/`y=`/`w=`/`h=` only when requested, keeping default
-wire byte-identical. Crop/offset changes are placement edits and never
+Classic emits `X=`/`Y=` and `x=`/`y=`/`w=`/`h=` only when requested, keeping
+default wire byte-identical. Crop/offset changes are placement edits and never
 retransmit cached or pinned payloads.
 
 Validation runs before cache state or wire: offsets must be inside one current
 cell, crops must be positive and wholly inside the real/caller-declared root,
 and all extent arithmetic is overflow-safe. Opaque PNG remains opaque. The
-crop plus offset is the effective Exact footprint. Unicode placeholders now
-support Exact by omitting `c=`/`r=` and painting only the native cell footprint,
-including clearing stale remainder cells after a shrink. Unsupported tiers and
-invalid widget values preserve the authored Baseline with one transition event.
+crop plus offset is the effective Exact footprint. Kitty's Unicode-placeholder
+renderer ignores virtual-placement crop/offset state and reconstructs from the
+full image, so that route reports no geometry or Exact support; direct calls
+refuse before payload/wire, while App preserves the authored Baseline with one
+transition event. Unsupported tiers and invalid widget values do the same.
 
 GCC 14.2 and Clang 20.1 Release `-Werror` builds pass all 71 CTest targets and
 the standalone public-header target. The six changed/relevant suites pass GCC
 ASan+UBSan with leak detection; App and geometry production paths pass TSan.
 The full local sanitizer matrix could not coexist with the compiler trees under
 the workspace quota, so hosted ASan+UBSan remains the full-matrix gate. GCC and
-Clang each pass `subdir`, `install` and `vendored` consumer acceptance. Four
+Clang each pass `subdir`, `install` and `vendored` consumer acceptance. Five
 focused mutations prove the suites reject omitted geometry keys, a false
-full-rect Unicode footprint, bypassed App preflight and false legacy support.
-The offline stanza-13 wire dump is structurally valid; hosted CI and the
-real-Kitty visual gate are pending.
+Unicode support claim, bypassed App preflight, missed placement-cache changes
+and false legacy support. The
+first hosted matrix passed all ten jobs. The first stanza-13 live run exposed
+Kitty's ignored virtual crop (the native-sized copy still showed red/blue),
+which is now a refusal regression; the revised Classic Stretch/Exact live gate
+and the post-fix hosted matrix are pending.
 
 ## Previous stable release: v0.39.0
 

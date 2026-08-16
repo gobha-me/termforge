@@ -44,7 +44,7 @@
 #  12  #114 — three classic placements prove above-text, below-text and
 #      below-non-default-background named layers. Self-contained.
 #  13  #115 — one transmitted quadrant image is source-cropped and sub-cell
-#      offset through both Classic Stretch and Unicode Exact placements.
+#      offset through Classic Stretch and Classic Exact placements.
 #
 # All commands use q=0 so kitty REPORTS errors; every response the terminal
 # sends is captured and echoed in readable form. A response of "_Gi=42;OK"
@@ -578,11 +578,11 @@ stanza_13() {
   say ""
   say "== Stanza 13: #115 source crops and sub-cell placement offsets =="
   say "One 4x4 quadrant image is shown twice from its RIGHT HALF only."
-  say "Expected: the left Classic plate is a large GREEN-over-YELLOW crop"
-  say "inset from its first cell; the right Unicode Exact copy is the same"
-  say "GREEN/YELLOW crop at native 2x4 pixels, also inset. No red or blue."
+  say "Expected: the left Classic Stretch plate is a large GREEN-over-YELLOW"
+  say "crop inset from its first cell; the right Classic Exact copy is the"
+  say "same crop at native 2x4 pixels, also inset. No red or blue."
 
-  local quadrant_b64 transmit classic virtual
+  local quadrant_b64 transmit stretched exact
   quadrant_b64=$(
     {
       printf '\xff\x00\x00\xff\xff\x00\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff'
@@ -598,18 +598,17 @@ stanza_13() {
   # Reserve room, save the origin and keep both placements visible together.
   printf '\n\n\n\n\n\n%s[6A%s7' "$ESC" "$ESC"
   send_quiet "${ESC}_Ga=p,i=52,p=1,c=6,r=4,x=2,y=0,w=2,h=4,X=2,Y=3,C=1,q=0${ST}"
-  classic=$reply_out
+  stretched=$reply_out
 
   printf '%s8%s[10C' "$ESC" "$ESC"
-  send_quiet "${ESC}_Ga=p,i=52,p=2,U=1,x=2,y=0,w=2,h=4,X=2,Y=3,q=0${ST}"
-  virtual=$reply_out
-  printf '%s[38;5;52m%s%s%s%s[0m' "$ESC" "$PH_SPEC" "$D0" "$D0" "$ESC"
+  send_quiet "${ESC}_Ga=p,i=52,p=2,x=2,y=0,w=2,h=4,X=2,Y=3,C=1,q=0${ST}"
+  exact=$reply_out
   printf '%s8%s[6B\r' "$ESC" "$ESC"
 
-  say "$(printf 'transmit / Classic crop / Unicode crop responses: %q / %q / %q' "$transmit" "$classic" "$virtual")"
-  say "Report: (a) Classic is green-over-yellow and inset, (b) Unicode is"
-  say "the same crop at native size and inset, (c) no red/blue is visible,"
-  say "and (d) whether any response contains ';E'."
+  say "$(printf 'transmit / Stretch crop / Exact crop responses: %q / %q / %q' "$transmit" "$stretched" "$exact")"
+  say "Report: (a) Stretch is green-over-yellow and inset, (b) Exact is the"
+  say "same crop at native 2x4 and inset, (c) no red/blue is visible, and"
+  say "(d) whether any response contains ';E'."
 }
 
 if (( ${#stanzas[@]} )); then
@@ -626,5 +625,5 @@ else
   say "(k) stanza 10's existing block turns green without re-placement, and"
   say "(l) stanza 11's offset overwrite/alpha quadrants match, and (m)"
   say "stanza 12's three named-layer visibility results match, and (n) stanza"
-  say "13's Classic/Unicode crop and offset results match its description."
+  say "13's Classic Stretch/Exact crop and offset results match its description."
 fi

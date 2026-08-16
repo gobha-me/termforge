@@ -17,7 +17,6 @@
 #include "support/apc.hpp"
 #include "support/image.hpp"
 #include "support/legacy_driver.hpp"
-#include "support/terminal_grid.hpp"
 #include "termforge/drivers/ansi_rgb_driver.hpp"
 #include "termforge/drivers/kitty_driver.hpp"
 
@@ -213,63 +212,32 @@ TEST_CASE("Exact fit measures the visible crop and its offset") {
   CHECK(miss_wire.empty());
 }
 
-TEST_CASE("Unicode Exact uses only the crop's native placeholder footprint") {
+TEST_CASE("Unicode placeholders refuse geometry their renderer ignores") {
   const Image image = solid(32, 48, kInk);
   const Rect containing{1, 1, 4, 4};
-  const auto first = geometry(PixelPoint{3, 4}, PixelRect{2, 3, 13, 17});
+  const auto request = geometry(PixelPoint{3, 4},
+                                PixelRect{2, 3, 13, 17},
+                                PlacementFit::Stretch);
   std::string wire;
   KittyDriver driver;
   driver.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
   driver.set_output(&wire);
 
-  REQUIRE(driver.draw_image(containing, image, first));
-  driver.flush();
-
-  const auto placed = placements(wire);
-  REQUIRE(placed.size() == 1);
-  CHECK(key_value(placed[0], "U") == "1");
-  expect_layout(placed[0], first.pixel_offset, *first.source);
-  CHECK_FALSE(has_key(placed[0], "c"));
-  CHECK_FALSE(has_key(placed[0], "r"));
-  CHECK(wire.find("\xF4\x8E\xBB\xAE") != std::string::npos);
-
-  tfsupport::TerminalGrid grid{8, 7};
-  grid.feed(wire);
-  for (int y = 1; y < 3; ++y)
-    for (int x = 1; x < 3; ++x) CHECK(grid.at(x, y).placeholder());
-  CHECK_FALSE(grid.at(3, 1).placeholder());
-  CHECK_FALSE(grid.at(1, 3).placeholder());
-
-  // Shrinking the crop clears the old 2x2 grid before writing the new 1x1
-  // footprint; the unused portion of the caller's containing rect stays text.
-  wire.clear();
-  const auto smaller = geometry(PixelPoint{}, PixelRect{2, 3, 5, 10});
-  REQUIRE(driver.draw_image(containing, image, smaller));
-  driver.flush();
-  CHECK(total_data_transmits(wire) == 0);
-  grid.feed(wire);
-  CHECK(grid.at(1, 1).placeholder());
-  CHECK_FALSE(grid.at(2, 1).placeholder());
-  CHECK_FALSE(grid.at(1, 2).placeholder());
-  CHECK_FALSE(grid.at(2, 2).placeholder());
-}
-
-TEST_CASE("Unicode Exact refuses a crop footprint beyond its protocol table") {
-  const std::array payload{std::byte{1}};
-  const EncodedImage image{ImageFormat::Png, payload, Extent{2400, 16}};
-  KittyDriver driver;
-  std::string wire;
-  driver.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
-  driver.set_output(&wire);
-
-  const auto result = driver.draw_image(
-      Rect{0, 0, 400, 1}, image,
-      geometry(PixelPoint{}, PixelRect{0, 0, 2400, 16}));
+  // A virtual placement accepts x/y/w/h/X/Y syntactically, but Kitty's
+  // placeholder renderer reconstructs from the full image and ignores them.
+  // The real-terminal symptom was a 4x4 quadrant atlas showing red and blue
+  // beside the selected green/yellow half. Query and draw must both refuse
+  // before the payload or a misleading virtual placement reaches the wire.
+  CHECK_FALSE(driver.supports_image_placement(request));
+  const auto result = driver.draw_image(containing, image, request);
   REQUIRE_FALSE(result);
-  CHECK(result.error().message.find("297-cell protocol limit") !=
+  CHECK(result.error().severity == Severity::Warning);
+  CHECK(result.error().source == "kitty");
+  CHECK(result.error().message.find("supports_image_placement") !=
         std::string::npos);
   driver.flush();
   CHECK(wire.empty());
+  CHECK(driver.residency().source_payload_bytes == 0);
 }
 
 TEST_CASE("drivers without placement geometry support refuse honestly") {

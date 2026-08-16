@@ -512,7 +512,7 @@ TEST_CASE("the query and the emit path cannot disagree") {
         k.supports_placement_fit(PlacementFit::Exact));
 }
 
-TEST_CASE("Exact under Unicode placeholders uses a native footprint") {
+TEST_CASE("Exact is refused under Unicode placeholders, and says so") {
   const Image img = checker(8, 16, kA, kB);
   const Rect dest{0, 0, 1, 1};
   KittyDriver d;
@@ -520,18 +520,20 @@ TEST_CASE("Exact under Unicode placeholders uses a native footprint") {
   std::string out;
   d.set_output(&out);
 
-  CHECK(d.supports_placement_fit(PlacementFit::Exact));
+  CHECK_FALSE(d.supports_placement_fit(PlacementFit::Exact));
   CHECK(d.supports_placement_fit(PlacementFit::Stretch));
 
   const auto r = d.draw_image(dest, img, PlacementFit::Exact);
   d.flush();
-  REQUIRE(r);
-  const auto exact = placements(out);
-  REQUIRE(exact.size() == 1);
-  CHECK(key_value(exact[0], "U") == "1");
-  CHECK_FALSE(has_key(exact[0], "c"));
-  CHECK_FALSE(has_key(exact[0], "r"));
-  CHECK(count_of(out, "\xF4\x8E\xBB\xAE") == 1);
+  REQUIRE_FALSE(r);
+  CHECK(r.error().severity == Severity::Warning);
+  CHECK(r.error().source == "kitty");
+  CHECK(r.error().message.find("placement") != std::string::npos);
+  // Nothing at all: no virtual placement, and no placeholder cells. A grid
+  // painted for a placement the terminal cannot honour is worse than no draw.
+  CHECK(out.empty());
+  CHECK(count_of(out, "U=1") == 0);
+  CHECK(count_of(out, "\xF4\x8E\xBB\xAE") == 0);
 
   // Stretch in the same mode still works, so the refusal is about the fit and
   // not about the mode being broken.
@@ -541,7 +543,9 @@ TEST_CASE("Exact under Unicode placeholders uses a native footprint") {
   CHECK(count_of(out, "U=1") == 1);
 }
 
-TEST_CASE("Exact support survives a placement-mode transition") {
+TEST_CASE("the answer tracks set_placement_mode at runtime") {
+  // An application cannot infer this from the driver's type, which is why it
+  // is a query and not a compile-time property.
   const Image img = checker(8, 16, kA, kB);
   const Rect dest{0, 0, 1, 1};
   KittyDriver d;
@@ -550,12 +554,10 @@ TEST_CASE("Exact support survives a placement-mode transition") {
 
   REQUIRE(d.supports_placement_fit(PlacementFit::Exact));
   REQUIRE(d.draw_image(dest, img, PlacementFit::Exact));
-  d.flush();
 
   d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
-  CHECK(d.supports_placement_fit(PlacementFit::Exact));
-  CHECK(d.draw_image(dest, img, PlacementFit::Exact));
-  d.flush();
+  CHECK_FALSE(d.supports_placement_fit(PlacementFit::Exact));
+  CHECK_FALSE(d.draw_image(dest, img, PlacementFit::Exact));
 
   d.set_placement_mode(KittyDriver::PlacementMode::Classic);
   CHECK(d.supports_placement_fit(PlacementFit::Exact));
@@ -1196,7 +1198,11 @@ TEST_CASE("encoded: an empty rect is refused as EMPTY, not as a fit failure") {
   }
 }
 
-TEST_CASE("encoded: Exact under placeholders stays native on this overload") {
+TEST_CASE("encoded: Exact is refused under placeholders, on this overload too") {
+  // supports_placement_fit is RUNTIME state on kitty, and the encoded path
+  // consults it through the same placement guard as the Image path. Drop that
+  // tier check and an Exact encoded draw silently becomes a stretched
+  // placeholder placement.
   const Image art = checker(8, 8, kA, kB);
   const EncodedImage img = as_encoded(art);
   KittyDriver d;
@@ -1204,15 +1210,12 @@ TEST_CASE("encoded: Exact under placeholders stays native on this overload") {
   d.set_output(&out);
   d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
 
-  CHECK(d.supports_placement_fit(PlacementFit::Exact));
+  CHECK_FALSE(d.supports_placement_fit(PlacementFit::Exact));
   const auto r = d.draw_image(Rect{0, 0, 4, 4}, img, PlacementFit::Exact);
-  REQUIRE(r);
+  REQUIRE_FALSE(r);
+  CHECK(r.error().source == "kitty");
   d.flush();
-  const auto exact = placements(out);
-  REQUIRE(exact.size() == 1);
-  CHECK_FALSE(has_key(exact[0], "c"));
-  CHECK_FALSE(has_key(exact[0], "r"));
-  CHECK(key_value(exact[0], "U") == "1");
+  CHECK(out.empty());
   // ...and Stretch still works in the same mode, so the refusal is about the
   // fit and not about placeholders being broken on this overload.
   KittyDriver ok;

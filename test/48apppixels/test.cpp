@@ -124,6 +124,12 @@ class PixelApp : public App {
   auto run(int frames) -> void {
     test_run_frames(frames, 20, 8, &m_sink, std::make_unique<KittyDriver>());
   }
+  auto run_unicode(int frames) -> void {
+    auto driver = std::make_unique<KittyDriver>();
+    driver->set_placement_mode(
+        KittyDriver::PlacementMode::UnicodePlaceholders);
+    test_run_frames(frames, 20, 8, &m_sink, std::move(driver));
+  }
   auto run_ansi(int frames) -> void {
     test_run_frames(frames, 20, 8, &m_sink, std::make_unique<AnsiRgbDriver>());
   }
@@ -544,6 +550,24 @@ TEST_CASE("app pixels: unsupported geometry keeps ANSI Baseline",
   grid.feed(app.wire());
   CHECK(grid.row_text(0).substr(0, 4) == "QZJV");
   CHECK(app.wire().find("\xE2\x96\x80") == std::string::npos);
+}
+
+TEST_CASE("app pixels: Unicode geometry keeps Baseline instead of full atlas",
+          "[apppixels][kitty][placeholders][geometry][fallback][issue115]") {
+  PixelApp app;
+  app.plate.placement.pixel_offset = PixelPoint{2, 3};
+  app.plate.placement.source = PixelRect{2, 0, 2, 4};
+  app.run_unicode(3);
+
+  CHECK(app.plate.pixel_calls == 0);
+  REQUIRE(app.errors.size() == 1);
+  CHECK(app.errors[0].severity == Severity::Info);
+  CHECK(app.errors[0].source == "app");
+  tfsupport::TerminalGrid grid{20, 8};
+  grid.feed(app.wire());
+  CHECK(grid.row_text(0).substr(0, 4) == "QZJV");
+  CHECK(total_data_transmits(app.wire()) == 0);
+  CHECK(app.wire().find("\xF4\x8E\xBB\xAE") == std::string::npos);
 }
 
 TEST_CASE("app pixels: a persistent layer move does not rebuild content",

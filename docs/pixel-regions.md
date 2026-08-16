@@ -329,16 +329,13 @@ see, and overflowing would paint outside the region the caller named.
 | tier | what `Exact` does | supported? |
 |---|---|---|
 | Kitty, classic placement | omits `c=`/`r=` — the protocol's own "place at true size" | yes |
-| Kitty, Unicode placeholders | omits `c=`/`r=` and paints only the native cell footprint | yes |
+| Kitty, Unicode placeholders | — | **no**; virtual-placement geometry is not applied when placeholders materialize the image |
 | AnsiRgb | source→destination becomes the identity map; one source pixel per half-cell | yes |
 | Fallback | identity map, one source pixel per ramp glyph | yes |
 
-Ask `supports_placement_fit` before committing an asset pipeline to a tier,
-exactly as with `supports_image_format`. Under Unicode placeholders, Exact's
-grid is `image_cell_extent(pixel_offset + selected_source_extent)` at the
-destination's top-left. The caller's containing rect may be larger; those
-remainder cells are untouched. The protocol's 297-cell limit still applies to
-the computed grid rather than to unused containing space.
+`supports_placement_fit` is **runtime**, not a property of the driver's type:
+`set_placement_mode` moves Kitty's answer. Ask before committing an asset
+pipeline to it, exactly as with `supports_image_format`.
 
 ### Named image layers (#114)
 
@@ -401,11 +398,20 @@ driver.draw_image(cells, image, {
 });
 ```
 
-Kitty spells these as placement keys `X=`/`Y=` and `x=`/`y=`/`w=`/`h=`.
-Zero offsets and an absent crop are omitted, so `ImagePlacementOptions{}` is
-byte-for-byte the historical placement. Changing either value retires and
-recreates only placement state; cached and pinned image payloads remain
-resident.
+Kitty Classic spells these as placement keys `X=`/`Y=` and
+`x=`/`y=`/`w=`/`h=`. Zero offsets and an absent crop are omitted, so
+`ImagePlacementOptions{}` is byte-for-byte the historical placement. Changing
+either value retires and recreates only placement state; cached and pinned
+image payloads remain resident.
+
+Unicode placeholders deliberately refuse both geometry fields. Kitty accepts
+the keys on a virtual-placement command, but when a placeholder cell
+materializes the placement it derives from the complete root image and ignores
+the stored crop and sub-cell offset. An atlas request would therefore expose
+neighboring sprites (the real-terminal failure showed the red/blue half beside
+the selected green/yellow half). `supports_image_placement` returns false on
+that route, direct calls return a `Warning` before payload or placement wire,
+and App keeps the widget's information-complete cell Baseline with one `Info`.
 
 For `Exact`, the crop replaces the root image as the fit extent, and the
 offset counts too: a 12×20 crop at `{3,4}` needs 15×24 pixels of destination
@@ -1264,6 +1270,10 @@ Same widget, same code, no driver branching.
   out of scope here as it is on `Image`. `PlacementFit::Exact` (#137)
   landed the *no-scaling* half and anchors top-left; it is not a fit mode
   and adds no border behaviour.
+- **Geometry and `Exact` under Unicode placeholders** — Kitty's current
+  placeholder materialization ignores the virtual placement's crop and
+  sub-cell offset. Supporting this needs an action-level capability plus an
+  honest anchoring route; emitting the accepted-but-ignored keys is not one.
 - **MapWidget** — tile-based maps fit naturally: `draw_pixels` renders
   the tile grid, `draw` provides the half-block approximation.
 - **Animation** — terminal-driven frame registration/playback for animated

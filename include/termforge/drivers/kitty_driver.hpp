@@ -90,9 +90,9 @@ class KittyDriver final : public TerminalDriver {
   auto draw_image(Rect cells, const EncodedImage& image)
       -> std::expected<void, ErrorEvent> override;
   // PlacementFit::Exact omits c=/r= so the terminal places the selected
-  // source rectangle at native resolution (#137, #115). In placeholder mode
-  // the emitted grid is the native pixel footprint rather than the caller's
-  // whole containing rect.
+  // source rectangle at native resolution (#137, #115). Classic placement
+  // only: Kitty's Unicode placeholder renderer ignores virtual-placement
+  // crop and sub-cell-offset fields, so that route refuses rather than lying.
   auto draw_image(Rect cells, const Image& image, PlacementFit fit)
       -> std::expected<void, ErrorEvent> override;
   auto draw_image(Rect cells, const Image& image, ImagePlacementOptions options)
@@ -173,8 +173,8 @@ class KittyDriver final : public TerminalDriver {
   // The flagship tier is the only one with an opaque-payload channel.
   [[nodiscard]] auto supports_image_format(ImageFormat f) const noexcept
       -> bool override;
-  // Both fits are supported in both placement modes. Exact under Unicode
-  // placeholders is implemented by #115's native-footprint grid.
+  // Mode-dependent: Exact is Classic-only, so this answer moves when
+  // set_placement_mode is called.
   [[nodiscard]] auto supports_placement_fit(PlacementFit f) const noexcept
       -> bool override;
   [[nodiscard]] auto
@@ -194,8 +194,10 @@ class KittyDriver final : public TerminalDriver {
   // region placed in Classic keeps placed=true and the placeholder path
   // would reference a virtual placement that was never created.
   //
-  // Exact remains supported across the transition: the next draw creates a
-  // native-footprint virtual placement rather than silently stretching it.
+  // This also moves supports_placement_fit(Exact) (#137): switching to
+  // UnicodePlaceholders after a successful Exact draw makes the next Exact
+  // draw refuse. App re-asks supports_image_placement before blanking its
+  // authored Baseline, so the refusal leaves no hole.
   void set_placement_mode(PlacementMode mode);
   [[nodiscard]] auto placement_mode() const noexcept -> PlacementMode {
     return m_mode;
@@ -367,11 +369,10 @@ class KittyDriver final : public TerminalDriver {
   // The placement half both draw paths share: the classic delete-and-replace
   // dance kitty needs because it will not refresh a live classic placement,
   // and the placeholder grid that is re-emitted every frame because the grid
-  // IS the placement. Under Exact `grid` may be smaller than `dest`.
+  // IS the placement.
   auto emit_placement(std::uint32_t image_id, std::uint32_t placement_id,
-                      bool& placed, Rect dest, Rect grid,
-                      ImagePlacementOptions options, bool content_changed,
-                      bool placement_changed) -> void;
+                      bool& placed, Rect dest, ImagePlacementOptions options,
+                      bool content_changed, bool placement_changed) -> void;
 
   // Everything both pin_image overloads share once the payload is in hand.
   auto pin_payload(std::span<const std::byte> payload, int format_code,
@@ -432,17 +433,9 @@ class KittyDriver final : public TerminalDriver {
   // makes "the format participates in image identity" impossible to forget at
   // a call site.
   auto draw_payload(Rect cells, std::span<const std::byte> payload,
-                    int format_code, Extent px, Extent exact_pixels,
+                    int format_code, Extent px,
                     ImagePlacementOptions options, bool request_reply)
       -> std::expected<void, ErrorEvent>;
-
-  // The cells the placeholder text actually occupies. Stretch uses the
-  // destination verbatim. Exact rounds offset+selected-source pixels up by the
-  // current cell geometry and never paints the unused remainder.
-  [[nodiscard]] auto placement_grid(Rect dest, Extent exact_pixels,
-                                    ImagePlacementOptions options,
-                                    std::string_view fn) const
-      -> std::expected<Rect, ErrorEvent>;
 
   // Classic placement: position the cursor and place (a=p, C=1), scaled to
   // cols x rows cells under Stretch, or at the transmitted resolution under
@@ -460,8 +453,8 @@ class KittyDriver final : public TerminalDriver {
   // `placed` says whether the virtual placement already exists; the cell grid
   // is re-emitted either way, because the grid IS the placement.
   auto place_unicode(std::uint32_t image_id, std::uint32_t placement_id,
-                     bool placed, Rect grid, ImagePlacementOptions options)
-      -> void;
+                     bool placed, int x, int y, int cols, int rows,
+                     ImagePlacementOptions options) -> void;
 
   // Delete one PLACEMENT, leaving the image data resident (a=d,d=i). The
   // distinction is #109's: delete_image below frees the data too, which is
