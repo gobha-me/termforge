@@ -69,10 +69,16 @@ using termforge::FallbackDriver;
 using termforge::KittyDriver;
 using termforge::Rect;
 using termforge::Rgb;
+using termforge::Severity;
 using termforge::TerminalDriver;
 
 constexpr Rgb kFg{200, 200, 200};
 constexpr Rgb kBg{0, 0, 0};
+constexpr std::string_view kSyncBegin{"\033[?2026h"};
+constexpr std::string_view kSyncEnd{"\033[?2026l"};
+constexpr std::size_t kSyncPendingBudget = 1024U * 1024U;
+constexpr std::size_t kMaxSyncFrameBytes =
+    kSyncPendingBudget - kSyncEnd.size();
 
 // A sink that records every call. The COUNT is the observable:
 // "one frame is one write" is the property under test, and the std::string*
@@ -96,6 +102,39 @@ class CountingSink final : public ByteSink {
   int m_calls{0};
   std::string m_all;
   std::vector<std::size_t> m_sizes;
+};
+
+class FailingSink final : public ByteSink {
+ public:
+  auto write(std::span<const char>)
+      -> std::expected<void, ErrorEvent> override {
+    return std::unexpected{
+        ErrorEvent{Severity::Error, "sink", "intentional refusal"}};
+  }
+};
+
+// A minimal out-of-tree-shaped driver that exposes the protected write
+// boundary to this suite. Testing emit_frame directly makes #269's exact byte
+// boundary observable without manufacturing a million-byte Screen or relying
+// on one tier's SGR overhead.
+class SyncProbeDriver final : public TerminalDriver {
+ public:
+  auto init() -> std::expected<void, ErrorEvent> override { return {}; }
+  auto draw_text(int, int, std::string_view, Rgb, Rgb, Attr) -> void override {}
+  auto draw_image(Rect, const termforge::Image&)
+      -> std::expected<void, ErrorEvent> override {
+    return {};
+  }
+  [[nodiscard]] auto preferred_pixel_extent(Rect cells) const noexcept
+      -> termforge::Extent override {
+    return termforge::Extent{cells.w, cells.h};
+  }
+  auto flush() -> void override { (void)emit_frame({}); }
+  [[nodiscard]] auto capabilities() const noexcept
+      -> Capabilities override {
+    return {};
+  }
+  auto emit(std::string_view bytes) -> bool { return emit_frame(bytes); }
 };
 
 // "Write the d=A direct to stdout, never through the sink" -- the bypass
@@ -282,7 +321,92 @@ TEST_CASE("one write: unmanaged destruction is silent instead of bypassing the s
 //
 // The wrap lives in emit_frame, symmetrically for every driver: without
 // the capability the bytes are byte-identical to today; with it they are
-// wrapped in begin/end, ONE call, one frame.
+// wrapped in begin/end, ONE call, one frame. #269 adds the other necessary
+// bound: a terminal may stop buffering an oversized transaction before its
+// reset arrives, so the base emits that frame whole but unwrapped and reports
+// the lesser route once.
+
+TEST_CASE("one write: 2026 stays within its pending-byte budget",
+          "[onewrite][sync][failure]") {
+  SECTION("the largest eligible frame is wrapped and fully metered") {
+    SyncProbeDriver d;
+    CountingSink sink;
+    d.set_sync_updates(true);
+    d.set_output(&sink);
+    const std::string payload(kMaxSyncFrameBytes, 'x');
+
+    REQUIRE(d.emit(payload));
+    CHECK(sink.calls() == 1);
+    CHECK(sink.all().starts_with(kSyncBegin));
+    CHECK(sink.all().ends_with(kSyncEnd));
+    CHECK(sink.all().size() ==
+          payload.size() + kSyncBegin.size() + kSyncEnd.size());
+    CHECK(d.last_frame_bytes().total() == sink.all().size());
+    CHECK(d.take_driver_events().empty());
+  }
+
+  SECTION("an oversized frame is whole, unwrapped, and reports once") {
+    SyncProbeDriver d;
+    CountingSink sink;
+    d.set_sync_updates(true);
+    d.set_output(&sink);
+    const std::string payload(kMaxSyncFrameBytes + 1, 'x');
+
+    REQUIRE(d.emit(payload));
+    CHECK(sink.calls() == 1);
+    REQUIRE(sink.all().size() == payload.size());
+    CHECK(sink.all().find(kSyncBegin) == std::string::npos);
+    CHECK(sink.all().find(kSyncEnd) == std::string::npos);
+    CHECK(sink.all().front() == 'x');
+    CHECK(sink.all().back() == 'x');
+    CHECK(d.last_frame_bytes().total() == payload.size());
+
+    auto events = d.take_driver_events();
+    REQUIRE(events.size() == 1);
+    CHECK(events.front().severity == Severity::Info);
+    CHECK(events.front().source == "driver");
+    CHECK(events.front().message ==
+          "synchronized output skipped: frame exceeds the 1-MiB "
+          "pending-transaction safety limit");
+
+    // The same sustained large-frame condition must not replace kitty's
+    // stderr flood with an ErrorEvent flood.
+    REQUIRE(d.emit(payload));
+    CHECK(sink.calls() == 2);
+    CHECK(d.take_driver_events().empty());
+
+    // The downgrade is per-frame, not a permanent loss of a negotiated
+    // capability. A small frame immediately resumes atomic presentation.
+    constexpr std::string_view small{"small"};
+    REQUIRE(d.emit(small));
+    CHECK(sink.calls() == 3);
+    CHECK(sink.all().ends_with(std::string{kSyncBegin} + std::string{small} +
+                               std::string{kSyncEnd}));
+    CHECK(d.last_frame_bytes().total() ==
+          small.size() + kSyncBegin.size() + kSyncEnd.size());
+    CHECK(d.take_driver_events().empty());
+  }
+
+  SECTION("a refused write neither reports nor consumes the lesser route") {
+    SyncProbeDriver d;
+    FailingSink refusing;
+    d.set_sync_updates(true);
+    d.set_output(&refusing);
+    const std::string payload(kMaxSyncFrameBytes + 1, 'x');
+
+    CHECK_FALSE(d.emit(payload));
+    CHECK(d.take_driver_events().empty());
+    REQUIRE(d.take_output_error().has_value());
+
+    CountingSink accepting;
+    d.set_output(&accepting);
+    REQUIRE(d.emit(payload));
+    CHECK(accepting.calls() == 1);
+    auto events = d.take_driver_events();
+    REQUIRE(events.size() == 1);
+    CHECK(events.front().severity == Severity::Info);
+  }
+}
 
 TEST_CASE("one write: 2026 wraps the frame only when the flag is set",
           "[onewrite][sync][kitty]") {

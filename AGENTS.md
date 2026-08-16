@@ -84,6 +84,13 @@ file is the tactical version.
   copy makes the `ByteSink*` overload invisible). The limitation is real and
   tested: a driver that emits without going through `emit_frame` opts out of
   the sink *and* the meter at once — `test/support/bypass_driver.hpp` pins it.
+  **Synchronized output is bounded at that same boundary** (#269): a frame
+  whose payload plus `CSI ? 2026 l` exceeds the one-MiB pending transaction
+  budget is emitted whole and unwrapped in the same single write, metered as
+  emitted, and reports the lesser route once as `Severity::Info`. The
+  capability stays enabled so a later small frame is wrapped normally. Never
+  split a frame or an escape sequence to force it under the budget, and never
+  turn one oversized frame into a permanent session downgrade.
   A sink refusal is latched, not returned (`flush()` is pure and `-> void`,
   and giving it a return type would break every out-of-tree driver), and `App`
   drains it into an `ErrorEvent` each frame. **The sink is borrowed, never

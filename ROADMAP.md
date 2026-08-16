@@ -126,6 +126,13 @@ completed items.
 > root frame 1 without retransmitting or replacing placements; the meter bills
 > the operation as image-edit traffic, and accepted-write residency/reply state
 > composes with #112/#165. Legacy and non-Kitty tiers refuse with a `Warning`.
+>
+> **2026-08-16 — bounded synchronized output.** **#269** keeps DEC mode 2026
+> transactions within a one-MiB pending-byte budget. Oversized frames retain
+> the one-frame/one-write and exact-meter contracts but travel unwrapped, with
+> one `Info` event per driver session; later small frames resume synchronization.
+> This avoids old-Kitty timeout/capacity stop diagnostics without emulator
+> version detection, escape splitting or a permanent capability downgrade.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 

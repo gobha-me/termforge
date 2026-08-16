@@ -6,28 +6,36 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-16, latest)
 
-**Release candidate: v0.37.0 — semantic mouse actions.** #267 preserves the
-SGR motion bit on `MouseEvent`, adds the compatibility-conscious
-`MouseEvent::action()` projection (`Press`, `Drag`, `Release`, `Wheel`, or
-`Move`), and keeps the legacy `pressed` field true only for presses. Existing
-positional aggregate initializers retain their field mapping because the new
-state is appended.
+**Release candidate: v0.37.1 — bounded synchronized output.** #269 keeps each
+DEC mode 2026 pending transaction at or below one MiB. `emit_frame` already
+holds the complete frame at the sole sink/meter boundary, so it can decide
+before writing: an oversized frame is emitted byte-for-byte, unwrapped, in the
+same single write and its actual bytes are metered. The lesser route emits one
+`Severity::Info` per driver session rather than replacing Kitty's stderr flood
+with an application-event flood. Synchronization remains negotiated, so the
+next small frame is wrapped normally.
 
-Structured sources reject contradictory motion states atomically. Trace schema
-5 records the motion bit so source-posted drags survive recording and playback;
-schemas 1-4 remain readable and retain every action they could represent. The
-input example now displays semantic actions rather than inferring releases from
-`pressed`.
+The bound matches Kitty 0.32.2's one-MiB pending queue without detecting an
+emulator or version, and it also avoids inventing a capacity field the DEC 2026
+query cannot report. Exact-boundary, first/repeated oversized, resumed-small,
+one-write, event and meter cases live in `test/50onewrite`.
 
-GCC 14.2, Clang 20.1 and GCC ASan+UBSan with leak detection each pass all 68
-tests. Both compilers pass `subdir`, `install` and `vendored` consumer
-acceptance. Four focused mutations prove the suites fail if parsing drops the
-motion bit, action mapping collapses drag to release, trace encoding loses
-motion, or source validation accepts motion plus press. Hosted PR/exact-main CI
-and a real-Kitty press/drag/release check remain required before release.
+GCC 14.2 and Clang 20.1 Release builds with warnings as errors, plus GCC
+ASan+UBSan with leak detection, each pass all 68 tests. Both compilers pass the
+`subdir`, `install` and `vendored` consumer acceptance paths. Five focused
+mutations prove the suite fails if the size guard, one-shot event latch,
+accepted-write event boundary, per-frame recovery or actual-byte metering
+regresses. Hosted PR/exact-main CI and the original Apsis Drift Kitty/RDP
+capture remain required before release.
 
-**Next:** after #267 ships, reassess the open queue; #269 remains the only
-unlabelled open feature and needs a bounded pending-mode design before code.
+## Previous stable release: v0.37.0
+
+**v0.37.0 — semantic mouse actions.** #267 preserves SGR motion as
+`MouseAction::Drag`, keeps `MouseEvent::pressed` as the press-only compatibility
+projection, validates structured-source states, and records the new bit in
+trace schema 5 while retaining schema 1-4 readability. The release shipped from
+merge commit `bc74efe` after local/hosted validation and a real-Kitty
+press-drag-release check.
 
 ## Previous stable release: v0.36.0
 
