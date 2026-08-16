@@ -143,6 +143,19 @@ struct Extent {
   constexpr auto operator==(const Extent&) const noexcept -> bool = default;
 };
 
+// A point in an image's PIXEL coordinate space. Rect remains cells throughout
+// the public drawing API; using it for a resident-frame edit would make the
+// unit mismatch the type system currently prevents expressible again.
+//
+// Keep this an aggregate, like Rect and Extent. Negative coordinates are
+// representable so an invalid offset can be reported as an ErrorEvent at the
+// driver boundary rather than narrowed or wrapped before validation.
+struct PixelPoint {
+  int x{0}, y{0};
+
+  constexpr auto operator==(const PixelPoint&) const noexcept -> bool = default;
+};
+
 // ── image ────────────────────────────────────────────────────────────────
 // Raw 32-bit RGBA pixel buffer. Loaded from raw-RGB assets (PNG/JPEG are
 // deliberately out of scope for the core; decode elsewhere and hand us RGBA).
@@ -151,6 +164,12 @@ struct Pixel {
   std::uint8_t r{0}, g{0}, b{0}, a{255};
   constexpr auto operator==(const Pixel&) const -> bool = default;
 };
+
+// How a partial resident-image update combines with the existing root frame.
+// AlphaBlend is source-over composition; Overwrite copies all source channels,
+// including alpha. The enum names the choice explicitly because repeating an
+// alpha edit is not idempotent while repeating an overwrite may be.
+enum class ImageComposition { AlphaBlend, Overwrite };
 
 class Image {
  public:

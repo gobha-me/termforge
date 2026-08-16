@@ -120,6 +120,12 @@ completed items.
 > interface. Kitty applies ordered, generation-qualified changes only after an
 > accepted frame write and reconciles later opaque rejection/timeout without
 > claiming to know terminal memory capacity.
+>
+> **2026-08-16 — partial resident-image edits.** **#140** adds pixel-offset raw
+> and encoded block edits with explicit alpha/overwrite composition. Kitty edits
+> root frame 1 without retransmitting or replacing placements; the meter bills
+> the operation as image-edit traffic, and accepted-write residency/reply state
+> composes with #112/#165. Legacy and non-Kitty tiers refuse with a `Warning`.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 

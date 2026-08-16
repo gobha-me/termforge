@@ -31,10 +31,12 @@ using termforge::ErrorEvent;
 using termforge::Extent;
 using termforge::FallbackDriver;
 using termforge::Image;
+using termforge::ImageComposition;
 using termforge::ImageFormat;
 using termforge::ImageResidency;
 using termforge::KittyDriver;
 using termforge::Pixel;
+using termforge::PixelPoint;
 using termforge::Rect;
 using termforge::Severity;
 using termforge::TerminalDriver;
@@ -227,6 +229,117 @@ TEST_CASE("residency: opaque replies reconcile committed beliefs",
   CHECK(d.residency() == ImageResidency{1, 1, 18});
   d.consume_reply(TerminalReply{1, std::nullopt, "EBADPNG"});
   CHECK(d.residency() == ImageResidency{0, 1, 11});
+}
+
+TEST_CASE("residency: partial edits add accepted source blocks in order",
+          "[residency][kitty][edit]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const Image root = art(4, 4, 10);  // 64 source bytes
+  const auto pin = d.pin_image(root);
+  REQUIRE(pin);
+  d.flush();
+  REQUIRE(d.residency() == ImageResidency{0, 1, 64});
+
+  REQUIRE(d.edit_pinned(*pin, PixelPoint{1, 1}, art(2, 2, 20),
+                        ImageComposition::Overwrite));
+  CHECK(d.residency() == ImageResidency{0, 1, 64});
+  d.flush();
+  CHECK(d.residency() == ImageResidency{0, 1, 80});
+
+  REQUIRE(d.edit_pinned(*pin, PixelPoint{0, 0}, art(1, 1, 30),
+                        ImageComposition::AlphaBlend));
+  REQUIRE(d.edit_pinned(*pin, PixelPoint{3, 3}, art(1, 1, 40),
+                        ImageComposition::Overwrite));
+  d.flush();
+  CHECK(d.residency() == ImageResidency{0, 1, 88});
+
+  // A later full replacement supersedes the accumulated edit sources.
+  REQUIRE(d.replace_pinned(*pin, root));
+  d.flush();
+  CHECK(d.residency() == ImageResidency{0, 1, 64});
+}
+
+TEST_CASE("residency: refused and rejected partial edits restore the root",
+          "[residency][kitty][edit][sink][reply]") {
+  KittyDriver d;
+  std::string accepted;
+  d.set_output(&accepted);
+  const Image root = art(4, 4, 50);
+  const auto pin = d.pin_image(root);
+  REQUIRE(pin);
+  d.flush();
+  REQUIRE(d.residency() == ImageResidency{0, 1, 64});
+
+  FailingSink dead;
+  d.set_output(&dead);
+  REQUIRE(d.edit_pinned(*pin, PixelPoint{1, 1}, art(2, 2, 60),
+                        ImageComposition::Overwrite));
+  d.flush();
+  CHECK(d.residency() == ImageResidency{0, 1, 64});
+  REQUIRE(d.take_output_error());
+
+  // The rejected write also discards the staged hash invalidation: restoring
+  // the already-resident full frame is an exact no-op.
+  accepted.clear();
+  d.set_output(&accepted);
+  REQUIRE(d.replace_pinned(*pin, root));
+  d.flush();
+  CHECK(accepted.empty());
+
+  const auto png = bytes(11, 70);
+  d.set_output(&dead);
+  REQUIRE(d.edit_pinned(
+      *pin, PixelPoint{0, 0},
+      EncodedImage{ImageFormat::Png, png, Extent{2, 2}},
+      ImageComposition::AlphaBlend));
+  d.flush();
+  CHECK(d.residency() == ImageResidency{0, 1, 64});
+  REQUIRE(d.take_output_error());
+
+  // No reply can arrive for bytes the sink rejected. The correlation is
+  // discarded at that boundary, so the same handle is immediately usable.
+  accepted.clear();
+  d.set_output(&accepted);
+  REQUIRE(d.edit_pinned(
+      *pin, PixelPoint{0, 0},
+      EncodedImage{ImageFormat::Png, png, Extent{2, 2}},
+      ImageComposition::AlphaBlend));
+  d.flush();
+  CHECK(d.residency() == ImageResidency{0, 1, 75});
+  d.consume_reply(TerminalReply{pin->id, std::nullopt, "EINVAL"});
+  CHECK(d.residency() == ImageResidency{0, 1, 64});
+  REQUIRE(d.take_driver_events().size() == 1);
+
+  accepted.clear();
+  REQUIRE(d.replace_pinned(*pin, root));
+  d.flush();
+  CHECK(accepted.empty());
+}
+
+TEST_CASE("residency: an opaque partial-edit timeout restores prior bytes",
+          "[residency][kitty][edit][reply]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const auto pin = d.pin_image(art(4, 4, 80));
+  REQUIRE(pin);
+  d.flush();
+
+  const auto png = bytes(13, 90);
+  REQUIRE(d.edit_pinned(
+      *pin, PixelPoint{1, 1},
+      EncodedImage{ImageFormat::Png, png, Extent{2, 2}},
+      ImageComposition::Overwrite));
+  d.flush();
+  REQUIRE(d.residency() == ImageResidency{0, 1, 77});
+
+  for (int i = 0; i < 119; ++i) d.flush();
+  CHECK(d.residency() == ImageResidency{0, 1, 64});
+  const auto events = d.take_driver_events();
+  REQUIRE(events.size() == 1);
+  CHECK(events.front().message.find("timed out") != std::string::npos);
 }
 
 TEST_CASE("residency: an opaque timeout removes the committed pin belief",

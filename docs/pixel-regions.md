@@ -711,6 +711,36 @@ The replacement edits content lifetime only. Placement lifetime remains the
 separate rule below: omit `draw_pinned` for a frame and normal collection may
 retire that placement while the image data and handle remain resident.
 
+### Partial blocks edit the same resident root (#140)
+
+`edit_pinned` changes a pixel rectangle without sending the full root again:
+
+```cpp
+driver.edit_pinned(handle, PixelPoint{64, 32}, block,
+                   ImageComposition::Overwrite);
+```
+
+The offset is explicitly pixel-space; `Rect` remains cell-space everywhere.
+The block may be an `Image` or an `EncodedImage`, and its encoding need not
+match the root's original encoding. The declared block must fit completely
+inside the pinned extent. Empty, negative, out-of-bounds and malformed inputs
+return a `Warning` before bytes or state change. AlphaBlend is source-over;
+Overwrite copies every channel including alpha.
+
+Kitty emits `a=f,r=1` with `x=/y=` for the destination and `s=/v=` for the
+block. `X=1` appears only for Overwrite. Every chunk remains on root frame 1,
+the image id is stable, and no placement is recreated. Non-Kitty tiers refuse
+rather than silently paying for a full retransmission.
+
+The byte meter assigns the entire operation, payload included, to
+`image_edit`; `image_transmit` stays zero. After the sink accepts the frame,
+residency adds the block's exact input bytes because the accepted root now
+depends on the prior content plus that edit. A later full replacement resets
+the source-byte count to its new payload. An edit also makes the full-frame
+hash unknown, so a later replacement cannot incorrectly deduplicate against
+the pre-edit root. Sink refusal discards those changes, and an opaque PNG
+rejection or timeout restores the previous accepted belief.
+
 ### TGP support is per feature, not per terminal name
 
 The [Terminal Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/)

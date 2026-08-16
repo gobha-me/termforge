@@ -379,6 +379,40 @@ class TerminalDriver {
         "replace_pinned: this tier cannot replace a resident image"}};
   }
 
+  // Apply one pixel block to a pinned image's existing root frame (#140).
+  // `destination` is in PIXELS, not cells; the block's extent comes from the
+  // Image or the EncodedImage declaration. The image id and every placement
+  // remain live. This is deliberately distinct from replace_pinned: a partial
+  // edit must cost bytes proportional to the block rather than silently
+  // retransmitting the full image. The edit itself does not replace a
+  // placement; normal per-frame placement collection remains independent.
+  //
+  // NON-PURE for the same compatibility reason as every resident-image
+  // addition. A tier without an in-place edit channel refuses with a Warning;
+  // it must not substitute a full replacement because that changes the
+  // caller's requested bandwidth class.
+  virtual auto edit_pinned(PinnedImage /*image*/, PixelPoint /*destination*/,
+                           const Image& /*block*/,
+                           ImageComposition /*composition*/)
+      -> std::expected<void, ErrorEvent> {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "edit_pinned: this tier cannot edit a resident image in place"}};
+  }
+
+  // Opaque blocks keep EncodedImage's borrowed-for-the-call, shipped-verbatim
+  // contract. Their format is the block's wire encoding and need not match the
+  // pinned root's original encoding; the handle's full-replacement format is
+  // unchanged.
+  virtual auto edit_pinned(PinnedImage /*image*/, PixelPoint /*destination*/,
+                           const EncodedImage& /*block*/,
+                           ImageComposition /*composition*/)
+      -> std::expected<void, ErrorEvent> {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "edit_pinned: this tier cannot edit a resident image in place"}};
+  }
+
   // Release a pinned image: the terminal frees the data and every placement of
   // it disappears. The handle is dead afterwards and every entry point refuses
   // it.

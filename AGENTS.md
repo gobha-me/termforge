@@ -198,6 +198,17 @@ file is the tactical version.
   or hash state changes, preserving the last successful frame. The payload
   remains subject to the same raw-length and opaque-encoded rules as
   `pin_image`.
+- **Partial resident edits stay partial** (#140). `edit_pinned` targets a live
+  `PinnedImage` with a `PixelPoint` offset, a raw or encoded block and explicit
+  alpha/overwrite composition. `Rect` remains cells; never reuse it for pixel
+  coordinates. Kitty emits `a=f,r=1,x=,y=,s=,v=` and `X=1` only for overwrite,
+  keeps every placement live, and repeats `a=f,r=1` on continuations. Validate
+  the complete block inside the declared root extent before wire or state.
+  Other tiers return a `Warning`; a silent full retransmit changes the requested
+  bandwidth class and is not a fallback. The whole command, including payload,
+  is `image_edit`, never `image_transmit`. Accepted edits add their exact source
+  payload bytes to residency and make the full-frame hash unknown; sink refusal
+  discards both, while opaque rejection/timeout restores the prior belief.
 - **Raw mode is RAII** — `Terminal` restores termios on destruction. Never
   leave the terminal in raw mode on any exit path, **including one an exception
   takes**: a destructor is not a guarantee (an exception escaping `main`

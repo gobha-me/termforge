@@ -117,6 +117,12 @@ class KittyDriver final : public TerminalDriver {
       -> std::expected<void, ErrorEvent> override;
   auto replace_pinned(PinnedImage image, const EncodedImage& frame)
       -> std::expected<void, ErrorEvent> override;
+  auto edit_pinned(PinnedImage image, PixelPoint destination,
+                   const Image& block, ImageComposition composition)
+      -> std::expected<void, ErrorEvent> override;
+  auto edit_pinned(PinnedImage image, PixelPoint destination,
+                   const EncodedImage& block, ImageComposition composition)
+      -> std::expected<void, ErrorEvent> override;
   auto unpin_image(PinnedImage image)
       -> std::expected<void, ErrorEvent> override;
   auto draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
@@ -262,7 +268,12 @@ class KittyDriver final : public TerminalDriver {
     PlacementFit fit{PlacementFit::Stretch};
   };
 
-  enum class PendingKind { RegionTransmit, PinTransmit, PinnedReplace };
+  enum class PendingKind {
+    RegionTransmit,
+    PinTransmit,
+    PinnedReplace,
+    PinnedEdit
+  };
 
   struct PendingReply {
     PendingKind kind{PendingKind::RegionTransmit};
@@ -275,6 +286,10 @@ class KittyDriver final : public TerminalDriver {
     // accepted. Other pending kinds invalidate their resident belief.
     std::uint64_t previous_source_payload_bytes{0};
     bool previously_accounted{false};
+    // A partial edit destroys the full-frame identity used by replacement
+    // dedup. Preserve the prior value so a rejected opaque edit restores the
+    // last accepted root rather than merely its byte accounting.
+    std::uint64_t previous_content_hash{0};
   };
 
   enum class ResidencyKind { Region, Pinned };
@@ -285,12 +300,22 @@ class KittyDriver final : public TerminalDriver {
     std::uint64_t source_payload_bytes{0};
   };
 
-  enum class ResidencyMutationKind { Set, Erase };
+  enum class ResidencyMutationKind { Set, Add, Erase };
 
   struct ResidencyMutation {
     ResidencyMutationKind mutation{ResidencyMutationKind::Set};
     std::uint32_t image_id{0};
     AccountedImage image{};
+  };
+
+  // Full-frame content identity follows the same accepted-write boundary as
+  // residency. A zero hash means the root is valid but its complete bytes are
+  // unknown (after one or more partial edits), so replace_pinned must transmit
+  // rather than make an unsafe dedup claim.
+  struct ContentMutation {
+    std::uint32_t image_id{0};
+    std::uint32_t serial{0};
+    std::uint64_t content_hash{0};
   };
 
   // RAII byte attribution for a draw path (#139). Everything appended to
@@ -330,6 +355,12 @@ class KittyDriver final : public TerminalDriver {
                        Extent px, bool request_reply)
       -> std::expected<void, ErrorEvent>;
 
+  auto edit_payload(std::uint32_t id, PinnedEntry& entry,
+                    PixelPoint destination,
+                    std::span<const std::byte> payload, int format_code,
+                    Extent px, ImageComposition composition,
+                    bool request_reply) -> std::expected<void, ErrorEvent>;
+
   // The pinned entry `image` names, or a Warning saying which way it is
   // invalid. Both cases are real: a handle from another driver (a server runs
   // one per session) and a handle whose image was already unpinned.
@@ -355,6 +386,11 @@ class KittyDriver final : public TerminalDriver {
   auto replace_root_frame(std::span<const std::byte> payload, int format_code,
                           Extent px, std::uint32_t id,
                           bool request_reply) -> void;
+
+  auto edit_root_frame(std::span<const std::byte> payload, int format_code,
+                       Extent px, std::uint32_t id, PixelPoint destination,
+                       ImageComposition composition,
+                       bool request_reply) -> void;
 
   // Everything both public draw_image overloads share once the payload is in
   // hand: the placeholder clamp, byte attribution, slot keying and LRU, the
@@ -405,6 +441,7 @@ class KittyDriver final : public TerminalDriver {
   auto finish_pending(std::uint32_t image_id, const PendingReply& pending,
                       bool success, std::string_view status,
                       bool timed_out) -> void;
+  auto discard_unwritten_edits() -> void;
   auto expire_pending_replies() -> void;
   [[nodiscard]] auto pending_warning(std::string_view operation,
                                      std::uint32_t image_id) const
@@ -413,13 +450,24 @@ class KittyDriver final : public TerminalDriver {
   auto stage_residency_set(std::uint32_t image_id, std::uint32_t serial,
                            ResidencyKind kind,
                            std::size_t source_payload_bytes) -> void;
+  auto stage_residency_add(std::uint32_t image_id, std::uint32_t serial,
+                           std::size_t source_payload_bytes) -> void;
   auto stage_residency_erase(std::uint32_t image_id, std::uint32_t serial)
       -> void;
+  [[nodiscard]] auto projected_source_payload_bytes(
+      std::uint32_t image_id, std::uint32_t serial) const noexcept
+      -> std::uint64_t;
   auto finish_residency_frame(bool accepted) -> void;
   auto erase_accounted(std::uint32_t image_id, std::uint32_t serial) -> void;
   auto restore_accounted(std::uint32_t image_id, std::uint32_t serial,
                          std::uint64_t source_payload_bytes,
                          bool previously_accounted) -> void;
+  auto stage_content_hash(std::uint32_t image_id, std::uint32_t serial,
+                          std::uint64_t content_hash) -> void;
+  [[nodiscard]] auto projected_content_hash(std::uint32_t image_id,
+                                            const PinnedEntry& entry) const
+      noexcept -> std::uint64_t;
+  auto finish_content_frame(bool accepted) -> void;
 
   // Retire the text-grid half of a Unicode-placeholder placement (#201).
   // A stale placement is discovered after the frame's cell diff has already
@@ -517,6 +565,7 @@ class KittyDriver final : public TerminalDriver {
   // ordered because one frame may evict an id and reuse it for a new image.
   std::unordered_map<std::uint32_t, AccountedImage> m_accounted_images;
   std::vector<ResidencyMutation> m_residency_mutations;
+  std::vector<ContentMutation> m_content_mutations;
   // Placements of pinned images, keyed like a region on the destination rect.
   // Uncapped on purpose: they are collected every frame, so the live count is
   // whatever the last frame drew, and an LRU here would reintroduce the silent

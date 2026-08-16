@@ -4,34 +4,42 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-15, latest)
+## Where we are (2026-08-16, latest)
 
-**Release candidate: v0.35.0 — driver-accounted image residency.** #112 adds
-`ImageResidency` and the non-pure `TerminalDriver::residency()` query. The
-snapshot splits region-cache and application-pinned image counts and reports
-their combined exact source payload bytes. For opaque PNG that means compressed
-input bytes, not a guessed decoded allocation; terminal byte capacity remains
-unknown rather than invented. Legacy and non-resident tiers inherit an empty
-snapshot.
+**Release candidate: v0.36.0 — partial pinned-image edits.** #140 adds
+`PixelPoint`, `ImageComposition` and non-pure raw/encoded `edit_pinned`
+overloads. Kitty applies a block to root frame 1 with pixel offsets and explicit
+source-over/overwrite semantics; it keeps the image id and placement, emits no
+`a=t`, and bills the complete command plus payload to `image_edit`.
 
-Kitty keeps the ledger per driver and stages ordered, generation-qualified
-changes because one frame may evict an id and reuse it. An accepted
-`emit_frame` commits uploads, replacements and deletes; a refused sink write
-discards them while preserving the previous snapshot. Opaque operations count
-as believed resident after their write, then terminal rejection or timeout
-removes a region/initial pin or restores a rejected root edit's prior source
-bytes. Explicit invalidation clears the belief without wire, and an accepted
-shutdown delete-all clears it at the same boundary.
+Validation proves the block fits the pinned extent before wire or state. Edit
+content identity and source-byte residency commit only at an accepted frame
+write. Opaque PNG edits reuse #165's correlated reply path; rejection and
+timeout restore the prior root belief, and a sink refusal discards the pending
+correlation because no terminal can acknowledge bytes it never received.
+Legacy and non-Kitty tiers return a `Warning` rather than silently
+retransmitting the full image.
 
-GCC 14.2 and Clang 20.1 Release `-Werror` builds each pass all 68 tests;
-ASan+UBSan passes the same matrix. Both compilers pass the `subdir`, `install`
-and `vendored` consumer paths. Focused mutations of accepted-write commit,
-reply invalidation and rejected-edit restoration all fail the residency suite.
-Hosted PR and exact-main CI remain required before release. No real-emulator
-gate applies because the emitted terminal protocol is byte-identical.
+Focused offline tests cover raw/PNG blocks, both composition modes, multi-chunk
+root targeting and reply quietness, the 32x32-in-240x160 bandwidth claim, meter
+buckets, invalid geometry/handles, accepted/refused writes and opaque
+rejection/timeout. GCC 14.2 and Clang 20.1 Release `-Werror` builds each pass all
+68 tests; ASan+UBSan passes the same matrix, and both compilers pass `subdir`,
+`install` and `vendored` consumer acceptance. Mutations of the root action,
+meter bucket, accepted residency addition and rejection/timeout rollback all
+fail their focused suites. Hosted PR/exact-main CI and stanza 11 live-emulator
+evidence remain required before release.
 
-**Next:** once #112 lands and v0.35.0 is published, take #140; its owner
-explicitly ordered partial resident edits after #165 and #112.
+**Next:** after #140 ships, take priority:2 bug #267 unless an open PR appears.
+
+## Previous stable release: v0.35.0
+
+**v0.35.0 — driver-accounted image residency.** #112 adds `ImageResidency` and
+the non-pure `TerminalDriver::residency()` query. Kitty commits ordered,
+generation-qualified uploads, replacements and deletes only after accepted
+frame writes, and reconciles opaque rejection/timeout without claiming terminal
+capacity. GCC/Clang, sanitizer, consumer and all ten hosted jobs passed; the
+release targets merge commit `8c45ff4`.
 
 ## Previous stable release: v0.34.0
 
