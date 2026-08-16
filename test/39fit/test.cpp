@@ -528,9 +528,9 @@ TEST_CASE("Exact is refused under Unicode placeholders, and says so") {
   REQUIRE_FALSE(r);
   CHECK(r.error().severity == Severity::Warning);
   CHECK(r.error().source == "kitty");
-  CHECK(r.error().message.find("Exact") != std::string::npos);
+  CHECK(r.error().message.find("placement") != std::string::npos);
   // Nothing at all: no virtual placement, and no placeholder cells. A grid
-  // painted for a placement that was never created is worse than no draw.
+  // painted for a placement the terminal cannot honour is worse than no draw.
   CHECK(out.empty());
   CHECK(count_of(out, "U=1") == 0);
   CHECK(count_of(out, "\xF4\x8E\xBB\xAE") == 0);
@@ -1200,10 +1200,9 @@ TEST_CASE("encoded: an empty rect is refused as EMPTY, not as a fit failure") {
 
 TEST_CASE("encoded: Exact is refused under placeholders, on this overload too") {
   // supports_placement_fit is RUNTIME state on kitty, and the encoded path
-  // consults it through the same validate_fit as the Image path. Asserted
-  // here because placeholders are the one mode where place_unicode ignores
-  // the fit entirely -- drop the tier check and an Exact encoded draw would
-  // silently become a stretched placeholder placement.
+  // consults it through the same placement guard as the Image path. Drop that
+  // tier check and an Exact encoded draw silently becomes a stretched
+  // placeholder placement.
   const Image art = checker(8, 8, kA, kB);
   const EncodedImage img = as_encoded(art);
   KittyDriver d;

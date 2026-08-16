@@ -29,6 +29,7 @@
 #include <unistd.h>
 
 #include "detail/keyboard.hpp"
+#include "detail/placement.hpp"
 #include "detail/requirements.hpp"
 #include "detail/trace.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
@@ -2334,6 +2335,47 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
     // as "draw_image: empty image", leaving a hole in the UI.
     const bool cached = retained != nullptr && retained->content_ready;
     if ((image != nullptr && !image->empty()) || (!needs_image && cached)) {
+      const Extent source_extent =
+          image != nullptr
+              ? Extent{image->width(), image->height()}
+              : retained->extent;
+      // Validate before blanking the authored Baseline. A crop outside this
+      // frame or an invalid sub-cell offset is a Warning and no enhanced draw,
+      // not a one-frame hole followed by a driver refusal in the image window.
+      if (auto valid = detail::validate_placement(
+              placement, region, source_extent, *m_driver, m_driver->name(),
+              "pixel region");
+          !valid) {
+        // The driver supports the feature, but this particular value cannot
+        // be honoured. Use the same per-region transition latch as a
+        // capability refusal: continuous rendering must not turn one bad crop
+        // into an ErrorEvent storm. Unlike the supported-lesser-route case
+        // above this remains Warning, because the requested image was not
+        // drawn at all.
+        const auto fallback = std::find_if(
+            m_pixel_placement_fallbacks.begin(),
+            m_pixel_placement_fallbacks.end(),
+            [&](const PixelPlacementFallback& candidate) {
+              return candidate.owner == &widget &&
+                     candidate.ordinal == ordinal;
+            });
+        bool report = false;
+        if (fallback == m_pixel_placement_fallbacks.end()) {
+          m_pixel_placement_fallbacks.push_back(
+              PixelPlacementFallback{.owner = &widget,
+                                     .ordinal = ordinal,
+                                     .placement = placement,
+                                     .seen = true});
+          report = true;
+        } else {
+          report = fallback->placement != placement;
+          fallback->placement = placement;
+          fallback->seen = true;
+        }
+        if (report) m_input.push_error(std::move(valid.error()));
+        if (retained != nullptr) retained->visible = false;
+        continue;
+      }
       m_pixel_regions.push_back({.owner = &widget,
                                  .ordinal = ordinal,
                                  .rect = region,
@@ -2434,19 +2476,6 @@ auto App::flush_pixel_regions() -> void {
 
     const bool submit_content = !state.content_ready || pr.content_dirty ||
                                 state.recreate || extent_changed;
-    if (pr.placement.fit == PlacementFit::Exact) {
-      const Extent needed = m_driver->image_cell_extent(next_extent);
-      if (needed.w > pr.rect.w || needed.h > pr.rect.h) {
-        m_input.push_error(ErrorEvent{
-            Severity::Warning, "app",
-            std::format("persistent pixel region: Exact placement needs "
-                        "{}x{} cells for {}x{} pixels, but destination is "
-                        "{}x{}",
-                        needed.w, needed.h, next_extent.w, next_extent.h,
-                        pr.rect.w, pr.rect.h)});
-        continue;
-      }
-    }
     if ((state.recreate || extent_changed) && state.pin) {
       if (auto released = m_driver->unpin_image(state.pin); !released) {
         m_input.push_error(std::move(released.error()));

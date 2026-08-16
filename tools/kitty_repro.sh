@@ -2,8 +2,8 @@
 # kitty_repro.sh — minimal standalone repros for the kitty graphics paths that
 # KittyDriver emits. Run inside a real kitty (>= 0.28) terminal:
 #
-#   ./tools/kitty_repro.sh          # all twelve stanzas, with pauses
-#   ./tools/kitty_repro.sh 12       # ONLY stanza 12
+#   ./tools/kitty_repro.sh          # all thirteen stanzas, with pauses
+#   ./tools/kitty_repro.sh 13       # ONLY stanza 13
 #   ./tools/kitty_repro.sh 3 4      # a subset, in the order given
 #   ./tools/kitty_repro.sh --dump   # emit the wire bytes, touch no terminal
 #
@@ -43,6 +43,8 @@
 #      resident root without retransmitting or replacing its placement.
 #  12  #114 — three classic placements prove above-text, below-text and
 #      below-non-default-background named layers. Self-contained.
+#  13  #115 — one transmitted quadrant image is source-cropped and sub-cell
+#      offset through Classic Stretch and Classic Exact placements.
 #
 # All commands use q=0 so kitty REPORTS errors; every response the terminal
 # sends is captured and echoed in readable form. A response of "_Gi=42;OK"
@@ -57,9 +59,9 @@ stanzas=()
 for arg in "$@"; do
   case $arg in
     --dump) dump=1 ;;
-    [1-9]|10|11|12) stanzas+=("$arg") ;;
+    [1-9]|10|11|12|13) stanzas+=("$arg") ;;
     *)
-      echo "usage: $0 [--dump] [1-9|10|11|12]..." >&2
+      echo "usage: $0 [--dump] [1-9|10|11|12|13]..." >&2
       exit 2
       ;;
   esac
@@ -572,11 +574,48 @@ stanza_12() {
   say "magenta plate hides green, and (d) whether any response contains ';E'."
 }
 
+stanza_13() {
+  say ""
+  say "== Stanza 13: #115 source crops and sub-cell placement offsets =="
+  say "One 4x4 quadrant image is shown twice from its RIGHT HALF only."
+  say "Expected: the left Classic Stretch plate is a large GREEN-over-YELLOW"
+  say "crop inset from its first cell; the right Classic Exact copy is the"
+  say "same crop at native 2x4 pixels, also inset. No red or blue."
+
+  local quadrant_b64 transmit stretched exact
+  quadrant_b64=$(
+    {
+      printf '\xff\x00\x00\xff\xff\x00\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff'
+      printf '\xff\x00\x00\xff\xff\x00\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff'
+      printf '\x00\x00\xff\xff\x00\x00\xff\xff\xff\xff\x00\xff\xff\xff\x00\xff'
+      printf '\x00\x00\xff\xff\x00\x00\xff\xff\xff\xff\x00\xff\xff\xff\x00\xff'
+    } | base64 | tr -d '\n'
+  )
+
+  send_quiet "${ESC}_Ga=t,t=d,f=32,i=52,s=4,v=4,m=0,q=0;${quadrant_b64}${ST}"
+  transmit=$reply_out
+
+  # Reserve room, save the origin and keep both placements visible together.
+  printf '\n\n\n\n\n\n%s[6A%s7' "$ESC" "$ESC"
+  send_quiet "${ESC}_Ga=p,i=52,p=1,c=6,r=4,x=2,y=0,w=2,h=4,X=2,Y=3,C=1,q=0${ST}"
+  stretched=$reply_out
+
+  printf '%s8%s[10C' "$ESC" "$ESC"
+  send_quiet "${ESC}_Ga=p,i=52,p=2,x=2,y=0,w=2,h=4,X=2,Y=3,C=1,q=0${ST}"
+  exact=$reply_out
+  printf '%s8%s[6B\r' "$ESC" "$ESC"
+
+  say "$(printf 'transmit / Stretch crop / Exact crop responses: %q / %q / %q' "$transmit" "$stretched" "$exact")"
+  say "Report: (a) Stretch is green-over-yellow and inset, (b) Exact is the"
+  say "same crop at native 2x4 and inset, (c) no red/blue is visible, and"
+  say "(d) whether any response contains ';E'."
+}
+
 if (( ${#stanzas[@]} )); then
   run_all=0
   for n in "${stanzas[@]}"; do "stanza_$n"; done
 else
-  for n in 1 2 3 4 5 6 7 8 9 10 11 12; do "stanza_$n"; done
+  for n in 1 2 3 4 5 6 7 8 9 10 11 12 13; do "stanza_$n"; done
   say ""
   say "Report: (a) stanza 1 red block, (b) green after stanza 2, (c) stanza 3"
   say "blue block, (d) YELLOW block after stanza 4, (e) stanza 5 shows a"
@@ -585,5 +624,6 @@ else
   say "containing ';E' (an error), (j) stanza 9's three requested results,"
   say "(k) stanza 10's existing block turns green without re-placement, and"
   say "(l) stanza 11's offset overwrite/alpha quadrants match, and (m)"
-  say "stanza 12's three named-layer visibility results match its description."
+  say "stanza 12's three named-layer visibility results match, and (n) stanza"
+  say "13's Classic Stretch/Exact crop and offset results match its description."
 fi

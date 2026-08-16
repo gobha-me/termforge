@@ -89,9 +89,10 @@ class KittyDriver final : public TerminalDriver {
   // only the f= value and the source of the bytes differ.
   auto draw_image(Rect cells, const EncodedImage& image)
       -> std::expected<void, ErrorEvent> override;
-  // PlacementFit::Exact omits c=/r= so the terminal places at the image's
-  // transmitted resolution (#137). Classic placement only -- see
-  // supports_placement_fit.
+  // PlacementFit::Exact omits c=/r= so the terminal places the selected
+  // source rectangle at native resolution (#137, #115). Classic placement
+  // only: Kitty's Unicode placeholder renderer ignores virtual-placement
+  // crop and sub-cell-offset fields, so that route refuses rather than lying.
   auto draw_image(Rect cells, const Image& image, PlacementFit fit)
       -> std::expected<void, ErrorEvent> override;
   auto draw_image(Rect cells, const Image& image, ImagePlacementOptions options)
@@ -172,7 +173,7 @@ class KittyDriver final : public TerminalDriver {
   // The flagship tier is the only one with an opaque-payload channel.
   [[nodiscard]] auto supports_image_format(ImageFormat f) const noexcept
       -> bool override;
-  // Mode-dependent: Exact is Classic-only, so this answer MOVES when
+  // Mode-dependent: Exact is Classic-only, so this answer moves when
   // set_placement_mode is called.
   [[nodiscard]] auto supports_placement_fit(PlacementFit f) const noexcept
       -> bool override;
@@ -194,9 +195,9 @@ class KittyDriver final : public TerminalDriver {
   // would reference a virtual placement that was never created.
   //
   // This also moves supports_placement_fit(Exact) (#137): switching to
-  // UnicodePlaceholders after a successful Exact draw makes the NEXT Exact
-  // draw refuse, and gc_regions will then delete the region it had placed —
-  // a hole in the UI for an application that does not re-ask.
+  // UnicodePlaceholders after a successful Exact draw makes the next Exact
+  // draw refuse. App re-asks supports_image_placement before blanking its
+  // authored Baseline, so the refusal leaves no hole.
   void set_placement_mode(PlacementMode mode);
   [[nodiscard]] auto placement_mode() const noexcept -> PlacementMode {
     return m_mode;
@@ -240,10 +241,10 @@ class KittyDriver final : public TerminalDriver {
     std::uint64_t last_used{0};    // per-draw LRU clock (strictly increasing)
     std::uint32_t serial{0};       // never reused while a reply can name it
     bool placed{false};            // placement command already emitted
-    // Complete placement state, not content (#137, #114). A fit or layer
-    // change invalidates `placed` exactly as a content change does; without it
-    // the same image redrawn to the same rect under new options matches both
-    // region_key and content_hash and emits nothing at all.
+    // Complete placement state, not content (#137, #114, #115). A fit, layer,
+    // offset or crop change invalidates `placed` exactly as a content change
+    // does; without it the same image redrawn to the same rect under new
+    // options matches both region_key and content_hash and emits nothing.
     ImagePlacementOptions placement{};
   };
 
@@ -368,9 +369,7 @@ class KittyDriver final : public TerminalDriver {
   // The placement half both draw paths share: the classic delete-and-replace
   // dance kitty needs because it will not refresh a live classic placement,
   // and the placeholder grid that is re-emitted every frame because the grid
-  // IS the placement. `placed` is read and written. `replace` says the
-  // existing placement is stale -- changed content or a changed fit for a
-  // region, a changed fit for a pinned image, which has no content to change.
+  // IS the placement.
   auto emit_placement(std::uint32_t image_id, std::uint32_t placement_id,
                       bool& placed, Rect dest, ImagePlacementOptions options,
                       bool content_changed, bool placement_changed) -> void;
@@ -434,8 +433,9 @@ class KittyDriver final : public TerminalDriver {
   // makes "the format participates in image identity" impossible to forget at
   // a call site.
   auto draw_payload(Rect cells, std::span<const std::byte> payload,
-                    int format_code, Extent px, ImagePlacementOptions options,
-                    bool request_reply) -> std::expected<void, ErrorEvent>;
+                    int format_code, Extent px,
+                    ImagePlacementOptions options, bool request_reply)
+      -> std::expected<void, ErrorEvent>;
 
   // Classic placement: position the cursor and place (a=p, C=1), scaled to
   // cols x rows cells under Stretch, or at the transmitted resolution under

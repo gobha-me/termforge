@@ -26,12 +26,23 @@
 
 #include <expected>
 #include <format>
+#include <limits>
 #include <string_view>
 
 #include "termforge/core/types.hpp"
 #include "termforge/drivers/terminal_driver.hpp"
 
 namespace termforge::detail {
+
+// A validated source selection, plus the pixel footprint Exact must reserve
+// after the image is shifted inside its first cell (#115). `source` is always
+// populated: an absent ImagePlacementOptions::source resolves to the complete
+// root image. The caller still consults the optional itself when deciding
+// whether x=/y=/w=/h= belong on the wire.
+struct PlacementGeometry {
+  PixelRect source{};
+  Extent exact_pixels{};
+};
 
 // A PlacementFit's spelling, for diagnostics. An exhaustive switch rather than
 // a ternary, for the same reason format_name is one: a third enumerator added
@@ -111,6 +122,75 @@ namespace termforge::detail {
     }
   }
   return {};
+}
+
+// Validate the pixel-coordinate half of ImagePlacementOptions and the fit it
+// produces. `root` is measured for Image and caller-declared for EncodedImage
+// and pinned content; PNG remains opaque and is never parsed.
+//
+// Run this before cache lookup, map mutation or wire. Kitty's protocol clips a
+// source rectangle to the image automatically, but accepting that would turn a
+// caller mistake into a silent partial draw. TermForge instead requires the
+// complete crop to exist, matching edit_pinned's all-or-nothing bounds rule.
+[[nodiscard]] inline auto validate_placement(
+    ImagePlacementOptions options, Rect cells, Extent root,
+    const TerminalDriver& driver, std::string_view source, std::string_view fn)
+    -> std::expected<PlacementGeometry, ErrorEvent> {
+  // Keep the query and emit paths structural mirrors. In particular, Kitty's
+  // virtual-placement record accepts crop/offset keys but its Unicode
+  // placeholder renderer ignores them and reconstructs from the full image.
+  // A driver that selects that route must refuse before validation, cache
+  // mutation or wire instead of emitting a syntactically valid lie.
+  if (!driver.supports_image_placement(options)) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, std::string{source},
+        std::format("{}: this tier cannot honour the requested image "
+                    "placement -- ask supports_image_placement() before "
+                    "drawing",
+                    fn)}};
+  }
+  const PixelPoint offset = options.pixel_offset;
+  const Extent cell = driver.preferred_pixel_extent(Rect{0, 0, 1, 1});
+  if (offset.x < 0 || offset.y < 0 || offset.x >= cell.w ||
+      offset.y >= cell.h) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, std::string{source},
+        std::format("{}: pixel offset ({},{}) must be inside one {}x{} cell",
+                    fn, offset.x, offset.y, cell.w, cell.h)}};
+  }
+
+  const PixelRect crop = options.source.value_or(
+      PixelRect{0, 0, root.w, root.h});
+  const auto right = static_cast<std::int64_t>(crop.x) + crop.w;
+  const auto bottom = static_cast<std::int64_t>(crop.y) + crop.h;
+  if (crop.x < 0 || crop.y < 0 || crop.empty() || right > root.w ||
+      bottom > root.h) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, std::string{source},
+        std::format("{}: source crop ({},{},{}x{}) is outside the {}x{} "
+                    "image extent",
+                    fn, crop.x, crop.y, crop.w, crop.h, root.w, root.h)}};
+  }
+
+  const auto exact_w = static_cast<std::int64_t>(offset.x) + crop.w;
+  const auto exact_h = static_cast<std::int64_t>(offset.y) + crop.h;
+  if (exact_w > std::numeric_limits<int>::max() ||
+      exact_h > std::numeric_limits<int>::max()) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, std::string{source},
+        std::format("{}: pixel offset plus source crop exceeds the supported "
+                    "pixel extent",
+                    fn)}};
+  }
+
+  const Extent exact_pixels{static_cast<int>(exact_w),
+                            static_cast<int>(exact_h)};
+  if (auto ok = validate_fit(options.fit, cells, exact_pixels, driver, source,
+                             fn);
+      !ok) {
+    return std::unexpected{ok.error()};
+  }
+  return PlacementGeometry{crop, exact_pixels};
 }
 
 }  // namespace termforge::detail

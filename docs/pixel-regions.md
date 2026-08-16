@@ -329,13 +329,13 @@ see, and overflowing would paint outside the region the caller named.
 | tier | what `Exact` does | supported? |
 |---|---|---|
 | Kitty, classic placement | omits `c=`/`r=` — the protocol's own "place at true size" | yes |
-| Kitty, Unicode placeholders | — | **no**; the painted cell grid and the placement extent must agree by construction. That is #115 (sub-cell offsets) |
+| Kitty, Unicode placeholders | — | **no**; virtual-placement geometry is not applied when placeholders materialize the image |
 | AnsiRgb | source→destination becomes the identity map; one source pixel per half-cell | yes |
 | Fallback | identity map, one source pixel per ramp glyph | yes |
 
-`supports_placement_fit` is **runtime**, not a property of the driver's
-type: `set_placement_mode` moves kitty's answer. Ask before committing an
-asset pipeline to it, exactly as with `supports_image_format`.
+`supports_placement_fit` is **runtime**, not a property of the driver's type:
+`set_placement_mode` moves Kitty's answer. Ask before committing an asset
+pipeline to it, exactly as with `supports_image_format`.
 
 ### Named image layers (#114)
 
@@ -347,6 +347,8 @@ relationships to terminal-owned content. `ImageLayer` names those regimes and
 struct ImagePlacementOptions {
   PlacementFit fit{PlacementFit::Stretch};
   ImageLayer layer{};  // above_text(0), the historical implicit z=0
+  PixelPoint pixel_offset{};
+  std::optional<PixelRect> source{};
 };
 
 driver.draw_image(cells, image, {
@@ -380,6 +382,51 @@ placeholders encode only one image identity in a cell grid, so that same
 collision is explicitly refused instead of allowing the later grid to win
 silently.
 
+### Sub-cell placement and source crops (#115)
+
+`pixel_offset` positions the selected image inside the destination's first
+cell. Its coordinates are pixels, non-negative, and strictly smaller than the
+driver's current one-cell pixel extent. `source` selects a positive pixel rect
+inside the transmitted root image:
+
+```cpp
+driver.draw_image(cells, image, {
+    .fit = PlacementFit::Exact,
+    .layer = ImageLayer::above_text(),
+    .pixel_offset = PixelPoint{3, 4},
+    .source = PixelRect{64, 32, 160, 90},
+});
+```
+
+Kitty Classic spells these as placement keys `X=`/`Y=` and
+`x=`/`y=`/`w=`/`h=`. Zero offsets and an absent crop are omitted, so
+`ImagePlacementOptions{}` is byte-for-byte the historical placement. Changing
+either value retires and recreates only placement state; cached and pinned
+image payloads remain resident.
+
+Unicode placeholders deliberately refuse both geometry fields. Kitty accepts
+the keys on a virtual-placement command, but when a placeholder cell
+materializes the placement it derives from the complete root image and ignores
+the stored crop and sub-cell offset. An atlas request would therefore expose
+neighboring sprites (the real-terminal failure showed the red/blue half beside
+the selected green/yellow half). `supports_image_placement` returns false on
+that route, direct calls return a `Warning` before payload or placement wire,
+and App keeps the widget's information-complete cell Baseline with one `Info`.
+
+For `Exact`, the crop replaces the root image as the fit extent, and the
+offset counts too: a 12×20 crop at `{3,4}` needs 15×24 pixels of destination
+capacity. For `Stretch`, the terminal scales the selected source into the
+declared cell rect and applies the sub-cell origin. A crop must be wholly
+inside `Image`'s real extent or `EncodedImage`'s caller-declared extent. The
+library uses that declaration for opaque PNG exactly as it already does for
+`s=`/`v=`, hashing and fit checks; it never parses the payload.
+
+Invalid offsets, empty/out-of-bounds crops and overflow are refused with a
+`Warning` before cache state or wire changes. A driver without this placement
+facility refuses the non-default fields. App performs the same value check
+before borrowing/blanking a widget region, preserves its cell Baseline, and
+reports one transition event rather than one warning per frame.
+
 On the resampling tiers a half-cell is not a square device pixel, and the
 ASCII ramp discards colour regardless — but what `Exact` promises is *no
 resampling*, and the identity map delivers exactly that. A dither survives
@@ -387,8 +434,8 @@ as a pattern, aspect-distorted but structurally intact.
 
 An exactly-placed image will usually not fill its last row and column of
 cells (480px at a 9px cell is 53.33 cells, so 54 are reserved and 6px are
-spare). That overhang is the app's, which is correct; placing the image
-*within* the cell needs sub-cell offsets, which is #115.
+spare). That overhang is the app's, which is correct; `pixel_offset` can now
+position the image within the first cell without inventing a border policy.
 
 This is the standard DPI pattern: cells are logical units and
 `preferred_pixel_extent` is `devicePixelRatio`. A caller that merely
@@ -1223,8 +1270,10 @@ Same widget, same code, no driver branching.
   out of scope here as it is on `Image`. `PlacementFit::Exact` (#137)
   landed the *no-scaling* half and anchors top-left; it is not a fit mode
   and adds no border behaviour.
-- **`Exact` under Unicode placeholders** — folded into #115, where
-  sub-cell offsets make it expressible.
+- **Geometry and `Exact` under Unicode placeholders** — Kitty's current
+  placeholder materialization ignores the virtual placement's crop and
+  sub-cell offset. Supporting this needs an action-level capability plus an
+  honest anchoring route; emitting the accepted-but-ignored keys is not one.
 - **MapWidget** — tile-based maps fit naturally: `draw_pixels` renders
   the tile grid, `draw` provides the half-block approximation.
 - **Animation** — terminal-driven frame registration/playback for animated

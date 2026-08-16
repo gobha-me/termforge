@@ -232,6 +232,22 @@ constexpr int kFormatPng = 100;
   return kFormatRgba32;
 }
 
+// Classic image-display keys (#115). Defaults are omitted so
+// ImagePlacementOptions{} remains byte-for-byte historical.
+[[nodiscard]] auto placement_layout(ImagePlacementOptions options)
+    -> std::string {
+  std::string out;
+  if (options.source) {
+    const auto& crop = *options.source;
+    out += std::format(",x={},y={},w={},h={}", crop.x, crop.y, crop.w, crop.h);
+  }
+  if (options.pixel_offset.x != 0)
+    out += std::format(",X={}", options.pixel_offset.x);
+  if (options.pixel_offset.y != 0)
+    out += std::format(",Y={}", options.pixel_offset.y);
+  return out;
+}
+
 // Bound on tracked regions; past this the least-recently-drawn slot is
 // deleted terminal-side and reused. Far above any realistic UI.
 constexpr std::size_t kMaxRegionSlots = 16;
@@ -475,20 +491,12 @@ auto KittyDriver::supports_placement_fit(PlacementFit f) const noexcept
   // Exhaustive switch rather than a ternary, for the same reason
   // supports_image_format is one.
   switch (f) {
-    case PlacementFit::Stretch:
-      return true;
+    case PlacementFit::Stretch: return true;
     case PlacementFit::Exact:
-      // Classic only. Under Unicode placeholders the image is displayed
-      // THROUGH a cell grid this driver paints, and the virtual placement's
-      // c=/r= declare the footprint those diacritics index into -- so grid
-      // and extent must agree by construction. Omitting c=/r= from a U=1
-      // placement does not mean 1:1; it means the terminal infers a footprint
-      // that the already-painted grid then indexes into. The only
-      // implementable reading is to place at image_cell_extent() instead,
-      // which either paints outside the rect the caller named or clips the
-      // image -- and clipping is the silent loss draw_payload's comment
-      // already rules out. Placeholders plus Exact is really placeholders
-      // plus sub-cell offsets, which is #115.
+      // A virtual placement accepts omitted c=/r= on the wire, but Kitty's
+      // placeholder renderer derives the natural footprint from the complete
+      // image and ignores the virtual placement's source crop and cell-pixel
+      // offset. That is not Exact for a selected source, so refuse it.
       return m_mode == PlacementMode::Classic;
   }
   return false;
@@ -496,7 +504,15 @@ auto KittyDriver::supports_placement_fit(PlacementFit f) const noexcept
 
 auto KittyDriver::supports_image_placement(
     ImagePlacementOptions options) const noexcept -> bool {
-  return options.layer.z_index().has_value() &&
+  // This is a capability query, not per-image validation. Crop bounds need a
+  // source extent and therefore belong at draw/collect time. Kitty's virtual
+  // placement record accepts geometry keys, but create_cell_image ignores
+  // them and renders the full source; claiming support would make a sprite
+  // atlas show neighboring sprites. Keep that route on the authored Baseline.
+  const bool geometry_supported =
+      m_mode == PlacementMode::Classic ||
+      (options.pixel_offset == PixelPoint{} && !options.source);
+  return options.layer.z_index().has_value() && geometry_supported &&
          supports_placement_fit(options.fit);
 }
 
@@ -531,15 +547,14 @@ auto KittyDriver::draw_image(Rect cells, const Image& image,
         "draw_image: image layer rank is outside the protocol range"}};
   }
   // Before draw_payload, never after: a refusal must not have paid for an
-  // upload it then declines to place.
-  if (auto ok = detail::validate_fit(options.fit, cells,
-                                     Extent{image.width(), image.height()},
-                                     *this, "kitty", "draw_image");
-      !ok) {
-    return ok;
-  }
+  // upload it then declines to place. The selected crop, plus its sub-cell
+  // origin under Exact, is the footprint that must fit.
+  const Extent root{image.width(), image.height()};
+  auto geometry = detail::validate_placement(options, cells, root, *this,
+                                             "kitty", "draw_image");
+  if (!geometry) return std::unexpected{geometry.error()};
   return draw_payload(cells, std::as_bytes(image.pixels()), kFormatRgba32,
-                      Extent{image.width(), image.height()}, options, false);
+                      root, options, false);
 }
 
 auto KittyDriver::draw_image(Rect cells, const EncodedImage& image)
@@ -580,17 +595,14 @@ auto KittyDriver::draw_image(Rect cells, const EncodedImage& image,
         Severity::Warning, "kitty",
         "draw_image: image layer rank is outside the protocol range"}};
   }
-  // Against the DECLARED extent, for both formats (#169). Before draw_payload
-  // and never after: a refusal must not have paid for the upload -- 205,283
-  // bytes for the plate #163 measured, which is the most expensive possible
-  // way to draw nothing.
-  if (auto ok = detail::validate_fit(options.fit, cells, image.pixels, *this,
-                                     "kitty", "draw_image");
-      !ok) {
-    return ok;
-  }
+  // Against the DECLARED extent, for both formats (#169, #115). Before
+  // draw_payload and never after: a refusal must not have paid for the upload.
+  auto geometry = detail::validate_placement(options, cells, image.pixels,
+                                             *this, "kitty", "draw_image");
+  if (!geometry) return std::unexpected{geometry.error()};
   return draw_payload(cells, image.bytes, wire_format(image.format),
-                      image.pixels, options, image.format == ImageFormat::Png);
+                      image.pixels, options,
+                      image.format == ImageFormat::Png);
 }
 
 // ── resident images (#109) ──────────────────────────────────────────────────
@@ -1027,12 +1039,11 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image,
         "draw_pinned: image layer rank is outside the protocol range"}};
   }
   // Against the extent declared at PIN time, from the driver's own copy --
-  // the handle carries no geometry a caller could get wrong.
-  if (auto ok = detail::validate_fit(options.fit, cells, (*entry)->px, *this,
-                                     "kitty", "draw_pinned");
-      !ok) {
-    return std::unexpected{ok.error()};
-  }
+  // the handle carries no geometry a caller could get wrong. The crop plus
+  // sub-cell origin is the Exact footprint.
+  auto geometry = detail::validate_placement(options, cells, (*entry)->px,
+                                             *this, "kitty", "draw_pinned");
+  if (!geometry) return std::unexpected{geometry.error()};
 
   bool clamped = false;
   const Rect dest = clamp_dest(cells, clamped);
@@ -1156,11 +1167,10 @@ auto KittyDriver::retain_pinned(Rect cells, PinnedImage image,
         Severity::Warning, "kitty",
         "retain_pinned: image layer rank is outside the protocol range"}};
   }
-  if (auto ok = detail::validate_fit(options.fit, cells, (*entry)->px, *this,
-                                     "kitty", "retain_pinned");
-      !ok) {
-    return ok;
-  }
+  auto geometry = detail::validate_placement(options, cells, (*entry)->px,
+                                             *this, "kitty",
+                                             "retain_pinned");
+  if (!geometry) return std::unexpected{geometry.error()};
 
   bool clamped = false;
   const Rect dest = clamp_dest(cells, clamped);
@@ -1295,10 +1305,8 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
     }
     content_changed = true;
   }
-  slot.last_used = ++m_clock;  // per-draw: strictly increasing within a frame
-
-  // #137/#114: fit and layer are placement state, and nothing else here can
-  // see them change.
+  // #137/#114/#115: fit, layer, offset and crop are placement state, and
+  // nothing else here can see them change.
   // region_key is the destination geometry and payload_hash is the content, so
   // the same image redrawn to the same rect under a DIFFERENT fit matches both
   // — content_changed stays false, slot.placed stays true, and the driver would
@@ -1314,6 +1322,7 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   // precisely so claims like this could be falsified.
   const bool placement_changed = slot.placement != options;
   slot.placement = options;
+  slot.last_used = ++m_clock;  // per-draw: strictly increasing within a frame
 
   emit_placement(slot.image_id, kRegionPlacementId, slot.placed, dest, options,
                  content_changed, placement_changed);
@@ -1935,29 +1944,25 @@ auto KittyDriver::place_classic(std::uint32_t image_id,
   const std::string scale = options.fit == PlacementFit::Exact
                                 ? std::string{}
                                 : std::format(",c={},r={}", cols, rows);
+  const std::string layout = placement_layout(options);
   const auto z = *options.layer.z_index();
   const std::string layer = z == 0 ? std::string{} : std::format(",z={}", z);
   detail::append_cursor(m_buf, x, y, m_cursor_known, m_cursor_x, m_cursor_y);
-  m_buf += std::format("\033_Ga=p,i={},p={}{}{},C=1,q=2\033\\", image_id,
-                       placement_id, scale, layer);
+  m_buf += std::format("\033_Ga=p,i={},p={}{}{}{},C=1,q=2\033\\", image_id,
+                       placement_id, scale, layout, layer);
 }
 
 auto KittyDriver::place_unicode(std::uint32_t image_id,
-                                std::uint32_t placement_id, bool placed, int x,
-                                int y, int cols, int rows,
+                                std::uint32_t placement_id, bool placed,
+                                int x, int y, int cols, int rows,
                                 ImagePlacementOptions options) -> void {
-  // draw_image clamped the destination rect to the diacritic table's extent,
-  // so cols/rows are already <= kDiacriticCount and the declared geometry
-  // matches the emitted cell grid exactly.
-
   // Create the virtual placement once per slot.
   if (!placed) {
     // a=p (place), i=<image_id>, p=<placement_id>, U=1 (virtual),
     // c=<cols>, r=<rows>, q=2 (suppress response)
     const auto z = *options.layer.z_index();
     const std::string layer = z == 0 ? std::string{} : std::format(",z={}", z);
-    m_buf += std::format("\033_Ga=p,i={},p={},U=1,c={},r={}{}"
-                         ",q=2\033\\",
+    m_buf += std::format("\033_Ga=p,i={},p={},U=1,c={},r={}{},q=2\033\\",
                          image_id, placement_id, cols, rows, layer);
   }
 
@@ -1968,8 +1973,8 @@ auto KittyDriver::place_unicode(std::uint32_t image_id,
 
   for (int ry = 0; ry < rows; ++ry) {
     // Position cursor at start of this row.
-    detail::append_cursor(m_buf, x, y + ry, m_cursor_known, m_cursor_x,
-                          m_cursor_y);
+    detail::append_cursor(m_buf, x, y + ry, m_cursor_known,
+                          m_cursor_x, m_cursor_y);
 
     // Set SGR foreground to the image ID (24-bit).
     emit_id_as_sgr(image_id);
