@@ -1,5 +1,11 @@
 add_test(NAME startup COMMAND ${CMAKE_CURRENT_LIST_DIR}/../cmake/startup.sh)
 add_test(NAME shutdown COMMAND ${CMAKE_CURRENT_LIST_DIR}/../cmake/shutdown.sh)
+add_test(
+  NAME layer-z-single-definition
+  COMMAND ${CMAKE_COMMAND}
+          -DPROJECT_ROOT=${PROJECT_SOURCE_DIR}
+          -P ${PROJECT_SOURCE_DIR}/cmake/check_layer_z.cmake
+)
 
 file(GLOB TEST_DIRS ${CMAKE_CURRENT_LIST_DIR}/*)
 

@@ -167,6 +167,16 @@ class Widget {
     return PlacementFit::Stretch;
   }
 
+  // Complete placement policy for one declared region (#114). The default
+  // delegates to pixel_fit() so every existing override keeps controlling the
+  // scaling policy and gains the historical z=0 layer automatically. New
+  // widgets override this one to place generated/resident content below text,
+  // above text, or below non-default cell backgrounds.
+  [[nodiscard]] virtual auto pixel_placement(Rect region) const noexcept
+      -> ImagePlacementOptions {
+    return ImagePlacementOptions{.fit = pixel_fit(region), .layer = {}};
+  }
+
   auto set_geometry(Rect r) -> void { m_rect = r; }
   [[nodiscard]] auto rect() const noexcept -> Rect { return m_rect; }
 

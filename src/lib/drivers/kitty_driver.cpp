@@ -284,7 +284,8 @@ KittyDriver::ImageTally::~ImageTally() {
 
 auto KittyDriver::emit_placement(std::uint32_t image_id,
                                  std::uint32_t placement_id, bool& placed,
-                                 Rect dest, PlacementFit fit, bool replace)
+                                 Rect dest, ImagePlacementOptions options,
+                                 bool content_changed, bool placement_changed)
     -> void {
   if (m_mode == PlacementMode::Classic) {
     // kitty does NOT refresh an existing classic placement when the image
@@ -296,20 +297,27 @@ auto KittyDriver::emit_placement(std::uint32_t image_id,
     // A fit change needs the same treatment for the same reason: c=/r= are
     // baked into the existing placement and re-placing without deleting would
     // leave both live.
-    if (replace && placed) {
+    if ((content_changed || placement_changed) && placed) {
       delete_placement(image_id, placement_id);
       placed = false;
     }
     if (!placed) {
       place_classic(image_id, placement_id, dest.x, dest.y, dest.w, dest.h,
-                    fit);
+                    options);
       placed = true;
     }
   } else {
+    // z= belongs to the virtual placement, not to its placeholder cells. A
+    // layer-only change therefore retires and recreates that placement while
+    // a content change continues to refresh the existing virtual placement.
+    if (placement_changed && placed) {
+      delete_placement(image_id, placement_id);
+      placed = false;
+    }
     // Placeholder cells are re-emitted every frame (the cell grid is the
     // placement); the virtual placement itself is created once.
     place_unicode(image_id, placement_id, placed, dest.x, dest.y, dest.w,
-                  dest.h);
+                  dest.h, options);
     placed = true;
   }
 }
@@ -486,15 +494,28 @@ auto KittyDriver::supports_placement_fit(PlacementFit f) const noexcept
   return false;
 }
 
+auto KittyDriver::supports_image_placement(
+    ImagePlacementOptions options) const noexcept -> bool {
+  return options.layer.z_index().has_value() &&
+         supports_placement_fit(options.fit);
+}
+
 auto KittyDriver::draw_image(Rect cells, const Image& image)
     -> std::expected<void, ErrorEvent> {
   // The two-argument overload IS the Stretch case -- not a parallel
   // implementation of it. "Stretch emits byte-for-byte what it emitted before
   // #137" is then structurally true rather than a promise a test has to keep.
-  return draw_image(cells, image, PlacementFit::Stretch);
+  return draw_image(cells, image, ImagePlacementOptions{});
 }
 
 auto KittyDriver::draw_image(Rect cells, const Image& image, PlacementFit fit)
+    -> std::expected<void, ErrorEvent> {
+  return draw_image(cells, image,
+                    ImagePlacementOptions{.fit = fit, .layer = {}});
+}
+
+auto KittyDriver::draw_image(Rect cells, const Image& image,
+                             ImagePlacementOptions options)
     -> std::expected<void, ErrorEvent> {
   if (image.empty()) {
     return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
@@ -504,16 +525,21 @@ auto KittyDriver::draw_image(Rect cells, const Image& image, PlacementFit fit)
     return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
                                       "draw_image: empty destination rect"}};
   }
+  if (!options.layer.z_index()) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        "draw_image: image layer rank is outside the protocol range"}};
+  }
   // Before draw_payload, never after: a refusal must not have paid for an
   // upload it then declines to place.
-  if (auto ok = detail::validate_fit(fit, cells,
+  if (auto ok = detail::validate_fit(options.fit, cells,
                                      Extent{image.width(), image.height()},
                                      *this, "kitty", "draw_image");
       !ok) {
     return ok;
   }
   return draw_payload(cells, std::as_bytes(image.pixels()), kFormatRgba32,
-                      Extent{image.width(), image.height()}, fit, false);
+                      Extent{image.width(), image.height()}, options, false);
 }
 
 auto KittyDriver::draw_image(Rect cells, const EncodedImage& image)
@@ -524,11 +550,18 @@ auto KittyDriver::draw_image(Rect cells, const EncodedImage& image)
   // The two-argument overload IS the Stretch case, exactly as on the Image
   // pair above. "the encoded Stretch path emits byte-for-byte what it emitted
   // before #169" is then structural rather than a promise a test has to keep.
-  return draw_image(cells, image, PlacementFit::Stretch);
+  return draw_image(cells, image, ImagePlacementOptions{});
 }
 
 auto KittyDriver::draw_image(Rect cells, const EncodedImage& image,
                              PlacementFit fit)
+    -> std::expected<void, ErrorEvent> {
+  return draw_image(cells, image,
+                    ImagePlacementOptions{.fit = fit, .layer = {}});
+}
+
+auto KittyDriver::draw_image(Rect cells, const EncodedImage& image,
+                             ImagePlacementOptions options)
     -> std::expected<void, ErrorEvent> {
   // Empty, empty rect, the supports_image_format() check, and the Rgba32
   // length check. Png is deliberately unvalidated for length: we do not parse
@@ -542,17 +575,22 @@ auto KittyDriver::draw_image(Rect cells, const EncodedImage& image,
   if (auto ok = detail::validate_encoded(image, cells, *this, "kitty"); !ok) {
     return ok;
   }
+  if (!options.layer.z_index()) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        "draw_image: image layer rank is outside the protocol range"}};
+  }
   // Against the DECLARED extent, for both formats (#169). Before draw_payload
   // and never after: a refusal must not have paid for the upload -- 205,283
   // bytes for the plate #163 measured, which is the most expensive possible
   // way to draw nothing.
-  if (auto ok = detail::validate_fit(fit, cells, image.pixels, *this, "kitty",
-                                     "draw_image");
+  if (auto ok = detail::validate_fit(options.fit, cells, image.pixels, *this,
+                                     "kitty", "draw_image");
       !ok) {
     return ok;
   }
   return draw_payload(cells, image.bytes, wire_format(image.format),
-                      image.pixels, fit, image.format == ImageFormat::Png);
+                      image.pixels, options, image.format == ImageFormat::Png);
 }
 
 // ── resident images (#109) ──────────────────────────────────────────────────
@@ -968,6 +1006,13 @@ auto KittyDriver::invalidate_images() noexcept -> void {
 
 auto KittyDriver::draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
     -> std::expected<void, ErrorEvent> {
+  return draw_pinned(cells, image,
+                     ImagePlacementOptions{.fit = fit, .layer = {}});
+}
+
+auto KittyDriver::draw_pinned(Rect cells, PinnedImage image,
+                              ImagePlacementOptions options)
+    -> std::expected<void, ErrorEvent> {
   auto entry = resolve_pin(image, "draw_pinned");
   if (!entry) return std::unexpected{entry.error()};
   if (!(*entry)->accepted)
@@ -976,17 +1021,23 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
     return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
                                       "draw_pinned: empty destination rect"}};
   }
+  if (!options.layer.z_index()) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        "draw_pinned: image layer rank is outside the protocol range"}};
+  }
   // Against the extent declared at PIN time, from the driver's own copy --
   // the handle carries no geometry a caller could get wrong.
-  if (auto ok = detail::validate_fit(fit, cells, (*entry)->px, *this, "kitty",
-                                     "draw_pinned");
+  if (auto ok = detail::validate_fit(options.fit, cells, (*entry)->px, *this,
+                                     "kitty", "draw_pinned");
       !ok) {
     return std::unexpected{ok.error()};
   }
 
   bool clamped = false;
   const Rect dest = clamp_dest(cells, clamped);
-  const std::uint64_t key = region_key(dest.x, dest.y, dest.w, dest.h);
+  const std::uint64_t rect_key = region_key(dest.x, dest.y, dest.w, dest.h);
+  const PinPlacementKey key{rect_key, image.id};
 
   // Under placeholders a cell names its image by SGR foreground and names no
   // placement at all, so two placements of ONE image id showing at once are
@@ -1005,7 +1056,7 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
   // uses.
   if (m_mode == PlacementMode::UnicodePlaceholders &&
       (*entry)->last_place_clock > m_frame_start_clock &&
-      (*entry)->last_place_key != key) {
+      (*entry)->last_place_key != rect_key) {
     return std::unexpected{ErrorEvent{
         Severity::Warning, "kitty",
         "draw_pinned: a pinned image can have only one live placement under "
@@ -1016,7 +1067,7 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
   // exact rect this frame paints its own placeholder grid over these cells
   // with a different id, and whichever ran second wins silently.
   if (m_mode == PlacementMode::UnicodePlaceholders) {
-    if (const auto r = m_regions.find(key);
+    if (const auto r = m_regions.find(rect_key);
         r != m_regions.end() && r->second.last_used > m_frame_start_clock) {
       return std::unexpected{ErrorEvent{
           Severity::Warning, "kitty",
@@ -1024,11 +1075,20 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
           "frame -- under UnicodePlaceholders the two cell grids overwrite "
           "each other"}};
     }
+    for (const auto& [other_key, other] : m_pin_places) {
+      if (other_key.rect == rect_key && other_key.image_id != image.id &&
+          other.last_used > m_frame_start_clock) {
+        return std::unexpected{ErrorEvent{
+            Severity::Warning, "kitty",
+            "draw_pinned: another pinned image was already drawn to this "
+            "rect this frame -- under UnicodePlaceholders the two cell grids "
+            "overwrite each other"}};
+      }
+    }
   }
 
   auto place_it = m_pin_places.find(key);
-  const bool needs_placement_id =
-      place_it == m_pin_places.end() || place_it->second.image_id != image.id;
+  const bool needs_placement_id = place_it == m_pin_places.end();
   std::uint32_t new_placement_id = 1;
   if (needs_placement_id) {
     auto id = next_pin_placement_id(image.id);
@@ -1044,31 +1104,20 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
   ImageTally tally{*this, m_buf.size()};
 
   if (needs_placement_id) {
-    // This rect was showing a different pinned image. Retire that placement
-    // rather than leaving two live at one rect -- the same treatment a
-    // content change gets on the unpinned path, and for the same reason.
-    if (place_it != m_pin_places.end() && place_it->second.placed) {
-      delete_placement(place_it->second.image_id,
-                       place_it->second.placement_id);
-    }
-    const PinPlacement replacement{dest, image.id, new_placement_id, 0, false,
-                                   fit};
-    if (place_it == m_pin_places.end()) {
-      place_it = m_pin_places.emplace(key, replacement).first;
-    } else {
-      place_it->second = replacement;
-    }
+    const PinPlacement replacement{dest, image.id, new_placement_id,
+                                   0,    false,    options};
+    place_it = m_pin_places.emplace(key, replacement).first;
   }
   auto& place = place_it->second;
-  const bool fit_changed = place.fit != fit;
-  place.fit = fit;
+  const bool placement_changed = place.placement != options;
+  place.placement = options;
   place.last_used = ++m_clock;
-  // A pinned image has no content to change, so a stale fit is the only reason
-  // to re-place it.
-  emit_placement(place.image_id, place.placement_id, place.placed, dest, fit,
-                 fit_changed);
+  // A pinned image has no content to change, so stale placement options are
+  // the only reason to replace its placement.
+  emit_placement(place.image_id, place.placement_id, place.placed, dest,
+                 options, false, placement_changed);
 
-  (*entry)->last_place_key = key;
+  (*entry)->last_place_key = rect_key;
   (*entry)->last_place_clock = m_clock;
 
   if (clamped && !m_warned_clamp_pinned) {
@@ -1087,6 +1136,13 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
 auto KittyDriver::retain_pinned(Rect cells, PinnedImage image,
                                 PlacementFit fit)
     -> std::expected<void, ErrorEvent> {
+  return retain_pinned(cells, image,
+                       ImagePlacementOptions{.fit = fit, .layer = {}});
+}
+
+auto KittyDriver::retain_pinned(Rect cells, PinnedImage image,
+                                ImagePlacementOptions options)
+    -> std::expected<void, ErrorEvent> {
   auto entry = resolve_pin(image, "retain_pinned");
   if (!entry) return std::unexpected{entry.error()};
   if (!(*entry)->accepted)
@@ -1095,24 +1151,30 @@ auto KittyDriver::retain_pinned(Rect cells, PinnedImage image,
     return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
                                       "retain_pinned: empty destination rect"}};
   }
-  if (auto ok = detail::validate_fit(fit, cells, (*entry)->px, *this, "kitty",
-                                     "retain_pinned");
+  if (!options.layer.z_index()) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        "retain_pinned: image layer rank is outside the protocol range"}};
+  }
+  if (auto ok = detail::validate_fit(options.fit, cells, (*entry)->px, *this,
+                                     "kitty", "retain_pinned");
       !ok) {
     return ok;
   }
 
   bool clamped = false;
   const Rect dest = clamp_dest(cells, clamped);
-  (void)clamped;  // draw_pinned reported this placement's one-shot warning
-  const std::uint64_t key = region_key(dest.x, dest.y, dest.w, dest.h);
+  (void)clamped; // draw_pinned reported this placement's one-shot warning
+  const std::uint64_t rect_key = region_key(dest.x, dest.y, dest.w, dest.h);
+  const PinPlacementKey key{rect_key, image.id};
 
   // Retention is the no-wire half of draw_pinned. It is valid only while the
   // exact placement App remembers is still live; anything else delegates to
   // the ordinary draw, which creates or edits the placement correctly.
   auto place = m_pin_places.find(key);
-  if (place == m_pin_places.end() || place->second.image_id != image.id ||
-      !place->second.placed || place->second.fit != fit) {
-    return draw_pinned(cells, image, fit);
+  if (place == m_pin_places.end() || !place->second.placed ||
+      place->second.placement != options) {
+    return draw_pinned(cells, image, options);
   }
 
   // The same two Unicode-placeholder collisions draw_pinned refuses still
@@ -1120,14 +1182,14 @@ auto KittyDriver::retain_pinned(Rect cells, PinnedImage image,
   // retained grid, and retaining two rects for one image is still ambiguous.
   if (m_mode == PlacementMode::UnicodePlaceholders) {
     if ((*entry)->last_place_clock > m_frame_start_clock &&
-        (*entry)->last_place_key != key) {
+        (*entry)->last_place_key != rect_key) {
       return std::unexpected{ErrorEvent{
           Severity::Warning, "kitty",
           "retain_pinned: a pinned image can have only one live placement "
           "under UnicodePlaceholders -- the placeholder cell encodes the "
           "image id and not the placement id"}};
     }
-    if (const auto region = m_regions.find(key);
+    if (const auto region = m_regions.find(rect_key);
         region != m_regions.end() &&
         region->second.last_used > m_frame_start_clock) {
       return std::unexpected{ErrorEvent{
@@ -1136,19 +1198,30 @@ auto KittyDriver::retain_pinned(Rect cells, PinnedImage image,
           "this frame -- under UnicodePlaceholders the two cell grids "
           "overwrite each other"}};
     }
+    for (const auto& [other_key, other] : m_pin_places) {
+      if (other_key.rect == rect_key && other_key.image_id != image.id &&
+          other.last_used > m_frame_start_clock) {
+        return std::unexpected{ErrorEvent{
+            Severity::Warning, "kitty",
+            "retain_pinned: another pinned image was already drawn to this "
+            "rect this frame -- under UnicodePlaceholders the two cell grids "
+            "overwrite each other"}};
+      }
+    }
   }
 
   // Nothing is appended. Advancing the same clocks draw_pinned advances is
   // what keeps gc_regions from retiring the placement at this frame boundary
   // and keeps the within-frame collision predicates exact.
   place->second.last_used = ++m_clock;
-  (*entry)->last_place_key = key;
+  (*entry)->last_place_key = rect_key;
   (*entry)->last_place_clock = m_clock;
   return {};
 }
 
 auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
-                               int format_code, Extent px, PlacementFit fit,
+                               int format_code, Extent px,
+                               ImagePlacementOptions options,
                                bool request_reply)
     -> std::expected<void, ErrorEvent> {
   bool clamped = false;
@@ -1162,13 +1235,14 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   // ran second wins with nothing said.
   if (m_mode == PlacementMode::UnicodePlaceholders) {
     const std::uint64_t k = region_key(dest.x, dest.y, dest.w, dest.h);
-    if (const auto p = m_pin_places.find(k);
-        p != m_pin_places.end() && p->second.last_used > m_frame_start_clock) {
-      return std::unexpected{ErrorEvent{
-          Severity::Warning, "kitty",
-          "draw_image: a pinned image was already drawn to this rect this "
-          "frame -- under UnicodePlaceholders the two cell grids overwrite "
-          "each other"}};
+    for (const auto& [pin_key, place] : m_pin_places) {
+      if (pin_key.rect == k && place.last_used > m_frame_start_clock) {
+        return std::unexpected{ErrorEvent{
+            Severity::Warning, "kitty",
+            "draw_image: a pinned image was already drawn to this rect this "
+            "frame -- under UnicodePlaceholders the two cell grids overwrite "
+            "each other"}};
+      }
     }
   }
 
@@ -1223,7 +1297,8 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   }
   slot.last_used = ++m_clock;  // per-draw: strictly increasing within a frame
 
-  // #137: the fit is placement state, and nothing else here can see it change.
+  // #137/#114: fit and layer are placement state, and nothing else here can
+  // see them change.
   // region_key is the destination geometry and payload_hash is the content, so
   // the same image redrawn to the same rect under a DIFFERENT fit matches both
   // — content_changed stays false, slot.placed stays true, and the driver would
@@ -1237,11 +1312,11 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   // payload (205,283 bytes, measured) to change a ~30-byte placement escape,
   // and bill those bytes to image_transmit, which lies to the #139 meter built
   // precisely so claims like this could be falsified.
-  const bool fit_changed = slot.fit != fit;
-  slot.fit = fit;
+  const bool placement_changed = slot.placement != options;
+  slot.placement = options;
 
-  emit_placement(slot.image_id, kRegionPlacementId, slot.placed, dest, fit,
-                 content_changed || fit_changed);
+  emit_placement(slot.image_id, kRegionPlacementId, slot.placed, dest, options,
+                 content_changed, placement_changed);
 
   if (clamped && !m_warned_clamp) {
     m_warned_clamp = true;
@@ -1840,7 +1915,8 @@ auto KittyDriver::edit_root_frame(std::span<const std::byte> payload,
 
 auto KittyDriver::place_classic(std::uint32_t image_id,
                                 std::uint32_t placement_id, int x, int y,
-                                int cols, int rows, PlacementFit fit) -> void {
+                                int cols, int rows,
+                                ImagePlacementOptions options) -> void {
   // Position the cursor, then place. a=p displays a transmitted image at
   // the cursor; C=1 keeps the cursor where it is. c=/r= scale the image to
   // the destination cell rect — the terminal does the resampling, which is
@@ -1856,17 +1932,20 @@ auto KittyDriver::place_classic(std::uint32_t image_id,
   // strings, so the C=1,q=2 tail cannot drift between the two branches. The
   // allocation is nothing beside the base64 payload, and placements are only
   // re-emitted on a content or fit change.
-  const std::string scale =
-      fit == PlacementFit::Exact ? std::string{}
-                                 : std::format(",c={},r={}", cols, rows);
+  const std::string scale = options.fit == PlacementFit::Exact
+                                ? std::string{}
+                                : std::format(",c={},r={}", cols, rows);
+  const auto z = *options.layer.z_index();
+  const std::string layer = z == 0 ? std::string{} : std::format(",z={}", z);
   detail::append_cursor(m_buf, x, y, m_cursor_known, m_cursor_x, m_cursor_y);
-  m_buf += std::format("\033_Ga=p,i={},p={}{},C=1,q=2\033\\", image_id,
-                       placement_id, scale);
+  m_buf += std::format("\033_Ga=p,i={},p={}{}{},C=1,q=2\033\\", image_id,
+                       placement_id, scale, layer);
 }
 
 auto KittyDriver::place_unicode(std::uint32_t image_id,
                                 std::uint32_t placement_id, bool placed, int x,
-                                int y, int cols, int rows) -> void {
+                                int y, int cols, int rows,
+                                ImagePlacementOptions options) -> void {
   // draw_image clamped the destination rect to the diacritic table's extent,
   // so cols/rows are already <= kDiacriticCount and the declared geometry
   // matches the emitted cell grid exactly.
@@ -1875,8 +1954,11 @@ auto KittyDriver::place_unicode(std::uint32_t image_id,
   if (!placed) {
     // a=p (place), i=<image_id>, p=<placement_id>, U=1 (virtual),
     // c=<cols>, r=<rows>, q=2 (suppress response)
-    m_buf += std::format("\033_Ga=p,i={},p={},U=1,c={},r={},q=2\033\\",
-                         image_id, placement_id, cols, rows);
+    const auto z = *options.layer.z_index();
+    const std::string layer = z == 0 ? std::string{} : std::format(",z={}", z);
+    m_buf += std::format("\033_Ga=p,i={},p={},U=1,c={},r={}{}"
+                         ",q=2\033\\",
+                         image_id, placement_id, cols, rows, layer);
   }
 
   // Emit the placeholder cell grid. Each cell is:

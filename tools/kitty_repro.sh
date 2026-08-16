@@ -2,8 +2,8 @@
 # kitty_repro.sh — minimal standalone repros for the kitty graphics paths that
 # KittyDriver emits. Run inside a real kitty (>= 0.28) terminal:
 #
-#   ./tools/kitty_repro.sh          # all eleven stanzas, with pauses
-#   ./tools/kitty_repro.sh 11       # ONLY stanza 11
+#   ./tools/kitty_repro.sh          # all twelve stanzas, with pauses
+#   ./tools/kitty_repro.sh 12       # ONLY stanza 12
 #   ./tools/kitty_repro.sh 3 4      # a subset, in the order given
 #   ./tools/kitty_repro.sh --dump   # emit the wire bytes, touch no terminal
 #
@@ -41,6 +41,8 @@
 #      without re-placement. Self-contained and crosses the game's protocol seam.
 #  11  #140 — overwrite and alpha-compose two pixel-offset blocks into one
 #      resident root without retransmitting or replacing its placement.
+#  12  #114 — three classic placements prove above-text, below-text and
+#      below-non-default-background named layers. Self-contained.
 #
 # All commands use q=0 so kitty REPORTS errors; every response the terminal
 # sends is captured and echoed in readable form. A response of "_Gi=42;OK"
@@ -55,9 +57,9 @@ stanzas=()
 for arg in "$@"; do
   case $arg in
     --dump) dump=1 ;;
-    [1-9]|10|11) stanzas+=("$arg") ;;
+    [1-9]|10|11|12) stanzas+=("$arg") ;;
     *)
-      echo "usage: $0 [--dump] [1-9|10|11]..." >&2
+      echo "usage: $0 [--dump] [1-9|10|11|12]..." >&2
       exit 2
       ;;
   esac
@@ -525,11 +527,56 @@ stanza_11() {
   say "RED, and (d) whether any response contains ';E'."
 }
 
+stanza_12() {
+  say ""
+  say "== Stanza 12: #114 named image layers around text/background =="
+  say "Two 8x3 text plates and one 8x1 background plate. Expected:"
+  say "RED at z=1 hides its text; BLUE at z=-1 keeps white TEXT visible;"
+  say "GREEN below the background boundary is hidden by MAGENTA cells."
+
+  local rt bt gt rp bp gp row
+  send_quiet "${ESC}_Ga=t,t=d,f=32,i=49,s=2,v=2,m=0,q=0;${red_b64}${ST}"; rt=$reply_out
+  send_quiet "${ESC}_Ga=t,t=d,f=32,i=50,s=2,v=2,m=0,q=0;${blue_b64}${ST}"; bt=$reply_out
+  send_quiet "${ESC}_Ga=t,t=d,f=32,i=51,s=2,v=2,m=0,q=0;${green_b64}${ST}"; gt=$reply_out
+
+  # Reserve four rows, save the origin, and place three images without moving
+  # the terminal cursor. The subsequent cells deliberately arrive later: z,
+  # not command order, decides which content remains visible.
+  printf '\n\n\n\n%s[4A%s7' "$ESC" "$ESC"
+  send_quiet "${ESC}_Ga=p,i=49,p=1,c=8,r=3,C=1,z=1,q=0${ST}"; rp=$reply_out
+  printf '%s8%s[10C' "$ESC" "$ESC"
+  send_quiet "${ESC}_Ga=p,i=50,p=1,c=8,r=3,C=1,z=-1,q=0${ST}"; bp=$reply_out
+  printf '%s8%s[20C' "$ESC" "$ESC"
+  send_quiet "${ESC}_Ga=p,i=51,p=1,c=8,r=1,C=1,z=-1073741825,q=0${ST}"; gp=$reply_out
+
+  for row in 0 1 2; do
+    printf '%s8%s[%dB%s[0m%s[38;2;255;255;255m' \
+      "$ESC" "$ESC" "$row" "$ESC" "$ESC"
+    if ((row == 1)); then printf '  TEXT  '; else printf '        '; fi
+
+    printf '%s8%s[%dB%s[10C%s[0m%s[38;2;255;255;255m' \
+      "$ESC" "$ESC" "$row" "$ESC" "$ESC" "$ESC"
+    if ((row == 1)); then printf '  TEXT  '; else printf '        '; fi
+  done
+
+  # ECH paints eight complete cells with the current non-default background
+  # without advancing the cursor. Keeping this case to one row removes image
+  # scaling/row-alignment ambiguity from the z<-2^30 protocol check.
+  printf '%s8%s[20C%s[48;2;255;0;255m%s[8X' \
+    "$ESC" "$ESC" "$ESC" "$ESC"
+  printf '%s[0m%s8%s[4B\r' "$ESC" "$ESC" "$ESC"
+
+  say "$(printf 'transmit(red/blue/green) responses: %q / %q / %q' "$rt" "$bt" "$gt")"
+  say "$(printf 'place(above/below/background) responses: %q / %q / %q' "$rp" "$bp" "$gp")"
+  say "Report: (a) red hides TEXT, (b) TEXT is visible over blue, (c) the"
+  say "magenta plate hides green, and (d) whether any response contains ';E'."
+}
+
 if (( ${#stanzas[@]} )); then
   run_all=0
   for n in "${stanzas[@]}"; do "stanza_$n"; done
 else
-  for n in 1 2 3 4 5 6 7 8 9 10 11; do "stanza_$n"; done
+  for n in 1 2 3 4 5 6 7 8 9 10 11 12; do "stanza_$n"; done
   say ""
   say "Report: (a) stanza 1 red block, (b) green after stanza 2, (c) stanza 3"
   say "blue block, (d) YELLOW block after stanza 4, (e) stanza 5 shows a"
@@ -537,5 +584,6 @@ else
   say "questions, (h) stanza 8's six labelled blocks, (i) any response"
   say "containing ';E' (an error), (j) stanza 9's three requested results,"
   say "(k) stanza 10's existing block turns green without re-placement, and"
-  say "(l) stanza 11's offset overwrite/alpha quadrants match its description."
+  say "(l) stanza 11's offset overwrite/alpha quadrants match, and (m)"
+  say "stanza 12's three named-layer visibility results match its description."
 fi

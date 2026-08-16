@@ -58,10 +58,12 @@ using namespace termforge;
 using tfsupport::data_deletes_of;
 using tfsupport::frame_updates_of;
 using tfsupport::ids_named;
+using tfsupport::key_value;
 using tfsupport::placement_deletes_of;
+using tfsupport::placements;
 using tfsupport::placements_of;
-using tfsupport::total_transmits;
 using tfsupport::total_data_transmits;
+using tfsupport::total_transmits;
 using tfsupport::transmits_of;
 
 namespace {
@@ -72,7 +74,9 @@ struct PlateWidget final : Widget {
   Rect region{0, 0, 4, 2};
   Image cache = tfsupport::checker(4, 4, Pixel{200, 30, 30, 255},
                                    Pixel{30, 30, 200, 255});
-  bool present{true};  // false models draw_pixels returning nullptr
+  bool present{true}; // false models draw_pixels returning nullptr
+  PixelRegionState state{};
+  ImagePlacementOptions placement{};
   int pixel_calls{0};
   Extent last_extent{};
 
@@ -86,6 +90,17 @@ struct PlateWidget final : Widget {
                       Rgb{10, 10, 10});
   }
   auto pixel_regions() -> std::vector<Rect> override { return {region}; }
+  [[nodiscard]] auto pixel_region_state(Rect) const noexcept
+      -> PixelRegionState override {
+    return state;
+  }
+  auto pixel_region_submitted(Rect) noexcept -> void override {
+    state.content_dirty = false;
+  }
+  [[nodiscard]] auto pixel_placement(Rect) const noexcept
+      -> ImagePlacementOptions override {
+    return placement;
+  }
   auto draw_pixels(Rect, Extent pixels) -> const Image* override {
     ++pixel_calls;
     last_extent = pixels;
@@ -98,6 +113,7 @@ struct PlateWidget final : Widget {
 class PixelApp : public App {
  public:
   PlateWidget plate;
+  std::vector<ErrorEvent> errors;
 
   auto on_render(Screen& s) -> void override {
     s.write_text(0, 4, "app", Rgb{0xE0, 0xE0, 0xF0}, Rgb{0x10, 0x10, 0x18});
@@ -124,6 +140,14 @@ class PixelApp : public App {
   [[nodiscard]] auto cumulative() -> FrameBytes { return driver().total_bytes(); }
 
  protected:
+  auto on_event(const Event& event) -> void override {
+    if (const auto* error = std::get_if<ErrorEvent>(&event)) {
+      errors.push_back(*error);
+      return;
+    }
+    App::on_event(event);
+  }
+
   // No sleeping and no fd: the clock only ever moves because wait_readable was
   // asked to wait, so a frame costs nothing and the suite is deterministic.
   [[nodiscard]] auto now_steady() const
@@ -440,6 +464,65 @@ TEST_CASE("app pixels: the harness can put a graphics driver in App's loop",
   CHECK(app.plate.last_extent == Extent{32, 32});
   CHECK(total_transmits(app.wire()) == 1);
   CHECK(ids_named(app.wire()) == std::set<std::uint32_t>{1});
+}
+
+TEST_CASE("app pixels: a widget layer reaches Kitty's production image pass",
+          "[apppixels][kitty][layers][issue114]") {
+  PixelApp app;
+  app.plate.placement.layer = ImageLayer::below_text();
+  app.run(1);
+
+  CHECK(app.plate.pixel_calls == 1);
+  const auto placed = placements(app.wire());
+  REQUIRE(placed.size() == 1);
+  CHECK(key_value(placed[0], "z") == "-1");
+  CHECK(app.errors.empty());
+}
+
+TEST_CASE("app pixels: unsupported layers keep Baseline and report once",
+          "[apppixels][ansi][layers][fallback][issue114]") {
+  PixelApp app;
+  app.plate.placement.layer = ImageLayer::below_text();
+  app.run_ansi(4);
+
+  CHECK(app.plate.pixel_calls == 0);
+  REQUIRE(app.errors.size() == 1);
+  CHECK(app.errors[0].severity == Severity::Info);
+  CHECK(app.errors[0].source == "app");
+  tfsupport::TerminalGrid grid{20, 8};
+  grid.feed(app.wire());
+  CHECK(grid.row_text(0).substr(0, 4) == "QZJV");
+  CHECK(app.wire().find("\xE2\x96\x80") == std::string::npos);
+}
+
+TEST_CASE("app pixels: a persistent layer move does not rebuild content",
+          "[apppixels][kitty][persistent][layers][issue114]") {
+  class LayerMovingApp final : public PixelApp {
+   public:
+    auto on_render(Screen& screen) -> void override {
+      plate.state.mode = PixelRegionMode::Persistent;
+      plate.placement.layer =
+          m_frame == 0 ? ImageLayer{} : ImageLayer::below_text();
+      PixelApp::on_render(screen);
+      ++m_frame;
+    }
+
+   private:
+    int m_frame{0};
+  } app;
+
+  app.run(3);
+
+  CHECK(app.plate.pixel_calls == 1);
+  CHECK(total_data_transmits(app.wire()) == 1);
+  const auto placed = placements(app.wire());
+  REQUIRE(placed.size() == 2);
+  const auto image_id =
+      static_cast<std::uint32_t>(std::stoul(key_value(placed[0], "i")));
+  CHECK(placements_of(app.wire(), image_id) == 2);
+  CHECK(placement_deletes_of(app.wire(), image_id) == 1);
+  CHECK_FALSE(tfsupport::has_key(placed[0], "z"));
+  CHECK(key_value(placed[1], "z") == "-1");
 }
 
 TEST_CASE("app pixels: ANSI receives the raster and blanks its cell fallback",

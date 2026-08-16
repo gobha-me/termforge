@@ -60,6 +60,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -93,6 +94,8 @@ class KittyDriver final : public TerminalDriver {
   // supports_placement_fit.
   auto draw_image(Rect cells, const Image& image, PlacementFit fit)
       -> std::expected<void, ErrorEvent> override;
+  auto draw_image(Rect cells, const Image& image, ImagePlacementOptions options)
+      -> std::expected<void, ErrorEvent> override;
   // The two composed (#169): a pre-encoded plate at its native resolution,
   // which is the combination baked art actually wants. The fit is enforced
   // against the DECLARED extent for both formats -- see TerminalDriver for
@@ -100,7 +103,10 @@ class KittyDriver final : public TerminalDriver {
   // costs.
   auto draw_image(Rect cells, const EncodedImage& image, PlacementFit fit)
       -> std::expected<void, ErrorEvent> override;
-  // Unhide the base overload set (see TerminalDriver). All four are
+  auto draw_image(Rect cells, const EncodedImage& image,
+                  ImagePlacementOptions options)
+      -> std::expected<void, ErrorEvent> override;
+  // Unhide the base overload set (see TerminalDriver). All six are
   // overridden here so nothing is actually hidden today; the declaration keeps
   // that true if one of them is ever removed.
   using TerminalDriver::draw_image;
@@ -130,7 +136,12 @@ class KittyDriver final : public TerminalDriver {
       -> std::expected<void, ErrorEvent> override;
   auto draw_pinned(Rect cells, PinnedImage image, PlacementFit fit)
       -> std::expected<void, ErrorEvent> override;
+  auto draw_pinned(Rect cells, PinnedImage image, ImagePlacementOptions options)
+      -> std::expected<void, ErrorEvent> override;
   auto retain_pinned(Rect cells, PinnedImage image, PlacementFit fit)
+      -> std::expected<void, ErrorEvent> override;
+  auto retain_pinned(Rect cells, PinnedImage image,
+                     ImagePlacementOptions options)
       -> std::expected<void, ErrorEvent> override;
 
   // Forget terminal-side image/placement state without emitting deletes.  A
@@ -164,6 +175,9 @@ class KittyDriver final : public TerminalDriver {
   // Mode-dependent: Exact is Classic-only, so this answer MOVES when
   // set_placement_mode is called.
   [[nodiscard]] auto supports_placement_fit(PlacementFit f) const noexcept
+      -> bool override;
+  [[nodiscard]] auto
+  supports_image_placement(ImagePlacementOptions options) const noexcept
       -> bool override;
   // The terminal's real cell geometry (see set_cell_pixels), so a widget can
   // rasterize at native resolution instead of guessing.
@@ -222,15 +236,15 @@ class KittyDriver final : public TerminalDriver {
   struct RegionSlot {
     Rect rect{};  // cells occupied by the placeholder grid (#201)
     std::uint32_t image_id{0};
-    std::uint64_t content_hash{0};  // 0 = nothing transmitted yet
-    std::uint64_t last_used{0};     // per-draw LRU clock (strictly increasing)
-    std::uint32_t serial{0};        // never reused while a reply can name it
-    bool placed{false};             // placement command already emitted
-    // Placement state, not content (#137). A fit change invalidates `placed`
-    // exactly as a content change does; without it the same image redrawn to
-    // the same rect under a new fit matches both region_key and content_hash
-    // and emits nothing at all.
-    PlacementFit fit{PlacementFit::Stretch};
+    std::uint64_t content_hash{0}; // 0 = nothing transmitted yet
+    std::uint64_t last_used{0};    // per-draw LRU clock (strictly increasing)
+    std::uint32_t serial{0};       // never reused while a reply can name it
+    bool placed{false};            // placement command already emitted
+    // Complete placement state, not content (#137, #114). A fit or layer
+    // change invalidates `placed` exactly as a content change does; without it
+    // the same image redrawn to the same rect under new options matches both
+    // region_key and content_hash and emits nothing at all.
+    ImagePlacementOptions placement{};
   };
 
   // One image the application asked the terminal to keep (#109). Deliberately
@@ -268,7 +282,25 @@ class KittyDriver final : public TerminalDriver {
     std::uint32_t placement_id{0};
     std::uint64_t last_used{0};  // same per-draw clock as RegionSlot
     bool placed{false};
-    PlacementFit fit{PlacementFit::Stretch};
+    ImagePlacementOptions placement{};
+  };
+
+  // A pinned placement is identified by BOTH the resident image and its cell
+  // destination. Keying only by Rect made two independently resident layers
+  // at the same viewport replace each other before z-order could help (#114).
+  struct PinPlacementKey {
+    std::uint64_t rect{0};
+    std::uint32_t image_id{0};
+    auto operator==(const PinPlacementKey&) const -> bool = default;
+  };
+
+  struct PinPlacementKeyHash {
+    [[nodiscard]] auto operator()(const PinPlacementKey& key) const noexcept
+        -> std::size_t {
+      const auto a = std::hash<std::uint64_t>{}(key.rect);
+      const auto b = std::hash<std::uint32_t>{}(key.image_id);
+      return a ^ (b + 0x9e3779b9U + (a << 6) + (a >> 2));
+    }
   };
 
   enum class PendingKind {
@@ -340,8 +372,8 @@ class KittyDriver final : public TerminalDriver {
   // existing placement is stale -- changed content or a changed fit for a
   // region, a changed fit for a pinned image, which has no content to change.
   auto emit_placement(std::uint32_t image_id, std::uint32_t placement_id,
-                      bool& placed, Rect dest, PlacementFit fit, bool replace)
-      -> void;
+                      bool& placed, Rect dest, ImagePlacementOptions options,
+                      bool content_changed, bool placement_changed) -> void;
 
   // Everything both pin_image overloads share once the payload is in hand.
   auto pin_payload(std::span<const std::byte> payload, int format_code,
@@ -402,9 +434,8 @@ class KittyDriver final : public TerminalDriver {
   // makes "the format participates in image identity" impossible to forget at
   // a call site.
   auto draw_payload(Rect cells, std::span<const std::byte> payload,
-                    int format_code, Extent px, PlacementFit fit,
-                    bool request_reply)
-      -> std::expected<void, ErrorEvent>;
+                    int format_code, Extent px, ImagePlacementOptions options,
+                    bool request_reply) -> std::expected<void, ErrorEvent>;
 
   // Classic placement: position the cursor and place (a=p, C=1), scaled to
   // cols x rows cells under Stretch, or at the transmitted resolution under
@@ -414,14 +445,16 @@ class KittyDriver final : public TerminalDriver {
   // places identically and is not a RegionSlot, and passing the ids is what
   // lets both callers share one implementation instead of two that drift.
   auto place_classic(std::uint32_t image_id, std::uint32_t placement_id, int x,
-                     int y, int cols, int rows, PlacementFit fit) -> void;
+                     int y, int cols, int rows, ImagePlacementOptions options)
+      -> void;
 
   // Create a virtual placement and emit Unicode placeholder cells.
   // The image becomes part of the text grid (tmux-safe).
   // `placed` says whether the virtual placement already exists; the cell grid
   // is re-emitted either way, because the grid IS the placement.
   auto place_unicode(std::uint32_t image_id, std::uint32_t placement_id,
-                     bool placed, int x, int y, int cols, int rows) -> void;
+                     bool placed, int x, int y, int cols, int rows,
+                     ImagePlacementOptions options) -> void;
 
   // Delete one PLACEMENT, leaving the image data resident (a=d,d=i). The
   // distinction is #109's: delete_image below frees the data too, which is
@@ -569,11 +602,14 @@ class KittyDriver final : public TerminalDriver {
   std::unordered_map<std::uint32_t, AccountedImage> m_accounted_images;
   std::vector<ResidencyMutation> m_residency_mutations;
   std::vector<ContentMutation> m_content_mutations;
-  // Placements of pinned images, keyed like a region on the destination rect.
+  // Placements of pinned images, keyed on BOTH destination rect and image id.
+  // Classic mode can therefore layer distinct resident images at one rect;
+  // Unicode placeholders refuse that cell-grid collision before mutation.
   // Uncapped on purpose: they are collected every frame, so the live count is
   // whatever the last frame drew, and an LRU here would reintroduce the silent
   // eviction the ticket exists to remove.
-  std::unordered_map<std::uint64_t, PinPlacement> m_pin_places;
+  std::unordered_map<PinPlacementKey, PinPlacement, PinPlacementKeyHash>
+      m_pin_places;
   // Monotonic and never reused, unlike the terminal-side ids. This is what a
   // handle carries so that an unpinned handle stays refused after its id has
   // been recycled -- see PinnedEntry::serial.
