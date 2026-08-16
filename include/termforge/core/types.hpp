@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -366,6 +367,97 @@ struct EncodedImage {
 };
 
 // ── image placement ──────────────────────────────────────────────────────
+// Kitty's image stacking order is one signed 32-bit z-index, but exposing the
+// integer alone makes every application rediscover the two terminal-owned
+// separators: text, and non-default cell backgrounds (#114). ImageLayer names
+// those three regimes and keeps raw() as the explicit protocol escape hatch.
+//
+// `rank` is the distance from the regime's nearest separator. Rank zero is the
+// current default above text (z=0), immediately below text (z=-1), or the first
+// value below cell backgrounds. A larger rank moves farther into that regime.
+// z_index() returns nullopt when a semantic rank would leave its regime or the
+// signed 32-bit protocol domain; callers refuse that before state or wire.
+class ImageLayer {
+ public:
+  enum class Band : std::uint8_t {
+    AboveText,
+    BelowText,
+    BelowBackground,
+    Raw,
+  };
+
+  constexpr ImageLayer() noexcept = default;
+
+  [[nodiscard]] static constexpr auto
+  above_text(std::uint32_t rank = 0) noexcept -> ImageLayer {
+    return ImageLayer{Band::AboveText, rank, 0};
+  }
+
+  [[nodiscard]] static constexpr auto
+  below_text(std::uint32_t rank = 0) noexcept -> ImageLayer {
+    return ImageLayer{Band::BelowText, rank, 0};
+  }
+
+  [[nodiscard]] static constexpr auto
+  below_background(std::uint32_t rank = 0) noexcept -> ImageLayer {
+    return ImageLayer{Band::BelowBackground, rank, 0};
+  }
+
+  [[nodiscard]] static constexpr auto raw(std::int32_t z) noexcept
+      -> ImageLayer {
+    return ImageLayer{Band::Raw, 0, z};
+  }
+
+  [[nodiscard]] constexpr auto band() const noexcept -> Band { return m_band; }
+  [[nodiscard]] constexpr auto rank() const noexcept -> std::uint32_t {
+    return m_rank;
+  }
+
+  [[nodiscard]] constexpr auto z_index() const noexcept
+      -> std::optional<std::int32_t> {
+    constexpr std::int64_t kBelowBackgroundBoundary = -(std::int64_t{1} << 30);
+    constexpr std::int32_t kBelowBackgroundZ = -1073741825;
+
+    const auto rank = static_cast<std::int64_t>(m_rank);
+    std::int64_t z = 0;
+    switch (m_band) {
+      case Band::AboveText:
+        z = rank;
+        if (z > std::numeric_limits<std::int32_t>::max()) return std::nullopt;
+        break;
+      case Band::BelowText:
+        z = -1 - rank;
+        if (z < kBelowBackgroundBoundary) return std::nullopt;
+        break;
+      case Band::BelowBackground:
+        z = static_cast<std::int64_t>(kBelowBackgroundZ) - rank;
+        if (z < std::numeric_limits<std::int32_t>::min()) return std::nullopt;
+        break;
+      case Band::Raw:
+        return m_raw_z;
+    }
+    return static_cast<std::int32_t>(z);
+  }
+
+  [[nodiscard]] constexpr auto
+  operator==(const ImageLayer& other) const noexcept -> bool {
+    const auto a = z_index();
+    const auto b = other.z_index();
+    if (a && b) return *a == *b;
+    return m_band == other.m_band && m_rank == other.m_rank &&
+           m_raw_z == other.m_raw_z;
+  }
+
+ private:
+  constexpr ImageLayer(Band band, std::uint32_t rank,
+                       std::int32_t raw_z) noexcept
+      : m_band(band), m_rank(rank), m_raw_z(raw_z) {}
+
+  Band m_band{Band::AboveText};
+  std::uint32_t m_rank{0};
+  std::int32_t m_raw_z{0};
+};
+
 // How a driver resolves the mismatch between an image's pixel extent and the
 // cell rect it was asked to fill (#137).
 //
@@ -401,6 +493,18 @@ enum class PlacementFit {
   // stretching, which would be indistinguishable from the bug this exists to
   // remove.
   Exact,
+};
+
+// Every property of one image placement, kept in one additive value type so
+// #115 can extend it with pixel offsets/crop without growing a mutually
+// exclusive virtual-overload tree. The default is exactly the historical
+// Stretch placement at the protocol's implicit z=0.
+struct ImagePlacementOptions {
+  PlacementFit fit{PlacementFit::Stretch};
+  ImageLayer layer{};
+
+  constexpr auto operator==(const ImagePlacementOptions&) const noexcept
+      -> bool = default;
 };
 
 // ── resident images (#109) ───────────────────────────────────────────────

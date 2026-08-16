@@ -45,7 +45,8 @@ Landed and verified:
   explicit built-in driver selection, read-mode API, alt-screen lifecycle.
 - **KittyDriver** — Kitty graphics protocol: base64 + APC transmit, classic
   cursor placement, Unicode placeholders (tmux-first), stable per-region image
-  IDs with LRU eviction. Flagship driver.
+  IDs with LRU eviction, and semantic above-text/below-text/below-background
+  image layers. Flagship driver.
 - **AnsiRgbDriver** — truecolor half-block rendering with SGR run-coalescing.
 - **FallbackDriver** — plain-ASCII luminance, the bare-TTY floor.
 - **Widgets** — `Widget` base (with immediate and persistent pixel-region

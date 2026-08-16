@@ -103,6 +103,13 @@ class Widget {
   virtual auto pixel_fit(Rect region) const noexcept -> PlacementFit {
     return PlacementFit::Stretch;
   }
+
+  // Complete placement policy. The default delegates to pixel_fit(), so an
+  // existing fit override remains effective and inherits z=0.
+  virtual auto pixel_placement(Rect region) const noexcept
+      -> ImagePlacementOptions {
+    return {.fit = pixel_fit(region), .layer = {}};
+  }
 };
 ```
 
@@ -148,7 +155,9 @@ frame, after `content_dirty`, or when recovery requires recreation.
 On Kitty, App pins the initial image, uses `replace_pinned` for accepted-size
 content changes, and refreshes the existing placement without re-hashing the
 buffer. A changed logical extent explicitly unpins and repins because pinned
-handle extent is immutable. On ANSI truecolour there is no resident image
+handle extent is immutable. Fit and layer are placement state: changing either
+re-places the resident image without borrowing or transmitting its content.
+On ANSI truecolour there is no resident image
 store, so clean stable frames emit nothing; dirty content, movement, and a
 full repaint still rasterize through `draw_image`.
 
@@ -221,10 +230,11 @@ and later restores it without retransmitting the resident image.
    frame, not per-widget.
 5. **Third-party widgets opt in.** Override `pixel_regions()` and
    `draw_pixels()` — no driver or framework changes needed.
-6. **Degradation is implicit.** No enhanced image tier? Cells still work.
-   The app can query `driver->capabilities()` if it wants to surface the active
-   tier. App deliberately leaves FallbackDriver on those cells even though a
-   direct image caller may choose its luminance ramp.
+6. **Degradation preserves the Baseline.** No enhanced image tier? Cells still
+   work. An unsupported explicit placement request is detected before App
+   borrows pixels or blanks cells, keeps the authored Baseline, and emits one
+   transition-latched `Info`. App deliberately leaves FallbackDriver on those
+   cells even though a direct image caller may choose its luminance ramp.
 
 ### The Honest Tradeoff
 
@@ -326,6 +336,49 @@ see, and overflowing would paint outside the region the caller named.
 `supports_placement_fit` is **runtime**, not a property of the driver's
 type: `set_placement_mode` moves kitty's answer. Ask before committing an
 asset pipeline to it, exactly as with `supports_image_format`.
+
+### Named image layers (#114)
+
+Kitty exposes one signed z-index, but applications usually mean one of three
+relationships to terminal-owned content. `ImageLayer` names those regimes and
+`ImagePlacementOptions` carries the layer together with the existing fit:
+
+```cpp
+struct ImagePlacementOptions {
+  PlacementFit fit{PlacementFit::Stretch};
+  ImageLayer layer{};  // above_text(0), the historical implicit z=0
+};
+
+driver.draw_image(cells, image, {
+    .fit = PlacementFit::Stretch,
+    .layer = ImageLayer::below_text(),
+});
+```
+
+`above_text(rank)` starts at z=0 and increases. `below_text(rank)` starts at
+z=-1 and descends through the protocol's text/background separator.
+`below_background(rank)` starts immediately below that separator and descends
+to the signed 32-bit floor. The rank is always distance from the nearest
+boundary, so rank zero means “nearest.” `raw(int32_t)` is the explicit protocol
+escape hatch. A semantic rank that would leave its named regime is invalid and
+is refused with a `Warning` before wire or driver state changes.
+
+The options overloads cover raw and pre-encoded draws plus resident
+`draw_pinned`/`retain_pinned`. They are non-pure compatibility hooks: an older
+driver receives the historical z=0 request through its existing fit overload
+and honestly refuses a non-default layer. `supports_image_placement(options)`
+preflights the complete request. App uses that query before calling
+`draw_pixels`; unsupported widget layers therefore keep the information-complete
+cell Baseline and report the lesser route once as `Info`.
+
+Kitty omits `z=` for the default, preserving the old byte stream exactly, and
+emits it for both classic and Unicode-placeholder placements otherwise. A
+layer-only change retires and recreates placement state without retransmitting
+image data. Classic mode can place distinct pinned images at the exact same
+cell rect because `(image, rect)` identifies each placement. Unicode
+placeholders encode only one image identity in a cell grid, so that same
+collision is explicitly refused instead of allowing the later grid to win
+silently.
 
 On the resampling tiers a half-cell is not a square device pixel, and the
 ASCII ramp discards colour regardless — but what `Exact` promises is *no

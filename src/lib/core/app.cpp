@@ -1338,6 +1338,7 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
   // short-circuits on the push itself.
   m_caps = {};
   m_persistent_pixels.clear();
+  m_pixel_placement_fallbacks.clear();
   if (auto r = m_term.query_capabilities(); r) m_caps = *r;
   m_driver = m_term.select_driver(m_caps, m_builtin_driver);
   if (auto r = m_driver->init(); !r) return r;
@@ -1579,6 +1580,8 @@ auto App::frame_step() -> void {
       m_render_mode == RenderMode::Continuous || requested;
   if (rendered) {
     m_pixel_regions.clear();
+    for (auto& fallback : m_pixel_placement_fallbacks)
+      fallback.seen = false;
     for (auto& region : m_persistent_pixels) {
       region.seen = false;
       region.pending_content = false;
@@ -1904,6 +1907,7 @@ auto App::test_wire_headless(int cols, int rows, std::string* sink,
   // about.
   m_driver = std::move(driver);
   m_persistent_pixels.clear();
+  m_pixel_placement_fallbacks.clear();
   m_driver->set_output(sink);
   m_screen = std::make_unique<Screen>(cols, rows);
   m_renderer = std::make_unique<Renderer>(*m_driver);
@@ -2247,7 +2251,42 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
   for (std::size_t ordinal = 0; ordinal < regions.size(); ++ordinal) {
     const Rect region = regions[ordinal];
     const PixelRegionState state = widget.pixel_region_state(region);
-    const PlacementFit fit = widget.pixel_fit(region);
+    const ImagePlacementOptions placement = widget.pixel_placement(region);
+
+    // Ask before borrowing a raster or blanking its authored cell Baseline.
+    // Unsupported direct draws are Warnings because nothing was emitted; a
+    // widget has already supplied the complete lesser route, so App honours
+    // the request through that route and reports one Info per transition.
+    if (!m_driver->supports_image_placement(placement)) {
+      const auto fallback = std::find_if(
+          m_pixel_placement_fallbacks.begin(),
+          m_pixel_placement_fallbacks.end(),
+          [&](const PixelPlacementFallback& candidate) {
+            return candidate.owner == &widget && candidate.ordinal == ordinal;
+          });
+      if (fallback == m_pixel_placement_fallbacks.end()) {
+        m_pixel_placement_fallbacks.push_back(
+            PixelPlacementFallback{.owner = &widget,
+                                   .ordinal = ordinal,
+                                   .placement = placement,
+                                   .seen = true});
+        m_input.push_error(ErrorEvent{
+            Severity::Info, "app",
+            "pixel region: requested image placement is unsupported; using "
+            "the widget's cell Baseline"});
+      } else {
+        if (fallback->placement != placement) {
+          fallback->placement = placement;
+          m_input.push_error(ErrorEvent{
+              Severity::Info, "app",
+              "pixel region: requested image placement is unsupported; "
+              "using the widget's cell Baseline"});
+        }
+        fallback->seen = true;
+      }
+      continue;
+    }
+
     PersistentPixelRegion* retained = nullptr;
     if (state.mode == PixelRegionMode::Persistent) {
       const auto it = std::find_if(
@@ -2284,7 +2323,7 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
       // when placement must be repainted; App never borrows it across frames.
       if (m_driver->max_pinned_images() == 0 &&
           (!retained->visible || retained->rect != region ||
-           retained->fit != fit || m_pixel_force_repaint)) {
+           retained->placement != placement || m_pixel_force_repaint)) {
         needs_image = true;
       }
     }
@@ -2299,7 +2338,7 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
                                  .ordinal = ordinal,
                                  .rect = region,
                                  .image = image,
-                                 .fit = fit,
+                                 .placement = placement,
                                  .mode = state.mode,
                                  .content_dirty = state.content_dirty});
 
@@ -2340,7 +2379,7 @@ auto App::flush_pixel_regions() -> void {
   // already passed the same test.
   for (const auto& pr : m_pixel_regions) {
     if (pr.mode == PixelRegionMode::Immediate) {
-      if (auto drawn = m_driver->draw_image(pr.rect, *pr.image, pr.fit);
+      if (auto drawn = m_driver->draw_image(pr.rect, *pr.image, pr.placement);
           !drawn) {
         m_input.push_error(std::move(drawn.error()));
       }
@@ -2366,7 +2405,7 @@ auto App::flush_pixel_regions() -> void {
 
     if (m_driver->max_pinned_images() == 0) {
       const bool placement_changed = !state.visible || state.rect != pr.rect ||
-                                     state.fit != pr.fit ||
+                                     state.placement != pr.placement ||
                                      m_pixel_force_repaint;
       const bool submit_content = !state.content_ready || pr.content_dirty ||
                                   state.recreate || extent_changed;
@@ -2375,14 +2414,14 @@ auto App::flush_pixel_regions() -> void {
         // reach here; keep the guard defensive because a null borrowed view is
         // a fallback request, never permission to dereference it.
         if (pr.image == nullptr) continue;
-        if (auto drawn = m_driver->draw_image(pr.rect, *pr.image, pr.fit);
+        if (auto drawn = m_driver->draw_image(pr.rect, *pr.image, pr.placement);
             !drawn) {
           m_input.push_error(std::move(drawn.error()));
           continue;
         }
         state.pending_visible = true;
         state.pending_rect = pr.rect;
-        state.pending_fit = pr.fit;
+        state.pending_placement = pr.placement;
         state.touched_wire = true;
         if (submit_content) {
           state.pending_content = true;
@@ -2395,14 +2434,7 @@ auto App::flush_pixel_regions() -> void {
 
     const bool submit_content = !state.content_ready || pr.content_dirty ||
                                 state.recreate || extent_changed;
-    if (!m_driver->supports_placement_fit(pr.fit)) {
-      m_input.push_error(ErrorEvent{
-          Severity::Warning, "app",
-          "persistent pixel region: requested placement fit is unsupported "
-          "by this driver"});
-      continue;
-    }
-    if (pr.fit == PlacementFit::Exact) {
+    if (pr.placement.fit == PlacementFit::Exact) {
       const Extent needed = m_driver->image_cell_extent(next_extent);
       if (needed.w > pr.rect.w || needed.h > pr.rect.h) {
         m_input.push_error(ErrorEvent{
@@ -2449,8 +2481,10 @@ auto App::flush_pixel_regions() -> void {
       // Preserve the last accepted frame when replacement was refused. The
       // producer stays dirty, but the existing placement need not turn into a
       // hole while it waits for a retry.
-      if (state.visible && state.rect == pr.rect && state.fit == pr.fit) {
-        if (auto kept = m_driver->retain_pinned(pr.rect, state.pin, pr.fit);
+      if (state.visible && state.rect == pr.rect &&
+          state.placement == pr.placement) {
+        if (auto kept =
+                m_driver->retain_pinned(pr.rect, state.pin, pr.placement);
             !kept) {
           m_input.push_error(std::move(kept.error()));
         }
@@ -2459,7 +2493,7 @@ auto App::flush_pixel_regions() -> void {
     }
 
     const bool placement_changed = !state.visible || state.rect != pr.rect ||
-                                   state.fit != pr.fit ||
+                                   state.placement != pr.placement ||
                                    m_pixel_force_repaint || state.recreate ||
                                    extent_changed;
     // retain_pinned is a non-pure compatibility hook: Kitty's override is a
@@ -2467,16 +2501,17 @@ auto App::flush_pixel_regions() -> void {
     // draw_pinned fallback and may append placement bytes. Treat either route
     // as touching driver state so a refused sink write retries conservatively.
     state.touched_wire = true;
-    auto placed = placement_changed
-                      ? m_driver->draw_pinned(pr.rect, state.pin, pr.fit)
-                      : m_driver->retain_pinned(pr.rect, state.pin, pr.fit);
+    auto placed =
+        placement_changed
+            ? m_driver->draw_pinned(pr.rect, state.pin, pr.placement)
+            : m_driver->retain_pinned(pr.rect, state.pin, pr.placement);
     if (!placed) {
       m_input.push_error(std::move(placed.error()));
       continue;
     }
     state.pending_visible = true;
     state.pending_rect = pr.rect;
-    state.pending_fit = pr.fit;
+    state.pending_placement = pr.placement;
     if (submit_content) {
       state.pending_content = true;
       state.pending_extent = next_extent;
@@ -2506,6 +2541,10 @@ auto App::flush_pixel_regions() -> void {
     }
     it = m_persistent_pixels.erase(it);
   }
+
+  std::erase_if(
+      m_pixel_placement_fallbacks,
+      [](const PixelPlacementFallback& fallback) { return !fallback.seen; });
 
   // After the regions, so a same-rect collision resolves in the widget tree's
   // favour (see the hook's doc -- it is an emission order, not a claim about
@@ -2560,7 +2599,7 @@ auto App::finish_pixel_frame(bool output_accepted) -> void {
     if (state.pending_visible) {
       state.visible = true;
       state.rect = state.pending_rect;
-      state.fit = state.pending_fit;
+      state.placement = state.pending_placement;
     }
     if (state.pending_content) {
       state.content_ready = true;

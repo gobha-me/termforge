@@ -172,6 +172,31 @@ class TerminalDriver {
         "draw_image: this tier cannot place with PlacementFit::Exact"}};
   }
 
+  // The additive placement-options path (#114). NON-PURE so a driver written
+  // before named layers keeps compiling. The base delegates an implicit-z
+  // request to the established PlacementFit overload, preserving that
+  // driver's own Stretch/Exact behaviour; any non-zero layer is an honest
+  // Warning because an old tier has no way to honour it.
+  //
+  // No default argument: defaults on virtuals bind statically, and a defaulted
+  // options overload would also collide with the existing overload set.
+  virtual auto draw_image(Rect cells, const Image& image,
+                          ImagePlacementOptions options)
+      -> std::expected<void, ErrorEvent> {
+    const auto z = options.layer.z_index();
+    if (!z) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "driver",
+          "draw_image: image layer rank is outside the protocol range"}};
+    }
+    if (*z != 0) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "driver",
+          "draw_image: this tier cannot place on a non-default image layer"}};
+    }
+    return draw_image(cells, image, options.fit);
+  }
+
   // Whether `fit` can actually be honoured on this tier, askable WITHOUT
   // drawing -- the same contract, and for the same reason, as
   // supports_image_format below.
@@ -182,6 +207,17 @@ class TerminalDriver {
   [[nodiscard]] virtual auto supports_placement_fit(
       PlacementFit fit) const noexcept -> bool {
     return fit == PlacementFit::Stretch;
+  }
+
+  // Whether the complete placement request can be honoured before drawing.
+  // App asks this before blanking a widget's information-complete Baseline.
+  // The base accepts only the protocol's implicit z=0 and then delegates the
+  // fit question to the existing runtime query.
+  [[nodiscard]] virtual auto
+  supports_image_placement(ImagePlacementOptions options) const noexcept
+      -> bool {
+    const auto z = options.layer.z_index();
+    return z && *z == 0 && supports_placement_fit(options.fit);
   }
 
   // Fill `cells` with an already-encoded payload, shipped to the terminal
@@ -196,7 +232,7 @@ class TerminalDriver {
   // channel -- a Warning, per the degradation-is-an-event rule, rather than a
   // silent no-draw.
   //
-  // THIRD-PARTY DRIVERS: overriding any ONE of the four `draw_image`
+  // THIRD-PARTY DRIVERS: overriding any ONE of the six `draw_image`
   // overloads hides ALL of them for calls made through your concrete type --
   // name hiding in C++ is by name, not by signature. Add
   // `using TerminalDriver::draw_image;` to your class to unhide them.
@@ -250,7 +286,8 @@ class TerminalDriver {
   // rather than softened to "misplaced" -- Stretch cannot do it, because there
   // c=/r= dominate.
   //
-  // A fourth overload extends one existing hazard: `draw_image(rect, {}, fit)`
+  // The Image/EncodedImage fit pair extends one existing hazard:
+  // `draw_image(rect, {}, fit)`
   // is ambiguous, because `{}` list-initializes Image and EncodedImage equally
   // well. So is the two-argument `draw_image(rect, {})`, and has been since
   // #163. Both are hard errors naming both candidates, never a silent miscall;
@@ -277,6 +314,26 @@ class TerminalDriver {
     return std::unexpected{ErrorEvent{
         Severity::Warning, "driver",
         "draw_image: this tier cannot place with PlacementFit::Exact"}};
+  }
+
+  // EncodedImage half of the same options path. The default deliberately
+  // delegates to the pre-existing fit overload so a #169-era third-party
+  // driver keeps running its implementation for the default layer.
+  virtual auto draw_image(Rect cells, const EncodedImage& image,
+                          ImagePlacementOptions options)
+      -> std::expected<void, ErrorEvent> {
+    const auto z = options.layer.z_index();
+    if (!z) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "driver",
+          "draw_image: image layer rank is outside the protocol range"}};
+    }
+    if (*z != 0) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "driver",
+          "draw_image: this tier cannot place on a non-default image layer"}};
+    }
+    return draw_image(cells, image, options.fit);
   }
 
   // Whether `f` can actually be drawn on this tier, askable WITHOUT drawing.
@@ -457,12 +514,29 @@ class TerminalDriver {
         "draw_pinned: this tier cannot hold an image resident"}};
   }
 
+  virtual auto draw_pinned(Rect cells, PinnedImage image,
+                           ImagePlacementOptions options)
+      -> std::expected<void, ErrorEvent> {
+    const auto z = options.layer.z_index();
+    if (!z) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "driver",
+          "draw_pinned: image layer rank is outside the protocol range"}};
+    }
+    if (*z != 0) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "driver",
+          "draw_pinned: this tier cannot place on a non-default image layer"}};
+    }
+    return draw_pinned(cells, image, options.fit);
+  }
+
   // Stretch, spelled once. NON-VIRTUAL and delegating: one fewer virtual for an
   // out-of-tree driver to think about, and no default argument on a virtual
   // (which would bind statically -- see the draw_image overload above).
   auto draw_pinned(Rect cells, PinnedImage image)
       -> std::expected<void, ErrorEvent> {
-    return draw_pinned(cells, image, PlacementFit::Stretch);
+    return draw_pinned(cells, image, ImagePlacementOptions{});
   }
 
   // Keep an existing pinned placement live for this frame without changing
@@ -476,9 +550,26 @@ class TerminalDriver {
     return draw_pinned(cells, image, fit);
   }
 
+  virtual auto retain_pinned(Rect cells, PinnedImage image,
+                             ImagePlacementOptions options)
+      -> std::expected<void, ErrorEvent> {
+    const auto z = options.layer.z_index();
+    if (!z) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "driver",
+          "retain_pinned: image layer rank is outside the protocol range"}};
+    }
+    if (*z != 0) {
+      return std::unexpected{ErrorEvent{Severity::Warning, "driver",
+                                        "retain_pinned: this tier cannot place "
+                                        "on a non-default image layer"}};
+    }
+    return retain_pinned(cells, image, options.fit);
+  }
+
   auto retain_pinned(Rect cells, PinnedImage image)
       -> std::expected<void, ErrorEvent> {
-    return retain_pinned(cells, image, PlacementFit::Stretch);
+    return retain_pinned(cells, image, ImagePlacementOptions{});
   }
 
   // The terminal discarded every resident image without a protocol delete

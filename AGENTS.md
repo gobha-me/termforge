@@ -120,13 +120,27 @@ file is the tactical version.
   **`PixelSurface` owns a fixed logical pixel grid** (#195). Cell geometry only
   changes its destination; `reset` is the explicit storage-resize boundary.
   Its ASCII draw is the information-complete Baseline, while App carries the
-  widget's `pixel_fit` into the enhanced draw and turns a driver refusal into
-  an `ErrorEvent`. Since #197 it is a Persistent region: mutable access and
+  widget's `pixel_placement` into the enhanced draw and turns a driver refusal
+  into an `ErrorEvent`. Since #197 it is a Persistent region: mutable access and
   `invalidate` mark content dirty, App pins/replaces Kitty content and skips
   clean ANSI rasterization, movement is placement-only, and the producer is
   acknowledged only after the frame's sink write is accepted. Persistent
   region identity is `(Widget*, pixel_regions vector index)`, never its Rect;
   keep the vector order stable while a region lives.
+  **Image stacking is semantic placement state** (#114). `ImageLayer` maps
+  `above_text(rank)`, `below_text(rank)` and `below_background(rank)` onto the
+  Kitty signed z domain; rank zero is nearest the named boundary, and `raw(z)`
+  is the explicit protocol escape hatch. The below-background start literal is
+  defined only in `core/types.hpp` and guarded by a source scan -- drivers use
+  `z_index()`, never repeat it. `ImagePlacementOptions` is the additive home
+  for fit, layer and #115's future placement fields. Its driver overloads stay
+  non-pure, and the default z=0 wire stays byte-identical (omit `z=`). App asks
+  `supports_image_placement` before borrowing/blanking a widget region; an
+  unsupported request keeps the authored Baseline and emits one transition
+  `Info`. Placement options are complete cached/resident state, so a layer-only
+  change re-places without retransmitting. A pinned placement's Classic key is
+  `(image id, Rect)`, permitting exact overlap of distinct images; Unicode
+  placeholders cannot represent that collision and refuse it with a `Warning`.
 - **A pre-encoded payload is shipped verbatim** (#163). `EncodedImage` carries
   opaque bytes the *terminal* decodes; the library never encodes, decodes,
   inspects or resamples them — that is the application's asset pipeline's job,

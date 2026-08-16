@@ -1230,7 +1230,7 @@ class App {
     std::size_t ordinal{0};
     Rect rect;
     const Image* image{nullptr};
-    PlacementFit fit{PlacementFit::Stretch};
+    ImagePlacementOptions placement{};
     PixelRegionMode mode{PixelRegionMode::Immediate};
     bool content_dirty{true};
   };
@@ -1248,7 +1248,7 @@ class App {
     PinnedImage pin{};
     Extent extent{};
     Rect rect{};
-    PlacementFit fit{PlacementFit::Stretch};
+    ImagePlacementOptions placement{};
     bool content_ready{false};
     bool visible{false};
     bool seen{false};
@@ -1258,12 +1258,24 @@ class App {
     // after emit_frame's sink succeeds.
     Extent pending_extent{};
     Rect pending_rect{};
-    PlacementFit pending_fit{PlacementFit::Stretch};
+    ImagePlacementOptions pending_placement{};
     bool pending_content{false};
     bool pending_visible{false};
     bool touched_wire{false};
   };
   std::vector<PersistentPixelRegion> m_persistent_pixels;
+
+  // Unsupported widget placement options fall back to the authored cell
+  // Baseline before draw_pixels() is borrowed or those cells are blanked.
+  // Keep one transition latch per declared region so a continuous renderer
+  // reports the lesser route once rather than producing an ErrorEvent storm.
+  struct PixelPlacementFallback {
+    Widget* owner{nullptr};
+    std::size_t ordinal{0};
+    ImagePlacementOptions placement{};
+    bool seen{false};
+  };
+  std::vector<PixelPlacementFallback> m_pixel_placement_fallbacks;
   bool m_pixel_force_repaint{false};
 
   // Overlay stack, bottom-first. Raw pointers: see push_overlay.

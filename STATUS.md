@@ -6,25 +6,37 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-16, latest)
 
-**Release candidate: v0.38.0 — first-class built-in driver selection.** #257
-adds `BuiltinDriver::{Automatic,Kitty,AnsiRgb,Fallback}` and lets an `App`
-request an exact shipped tier before `run()`. Selection changes only driver
-construction: capability probing still runs, `App::capabilities()` remains the
-terminal truth, and synchronized-output support still follows those real wire
-facts. A mid-session or invalid request is a total `Severity::Warning` refusal.
+**Release candidate: v0.39.0 — named image placement layers.** #114 adds
+`ImageLayer::{above_text,below_text,below_background,raw}` and
+`ImagePlacementOptions`, carrying fit and layer together through widgets, App,
+resident-image state and every raw/encoded/pinned driver path. The semantic
+bands map to disjoint Kitty `z=` ranges with one canonical background boundary;
+the default remains byte-identical and omits `z=`.
 
-`TerminalDriver::name()` reports the resolved tier for diagnostics. Its
-non-pure `custom` default keeps existing out-of-tree drivers source-compatible,
-while the three shipped drivers return stable names. `forge-top --driver`
-now uses the shared API and deletes its private fabricated-capability mapping.
+Kitty updates a layer-only move as placement traffic without retransmitting
+payload, permits exact overlap between distinct pinned images in Classic mode,
+and explicitly refuses the Unicode-placeholder collision that cannot be
+represented honestly. Drivers that do not implement layers keep their existing
+non-pure source-compatible route: App preserves the information-complete
+Baseline, never borrows pixels, and emits one transition-latched
+`Severity::Info`.
 
-GCC 14.2 and Clang 20.1 Release `-Werror` builds, plus GCC ASan+UBSan with leak
-detection, each pass all 68 tests. Both compilers pass the `subdir`, `install`
-and `vendored` consumer acceptance paths. Three focused mutations prove the
-suite rejects an ignored override, overwritten probe facts and a pure legacy
-driver diagnostic. All ten hosted PR jobs pass; exact-main CI remains required
-before release. No terminal-protocol bytes changed, so no live-emulator gate
-applies.
+GCC 14.2 and Clang 20.1 Release `-Werror` builds pass all 70 CTest targets and
+the standalone public-header target. GCC ASan+UBSan passes 70/70, and the
+changed paths pass TSan. GCC and Clang each pass the `subdir`, `install` and
+`vendored` consumer acceptance paths. Three focused mutations prove the suites
+reject omitted Kitty `z=`, bypassed App preflight and false legacy-driver
+support. Hosted CI and real-Kitty stanza 12 remain required before merge and
+release.
+
+## Previous stable release: v0.38.0
+
+**v0.38.0 — first-class built-in driver selection.** #257 adds
+`BuiltinDriver::{Automatic,Kitty,AnsiRgb,Fallback}` and lets an `App` request an
+exact shipped tier before `run()`. `TerminalDriver::name()` reports the resolved
+tier, while its non-pure custom default keeps out-of-tree drivers compatible.
+The release shipped from merge commit `ed55206` after local, hosted and
+exact-main validation.
 
 ## Previous stable release: v0.37.1
 
