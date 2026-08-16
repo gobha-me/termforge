@@ -6,7 +6,8 @@
 // This is the shared currency for Screen's styled-run writer and TextBox's
 // scrollback: not a TextBox-private pair of structs. Markup parsing stays
 // consumer-side; styles are data, never escape codes. Attr is included now
-// (#62); word-aware wrapping across these spans is #24.
+// (#62), and #24's shared wrapper treats span boundaries as invisible when it
+// selects a word break while preserving each fragment's source style.
 
 #include <string>
 #include <vector>

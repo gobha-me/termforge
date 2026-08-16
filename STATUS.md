@@ -6,7 +6,26 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-16, latest)
 
-**Current stable release: v0.42.0 — terminal-driven animation control.** #117 adds
+**Current stable release: v0.43.0 — word-aware text wrapping.** #24 makes
+TextBox and Dialog choose the last fitting ASCII-space boundary instead of
+breaking ordinary prose mid-word. The one private wrapper treats styled spans
+as a continuous logical line, preserves source whitespace and style on both
+sides of a break, and retains the display-width-safe hard split for an
+unbroken run wider than the row. Plain and styled callers therefore cannot
+drift onto different break policies.
+
+The failure matrix covers exact widths, width one, leading/trailing/repeated
+spaces, overlong words, multibyte text at a break, span seams, resize reflow,
+Dialog hard/blank lines and the old empty/non-positive-width contracts. This
+closes the shared-wrapper prerequisite for #217's mutable streaming entries
+and wrap cache. No public type or signature changes. Fresh GCC 14.2 and Clang
+20.1 Release builds passed all 73 tests, ASan+UBSan passed the same matrix,
+both compilers passed the subdirectory, installed and vendored consumer paths,
+and three targeted mutations were killed.
+
+## Previous stable release: v0.42.0
+
+**v0.42.0 — terminal-driven animation control.** #117 adds
 payload-free once/loop playback over #116's `AnimationHandle`, explicit
 Restart/Ignore replay, Hold/Finish interruption, zero-based seek, local
 commanded-state/deadline observation and owned-root unregistration. Finish
@@ -4454,8 +4473,11 @@ The open queue, in rough priority order:
   `glyphs.hpp` (see below). Gives ListWidget's right-margin column an actual
   job — #72 deliberately left it alone and put its marker gutter on the left,
   so that column is still free.
-- **TF-01/02/03/05 (#24, #25, #26, #28)** — TextBox word-wrap, styled spans,
-  Composer widget, App post_event. (#27 landed in v0.1.7.)
+- **TF-01/02/03/05 (#24, #25, #26, #28)** — ~~TextBox word-wrap~~ **#24
+  LANDED (v0.43.0)**, ~~styled spans~~ **#25 LANDED**, Composer
+  widget #26, and ~~App post_event~~ **#28 LANDED**. #217 follows #24 with
+  mutable streaming entries, bounded retention and cached wrapping. (#27
+  landed in v0.1.7.)
 - **#16** (forge-top demo) — the larger dogfooding epic.
 
 Surfaced by #59, not fixed by it: `ProgressBar`'s indeterminate pulse

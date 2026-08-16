@@ -1,13 +1,13 @@
 #pragma once
 
-// TermForge — wrap: fold a line into display-width-bounded pieces.
+// TermForge — wrap: fold text into display-width-bounded pieces.
 //
-// Shared by TextBox (its scrollback view) and Dialog (its body text), which
-// is why it lives here rather than on either widget. The wrap is by display
-// COLUMN, not byte or code point: a grapheme is never split and a wide glyph
-// never straddles the edge (issue #10). It is a character wrap, not a word
-// wrap — a long word breaks mid-word. Word-aware wrapping is issue #24; when
-// that lands it replaces this body and both callers inherit it.
+// Shared by TextBox (its styled scrollback view) and Dialog (its plain body
+// text), which is why it lives here rather than on either widget. Wrapping is
+// by display COLUMN, not byte or code point: UTF-8 is never split and a wide
+// glyph never straddles the edge. A fitting ASCII-space boundary wins over a
+// mid-word split; an unbroken run longer than the row still hard-wraps so the
+// algorithm always makes progress (#24).
 //
 // Usage:
 //   std::vector<std::string> out;
@@ -17,6 +17,7 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "detail/utf8.hpp"
@@ -24,35 +25,162 @@
 #include "termforge/core/styled_text.hpp"
 
 namespace termforge::detail {
+namespace wrap_detail {
 
-// Append the wrapped pieces of `line` to `out`. A non-positive width means
-// "don't wrap" (one piece); an empty line yields one empty piece, so a blank
-// line in the source stays a blank row on screen.
-inline auto wrap_into(std::vector<std::string>& out, const std::string& line,
-                      int width) -> void {
+// A byte position in a StyledText document. Positions are normalized onto the
+// next non-empty span, so a span boundary has one representation and equality
+// remains enough for every loop termination check.
+struct Position {
+  std::size_t span{0};
+  std::size_t byte{0};
+
+  constexpr auto operator==(const Position&) const noexcept -> bool = default;
+};
+
+inline auto normalize(const StyledText& line, Position pos) noexcept
+    -> Position {
+  while (pos.span < line.size() &&
+         pos.byte >= line[pos.span].text.size()) {
+    ++pos.span;
+    pos.byte = 0;
+  }
+  return pos;
+}
+
+[[nodiscard]] inline auto at_end(const StyledText& line,
+                                 Position pos) noexcept -> bool {
+  return normalize(line, pos).span >= line.size();
+}
+
+struct Unit {
+  Position end;
+  int columns{0};
+  bool breakable_space{false};
+};
+
+// Read one UTF-8 code point (or one malformed byte, matching display_width's
+// zero-column recovery) without crossing a source span. TextBox sanitizes its
+// document before it reaches this helper; the malformed-byte arm keeps the
+// private plain adapter total over its existing input domain.
+[[nodiscard]] inline auto next_unit(const StyledText& line, Position pos)
+    noexcept -> Unit {
+  pos = normalize(line, pos);
+  const std::string_view remaining{line[pos.span].text.data() + pos.byte,
+                                   line[pos.span].text.size() - pos.byte};
+  char32_t cp = 0;
+  std::size_t len = 0;
+  const bool valid = utf8_decode(remaining, cp, len);
+  if (!valid) len = 1;
+  return Unit{normalize(line, Position{pos.span, pos.byte + len}),
+              valid ? char_width(cp) : 0, valid && cp == U' '};
+}
+
+// Copy [begin, end) into one visual row while preserving every source span's
+// style. Empty source spans remain document data but paint nothing, matching
+// the pre-#24 styled wrapper.
+inline auto append_range(StyledText& row, const StyledText& line,
+                         Position begin, Position end) -> void {
+  begin = normalize(line, begin);
+  end = normalize(line, end);
+  for (std::size_t i = begin.span; i < line.size(); ++i) {
+    if (i > end.span || (i == end.span && end.byte == 0)) break;
+    const std::size_t first = i == begin.span ? begin.byte : 0;
+    const std::size_t last = i == end.span ? end.byte : line[i].text.size();
+    if (last > first) {
+      row.push_back(TextSpan{line[i].text.substr(first, last - first),
+                             line[i].style});
+    }
+    if (i == end.span) break;
+  }
+}
+
+// The single wrapping engine. Span boundaries are invisible to its word and
+// width decisions; they matter only when append_range reconstructs each row.
+inline auto wrap_styled(std::vector<StyledText>& out, const StyledText& line,
+                        int width) -> void {
   if (width <= 0) {
     out.push_back(line);
     return;
   }
-  if (line.empty()) {
+
+  Position row_start = normalize(line, {});
+  if (at_end(line, row_start)) {
     out.emplace_back();
     return;
   }
-  const std::string_view sv{line};
-  std::size_t start = 0;
-  while (start < sv.size()) {
-    // Take as many whole graphemes as fit in `width` display columns (never
-    // splitting a code point or straddling a wide glyph).
-    std::size_t take = truncate_to_width(sv.substr(start), width).size();
-    if (take == 0) {
-      // A single wide glyph won't fit a 1-column width: force one code point so
-      // the loop makes progress rather than spinning.
-      char32_t cp = 0;
-      std::size_t len = 0;
-      take = utf8_decode(sv.substr(start), cp, len) ? len : 1;
+
+  while (!at_end(line, row_start)) {
+    Position scan = row_start;
+    Position last_break{};
+    bool has_break = false;
+    bool saw_word = false;
+    int columns = 0;
+
+    while (!at_end(line, scan)) {
+      const Unit unit = next_unit(line, scan);
+      if (columns + unit.columns > width) {
+        Position cut;
+        if (scan == row_start) {
+          // A width-2 glyph in a one-column row: preserve the old progress
+          // rule and give the painter the whole glyph to clip/pad honestly.
+          cut = unit.end;
+        } else {
+          cut = has_break ? last_break : scan;
+        }
+        StyledText row;
+        append_range(row, line, row_start, cut);
+        out.push_back(std::move(row));
+        row_start = cut;
+        break;
+      }
+
+      columns += unit.columns;
+      scan = unit.end;
+      if (unit.breakable_space) {
+        // A leading space is data, not a word boundary: choosing it would
+        // manufacture a whitespace-only row before an overlong first word.
+        if (saw_word) {
+          last_break = scan;
+          has_break = true;
+        }
+      } else {
+        saw_word = true;
+      }
     }
-    out.push_back(line.substr(start, take));
-    start += take;
+
+    if (at_end(line, scan)) {
+      StyledText row;
+      append_range(row, line, row_start, scan);
+      out.push_back(std::move(row));
+      break;
+    }
+  }
+}
+
+}  // namespace wrap_detail
+
+// Append wrapped styled rows. Span boundaries may fall mid-row or at the word
+// boundary; fragments keep their source style on either side. Spaces are
+// retained rather than trimmed/collapsed, including the space chosen as a
+// break. Empty spans paint nothing, and an empty logical line yields one empty
+// row.
+inline auto wrap_styled_into(std::vector<StyledText>& out,
+                             const StyledText& line, int width) -> void {
+  wrap_detail::wrap_styled(out, line, width);
+}
+
+// Plain-string compatibility adapter over the same engine. Keeping one source
+// of boundary decisions makes Dialog and TextBox agree on word, width and
+// whitespace semantics (#24).
+inline auto wrap_into(std::vector<std::string>& out, const std::string& line,
+                      int width) -> void {
+  std::vector<StyledText> rows;
+  wrap_detail::wrap_styled(rows,
+                           StyledText{TextSpan{line, TextStyle{}}}, width);
+  for (const StyledText& spans : rows) {
+    std::string row;
+    for (const TextSpan& span : spans) row += span.text;
+    out.push_back(std::move(row));
   }
 }
 
@@ -71,67 +199,6 @@ inline auto wrap_to_width(std::string_view text, int width)
     start = nl + 1;
   }
   return out;
-}
-
-// Character-wrap a styled line to `width` columns (#25). Span boundaries may
-// fall mid-row; a span that does not fit is split and its style continues on
-// the next row. Empty spans contribute no columns (paint nothing) and are
-// dropped from the wrapped rows — the document may still retain them. An
-// empty line (no spans, or only empty spans) yields one empty row, matching
-// wrap_into on "". Word-aware wrapping is #24.
-inline auto wrap_styled_into(std::vector<StyledText>& out, const StyledText& line,
-                             int width) -> void {
-  if (width <= 0) {
-    out.push_back(line);
-    return;
-  }
-
-  bool any_text = false;
-  for (const TextSpan& span : line) {
-    if (!span.text.empty()) {
-      any_text = true;
-      break;
-    }
-  }
-  if (!any_text) {
-    out.emplace_back();
-    return;
-  }
-
-  StyledText row;
-  int cols = 0;
-
-  auto flush = [&]() {
-    out.push_back(std::move(row));
-    row.clear();
-    cols = 0;
-  };
-
-  for (const TextSpan& span : line) {
-    std::string_view sv{span.text};
-    while (!sv.empty()) {
-      if (cols >= width) flush();
-      const int avail = width - cols;
-      std::size_t take = truncate_to_width(sv, avail).size();
-      if (take == 0) {
-        // A single wide glyph won't fit the remaining width: force one code
-        // point on an empty row so the loop progresses (same as wrap_into).
-        if (cols == 0) {
-          char32_t cp = 0;
-          std::size_t len = 0;
-          take = utf8_decode(sv, cp, len) ? len : 1;
-        } else {
-          flush();
-          continue;
-        }
-      }
-      const std::string_view piece = sv.substr(0, take);
-      row.push_back(TextSpan{std::string{piece}, span.style});
-      cols += display_width(piece);
-      sv.remove_prefix(take);
-    }
-  }
-  if (!row.empty()) out.push_back(std::move(row));
 }
 
 }  // namespace termforge::detail

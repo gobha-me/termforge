@@ -520,11 +520,39 @@ TEST_CASE("Dialog: body text wraps to max_width and grows the height",
   REQUIRE(d.rect().h == 5);   // 3 body rows + border
 }
 
+TEST_CASE("Dialog: body prose shares TextBox word boundaries (#24)",
+          "[dialog][wrap]") {
+  Screen screen{30, 10};
+  BareDialog d{""};
+  d.set_max_width(7);
+  d.set_text("alpha beta");
+  d.draw(screen);
+
+  const Rect g = d.rect();
+  REQUIRE(g.h == 4);  // two body rows + border
+  std::string first;
+  std::string second;
+  for (int x = g.x + 1; x < g.x + g.w - 1; ++x) {
+    first += screen.at(x, g.y + 1).text;
+    second += screen.at(x, g.y + 2).text;
+  }
+  CHECK(first == "alpha ");
+  CHECK(second == "beta");
+}
+
 TEST_CASE("Dialog: an embedded newline is a hard break", "[dialog]") {
   BareDialog d{""};
   d.set_text("one\ntwo");
   d.layout(80, 24);
   REQUIRE(d.rect().h == 4);  // two body rows + border
+}
+
+TEST_CASE("Dialog: adjacent newlines retain a blank body row (#24)",
+          "[dialog][wrap][failure]") {
+  BareDialog d{""};
+  d.set_text("one\n\ntwo");
+  d.layout(80, 24);
+  REQUIRE(d.rect().h == 5);  // three body rows + border
 }
 
 TEST_CASE("Dialog: draw repaints its whole rect", "[dialog][failure]") {

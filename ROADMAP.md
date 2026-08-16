@@ -133,6 +133,12 @@ completed items.
 > one `Info` event per driver session; later small frames resume synchronization.
 > This avoids old-Kitty timeout/capacity stop diagnostics without emulator
 > version detection, escape splitting or a permanent capability downgrade.
+>
+> **2026-08-16 — word-aware shared text wrapping.** **#24** makes the common
+> TextBox/Dialog wrapper choose the last fitting ASCII-space boundary before
+> falling back to its existing display-width-safe hard split. Styled rows keep
+> source whitespace and style across span boundaries, so the fix also supplies
+> the final wrapping policy #217's mutable-entry cache will key against.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 

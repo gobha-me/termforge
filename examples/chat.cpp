@@ -21,6 +21,9 @@ class ChatApp final : public App {
     m_textbox.append("This is a scrollable text box widget.");
     m_textbox.append("Use arrow keys or mouse wheel to scroll.");
     m_textbox.append("Press Ctrl+L to clear the text.");
+    m_textbox.append(
+        "Long prose wraps at word boundaries now, while unusually long "
+        "unbroken tokens still fall back to safe character wrapping.");
     m_textbox.append("");
 
     // Add some sample lines
