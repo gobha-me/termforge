@@ -31,10 +31,12 @@ Clang each pass `subdir`, `install` and `vendored` consumer acceptance. Five
 focused mutations prove the suites reject omitted geometry keys, a false
 Unicode support claim, bypassed App preflight, missed placement-cache changes
 and false legacy support. The
-first hosted matrix passed all ten jobs. The first stanza-13 live run exposed
-Kitty's ignored virtual crop (the native-sized copy still showed red/blue),
-which is now a refusal regression; the revised Classic Stretch/Exact live gate
-and the post-fix hosted matrix are pending.
+first hosted matrix and the post-fix matrix each passed all ten jobs. The first
+stanza-13 live run exposed Kitty's ignored virtual crop (the native-sized copy
+still showed red/blue), which is now a refusal regression. The revised live
+gate passes on real Kitty: Classic Stretch and Exact both show only the selected
+green/yellow crop at the requested offset, the Exact copy is native 2x4, and no
+protocol response contains `;E`.
 
 ## Previous stable release: v0.39.0
 
