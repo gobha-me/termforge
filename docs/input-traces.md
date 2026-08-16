@@ -52,8 +52,11 @@ terminal or composed session the raw byte record already contains those APCs,
 so they are not duplicated. Schema 5 preserves the SGR motion bit on posted
 and structured-source `MouseEvent`s, which keeps a drag distinct from its
 matching release; raw terminal records already preserve that bit in their
-original bytes. Schema-1 through schema-4 traces remain readable; schema 1
-implies the historical press-only route.
+original bytes. Schema 6 adds the action-probed Kitty animation capability so
+playback cannot silently select the same broad graphics tier with a different
+frame-registration contract. Schema-1 through schema-5 traces remain readable;
+schema 1 implies the historical press-only route, and schemas before 6 imply no
+animation-action support.
 
 The trace also records:
 

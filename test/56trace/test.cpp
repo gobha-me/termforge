@@ -537,7 +537,7 @@ TEST_CASE("malformed traces are rejected before the App starts", "[trace][failur
   SECTION("unknown schema") {
     std::string broken = artifact.trace;
     REQUIRE(broken.size() > 9);
-    broken[8] = 6;
+    broken[8] = 7;
     const auto [wire, error] = play_bytes(std::move(broken));
     REQUIRE(wire.empty());
     REQUIRE(error.message.find("schema") != std::string::npos);
@@ -611,6 +611,48 @@ TEST_CASE("schema 4 traces remain readable after mouse motion was added",
   v4[9] = 0;
   std::istringstream input{v4, std::ios::binary};
   REQUIRE(detail::read_trace(input).has_value());
+}
+
+TEST_CASE("schema 6 records action-level image-animation capability",
+          "[trace][compatibility][animation]") {
+  const Artifact artifact = make_artifact();
+  std::string current = artifact.trace;
+  REQUIRE(current.size() > 31);
+  // Capability bits begin at byte 28; bit 5 is kitty_animation.
+  current[28] = static_cast<char>(
+      static_cast<unsigned char>(current[28]) | 0x20U);
+  std::istringstream input{current, std::ios::binary};
+  const auto decoded = detail::read_trace(input);
+  REQUIRE(decoded.has_value());
+  CHECK(decoded->header.capabilities.kitty_animation);
+}
+
+TEST_CASE("schema 5 traces default image-animation support to false",
+          "[trace][compatibility][animation]") {
+  const Artifact artifact = make_artifact();
+  std::string v5 = artifact.trace;
+  REQUIRE(v5.size() > 56);
+  v5[8] = 5;
+  v5[9] = 0;
+  std::istringstream input{v5, std::ios::binary};
+  const auto decoded = detail::read_trace(input);
+  REQUIRE(decoded.has_value());
+  CHECK_FALSE(decoded->header.capabilities.kitty_animation);
+}
+
+TEST_CASE("schema 5 refuses an image-animation capability bit",
+          "[trace][compatibility][animation][failure]") {
+  const Artifact artifact = make_artifact();
+  std::string invalid = artifact.trace;
+  REQUIRE(invalid.size() > 56);
+  invalid[8] = 5;
+  invalid[9] = 0;
+  invalid[28] = static_cast<char>(
+      static_cast<unsigned char>(invalid[28]) | 0x20U);
+  std::istringstream input{invalid, std::ios::binary};
+  const auto decoded = detail::read_trace(input);
+  REQUIRE_FALSE(decoded.has_value());
+  CHECK(decoded.error().message.find("schema 6") != std::string::npos);
 }
 
 TEST_CASE("schema 3 refuses terminal replies introduced by schema 4",

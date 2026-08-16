@@ -6,37 +6,35 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-16, latest)
 
-**Release candidate: v0.40.0 — sub-cell image placement and source crops.**
-#115 adds pixel-space `PixelRect` and extends `ImagePlacementOptions` with a
-within-cell `pixel_offset` plus an optional root-image `source` crop. Kitty
-Classic emits `X=`/`Y=` and `x=`/`y=`/`w=`/`h=` only when requested, keeping
-default wire byte-identical. Crop/offset changes are placement edits and never
-retransmit cached or pinned payloads.
+**Release candidate: v0.41.0 — terminal-driven animation registration.** #116
+adds borrowed raw/encoded `AnimationFrame` descriptors with independent gaps
+and an opaque `AnimationHandle`. Kitty validates a complete sequence before
+wire, transmits one resident root plus ordered new `a=f` frames, preserves PNG
+bytes verbatim, and never implicitly deduplicates registrations whose playback
+state must remain independent. Zero milliseconds maps to protocol gapless;
+mixed extent/format sequences refuse without partial output.
 
-Validation runs before cache state or wire: offsets must be inside one current
-cell, crops must be positive and wholly inside the real/caller-declared root,
-and all extent arithmetic is overflow-safe. Opaque PNG remains opaque. The
-crop plus offset is the effective Exact footprint. Kitty's Unicode-placeholder
-renderer ignores virtual-placement crop/offset state and reconstructs from the
-full image, so that route reports no geometry or Exact support; direct calls
-refuse before payload/wire, while App preserves the authored Baseline with one
-transition event. Unsupported tiers and invalid widget values do the same.
+Support is an action-probed session fact, separate from broad Kitty graphics,
+and trace schema 6 preserves it. Registrations share the 256-slot
+application-resident id pool with pins. Residency counts one root and every
+source payload byte at the accepted-write boundary; multi-PNG acknowledgement,
+rejection, timeout, late-reply quarantine, sink refusal, invalidation and
+shutdown follow the existing resident-image contracts. The new virtual is
+non-pure and legacy tiers refuse with a `Warning`.
 
-GCC 14.2 and Clang 20.1 Release `-Werror` builds pass all 71 CTest targets and
-the standalone public-header target. The six changed/relevant suites pass GCC
-ASan+UBSan with leak detection; App and geometry production paths pass TSan.
-The full local sanitizer matrix could not coexist with the compiler trees under
-the workspace quota, so hosted ASan+UBSan remains the full-matrix gate. GCC and
-Clang each pass `subdir`, `install` and `vendored` consumer acceptance. Five
-focused mutations prove the suites reject omitted geometry keys, a false
-Unicode support claim, bypassed App preflight, missed placement-cache changes
-and false legacy support. The
-first hosted matrix and the post-fix matrix each passed all ten jobs. The first
-stanza-13 live run exposed Kitty's ignored virtual crop (the native-sized copy
-still showed red/blue), which is now a refusal regression. The revised live
-gate passes on real Kitty: Classic Stretch and Exact both show only the selected
-green/yellow crop at the requested offset, the Exact copy is native 2x4, and no
-protocol response contains `;E`.
+Local GCC and Clang builds each pass all 72 tests, and GCC/Clang consumer
+acceptance passes the subdirectory, installed and vendored paths. Hosted CI and
+the real-emulator action probe remain the release gates for this candidate.
+**Next after release: #117**, playback, seek, loop and explicit lifecycle
+control over `AnimationHandle`.
+
+## Previous stable release: v0.40.0
+
+**v0.40.0 — sub-cell image placement and source crops.** #115 adds pixel-space
+placement offsets and source crops across direct, App and resident paths. The
+release shipped from merge commit `bf5ecb2` after both compiler matrices,
+consumer acceptance, focused sanitizers/mutations, hosted CI, and the revised
+real-Kitty crop gate passed.
 
 ## Previous stable release: v0.39.0
 

@@ -27,9 +27,10 @@ constexpr std::uint32_t kCapabilitySixel{1U << 1};
 constexpr std::uint32_t kCapabilityTruecolor{1U << 2};
 constexpr std::uint32_t kCapabilityKeyboard{1U << 3};
 constexpr std::uint32_t kCapabilitySync{1U << 4};
+constexpr std::uint32_t kCapabilityAnimation{1U << 5};
 constexpr std::uint32_t kCapabilityMask =
     kCapabilityKitty | kCapabilitySixel | kCapabilityTruecolor |
-    kCapabilityKeyboard | kCapabilitySync;
+    kCapabilityKeyboard | kCapabilitySync | kCapabilityAnimation;
 constexpr std::uint32_t kInputPress{1U << 0};
 constexpr std::uint32_t kInputRepeat{1U << 1};
 constexpr std::uint32_t kInputRelease{1U << 2};
@@ -129,6 +130,7 @@ auto capabilities_bits(const Capabilities& caps) -> std::uint32_t {
   if (caps.truecolor) bits |= kCapabilityTruecolor;
   if (caps.kitty_keyboard) bits |= kCapabilityKeyboard;
   if (caps.sync_updates) bits |= kCapabilitySync;
+  if (caps.kitty_animation) bits |= kCapabilityAnimation;
   return bits;
 }
 
@@ -275,6 +277,10 @@ auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent> {
   if ((*caps_bits & ~kCapabilityMask) != 0) {
     return trace_error("trace header has unknown capability flags");
   }
+  if (*schema < 6 && (*caps_bits & kCapabilityAnimation) != 0) {
+    return trace_error(
+        "trace header uses image-animation capability before schema 6");
+  }
   trace.header.version_major = *major;
   trace.header.version_minor = *minor;
   trace.header.version_patch = *patch;
@@ -286,6 +292,7 @@ auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent> {
       *levels,
       (*caps_bits & kCapabilityKeyboard) != 0,
       (*caps_bits & kCapabilitySync) != 0,
+      *schema >= 6 && (*caps_bits & kCapabilityAnimation) != 0,
   };
   auto input_capabilities = input_capabilities_from_bits(*input_bits);
   if (!input_capabilities)

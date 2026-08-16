@@ -782,6 +782,56 @@ counted as believed resident while their reply is pending, and a later rejection
 or timeout reconciles that belief. The default is empty for non-resident and
 legacy third-party tiers.
 
+### Pre-baked terminal-driven sequences (#116)
+
+Registration uploads an ordered animation once and returns an opaque handle for
+#117's playback controls:
+
+```cpp
+std::array frames{
+    AnimationFrame{EncodedImage{ImageFormat::Png, first_png, {64, 64}}, 20ms},
+    AnimationFrame{EncodedImage{ImageFormat::Png, png_bytes, {64, 64}}, 35ms},
+};
+auto animation = driver.register_animation(frames);
+```
+
+Every frame must have the root's pixel extent and wire format. The complete
+sequence is validated before any wire or state changes. `Image` pixels and
+`EncodedImage::bytes` are borrowed for the call only, PNG stays opaque and
+verbatim, and a zero-millisecond gap means a gapless composition frame.
+Negative gaps and values outside Kitty's signed 32-bit millisecond domain are
+refused. Raw `Image` and encoded `Rgba32` frames may compose because they share
+one wire format; mixing either with PNG is refused.
+
+Kitty creates the root with `a=t`, adds each later frame with `a=f` and no `r=`,
+and uses `X=1` so full-frame registration is replacement rather than alpha
+composition. Every continuation repeats `a=f` but still omits `r=`: specifying
+`r` edits an existing frame and would turn registration into #140's root-edit
+operation. Later frames default to 40 ms in the protocol, so API gap zero is
+spelled `z=-1`; the root alone defaults gapless and receives a separate
+`a=a,r=1,z=` control command only for a positive gap.
+
+`supports_image_animation()` is the action-level gate. Startup proves it with a
+non-displayed 1x1 root/new-frame/delete exchange under an id outside the driver
+pools; the broad `kitty_graphics` response is insufficient. Pushed
+`Capabilities` and deterministic trace schema 6 carry the same fact without
+inventing emulator/version rules. Unsupported and legacy drivers keep compiling
+through the non-pure default and return a `Warning` without output.
+
+Each registration is independent even when its bytes equal another sequence:
+there is no implicit dedup because playback and lifecycle state must not alias.
+It consumes one slot from the same 256-id application-resident pool as pins.
+`ImageResidency::pinned_images` therefore counts one animation root, while
+`source_payload_bytes` sums every frame's exact input bytes. Both commit only
+when the frame write is accepted. Each opaque PNG transfer must then receive its
+ordered `OK`; rejection or timeout rolls back the whole sequence, schedules a
+root delete, and quarantines the id until every late reply has arrived.
+
+Registration lifetime is session-wide in #116: `invalidate_images()` forgets
+it without wire and accepted shutdown delete-all retires it with wire. Explicit
+stop/start/seek/loop and release belong to #117; the handle intentionally has no
+operation in this registration-only cut.
+
 ### Mutable content keeps the handle and placement (#196, #261)
 
 `replace_pinned` changes the data attached to a handle without allocating a
@@ -866,11 +916,11 @@ tested build more important, not less: do not infer current TGP coverage from
 the stable release date. The same rule applies to Ghostty and every other
 implementation.
 
-TermForge currently has one coarse `kitty_graphics` probe, so callers that know
-their terminal lacks a required TGP action must select ANSI until the
-capability schema can express and query that action. Future terminal-driven
-animation work must add a feature requirement/probe rather than expanding the
-meaning of the existing basic flag or pinning emulator versions.
+TermForge now has a dedicated action probe for animation registration. Other
+TGP actions remain independently suspect: a caller that knows its terminal
+lacks a required unprobed action must select ANSI until the capability schema
+can express and query that action. Never expand the meaning of the existing
+basic flag or pin emulator versions.
 
 ### The image's lifetime and the placement's lifetime are separate
 
@@ -901,18 +951,19 @@ an image id of 300. The previous runs used U+10FEEE, so their blank output said
 nothing about the colour encoding.
 
 #205 gives that finite policy a concrete contract: the flagship tier guarantees
-256 pinned images. That covers GLOAM's frozen 246-image art inventory with ten
-slots of headroom without claiming to know the terminal's byte capacity; byte
+256 application-resident images. That covers GLOAM's frozen 246-image art
+inventory with ten slots of headroom without claiming to know the terminal's
+byte capacity; byte
 accounting is available separately through `residency()`. Ids come from two
-adjacent pools: regions allocate upward in `[1, 16]`; pins allocate downward in
-`[17, 272]`, giving
+adjacent pools: regions allocate upward in `[1, 16]`; pins and animations
+allocate downward in `[17, 272]`, giving
 `KittyDriver::kMaxPinnedImages == 256`.
 
 **The pools are disjoint by construction, and neither allocator reads the
 other's map** (#190). Both *derive* a free id from their own live map rather
 than tracking one beside it: `region_slot` takes the smallest id in
-`[1, kMaxRegionSlots]` that no live region holds, `pin_payload` the largest in
-`[kFirstPinnedImageId, 272]` that no resident image holds. A `static_assert`
+`[1, kMaxRegionSlots]` that no live region holds, `resident_id` the largest in
+`[kFirstPinnedImageId, 272]` that no pin or animation holds. A `static_assert`
 orders the two ranges. So a region id cannot reach the pin range — not because
 each side checks, but because there is no value in the pin range a region can
 name.
@@ -934,10 +985,11 @@ no content hash to compare against. **The byte answer for motion is
 `pin_image`**: `draw_pinned` allocates no image id at all, which is exactly why
 #109 exists.
 
-`pin_image` refuses when all 256 **resident slots** are in use, and only then —
-unpinned regions cannot contribute to that. Deriving from the live map also
-means a pin/unpin cycle cannot walk the budget off its end, and there is no
-second container to disagree with the first.
+`pin_image` and `register_animation` refuse when all 256
+**application-resident slots** are in use, and only then — unpinned regions
+cannot contribute to that. Deriving from the live maps also means a lifecycle
+cycle cannot walk the budget off its end, and there is no counter or free list
+to disagree with them.
 
 ### A handle is not an id
 
@@ -1276,7 +1328,6 @@ Same widget, same code, no driver branching.
   honest anchoring route; emitting the accepted-but-ignored keys is not one.
 - **MapWidget** — tile-based maps fit naturally: `draw_pixels` renders
   the tile grid, `draw` provides the half-block approximation.
-- **Animation** — terminal-driven frame registration/playback for animated
-  widgets, with action-level capability probing rather than assuming the basic
-  TGP query proves animation support.
+- **Animation control** — #116 provides action-probed terminal-driven frame
+  registration; #117 adds playback, seek, looping and explicit lifecycle.
 - **Sixel pixel regions** — same mechanism, different driver.

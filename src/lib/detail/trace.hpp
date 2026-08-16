@@ -13,7 +13,7 @@
 
 namespace termforge::detail {
 
-inline constexpr std::uint16_t kTraceSchemaVersion{5};
+inline constexpr std::uint16_t kTraceSchemaVersion{6};
 
 enum class TraceKind : std::uint8_t {
   Frame = 1,

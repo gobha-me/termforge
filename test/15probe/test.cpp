@@ -6,6 +6,7 @@
 #include "detail/probe.hpp"
 #include "drivers/select_driver.hpp"
 #include "termforge/core/input.hpp"
+#include "termforge/core/terminal.hpp"
 #include "termforge/core/types.hpp"
 
 using namespace termforge;
@@ -43,6 +44,24 @@ TEST_CASE("probe_kitty_ok: a graphics reply after DA1 does not count",
 TEST_CASE("probe_kitty_ok: an unterminated APC response is not support",
           "[probe][kitty]") {
   REQUIRE_FALSE(detail::probe_kitty_ok("\033_Gi=31;OK"));  // no ST yet
+}
+
+TEST_CASE("probe_kitty_animation: only the dedicated action reply is support",
+          "[probe][kitty][animation]") {
+  constexpr std::string_view basic = "\033_Gi=31;OK\033\\";
+  constexpr std::string_view animation =
+      "\033_Gi=4294967295;OK\033\\";
+  REQUIRE(detail::probe_kitty_animation(
+      std::string{basic} + std::string{animation} + "\033[?62;4;22c"));
+  REQUIRE_FALSE(detail::probe_kitty_animation(
+      std::string{basic} + "\033_Gi=4294967295;ENOTSUPPORTED\033\\" +
+      "\033[?62c"));
+  REQUIRE_FALSE(detail::probe_kitty_animation(
+      std::string{basic} + "\033[?62c"));
+  REQUIRE_FALSE(detail::probe_kitty_animation(
+      std::string{basic} + "\033[?62c" + std::string{animation}));
+  REQUIRE_FALSE(detail::probe_kitty_animation(
+      "\033_Gi=429496729;OK\033\\\033[?62c"));  // truncated id
 }
 
 TEST_CASE("probe_da1_complete: false until the DA1 terminator arrives",
@@ -155,6 +174,23 @@ TEST_CASE("select_driver_for: a concrete built-in choice overrides precedence",
         "fallback");
   CHECK(select_driver_for(kitty_caps, BuiltinDriver::Automatic)->name() ==
         "kitty");
+}
+
+TEST_CASE("Terminal selection carries action-level animation support as state",
+          "[probe][select][animation]") {
+  Terminal terminal;
+  Capabilities caps;
+  caps.kitty_graphics = true;
+  caps.kitty_animation = true;
+  auto supported = terminal.select_driver(caps, BuiltinDriver::Kitty);
+  REQUIRE(supported->supports_image_animation());
+
+  auto forced_ansi = terminal.select_driver(caps, BuiltinDriver::AnsiRgb);
+  CHECK_FALSE(forced_ansi->supports_image_animation());
+
+  caps.kitty_animation = false;
+  auto unsupported = terminal.select_driver(caps, BuiltinDriver::Kitty);
+  CHECK_FALSE(unsupported->supports_image_animation());
 }
 
 // ── #8.3: a late CSI device report must not leak into the input stream ───────

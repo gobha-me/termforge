@@ -441,8 +441,9 @@ auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
 
   const int in_fd = m_impl->tty_fd;
 
-  // 1. Synchronized-output, Kitty graphics, keyboard-flags, then DA1. Write
-  //    all four, then read. i=31 is an arbitrary image id for the probe; a=q
+  // 1. Synchronized-output, Kitty graphics, keyboard-flags, an action-level
+  //    Kitty animation probe, then DA1. Write all requests, then read. i=31
+  //    is an arbitrary image id for the basic probe; a=q
   //    asks for support. Order matters twice: the graphics query stays ahead
   //    of DA1 so its reply precedes the terminator (probe_kitty_ok's ordering
   //    guard), and DA1 stays
@@ -454,10 +455,19 @@ auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
   const char* sync_query = "\033[?2026$p";
   const char* kitty_query = "\033_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\033\\";
   const char* keyboard_query = "\033[?u";
+  // #116: basic TGP support does not imply a=f. Build a non-displayed 1x1
+  // image under the maximum protocol id (outside every driver pool), add one
+  // gapless frame with a reply requested, then delete it. The final a=f reply
+  // is the action-level support signal; q=2 keeps the setup/cleanup quiet.
+  const char* animation_query =
+      "\033_Ga=t,t=d,f=24,i=4294967295,s=1,v=1,q=2;AAAA\033\\"
+      "\033_Ga=f,t=d,f=24,i=4294967295,s=1,v=1,z=-1,X=1,q=0;AAAA\033\\"
+      "\033_Ga=d,d=I,i=4294967295,q=2\033\\";
   const char* da1 = "\033[c";
   emit(m_impl->out_fd, sync_query);
   emit(m_impl->out_fd, kitty_query);
   emit(m_impl->out_fd, keyboard_query);
+  emit(m_impl->out_fd, animation_query);
   emit(m_impl->out_fd, da1);
 
   const std::string reply = read_available(in_fd, 150);
@@ -466,6 +476,8 @@ auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
   // status, arriving before the DA1 primary reply. An error status ("i=31;E…")
   // means the terminal answered "no" and must not select the KittyDriver.
   if (detail::probe_kitty_ok(reply)) caps.kitty_graphics = true;
+  if (caps.kitty_graphics && detail::probe_kitty_animation(reply))
+    caps.kitty_animation = true;
 
   // Sixel: advertised in the DA1 attribute list (attribute "4").
   if (detail::probe_sixel(reply)) caps.sixel = true;
@@ -670,6 +682,8 @@ auto Terminal::select_driver(const Capabilities& caps, BuiltinDriver choice)
   // choice changes only the rendering tier, never these session facts (#257).
   auto driver = select_driver_for(caps, choice);
   driver->set_sync_updates(caps.sync_updates);
+  driver->set_image_animation_support(
+      caps.kitty_animation && driver->capabilities().kitty_graphics);
   return driver;
 }
 

@@ -18,15 +18,16 @@
 // image that inherited the number.
 //
 // Ids come from two pools and the split is the id budget (#109). Regions
-// allocate upward from 1 and pinned images take the configured range beginning
-// at kFirstPinnedImageId. THE POOLS ARE DISJOINT BY CONSTRUCTION (#190): each
-// allocator DERIVES a free id from its own live map plus the shared quarantine
-// — region_slot walks up from 1 and stops at kMaxRegionSlots, pin_payload walks
-// down from the configured ceiling and stops at kFirstPinnedImageId — and the
-// static_assert in the .cpp orders the two ranges. So neither allocator reads
-// the other's live map. Before #190 the region side was a monotonic counter
-// that never gave a collected id back, a region that MOVED cost an id per
-// frame, and the ranges met in about four seconds.
+// allocate upward from 1; application-resident pins and animations share the
+// configured range beginning at kFirstPinnedImageId. THE POOLS ARE DISJOINT BY
+// CONSTRUCTION (#190): each allocator DERIVES a free id from its own live maps
+// plus the shared quarantine — region_slot walks up from 1 and stops at
+// kMaxRegionSlots, resident_id walks down from the configured ceiling and stops
+// at kFirstPinnedImageId — and the static_assert in the .cpp orders the two
+// ranges. So neither allocator reads the other pool's live maps. Before #190
+// the region side was a monotonic counter that never gave a collected id back,
+// a region that MOVED cost an id per frame, and the ranges met in about four
+// seconds.
 //
 // That fixed the ids and not the bytes. A region's identity is its destination
 // RECT, so content that moves is a new key with no content hash to compare
@@ -57,6 +58,7 @@
 
 #include "termforge/drivers/terminal_driver.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -119,6 +121,8 @@ class KittyDriver final : public TerminalDriver {
   [[nodiscard]] auto max_pinned_images() const noexcept
       -> std::size_t override;
   [[nodiscard]] auto residency() const noexcept -> ImageResidency override;
+  auto register_animation(std::span<const AnimationFrame> frames)
+      -> std::expected<AnimationHandle, ErrorEvent> override;
   auto pin_image(const Image& image)
       -> std::expected<PinnedImage, ErrorEvent> override;
   auto pin_image(const EncodedImage& image)
@@ -167,7 +171,7 @@ class KittyDriver final : public TerminalDriver {
   // 246-image inventory with ten slots of headroom while keeping the policy
   // finite and queryable. Terminal-side byte accounting remains #112. Region
   // ids occupy 1..kMaxRegionSlots by construction (#190), leaving this whole
-  // adjacent range for pins.
+  // adjacent range for application-resident pins and animations.
   static constexpr std::uint32_t kFirstPinnedImageId = 17;
   static constexpr std::size_t kMaxPinnedImages = 256;
   // The flagship tier is the only one with an opaque-payload channel.
@@ -273,6 +277,23 @@ class KittyDriver final : public TerminalDriver {
     std::uint64_t last_place_clock{0};
   };
 
+  // One independently registered terminal-driven sequence (#116). It lives
+  // outside m_pinned so a PinnedImage API can never address an animation root
+  // merely because both happen to occupy the same terminal id range.
+  struct AnimationEntry {
+    Extent px{};
+    int format_code{0};
+    std::size_t frame_count{0};
+    std::uint32_t serial{0};
+    bool written{false};
+    bool accepted{false};
+  };
+
+  struct StagedAnimation {
+    std::uint32_t image_id{0};
+    std::uint32_t serial{0};
+  };
+
   // One placement of a pinned image. The image outlives this; the placement is
   // collected per frame exactly like a region, because a classic placement
   // left behind floats above the text grid whether or not its data is
@@ -308,7 +329,8 @@ class KittyDriver final : public TerminalDriver {
     RegionTransmit,
     PinTransmit,
     PinnedReplace,
-    PinnedEdit
+    PinnedEdit,
+    AnimationRegister
   };
 
   struct PendingReply {
@@ -326,6 +348,10 @@ class KittyDriver final : public TerminalDriver {
     // dedup. Preserve the prior value so a rejected opaque edit restores the
     // last accepted root rather than merely its byte accounting.
     std::uint64_t previous_content_hash{0};
+    // Registration is one operation containing one opaque transfer per frame.
+    // Replies for one image id are ordered on the terminal stream, so this
+    // count lets the operation remain singular while acknowledging every PNG.
+    std::size_t remaining_replies{1};
   };
 
   enum class ResidencyKind { Region, Pinned };
@@ -379,6 +405,12 @@ class KittyDriver final : public TerminalDriver {
                    Extent px, bool request_reply)
       -> std::expected<PinnedImage, ErrorEvent>;
 
+  // Smallest free application-resident id, shared structurally by pins and
+  // animations. `operation` keeps exhaustion diagnostics tied to the public
+  // call that asked rather than baking pin-specific text into the allocator.
+  auto resident_id(std::string_view operation)
+      -> std::expected<std::uint32_t, ErrorEvent>;
+
   // Replace the root frame of a pinned image through kitty's animation-frame
   // edit action. Normal a=t retransmission under an existing id deletes that
   // image's placements; a=f,r=1,X=1 updates the data while preserving them.
@@ -425,6 +457,16 @@ class KittyDriver final : public TerminalDriver {
                        Extent px, std::uint32_t id, PixelPoint destination,
                        ImageComposition composition,
                        bool request_reply) -> void;
+
+  // Add a NEW animation frame. Unlike root-frame edits, this intentionally
+  // omits r=; continuations repeat only a=f,m= as the protocol requires.
+  auto transmit_animation_frame(std::span<const std::byte> payload,
+                                int format_code, Extent px,
+                                std::uint32_t id,
+                                std::chrono::milliseconds gap,
+                                bool request_reply) -> void;
+  auto set_root_animation_gap(std::uint32_t id,
+                              std::chrono::milliseconds gap) -> void;
 
   // Everything both public draw_image overloads share once the payload is in
   // hand: the placeholder clamp, byte attribution, slot keying and LRU, the
@@ -504,6 +546,7 @@ class KittyDriver final : public TerminalDriver {
                                             const PinnedEntry& entry) const
       noexcept -> std::uint64_t;
   auto finish_content_frame(bool accepted) -> void;
+  auto finish_animation_frame(bool accepted) -> void;
 
   // Retire the text-grid half of a Unicode-placeholder placement (#201).
   // A stale placement is discovered after the frame's cell diff has already
@@ -569,7 +612,7 @@ class KittyDriver final : public TerminalDriver {
   PlacementMode m_mode{PlacementMode::Classic};
   // There are deliberately no image-id or placement-id counters here. Image
   // ids are DERIVED from their live maps (#190) plus #165's late-reply
-  // quarantine: region_slot walks up from 1 and pin_payload walks down from
+  // quarantine: region_slot walks up from 1 and resident_id walks down from
   // the configured ceiling. Placement ids are
   // scoped per image on the kitty wire (#200): a region owns its image id and
   // always uses p=1, while a pin derives the smallest free positive p= from
@@ -597,6 +640,8 @@ class KittyDriver final : public TerminalDriver {
   // Resident images (#109), keyed on the terminal-side image id. Nothing in
   // gc_regions or region_slot can reach this map -- that is the feature.
   std::unordered_map<std::uint32_t, PinnedEntry> m_pinned;
+  std::unordered_map<std::uint32_t, AnimationEntry> m_animations;
+  std::vector<StagedAnimation> m_staged_animations;
   // Committed only at an accepted emit_frame boundary. The mutation vector is
   // ordered because one frame may evict an id and reuse it for a new image.
   std::unordered_map<std::uint32_t, AccountedImage> m_accounted_images;
@@ -614,7 +659,14 @@ class KittyDriver final : public TerminalDriver {
   // handle carries so that an unpinned handle stays refused after its id has
   // been recycled -- see PinnedEntry::serial.
   std::uint32_t m_next_pin_serial{0};
+  std::uint32_t m_next_animation_serial{0};
   std::uint32_t m_next_region_serial{0};
+  // A failed multi-PNG registration can leave several replies in flight for
+  // one now-dead id. Keep it unavailable until every ordered late reply has
+  // been consumed; a set would release it after the first and let the next
+  // stale OK bless a later resident object.
+  std::unordered_map<std::uint32_t, std::size_t>
+      m_animation_quarantined_replies;
   std::uint64_t m_flush_count{0};
   // Whether anything was ever uploaded, asked at the transmit path itself.
   // on_shutdown needs the answer and neither map can give it: an unpin queues
