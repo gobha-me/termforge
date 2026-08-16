@@ -133,7 +133,7 @@ file is the tactical version.
   is the explicit protocol escape hatch. The below-background start literal is
   defined only in `core/types.hpp` and guarded by a source scan -- drivers use
   `z_index()`, never repeat it. `ImagePlacementOptions` is the additive home
-  for fit, layer and #115's future placement fields. Its driver overloads stay
+  for fit, layer and #115's pixel placement fields. Its driver overloads stay
   non-pure, and the default z=0 wire stays byte-identical (omit `z=`). App asks
   `supports_image_placement` before borrowing/blanking a widget region; an
   unsupported request keeps the authored Baseline and emits one transition
@@ -141,6 +141,20 @@ file is the tactical version.
   change re-places without retransmitting. A pinned placement's Classic key is
   `(image id, Rect)`, permitting exact overlap of distinct images; Unicode
   placeholders cannot represent that collision and refuse it with a `Warning`.
+  **Sub-cell placement and source crops are placement state** (#115).
+  `pixel_offset` is non-negative and strictly inside one current cell;
+  `source` is a positive `PixelRect` wholly inside the real `Image` extent or
+  the caller-declared `EncodedImage`/pin extent. Validate both before cache
+  lookup, mutation or wire, with 64-bit intermediate arithmetic; never parse an
+  opaque PNG to check its declaration. The selected crop is the effective
+  `Exact` extent and its pixel offset counts toward the containing cell rect.
+  Kitty emits `X=`/`Y=` and `x=`/`y=`/`w=`/`h=` only when requested, so the
+  default wire remains byte-identical. Geometry changes re-place without
+  retransmitting. Under Unicode placeholders, `Exact` omits `c=`/`r=` and
+  paints only `image_cell_extent(offset + crop)` cells at the destination's
+  top-left; clear an old larger grid when that footprint shrinks. Other tiers
+  refuse these fields with a `Warning`, while App keeps the authored Baseline
+  and transition-latches the event before blanking cells.
 - **A pre-encoded payload is shipped verbatim** (#163). `EncodedImage` carries
   opaque bytes the *terminal* decodes; the library never encodes, decodes,
   inspects or resamples them — that is the application's asset pipeline's job,

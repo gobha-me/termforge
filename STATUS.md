@@ -6,32 +6,42 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-16, latest)
 
-**Release candidate: v0.39.0 — named image placement layers.** #114 adds
-`ImageLayer::{above_text,below_text,below_background,raw}` and
-`ImagePlacementOptions`, carrying fit and layer together through widgets, App,
-resident-image state and every raw/encoded/pinned driver path. The semantic
-bands map to disjoint Kitty `z=` ranges with one canonical background boundary;
-the default remains byte-identical and omits `z=`.
+**Release candidate: v0.40.0 — sub-cell image placement and source crops.**
+#115 adds pixel-space `PixelRect` and extends `ImagePlacementOptions` with a
+within-cell `pixel_offset` plus an optional root-image `source` crop. Kitty
+emits `X=`/`Y=` and `x=`/`y=`/`w=`/`h=` only when requested, keeping default
+wire byte-identical. Crop/offset changes are placement edits and never
+retransmit cached or pinned payloads.
 
-Kitty updates a layer-only move as placement traffic without retransmitting
-payload, permits exact overlap between distinct pinned images in Classic mode,
-and explicitly refuses the Unicode-placeholder collision that cannot be
-represented honestly. Drivers that do not implement layers keep their existing
-non-pure source-compatible route: App preserves the information-complete
-Baseline, never borrows pixels, and emits one transition-latched
-`Severity::Info`.
+Validation runs before cache state or wire: offsets must be inside one current
+cell, crops must be positive and wholly inside the real/caller-declared root,
+and all extent arithmetic is overflow-safe. Opaque PNG remains opaque. The
+crop plus offset is the effective Exact footprint. Unicode placeholders now
+support Exact by omitting `c=`/`r=` and painting only the native cell footprint,
+including clearing stale remainder cells after a shrink. Unsupported tiers and
+invalid widget values preserve the authored Baseline with one transition event.
 
-GCC 14.2 and Clang 20.1 Release `-Werror` builds pass all 70 CTest targets and
-the standalone public-header target. GCC ASan+UBSan passes 70/70, and the
-changed paths pass TSan. GCC and Clang each pass the `subdir`, `install` and
-`vendored` consumer acceptance paths. Three focused mutations prove the suites
-reject omitted Kitty `z=`, bypassed App preflight and false legacy-driver
-support. All ten hosted PR jobs pass, as does the real-Kitty gate below.
+GCC 14.2 and Clang 20.1 Release `-Werror` builds pass all 71 CTest targets and
+the standalone public-header target. The six changed/relevant suites pass GCC
+ASan+UBSan with leak detection; App and geometry production paths pass TSan.
+The full local sanitizer matrix could not coexist with the compiler trees under
+the workspace quota, so hosted ASan+UBSan remains the full-matrix gate. GCC and
+Clang each pass `subdir`, `install` and `vendored` consumer acceptance. Four
+focused mutations prove the suites reject omitted geometry keys, a false
+full-rect Unicode footprint, bypassed App preflight and false legacy support.
+The offline stanza-13 wire dump is structurally valid; hosted CI and the
+real-Kitty visual gate are pending.
 
-**Live evidence:** stanza 12 passed in a real Kitty session: the above-text
-red plate hid its authored text, the below-text blue plate left its text
-visible, and eight non-default magenta background cells completely hid the
-below-background green plate. No graphics response contained `;E`.
+## Previous stable release: v0.39.0
+
+**v0.39.0 — named image placement layers.** #114 adds
+`ImageLayer::{above_text,below_text,below_background,raw}` and carries fit and
+layer together through widgets, App, resident state and raw/encoded/pinned
+driver paths. Kitty updates layer-only moves without retransmission and refuses
+Unicode collisions it cannot represent honestly. Stanza 12 passed in real
+Kitty: above-text hid text, below-text preserved it and a non-default background
+hid the below-background plate, with no `;E` response. The release shipped from
+commit `35994c1` after all hosted jobs passed.
 
 ## Previous stable release: v0.38.0
 

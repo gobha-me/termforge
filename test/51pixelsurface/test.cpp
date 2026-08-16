@@ -489,16 +489,16 @@ TEST_CASE("clean ANSI surfaces redraw only for placement invalidation",
   CHECK(resized.surface.submission_count() == 1);
 }
 
-TEST_CASE("App reports a PixelSurface fit refusal on the next frame",
+TEST_CASE("App reports a PixelSurface fit refusal once",
           "[pixelsurface][app][failure][fit]") {
   SurfaceApp app;
   app.surface.set_fit(PlacementFit::Exact);
   app.run_with(std::make_unique<KittyDriver>(), 3);
 
   CHECK(tfsupport::total_transmits(app.wire) == 0);
-  REQUIRE(app.errors == 2);
+  REQUIRE(app.errors == 1);
   CHECK(app.last_severity == Severity::Warning);
-  CHECK(app.last_error.find("Exact placement needs") != std::string::npos);
+  CHECK(app.last_error.find("PlacementFit::Exact needs") != std::string::npos);
   CHECK(app.surface.submission_count() == 0);
   CHECK(app.surface.content_dirty());
 }

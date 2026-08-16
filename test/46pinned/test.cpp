@@ -79,10 +79,12 @@ auto art(int seed) -> Image {
 // those apart is the whole of this suite's subject.
 using tfsupport::data_deletes_of;
 using tfsupport::frame_updates_of;
+using tfsupport::has_key;
 using tfsupport::ids_named;
 using tfsupport::placement_deletes_of;
 using tfsupport::placement_ids_of;
 using tfsupport::placements_of;
+using tfsupport::placements;
 using tfsupport::total_transmits;
 using tfsupport::total_data_transmits;
 using tfsupport::transmits_of;
@@ -1583,10 +1585,14 @@ TEST_CASE("pinned: an Exact refusal names draw_pinned, not draw_image",
   CHECK(small.error().message.find("draw_pinned: PlacementFit::Exact") == 0);
 
   d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
-  const auto unsupported =
+  const auto placeholder =
       d.draw_pinned(Rect{0, 0, 4, 4}, *p, PlacementFit::Exact);
-  REQUIRE_FALSE(unsupported.has_value());
-  CHECK(unsupported.error().message.find("draw_pinned: this tier cannot") == 0);
+  REQUIRE(placeholder.has_value());
+  d.flush();
+  const auto placed = placements(out);
+  REQUIRE_FALSE(placed.empty());
+  CHECK_FALSE(has_key(placed.back(), "c"));
+  CHECK_FALSE(has_key(placed.back(), "r"));
 }
 
 // ── explicit shutdown ───────────────────────────────────────────────────────

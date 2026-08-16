@@ -172,11 +172,12 @@ class TerminalDriver {
         "draw_image: this tier cannot place with PlacementFit::Exact"}};
   }
 
-  // The additive placement-options path (#114). NON-PURE so a driver written
-  // before named layers keeps compiling. The base delegates an implicit-z
-  // request to the established PlacementFit overload, preserving that
-  // driver's own Stretch/Exact behaviour; any non-zero layer is an honest
-  // Warning because an old tier has no way to honour it.
+  // The additive placement-options path (#114, #115). NON-PURE so a driver
+  // written before it keeps compiling. The base delegates a default pixel
+  // placement at implicit z to the established PlacementFit overload,
+  // preserving that driver's own Stretch/Exact behaviour. A non-zero layer,
+  // sub-cell offset or source crop is an honest Warning because an old tier
+  // has no way to honour it.
   //
   // No default argument: defaults on virtuals bind statically, and a defaulted
   // options overload would also collide with the existing overload set.
@@ -194,6 +195,12 @@ class TerminalDriver {
           Severity::Warning, "driver",
           "draw_image: this tier cannot place on a non-default image layer"}};
     }
+    if (options.pixel_offset != PixelPoint{} || options.source) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "driver",
+          "draw_image: this tier cannot place with a pixel offset or source "
+          "crop"}};
+    }
     return draw_image(cells, image, options.fit);
   }
 
@@ -201,9 +208,9 @@ class TerminalDriver {
   // drawing -- the same contract, and for the same reason, as
   // supports_image_format below.
   //
-  // The answer can change at RUNTIME: kitty can only place at native
-  // resolution under classic placement, so set_placement_mode moves it. An
-  // application cannot infer this from the driver's type and must ask.
+  // The answer is a driver capability rather than something an application
+  // can infer from its type. Ask it: an out-of-tree tier may select a runtime
+  // route, and that answer is allowed to change with the route.
   [[nodiscard]] virtual auto supports_placement_fit(
       PlacementFit fit) const noexcept -> bool {
     return fit == PlacementFit::Stretch;
@@ -211,13 +218,15 @@ class TerminalDriver {
 
   // Whether the complete placement request can be honoured before drawing.
   // App asks this before blanking a widget's information-complete Baseline.
-  // The base accepts only the protocol's implicit z=0 and then delegates the
-  // fit question to the existing runtime query.
+  // The base accepts only the protocol's implicit z=0, zero pixel offset and
+  // complete source image, then delegates the fit question to the existing
+  // runtime query.
   [[nodiscard]] virtual auto
   supports_image_placement(ImagePlacementOptions options) const noexcept
       -> bool {
     const auto z = options.layer.z_index();
-    return z && *z == 0 && supports_placement_fit(options.fit);
+    return z && *z == 0 && options.pixel_offset == PixelPoint{} &&
+           !options.source && supports_placement_fit(options.fit);
   }
 
   // Fill `cells` with an already-encoded payload, shipped to the terminal
@@ -332,6 +341,12 @@ class TerminalDriver {
       return std::unexpected{ErrorEvent{
           Severity::Warning, "driver",
           "draw_image: this tier cannot place on a non-default image layer"}};
+    }
+    if (options.pixel_offset != PixelPoint{} || options.source) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "driver",
+          "draw_image: this tier cannot place with a pixel offset or source "
+          "crop"}};
     }
     return draw_image(cells, image, options.fit);
   }
@@ -528,6 +543,12 @@ class TerminalDriver {
           Severity::Warning, "driver",
           "draw_pinned: this tier cannot place on a non-default image layer"}};
     }
+    if (options.pixel_offset != PixelPoint{} || options.source) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "driver",
+          "draw_pinned: this tier cannot place with a pixel offset or source "
+          "crop"}};
+    }
     return draw_pinned(cells, image, options.fit);
   }
 
@@ -563,6 +584,12 @@ class TerminalDriver {
       return std::unexpected{ErrorEvent{Severity::Warning, "driver",
                                         "retain_pinned: this tier cannot place "
                                         "on a non-default image layer"}};
+    }
+    if (options.pixel_offset != PixelPoint{} || options.source) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "driver",
+          "retain_pinned: this tier cannot place with a pixel offset or "
+          "source crop"}};
     }
     return retain_pinned(cells, image, options.fit);
   }

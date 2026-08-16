@@ -157,6 +157,23 @@ struct PixelPoint {
   constexpr auto operator==(const PixelPoint&) const noexcept -> bool = default;
 };
 
+// A rectangle in an image's PIXEL coordinate space. This is deliberately not
+// Rect: Rect is cells everywhere in the drawing API, while a source crop names
+// pixels inside an already-transmitted image (#115).
+//
+// Keep this an aggregate. Negative origins and non-positive extents remain
+// representable so the driver can report an ErrorEvent before narrowing,
+// clipping, or emitting anything.
+struct PixelRect {
+  int x{0}, y{0}, w{0}, h{0};
+
+  [[nodiscard]] constexpr auto empty() const noexcept -> bool {
+    return w <= 0 || h <= 0;
+  }
+
+  constexpr auto operator==(const PixelRect&) const noexcept -> bool = default;
+};
+
 // ── image ────────────────────────────────────────────────────────────────
 // Raw 32-bit RGBA pixel buffer. Loaded from raw-RGB assets (PNG/JPEG are
 // deliberately out of scope for the core; decode elsewhere and hand us RGBA).
@@ -496,12 +513,22 @@ enum class PlacementFit {
 };
 
 // Every property of one image placement, kept in one additive value type so
-// #115 can extend it with pixel offsets/crop without growing a mutually
-// exclusive virtual-overload tree. The default is exactly the historical
-// Stretch placement at the protocol's implicit z=0.
+// fit, stacking, sub-cell alignment and source selection compose without a
+// mutually exclusive virtual-overload tree (#114, #115). The default is
+// exactly the historical Stretch placement at the protocol's implicit z=0,
+// from the source image's top-left corner with its complete extent.
 struct ImagePlacementOptions {
   PlacementFit fit{PlacementFit::Stretch};
   ImageLayer layer{};
+  // Pixel offset within the destination's first cell (Kitty X=/Y=). Each
+  // component must be non-negative and smaller than the current cell-pixel
+  // extent. Zero is omitted from the wire.
+  PixelPoint pixel_offset{};
+  // Optional source crop in the transmitted image's pixel coordinates (Kitty
+  // x=/y=/w=/h=). The complete crop must lie inside the source's real Image
+  // extent or the EncodedImage extent the caller declared; PNG is never
+  // parsed to verify that declaration.
+  std::optional<PixelRect> source{};
 
   constexpr auto operator==(const ImagePlacementOptions&) const noexcept
       -> bool = default;

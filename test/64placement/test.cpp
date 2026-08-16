@@ -98,6 +98,12 @@ TEST_CASE("default placement options preserve the historical Kitty wire") {
   const auto placed = placements(new_wire);
   REQUIRE(placed.size() == 1);
   CHECK_FALSE(has_key(placed[0], "z"));
+  CHECK_FALSE(has_key(placed[0], "x"));
+  CHECK_FALSE(has_key(placed[0], "y"));
+  CHECK_FALSE(has_key(placed[0], "w"));
+  CHECK_FALSE(has_key(placed[0], "h"));
+  CHECK_FALSE(has_key(placed[0], "X"));
+  CHECK_FALSE(has_key(placed[0], "Y"));
 }
 
 TEST_CASE("Kitty emits named layers for raw and pre-encoded images") {
