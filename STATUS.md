@@ -6,7 +6,7 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-16, latest)
 
-**Release candidate: v0.41.0 — terminal-driven animation registration.** #116
+**Current stable release: v0.41.0 — terminal-driven animation registration.** #116
 adds borrowed raw/encoded `AnimationFrame` descriptors with independent gaps
 and an opaque `AnimationHandle`. Kitty validates a complete sequence before
 wire, transmits one resident root plus ordered new `a=f` frames, preserves PNG
@@ -22,11 +22,13 @@ rejection, timeout, late-reply quarantine, sink refusal, invalidation and
 shutdown follow the existing resident-image contracts. The new virtual is
 non-pure and legacy tiers refuse with a `Warning`.
 
-Local GCC and Clang builds each pass all 72 tests, and GCC/Clang consumer
-acceptance passes the subdirectory, installed and vendored paths. Hosted CI and
-the real-emulator action probe remain the release gates for this candidate.
-**Next after release: #117**, playback, seek, loop and explicit lifecycle
-control over `AnimationHandle`.
+Local GCC and Clang builds each passed all 72 tests, GCC/Clang consumer
+acceptance passed the subdirectory, installed and vendored paths, and all ten
+hosted jobs passed. The byte-exact real-Kitty gate returned
+`i=4294967295,r=2;OK`, proving that the dedicated new-frame action created
+frame 2; the probe intentionally never places the image, so no visual output is
+expected. The release shipped on 2026-08-16 through PR #277. **Next: #117**,
+playback, seek, loop and explicit lifecycle control over `AnimationHandle`.
 
 ## Previous stable release: v0.40.0
 
