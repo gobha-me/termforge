@@ -4,9 +4,9 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## In development (2026-08-16)
+## Where we are (2026-08-16, latest)
 
-**v0.42.0 candidate — terminal-driven animation control.** #117 adds
+**Current stable release: v0.42.0 — terminal-driven animation control.** #117 adds
 payload-free once/loop playback over #116's `AnimationHandle`, explicit
 Restart/Ignore replay, Hold/Finish interruption, zero-based seek, local
 commanded-state/deadline observation and owned-root unregistration. Finish
@@ -21,13 +21,14 @@ caller-cadence suite covers exact wire, pending/stale/cross-driver failures,
 replay, seek, deadlines, sink rollback, lifecycle and App clock forwarding;
 six direct mutations were killed. Local GCC 14.2 and Clang 20.1 passed all 73
 tests, focused ASan passed registration/control, and both compilers passed the
-subdirectory, installed and vendored consumer paths. Repro stanza 15's dump is
-byte-valid. Hosted CI and the required real-Kitty visible loop/final-frame gate
-remain before merge and release.
+subdirectory, installed and vendored consumer paths. All ten hosted jobs passed.
+The real-Kitty stanza 15 gate visibly alternated its red and green frames, then
+Finish selected and held the final green frame without an error response. The
+release shipped on 2026-08-16 through PR #278.
 
-## Where we are (2026-08-16, latest)
+## Previous stable release: v0.41.0
 
-**Current stable release: v0.41.0 — terminal-driven animation registration.** #116
+**v0.41.0 — terminal-driven animation registration.** #116
 adds borrowed raw/encoded `AnimationFrame` descriptors with independent gaps
 and an opaque `AnimationHandle`. Kitty validates a complete sequence before
 wire, transmits one resident root plus ordered new `a=f` frames, preserves PNG
