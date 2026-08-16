@@ -659,10 +659,16 @@ auto Terminal::is_console_vt() const noexcept -> bool {
 
 auto Terminal::select_driver(const Capabilities& caps)
     -> std::unique_ptr<TerminalDriver> {
+  return select_driver(caps, BuiltinDriver::Automatic);
+}
+
+auto Terminal::select_driver(const Capabilities& caps, BuiltinDriver choice)
+    -> std::unique_ptr<TerminalDriver> {
   // Pure caps -> driver mapping, defined in the driver-selection TU to avoid
   // pulling every driver header into this one. The caller probes once (see
-  // App::setup) and passes the result in — no second probe here.
-  auto driver = select_driver_for(caps);
+  // App::setup) and passes the result in -- no second probe here. A concrete
+  // choice changes only the rendering tier, never these session facts (#257).
+  auto driver = select_driver_for(caps, choice);
   driver->set_sync_updates(caps.sync_updates);
   return driver;
 }

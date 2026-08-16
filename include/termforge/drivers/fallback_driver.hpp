@@ -50,6 +50,9 @@ class FallbackDriver final : public TerminalDriver {
       -> Extent override;
   auto flush() -> void override;
   [[nodiscard]] auto capabilities() const noexcept -> Capabilities override;
+  [[nodiscard]] auto name() const noexcept -> std::string_view override {
+    return "fallback";
+  }
 
   // set_output moved to TerminalDriver in #178 -- do not re-declare it here.
   // Name hiding would make the ByteSink* overload invisible to any call made

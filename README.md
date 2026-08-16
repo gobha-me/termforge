@@ -18,7 +18,7 @@ for tests.
 ## Status
 
 Core framework, KittyDriver, the widget system, mouse routing, and the
-`forge-top` dogfooding application are landed and tested across 67 CTest targets;
+`forge-top` dogfooding application are landed and tested across 68 CTest targets;
 GCC 13/14 + Clang 19/20 are green in CI, ASan/UBSan is clean, and the
 cross-thread event path has a focused TSan gate.
 
@@ -32,14 +32,17 @@ Landed and verified:
   suspend/reattach/reset, pixel-region plumbing, guarded teardown
   on every exit path including an exception, thread-safe `post(Event)`
   delivery onto the loop thread, and owned structured `EventSource` adapters
-  with explicit terminal replacement/composition). Terminal input, structured
+  with explicit terminal replacement/composition). Apps can request
+  `BuiltinDriver::{Kitty,AnsiRgb,Fallback}` before `run()` without fabricating
+  probe facts, and inspect the selected tier through `driver().name()`.
+  Terminal input, structured
   source batches, one posted-event snapshot, and ticks have a documented
   order; widgets and every other App API remain single-threaded. See
   [docs/event-sources.md](docs/event-sources.md).
 - `Terminal` — raw-mode RAII (termios restore on destruction, or explicitly via
   `leave_raw()` where no destructor is guaranteed to run), capability
-  probing (Kitty query + DA1, Sixel attribute, truecolor env), driver
-  selection, read-mode API, alt-screen lifecycle.
+  probing (Kitty query + DA1, Sixel attribute, truecolor env), automatic or
+  explicit built-in driver selection, read-mode API, alt-screen lifecycle.
 - **KittyDriver** — Kitty graphics protocol: base64 + APC transmit, classic
   cursor placement, Unicode placeholders (tmux-first), stable per-region image
   IDs with LRU eviction. Flagship driver.

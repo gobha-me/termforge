@@ -76,6 +76,9 @@ class KittyDriver final : public TerminalDriver {
   ~KittyDriver() override;
 
   auto init() -> std::expected<void, ErrorEvent> override;
+  [[nodiscard]] auto name() const noexcept -> std::string_view override {
+    return "kitty";
+  }
   auto draw_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
                  Attr attrs) -> void override;
   auto draw_image(Rect cells, const Image& image)

@@ -218,6 +218,12 @@ class Terminal {
   auto select_driver(const Capabilities& caps)
       -> std::unique_ptr<TerminalDriver>;
 
+  // Construct one exact built-in tier while retaining `caps` as the session's
+  // wire facts (notably synchronized-output support). Automatic is identical
+  // to the one-argument overload.
+  auto select_driver(const Capabilities& caps, BuiltinDriver choice)
+      -> std::unique_ptr<TerminalDriver>;
+
   // ── read modes ──
   // The capability probe needs a short timeout (a terminal may never reply),
   // while an event loop wants to block until input arrives. These switch the

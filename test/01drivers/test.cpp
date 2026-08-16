@@ -130,6 +130,9 @@ TEST_CASE("Drivers: capabilities reflect their tier", "[drivers]") {
   AnsiRgbDriver ansi;
   FallbackDriver fb;
   KittyDriver kitty;
+  REQUIRE(ansi.name() == "ansi-rgb");
+  REQUIRE(fb.name() == "fallback");
+  REQUIRE(kitty.name() == "kitty");
   REQUIRE(ansi.capabilities().truecolor);
   REQUIRE_FALSE(fb.capabilities().truecolor);
   REQUIRE(kitty.capabilities().kitty_graphics);

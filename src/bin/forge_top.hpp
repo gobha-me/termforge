@@ -16,7 +16,7 @@
 
 namespace termforge::forge_top {
 
-enum class DriverChoice { Automatic, Kitty, Ansi, Fallback };
+using DriverChoice = BuiltinDriver;
 
 class HelpPopup final : public Dialog {
 public:

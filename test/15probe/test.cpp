@@ -141,6 +141,22 @@ TEST_CASE("select_driver_for: empty caps degrade to the fallback driver",
   REQUIRE_FALSE(d->capabilities().truecolor);
 }
 
+TEST_CASE("select_driver_for: a concrete built-in choice overrides precedence",
+          "[probe][select]") {
+  Capabilities kitty_caps;
+  kitty_caps.kitty_graphics = true;
+  kitty_caps.truecolor = true;
+
+  CHECK(select_driver_for(kitty_caps, BuiltinDriver::Kitty)->name() ==
+        "kitty");
+  CHECK(select_driver_for(kitty_caps, BuiltinDriver::AnsiRgb)->name() ==
+        "ansi-rgb");
+  CHECK(select_driver_for(kitty_caps, BuiltinDriver::Fallback)->name() ==
+        "fallback");
+  CHECK(select_driver_for(kitty_caps, BuiltinDriver::Automatic)->name() ==
+        "kitty");
+}
+
 // ── #8.3: a late CSI device report must not leak into the input stream ───────
 
 namespace {

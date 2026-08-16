@@ -17,4 +17,10 @@ namespace termforge {
 [[nodiscard]] auto select_driver_for(const Capabilities& caps)
     -> std::unique_ptr<TerminalDriver>;
 
+// As above, with an explicit built-in tier override. Concrete choices ignore
+// capability precedence; Automatic delegates to the existing mapping.
+[[nodiscard]] auto select_driver_for(const Capabilities& caps,
+                                     BuiltinDriver choice)
+    -> std::unique_ptr<TerminalDriver>;
+
 }  // namespace termforge
