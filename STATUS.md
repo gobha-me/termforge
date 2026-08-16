@@ -25,8 +25,9 @@ ASan+UBSan with leak detection, each pass all 68 tests. Both compilers pass the
 `subdir`, `install` and `vendored` consumer acceptance paths. Five focused
 mutations prove the suite fails if the size guard, one-shot event latch,
 accepted-write event boundary, per-frame recovery or actual-byte metering
-regresses. Hosted PR/exact-main CI and the original Apsis Drift Kitty/RDP
-capture remain required before release.
+regresses. All ten hosted PR jobs pass. The original 60-second Apsis Drift
+`remote` capture on Kitty 0.32.2 over RDP completed without a pending-mode stop
+diagnostic. Exact-main CI remains required before release.
 
 ## Previous stable release: v0.37.0
 
