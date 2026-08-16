@@ -772,9 +772,14 @@ auto KittyDriver::register_animation(std::span<const AnimationFrame> frames)
     if (prepared[index].request_reply) ++reply_count;
   }
 
-  m_animations.emplace(id, AnimationEntry{prepared.front().px,
-                                           prepared.front().format_code,
-                                           prepared.size(), serial});
+  std::vector<std::chrono::milliseconds> gaps;
+  gaps.reserve(prepared.size());
+  for (const auto& frame : prepared) gaps.push_back(frame.gap);
+  m_animations.emplace(
+      id, AnimationEntry{prepared.front().px, prepared.front().format_code,
+                         prepared.size(), serial, false, false,
+                         std::move(gaps), AnimationEntry::Playback{},
+                         AnimationEntry::Playback{}});
   m_staged_animations.push_back(StagedAnimation{id, serial});
   stage_residency_set(id, serial, ResidencyKind::Pinned,
                       static_cast<std::size_t>(source_bytes));
@@ -791,6 +796,261 @@ auto KittyDriver::register_animation(std::span<const AnimationFrame> frames)
                          reply_count});
   }
   return AnimationHandle{id, instance_token(), serial};
+}
+
+auto KittyDriver::resolve_animation(AnimationHandle animation,
+                                    std::string_view fn)
+    -> std::expected<AnimationEntry*, ErrorEvent> {
+  if (!animation) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        std::format("{}: handle is empty -- it was never returned by "
+                    "register_animation",
+                    fn)}};
+  }
+  if (animation.owner != instance_token()) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        std::format("{}: handle was issued by a different driver -- id "
+                    "spaces are per-driver and one session's handle names "
+                    "another's animation",
+                    fn)}};
+  }
+  const auto it = m_animations.find(animation.id);
+  if (it == m_animations.end() || it->second.serial != animation.serial) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        std::format("{}: handle is stale -- the animation was already "
+                    "unregistered or invalidated",
+                    fn)}};
+  }
+  return &it->second;
+}
+
+auto KittyDriver::resolve_animation(AnimationHandle animation,
+                                    std::string_view fn) const
+    -> std::expected<const AnimationEntry*, ErrorEvent> {
+  if (!animation) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        std::format("{}: handle is empty -- it was never returned by "
+                    "register_animation",
+                    fn)}};
+  }
+  if (animation.owner != instance_token()) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        std::format("{}: handle was issued by a different driver -- id "
+                    "spaces are per-driver and one session's handle names "
+                    "another's animation",
+                    fn)}};
+  }
+  const auto it = m_animations.find(animation.id);
+  if (it == m_animations.end() || it->second.serial != animation.serial) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        std::format("{}: handle is stale -- the animation was already "
+                    "unregistered or invalidated",
+                    fn)}};
+  }
+  return &it->second;
+}
+
+auto KittyDriver::expected_animation_deadline(
+    const AnimationEntry& entry, std::size_t first_frame,
+    std::chrono::steady_clock::time_point now) noexcept
+    -> std::chrono::steady_clock::time_point {
+  using Clock = std::chrono::steady_clock;
+  auto result = now;
+  // Completion means the final frame became current. Its own gap is the
+  // last-to-root delay for a loop and therefore does not belong to a one-shot.
+  for (std::size_t i = first_frame; i + 1 < entry.gaps.size(); ++i) {
+    const auto gap = std::chrono::duration_cast<Clock::duration>(entry.gaps[i]);
+    const auto remaining = Clock::time_point::max() - result;
+    if (gap >= remaining) return Clock::time_point::max();
+    result += gap;
+  }
+  return result;
+}
+
+auto KittyDriver::stage_animation_control(std::uint32_t image_id) -> void {
+  m_staged_animation_controls.insert(image_id);
+}
+
+auto KittyDriver::emit_animation_control(std::uint32_t image_id,
+                                         std::string_view fields) -> void {
+  const std::size_t before = m_buf.size();
+  m_buf += std::format("\033_Ga=a,i={},{},q=2\033\\", image_id, fields);
+  tally_image_edit(m_buf.size() - before);
+}
+
+auto KittyDriver::play_animation(
+    AnimationHandle animation, AnimationPlayMode mode, AnimationReplay replay,
+    std::chrono::steady_clock::time_point now)
+    -> std::expected<void, ErrorEvent> {
+  auto resolved = resolve_animation(animation, "play_animation");
+  if (!resolved) return std::unexpected{resolved.error()};
+  AnimationEntry& entry = **resolved;
+  if (!entry.accepted) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        std::format("play_animation: animation {} is still awaiting its "
+                    "accepted write or terminal acknowledgement",
+                    animation.id)}};
+  }
+  switch (mode) {
+    case AnimationPlayMode::Once:
+    case AnimationPlayMode::Loop: break;
+    default:
+      return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
+                                        "play_animation: invalid play mode"}};
+  }
+  switch (replay) {
+    case AnimationReplay::Restart:
+    case AnimationReplay::Ignore: break;
+    default:
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "kitty", "play_animation: invalid replay mode"}};
+  }
+
+  const auto current = animation_status(animation, now);
+  if (!current) return std::unexpected{current.error()};
+  if (current->playing() && replay == AnimationReplay::Ignore) return {};
+
+  stage_animation_control(animation.id);
+  if (current->playing()) emit_animation_control(animation.id, "s=1,c=1");
+  if (mode == AnimationPlayMode::Once) {
+    emit_animation_control(animation.id, "s=2,c=1");
+    entry.projected.state = AnimationRunState::PlayingOnce;
+    entry.projected.deadline = expected_animation_deadline(entry, 0, now);
+  } else {
+    emit_animation_control(animation.id, "s=3,v=1,c=1");
+    entry.projected.state = AnimationRunState::Looping;
+    entry.projected.deadline.reset();
+  }
+  return {};
+}
+
+auto KittyDriver::seek_animation(
+    AnimationHandle animation, std::size_t frame_index,
+    std::chrono::steady_clock::time_point now)
+    -> std::expected<void, ErrorEvent> {
+  auto resolved = resolve_animation(animation, "seek_animation");
+  if (!resolved) return std::unexpected{resolved.error()};
+  AnimationEntry& entry = **resolved;
+  if (!entry.accepted) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        std::format("seek_animation: animation {} is still awaiting its "
+                    "accepted write or terminal acknowledgement",
+                    animation.id)}};
+  }
+  if (frame_index >= entry.frame_count) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        std::format("seek_animation: frame {} is outside animation {} with "
+                    "{} frames",
+                    frame_index, animation.id, entry.frame_count)}};
+  }
+
+  const auto current = animation_status(animation, now);
+  if (!current) return std::unexpected{current.error()};
+  stage_animation_control(animation.id);
+  const auto wire_frame = frame_index + 1;
+  if (current->playing()) {
+    emit_animation_control(animation.id,
+                           std::format("c={}", wire_frame));
+    if (current->state == AnimationRunState::PlayingOnce) {
+      entry.projected.deadline =
+          expected_animation_deadline(entry, frame_index, now);
+    }
+  } else {
+    emit_animation_control(animation.id,
+                           std::format("s=1,c={}", wire_frame));
+    entry.projected.state = AnimationRunState::Stopped;
+    entry.projected.deadline.reset();
+  }
+  return {};
+}
+
+auto KittyDriver::stop_animation(AnimationHandle animation,
+                                 AnimationStopMode mode)
+    -> std::expected<void, ErrorEvent> {
+  auto resolved = resolve_animation(animation, "stop_animation");
+  if (!resolved) return std::unexpected{resolved.error()};
+  AnimationEntry& entry = **resolved;
+  if (!entry.accepted) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        std::format("stop_animation: animation {} is still awaiting its "
+                    "accepted write or terminal acknowledgement",
+                    animation.id)}};
+  }
+  switch (mode) {
+    case AnimationStopMode::Hold:
+    case AnimationStopMode::Finish: break;
+    default:
+      return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
+                                        "stop_animation: invalid stop mode"}};
+  }
+
+  stage_animation_control(animation.id);
+  if (mode == AnimationStopMode::Finish) {
+    emit_animation_control(
+        animation.id, std::format("s=1,c={}", entry.frame_count));
+    entry.projected.state = AnimationRunState::Complete;
+  } else {
+    emit_animation_control(animation.id, "s=1");
+    entry.projected.state = AnimationRunState::Stopped;
+  }
+  entry.projected.deadline.reset();
+  return {};
+}
+
+auto KittyDriver::animation_status(
+    AnimationHandle animation,
+    std::chrono::steady_clock::time_point now) const
+    -> std::expected<AnimationStatus, ErrorEvent> {
+  auto resolved = resolve_animation(animation, "animation_status");
+  if (!resolved) return std::unexpected{resolved.error()};
+  const AnimationEntry& entry = **resolved;
+  if (!entry.written || !entry.accepted)
+    return AnimationStatus{AnimationRunState::Pending, std::nullopt};
+
+  AnimationStatus status{entry.projected.state, entry.projected.deadline};
+  if (status.state == AnimationRunState::PlayingOnce &&
+      status.expected_completion && now >= *status.expected_completion) {
+    status.state = AnimationRunState::Complete;
+  }
+  return status;
+}
+
+auto KittyDriver::unregister_animation(AnimationHandle animation)
+    -> std::expected<void, ErrorEvent> {
+  auto resolved = resolve_animation(animation, "unregister_animation");
+  if (!resolved) return std::unexpected{resolved.error()};
+  if (!(*resolved)->written) {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "kitty",
+        std::format("unregister_animation: animation {} is still awaiting "
+                    "its accepted write",
+                    animation.id)}};
+  }
+  const std::uint32_t serial = (*resolved)->serial;
+  if (const auto pending = m_pending_replies.find(animation.id);
+      pending != m_pending_replies.end()) {
+    if (pending->second.kind == PendingKind::AnimationRegister)
+      m_animation_quarantined_replies[animation.id] +=
+          pending->second.remaining_replies;
+    m_pending_replies.erase(pending);
+  }
+
+  const std::size_t before = m_buf.size();
+  delete_image(animation.id, serial);
+  tally_image_edit(m_buf.size() - before);
+  m_staged_animation_controls.erase(animation.id);
+  m_animations.erase(animation.id);
+  return {};
 }
 
 auto KittyDriver::pin_image(const Image& image)
@@ -1187,6 +1447,7 @@ auto KittyDriver::invalidate_images() noexcept -> void {
   m_pinned.clear();
   m_animations.clear();
   m_staged_animations.clear();
+  m_staged_animation_controls.clear();
   m_pin_places.clear();
   m_accounted_images.clear();
   m_residency_mutations.clear();
@@ -1677,6 +1938,18 @@ auto KittyDriver::finish_animation_frame(bool accepted) -> void {
   m_staged_animations.clear();
 }
 
+auto KittyDriver::finish_animation_controls(bool accepted) -> void {
+  for (const auto image_id : m_staged_animation_controls) {
+    const auto it = m_animations.find(image_id);
+    if (it == m_animations.end()) continue;
+    if (accepted)
+      it->second.committed = it->second.projected;
+    else
+      it->second.projected = it->second.committed;
+  }
+  m_staged_animation_controls.clear();
+}
+
 auto KittyDriver::finish_pending(std::uint32_t image_id,
                                  const PendingReply& pending, bool success,
                                  std::string_view status, bool timed_out)
@@ -1899,6 +2172,7 @@ void KittyDriver::flush() {
   const bool accepted = emit_frame(m_buf);
   if (!accepted) discard_unwritten_edits();
   finish_animation_frame(accepted);
+  finish_animation_controls(accepted);
   finish_residency_frame(accepted);
   finish_content_frame(accepted);
   m_buf.clear();
@@ -2364,6 +2638,7 @@ auto KittyDriver::on_shutdown() -> void {
   m_buf += kDeleteAll;
   tally_image_edit(kDeleteAll.size());
   const bool accepted = emit_frame(m_buf);
+  finish_animation_controls(accepted);
   if (accepted) {
     m_accounted_images.clear();
     m_animations.clear();

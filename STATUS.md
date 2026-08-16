@@ -6,7 +6,29 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-16, latest)
 
-**Current stable release: v0.41.0 — terminal-driven animation registration.** #116
+**Current stable release: v0.42.0 — terminal-driven animation control.** #117 adds
+payload-free once/loop playback over #116's `AnimationHandle`, explicit
+Restart/Ignore replay, Hold/Finish interruption, zero-based seek, local
+commanded-state/deadline observation and owned-root unregistration. Finish
+stops and selects the final frame, while App forwards its real or synthetic
+monotonic clock so completion tests are deterministic without pretending Kitty
+acknowledges presentation.
+
+The controls commit with the accepted frame write and roll projected state back
+on sink refusal; they are metered as image-edit bytes. Existing out-of-tree
+drivers remain source-compatible through non-pure Warning defaults. A dedicated
+caller-cadence suite covers exact wire, pending/stale/cross-driver failures,
+replay, seek, deadlines, sink rollback, lifecycle and App clock forwarding;
+six direct mutations were killed. Local GCC 14.2 and Clang 20.1 passed all 73
+tests, focused ASan passed registration/control, and both compilers passed the
+subdirectory, installed and vendored consumer paths. All ten hosted jobs passed.
+The real-Kitty stanza 15 gate visibly alternated its red and green frames, then
+Finish selected and held the final green frame without an error response. The
+release shipped on 2026-08-16 through PR #278.
+
+## Previous stable release: v0.41.0
+
+**v0.41.0 — terminal-driven animation registration.** #116
 adds borrowed raw/encoded `AnimationFrame` descriptors with independent gaps
 and an opaque `AnimationHandle`. Kitty validates a complete sequence before
 wire, transmits one resident root plus ordered new `a=f` frames, preserves PNG
@@ -27,8 +49,9 @@ acceptance passed the subdirectory, installed and vendored paths, and all ten
 hosted jobs passed. The byte-exact real-Kitty gate returned
 `i=4294967295,r=2;OK`, proving that the dedicated new-frame action created
 frame 2; the probe intentionally never places the image, so no visual output is
-expected. The release shipped on 2026-08-16 through PR #277. **Next: #117**,
-playback, seek, loop and explicit lifecycle control over `AnimationHandle`.
+expected. The release shipped on 2026-08-16 through PR #277. It left #117 —
+playback, seek, loop and explicit lifecycle control over `AnimationHandle` — as
+the next cut; that is the v0.42.0 candidate above.
 
 ## Previous stable release: v0.40.0
 

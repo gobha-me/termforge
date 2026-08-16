@@ -609,8 +609,8 @@ struct PinnedImage {
 // It carries the same three-part identity as PinnedImage for the same reasons:
 // ids overlap between driver instances and are recycled inside one instance,
 // while a handle must never start naming a later resident object by accident.
-// Animation playback/control is #117; #116 establishes the independently
-// owned resident sequence that those operations will address.
+// #117's playback, observation and lifecycle operations all target this
+// independently owned resident sequence rather than an integer id alone.
 struct AnimationHandle {
   std::uint32_t id{0};
   std::uint32_t owner{0};
@@ -620,6 +620,34 @@ struct AnimationHandle {
     return id != 0;
   }
   constexpr auto operator==(const AnimationHandle&) const -> bool = default;
+};
+
+// Playback policy and locally observable state for a registered animation
+// (#117). Kitty has no completion notification: Complete means the declared
+// one-shot schedule reached its expected deadline on App's monotonic timeline,
+// never that the terminal acknowledged presenting the final frame.
+enum class AnimationPlayMode : std::uint8_t { Once, Loop };
+enum class AnimationReplay : std::uint8_t { Restart, Ignore };
+enum class AnimationStopMode : std::uint8_t { Hold, Finish };
+enum class AnimationRunState : std::uint8_t {
+  Pending,
+  Stopped,
+  PlayingOnce,
+  Looping,
+  Complete,
+};
+
+struct AnimationStatus {
+  AnimationRunState state{AnimationRunState::Pending};
+  // Present only for a one-shot command. The deadline is when the final frame
+  // is expected to become current, so the final frame's own gap is excluded.
+  std::optional<std::chrono::steady_clock::time_point> expected_completion;
+
+  [[nodiscard]] constexpr auto playing() const noexcept -> bool {
+    return state == AnimationRunState::PlayingOnce ||
+           state == AnimationRunState::Looping;
+  }
+  constexpr auto operator==(const AnimationStatus&) const -> bool = default;
 };
 
 // ── capabilities ─────────────────────────────────────────────────────────

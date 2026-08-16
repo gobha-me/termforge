@@ -262,6 +262,20 @@ file is the tactical version.
   rollback, quarantine and cleanup boundaries as pins. Basic `kitty_graphics`
   is insufficient: the base-owned support bit comes from the action-level
   probe or a pushed capability, and the non-pure default refuses with Warning.
+- **Animation completion is commanded timeline state, not terminal truth**
+  (#117). Kitty has start/stop/current-frame controls but no completion query.
+  `play_animation` therefore takes explicit monotonic time, and App's protected
+  wrapper supplies the same real or synthetic clock as its frame loop. Once is
+  `s=2,c=1`; loop is `s=3,v=1,c=1`; an active Restart stops/selects frame 1
+  before starting, while Ignore emits nothing. Hold interruption uses `s=1`;
+  Finish uses `s=1,c=last`, so a cut-short transition lands on its authored end.
+  Seek indices are zero-based in C++ and one-based on `c=`. The expected
+  one-shot deadline sums gaps until the final frame becomes current and excludes
+  that final frame's own gap; a loop has none. Controls carry no payload, count
+  as `image_edit`, project state immediately, commit at the accepted-write
+  boundary and roll back on sink refusal. Unregistration owns the sequence and
+  therefore uses `d=I`, never placement-only `d=i`. The five driver additions
+  are non-pure honest defaults; legacy and unsupported tiers return Warning.
 - **Raw mode is RAII** — `Terminal` restores termios on destruction. Never
   leave the terminal in raw mode on any exit path, **including one an exception
   takes**: a destructor is not a guarantee (an exception escaping `main`

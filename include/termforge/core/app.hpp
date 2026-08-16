@@ -931,6 +931,33 @@ class App {
   [[nodiscard]] auto driver() -> TerminalDriver& { return *m_driver; }
   [[nodiscard]] auto terminal() -> Terminal& { return m_term; }
 
+  // App-timeline forwarding for terminal-driven animation control (#117).
+  // Call from the loop thread after setup (normally on_start/on_tick/on_event).
+  // The explicit time-bearing driver API remains available to direct callers;
+  // these helpers guarantee an App uses the same real/synthetic clock as its
+  // frame and tick machinery.
+  auto play_animation(AnimationHandle animation, AnimationPlayMode mode,
+                      AnimationReplay replay)
+      -> std::expected<void, ErrorEvent> {
+    return driver().play_animation(animation, mode, replay, now_steady());
+  }
+  auto seek_animation(AnimationHandle animation, std::size_t frame_index)
+      -> std::expected<void, ErrorEvent> {
+    return driver().seek_animation(animation, frame_index, now_steady());
+  }
+  auto stop_animation(AnimationHandle animation, AnimationStopMode mode)
+      -> std::expected<void, ErrorEvent> {
+    return driver().stop_animation(animation, mode);
+  }
+  [[nodiscard]] auto animation_status(AnimationHandle animation) const
+      -> std::expected<AnimationStatus, ErrorEvent> {
+    return m_driver->animation_status(animation, now_steady());
+  }
+  auto unregister_animation(AnimationHandle animation)
+      -> std::expected<void, ErrorEvent> {
+    return driver().unregister_animation(animation);
+  }
+
   // Render a widget's pixel regions through the active enhanced-image driver
   // (Kitty or ANSI truecolour). Call after widget.draw(screen) in on_render.
   // The cells are collected now and the images are issued in the frame's

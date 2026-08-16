@@ -827,10 +827,51 @@ when the frame write is accepted. Each opaque PNG transfer must then receive its
 ordered `OK`; rejection or timeout rolls back the whole sequence, schedules a
 root delete, and quarantines the id until every late reply has arrived.
 
-Registration lifetime is session-wide in #116: `invalidate_images()` forgets
-it without wire and accepted shutdown delete-all retires it with wire. Explicit
-stop/start/seek/loop and release belong to #117; the handle intentionally has no
-operation in this registration-only cut.
+### Playback, interruption, and local completion (#117)
+
+The handle owns the sequence's independent playback and lifecycle state:
+
+```cpp
+auto now = std::chrono::steady_clock::now();
+driver.play_animation(*animation, AnimationPlayMode::Once,
+                      AnimationReplay::Restart, now);
+
+auto status = driver.animation_status(*animation, now);
+if (status && status->expected_completion) {
+  // The declared schedule says when the final frame should become current.
+}
+
+driver.seek_animation(*animation, 1, now);  // API indices are zero-based
+driver.stop_animation(*animation, AnimationStopMode::Finish);
+driver.unregister_animation(*animation);
+```
+
+`AnimationPlayMode::Once` emits `s=2,c=1`; `Loop` emits `s=3,v=1,c=1`.
+Triggering an active sequence is explicit: `AnimationReplay::Ignore` emits
+nothing, while `Restart` first stops and selects frame 1, then starts the new
+mode. `AnimationStopMode::Hold` stops on the current frame; `Finish` stops and
+selects the final frame so an interrupted transition lands in the same visual
+state as a completed one. Seeking uses a zero-based API index and Kitty's
+one-based `c=` field. Every control is payload-free and metered as image-edit
+traffic.
+
+Kitty has no completion notification or query. `AnimationStatus` therefore
+reports commanded state and a client-side expected deadline, not proof that the
+terminal presented a frame. A finite one-shot becomes locally `Complete` when
+App's monotonic timeline reaches the sum of the remaining frame gaps; the final
+frame's own gap is excluded because completion means it became current. Loops
+have no deadline. App's protected helpers supply the same real or
+`SyntheticClock` timeline as ticks and frame pacing, while direct driver calls
+take that time explicitly.
+
+Registration is `Pending` until its write and any opaque acknowledgements are
+accepted. Controls update projected state immediately, commit with their frame
+write, and roll back if the sink refuses it. `unregister_animation` emits
+`a=d,d=I`, freeing the owned root and all of its frames; the handle becomes
+stale immediately. `invalidate_images()` forgets registrations without wire,
+and accepted shutdown delete-all retires them terminal-side. All five additions
+to `TerminalDriver` are non-pure honest defaults so existing out-of-tree tiers
+continue to compile and return `Warning` without output.
 
 ### Mutable content keeps the handle and placement (#196, #261)
 
