@@ -21,6 +21,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -29,13 +30,16 @@
 #include "detail/base64.hpp"
 #include "detail/payload_hash.hpp"
 #include "detail/simd.hpp"
+#include "termforge/core/app.hpp"
 #include "termforge/core/byte_sink.hpp"
 #include "termforge/core/renderer.hpp"
 #include "termforge/core/screen.hpp"
 #include "termforge/core/text.hpp"
 #include "termforge/drivers/ansi_rgb_driver.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
+#include "termforge/drivers/kitty_driver.hpp"
 #include "termforge/widgets/detail/width.hpp"
+#include "termforge/widgets/widget.hpp"
 
 using namespace termforge;
 
@@ -43,7 +47,7 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-enum class Suite { Kernels, W3, All };
+enum class Suite { Kernels, W3, W4, All };
 enum class Format { Table, Json };
 enum class KernelChoice { Auto, Scalar, Avx2 };
 
@@ -79,6 +83,41 @@ struct Wall {
   double budget_ms{};
   std::string largest_passing;
   std::optional<std::string> first_failing;
+};
+
+struct PhaseStats {
+  double median_ms{};
+  double p95_ms{};
+};
+
+struct W4Result {
+  std::string mode;
+  int region_count{};
+  int cell_w{};
+  int cell_h{};
+  int samples{};
+  PhaseStats tick;
+  PhaseStats application_render;
+  PhaseStats framework_submission;
+  PhaseStats sink_write;
+  PhaseStats frame_work;
+  FrameBytes bytes;
+  ImageResidency residency;
+  std::uint64_t checksum{};
+};
+
+struct W4BudgetWall {
+  double budget_ms{};
+  std::optional<int> largest_passing_count;
+  std::optional<int> first_failing_count;
+};
+
+struct W4Wall {
+  std::string mode;
+  int cell_w{};
+  int cell_h{};
+  std::optional<int> first_retransmit_count;
+  std::array<W4BudgetWall, 2> budgets;
 };
 
 std::atomic<std::uint64_t> g_observed{0};
@@ -140,8 +179,9 @@ class CountingSink final : public ByteSink {
       const auto v = value(arg);
       if (v == "kernels") out.suite = Suite::Kernels;
       else if (v == "w3") out.suite = Suite::W3;
+      else if (v == "w4") out.suite = Suite::W4;
       else if (v == "all") out.suite = Suite::All;
-      else throw std::runtime_error{"--suite must be kernels, w3, or all"};
+      else throw std::runtime_error{"--suite must be kernels, w3, w4, or all"};
     } else if (arg == "--format") {
       const auto v = value(arg);
       if (v == "table") out.format = Format::Table;
@@ -165,7 +205,7 @@ class CountingSink final : public ByteSink {
       else throw std::runtime_error{"--kernel-tier must be auto, scalar, or avx2"};
     } else if (arg == "--help") {
       std::cout
-          << "Usage: termforge_bench [--suite kernels|w3|all] "
+          << "Usage: termforge_bench [--suite kernels|w3|w4|all] "
              "[--format table|json] [--output PATH] [--samples N] "
              "[--warmup N] [--kernel-tier auto|scalar|avx2] [--smoke]\n";
       std::exit(0);
@@ -431,6 +471,296 @@ struct W3Case {
   return out;
 }
 
+[[nodiscard]] constexpr auto w4_region_key(Rect rect) noexcept
+    -> std::uint64_t {
+  return static_cast<std::uint64_t>(static_cast<std::uint16_t>(rect.x)) |
+         (static_cast<std::uint64_t>(static_cast<std::uint16_t>(rect.y))
+          << 16) |
+         (static_cast<std::uint64_t>(static_cast<std::uint16_t>(rect.w))
+          << 32) |
+         (static_cast<std::uint64_t>(static_cast<std::uint16_t>(rect.h))
+          << 48);
+}
+
+// W4 uses the production App caller order, not a replay: draw the Baseline,
+// collect every region, queue the image window, then perform the frame's one
+// write. Immediate deliberately exercises Kitty's ordinary 16-slot region
+// cache; Persistent uses the retained pin path current forge-top waveforms use.
+class W4Regions final : public Widget {
+ public:
+  W4Regions(PixelRegionMode mode, int count, Extent cells) : m_mode{mode} {
+    constexpr int kScreenCols = 128;
+    const int per_row = kScreenCols / cells.w;
+    m_regions.reserve(static_cast<std::size_t>(count));
+    m_images.resize(static_cast<std::size_t>(count));
+    m_dirty.resize(static_cast<std::size_t>(count), true);
+    for (int index = 0; index < count; ++index) {
+      const Rect region{(index % per_row) * cells.w,
+                        (index / per_row) * cells.h, cells.w, cells.h};
+      m_lookup.emplace(w4_region_key(region), static_cast<std::size_t>(index));
+      m_regions.push_back(region);
+    }
+  }
+
+  auto draw(Screen& screen) -> void override {
+    for (const Rect region : m_regions)
+      screen.fill_rect(region.x, region.y, region.w, region.h, {}, {});
+    clear_dirty();
+  }
+
+  auto pixel_regions() -> std::vector<Rect> override { return m_regions; }
+
+  auto draw_pixels(Rect region, Extent pixels) -> const Image* override {
+    const auto index = index_of(region);
+    if (!index || pixels.empty()) return nullptr;
+    auto& image = m_images[*index];
+    if (image.width() != pixels.w || image.height() != pixels.h) {
+      image = Image{pixels.w, pixels.h,
+                    opaque_pixels(pixels.w, pixels.h,
+                                  static_cast<int>(*index) + 1)};
+    }
+    return &image;
+  }
+
+  [[nodiscard]] auto pixel_region_state(Rect region) const noexcept
+      -> PixelRegionState override {
+    const auto index = index_of(region);
+    return {.mode = m_mode,
+            .content_dirty = index ? m_dirty[*index] : true,
+            .content_revision = 1};
+  }
+
+  auto pixel_region_submitted(Rect region) noexcept -> void override {
+    if (const auto index = index_of(region)) m_dirty[*index] = false;
+  }
+
+ private:
+  [[nodiscard]] auto index_of(Rect region) const noexcept
+      -> std::optional<std::size_t> {
+    const auto found = m_lookup.find(w4_region_key(region));
+    if (found == m_lookup.end()) return std::nullopt;
+    return found->second;
+  }
+
+  PixelRegionMode m_mode;
+  std::vector<Rect> m_regions;
+  std::vector<Image> m_images;
+  std::vector<bool> m_dirty;
+  std::unordered_map<std::uint64_t, std::size_t> m_lookup;
+};
+
+class W4App final : public App {
+ public:
+  W4App(PixelRegionMode mode, int count, Extent cells)
+      : m_regions{mode, count, cells} {
+    set_frame_ms(0);
+    set_frame_observer([this](const FrameObservation& observation) {
+      m_observations.push_back(observation);
+      m_residencies.push_back(driver().residency());
+      m_checksums.push_back(m_sink.checksum());
+    });
+  }
+
+  auto run(int frames) -> void {
+    auto selected = std::make_unique<KittyDriver>();
+    selected->set_placement_mode(KittyDriver::PlacementMode::Classic);
+    test_run_frames(frames, 128, 64, static_cast<std::string*>(nullptr),
+                    std::move(selected));
+    if (!m_errors.empty()) throw std::runtime_error{m_errors.front().message};
+  }
+
+  [[nodiscard]] auto observations() const
+      -> const std::vector<FrameObservation>& {
+    return m_observations;
+  }
+  [[nodiscard]] auto residencies() const
+      -> const std::vector<ImageResidency>& {
+    return m_residencies;
+  }
+  [[nodiscard]] auto checksums() const -> const std::vector<std::uint64_t>& {
+    return m_checksums;
+  }
+
+  auto on_event(const Event& event) -> void override {
+    if (const auto* error = std::get_if<ErrorEvent>(&event))
+      m_errors.push_back(*error);
+  }
+
+  auto on_render(Screen& screen) -> void override {
+    if (!m_bound) {
+      driver().set_output(&m_sink);
+      m_bound = true;
+    }
+    m_regions.draw(screen);
+    render_pixel_regions(m_regions);
+  }
+
+ protected:
+  auto wait_readable(int) -> bool override { return false; }
+  auto read_available(char*, int) -> int override { return 0; }
+
+ private:
+  W4Regions m_regions;
+  CountingSink m_sink;
+  bool m_bound{false};
+  std::vector<FrameObservation> m_observations;
+  std::vector<ImageResidency> m_residencies;
+  std::vector<std::uint64_t> m_checksums;
+  std::vector<ErrorEvent> m_errors;
+};
+
+template <typename Projection>
+[[nodiscard]] auto w4_phase_stats(
+    const std::vector<FrameObservation>& observations, std::size_t begin,
+    Projection&& projection) -> PhaseStats {
+  std::vector<double> values;
+  values.reserve(observations.size() - begin);
+  for (std::size_t index = begin; index < observations.size(); ++index) {
+    values.push_back(std::chrono::duration<double, std::milli>(
+                         projection(observations[index]))
+                         .count());
+  }
+  return {.median_ms = percentile(values, 0.5),
+          .p95_ms = percentile(values, 0.95)};
+}
+
+[[nodiscard]] auto run_w4_case(const Options& options, PixelRegionMode mode,
+                               int region_count, Extent cells) -> W4Result {
+  const int setup_frames = 1;
+  const int total_frames = setup_frames + options.warmup + options.samples;
+  W4App app{mode, region_count, cells};
+  app.run(total_frames);
+  const auto& observations = app.observations();
+  const auto& residencies = app.residencies();
+  const auto& checksums = app.checksums();
+  if (observations.size() != static_cast<std::size_t>(total_frames) ||
+      residencies.size() != observations.size() ||
+      checksums.size() != observations.size()) {
+    throw std::runtime_error{"W4 did not observe every rendered frame"};
+  }
+
+  const std::size_t begin =
+      static_cast<std::size_t>(setup_frames + options.warmup);
+  const ImageResidency residency = residencies[begin];
+  std::vector<FrameBytes> frame_bytes;
+  frame_bytes.reserve(observations.size() - begin);
+  std::uint64_t checksum = 14695981039346656037ULL;
+  for (std::size_t index = begin; index < observations.size(); ++index) {
+    if (!observations[index].output_accepted ||
+        residency != residencies[index]) {
+      throw std::runtime_error{std::format(
+          "W4 {} {}x{} count {} sample {} changed residency "
+          "{}/{}/{} -> {}/{}/{}",
+          mode == PixelRegionMode::Immediate ? "immediate" : "persistent",
+          cells.w, cells.h, region_count, index - begin,
+          residency.region_images, residency.pinned_images,
+          residency.source_payload_bytes,
+          residencies[index].region_images, residencies[index].pinned_images,
+          residencies[index].source_payload_bytes)};
+    }
+    frame_bytes.push_back(observations[index].bytes);
+    checksum ^= checksums[index] + observations[index].bytes.total() +
+                0x9E3779B97F4A7C15ULL + (checksum << 6) + (checksum >> 2);
+  }
+  std::sort(frame_bytes.begin(), frame_bytes.end(),
+            [](const FrameBytes& left, const FrameBytes& right) {
+              return left.total() < right.total();
+            });
+  const FrameBytes bytes = frame_bytes[(frame_bytes.size() - 1) / 2];
+
+  const auto total = [](const FrameObservation& observation) {
+    return observation.tick + observation.application_render +
+           observation.framework_submission + observation.sink_write;
+  };
+  return {
+      .mode = mode == PixelRegionMode::Immediate ? "immediate" : "persistent",
+      .region_count = region_count,
+      .cell_w = cells.w,
+      .cell_h = cells.h,
+      .samples = options.samples,
+      .tick = w4_phase_stats(observations, begin,
+                             [](const auto& frame) { return frame.tick; }),
+      .application_render = w4_phase_stats(
+          observations, begin,
+          [](const auto& frame) { return frame.application_render; }),
+      .framework_submission = w4_phase_stats(
+          observations, begin,
+          [](const auto& frame) { return frame.framework_submission; }),
+      .sink_write = w4_phase_stats(
+          observations, begin,
+          [](const auto& frame) { return frame.sink_write; }),
+      .frame_work = w4_phase_stats(observations, begin, total),
+      .bytes = bytes,
+      .residency = residency,
+      .checksum = checksum,
+  };
+}
+
+[[nodiscard]] auto run_w4(const Options& options) -> std::vector<W4Result> {
+  static constexpr std::array counts = {1, 8, 16, 17, 32, 64};
+  static constexpr std::array sizes = {Extent{1, 1}, Extent{4, 2},
+                                       Extent{8, 4}};
+  static constexpr std::array modes = {PixelRegionMode::Immediate,
+                                       PixelRegionMode::Persistent};
+  std::vector<W4Result> out;
+  const std::size_t size_count = options.smoke ? 1 : sizes.size();
+  for (const auto mode : modes) {
+    for (std::size_t size = 0; size < size_count; ++size) {
+      if (options.smoke) {
+        out.push_back(run_w4_case(options, mode, 16, sizes[size]));
+        out.push_back(run_w4_case(options, mode, 17, sizes[size]));
+        continue;
+      }
+      for (const int count : counts)
+        out.push_back(run_w4_case(options, mode, count, sizes[size]));
+    }
+  }
+  return out;
+}
+
+[[nodiscard]] auto derive_w4_walls(const std::vector<W4Result>& results)
+    -> std::vector<W4Wall> {
+  static constexpr std::array modes = {std::string_view{"immediate"},
+                                       std::string_view{"persistent"}};
+  static constexpr std::array sizes = {Extent{1, 1}, Extent{4, 2},
+                                       Extent{8, 4}};
+  std::vector<W4Wall> walls;
+  for (const auto mode : modes) {
+    for (const auto cells : sizes) {
+      W4Wall wall{.mode = std::string{mode},
+                  .cell_w = cells.w,
+                  .cell_h = cells.h,
+                  .first_retransmit_count = std::nullopt,
+                  .budgets = {
+                      W4BudgetWall{.budget_ms = 16.6,
+                                   .largest_passing_count = std::nullopt,
+                                   .first_failing_count = std::nullopt},
+                      W4BudgetWall{.budget_ms = 33.3,
+                                   .largest_passing_count = std::nullopt,
+                                   .first_failing_count = std::nullopt}}};
+      bool found = false;
+      for (const auto& result : results) {
+        if (result.mode != mode || result.cell_w != cells.w ||
+            result.cell_h != cells.h) {
+          continue;
+        }
+        found = true;
+        if (!wall.first_retransmit_count && result.bytes.image_transmit != 0)
+          wall.first_retransmit_count = result.region_count;
+        for (auto& budget : wall.budgets) {
+          if (result.frame_work.median_ms <= budget.budget_ms) {
+            budget.largest_passing_count = result.region_count;
+          } else if (!budget.first_failing_count) {
+            budget.first_failing_count = result.region_count;
+          }
+        }
+      }
+      if (found) walls.push_back(std::move(wall));
+    }
+  }
+  return walls;
+}
+
 [[nodiscard]] auto derive_walls(const std::vector<Result>& results)
     -> std::vector<Wall> {
   std::vector<Wall> walls;
@@ -489,6 +819,7 @@ struct W3Case {
   switch (suite) {
     case Suite::Kernels: return "kernels";
     case Suite::W3: return "w3";
+    case Suite::W4: return "w4";
     case Suite::All: return "all";
   }
   return "unknown";
@@ -511,9 +842,12 @@ struct W3Case {
 
 [[nodiscard]] auto json_report(const Options& options,
                                const std::vector<Result>& results,
-                               const std::vector<Wall>& walls) -> std::string {
+                               const std::vector<Wall>& walls,
+                               const std::vector<W4Result>& w4_results,
+                               const std::vector<W4Wall>& w4_walls)
+    -> std::string {
   std::string out = std::format(
-      "{{\n  \"schema_version\": 2,\n  \"termforge_version\": \"{}\",\n"
+      "{{\n  \"schema_version\": 3,\n  \"termforge_version\": \"{}\",\n"
       "  \"compiler\": \"{}\",\n  \"host\": \"{}\",\n"
       "  \"build_type\": \"Release\",\n  \"requested_suite\": \"{}\",\n"
       "  \"requested_kernel_tier\": \"{}\",\n"
@@ -552,13 +886,64 @@ struct W3Case {
                         : "null",
         i + 1 == walls.size() ? "" : ",");
   }
+  out += "  ],\n  \"w4_results\": [\n";
+  for (std::size_t i = 0; i < w4_results.size(); ++i) {
+    const auto& r = w4_results[i];
+    const auto phase = [](const PhaseStats& value) {
+      return std::format("{{\"median\":{:.6f},\"p95\":{:.6f}}}",
+                         value.median_ms, value.p95_ms);
+    };
+    out += std::format(
+        "    {{\"mode\":\"{}\",\"region_count\":{},"
+        "\"region_cells\":{{\"w\":{},\"h\":{}}},\"samples\":{},"
+        "\"timing_ms\":{{\"tick\":{},\"application_render\":{},"
+        "\"framework_submission\":{},\"sink_write\":{},"
+        "\"frame_work\":{}}},"
+        "\"frame_bytes\":{{\"selection\":\"median_total\","
+        "\"cells\":{},\"image_transmit\":{},"
+        "\"image_edit\":{},\"total\":{}}},"
+        "\"residency\":{{\"region_images\":{},\"pinned_images\":{},"
+        "\"source_payload_bytes\":{}}},\"checksum\":\"{:016x}\"}}{}\n",
+        json_escape(r.mode), r.region_count, r.cell_w, r.cell_h, r.samples,
+        phase(r.tick), phase(r.application_render),
+        phase(r.framework_submission), phase(r.sink_write),
+        phase(r.frame_work), r.bytes.cells, r.bytes.image_transmit,
+        r.bytes.image_edit, r.bytes.total(), r.residency.region_images,
+        r.residency.pinned_images, r.residency.source_payload_bytes,
+        r.checksum, i + 1 == w4_results.size() ? "" : ",");
+  }
+  out += "  ],\n  \"w4_walls\": [\n";
+  for (std::size_t i = 0; i < w4_walls.size(); ++i) {
+    const auto& wall = w4_walls[i];
+    const auto optional_int = [](std::optional<int> value) {
+      return value ? std::to_string(*value) : std::string{"null"};
+    };
+    out += std::format(
+        "    {{\"mode\":\"{}\",\"region_cells\":{{\"w\":{},"
+        "\"h\":{}}},\"first_retransmit_count\":{},\"budgets\":[",
+        json_escape(wall.mode), wall.cell_w, wall.cell_h,
+        optional_int(wall.first_retransmit_count));
+    for (std::size_t b = 0; b < wall.budgets.size(); ++b) {
+      const auto& budget = wall.budgets[b];
+      out += std::format(
+          "{{\"budget_ms\":{:.1f},\"largest_passing_count\":{},"
+          "\"first_failing_count\":{}}}{}",
+          budget.budget_ms, optional_int(budget.largest_passing_count),
+          optional_int(budget.first_failing_count),
+          b + 1 == wall.budgets.size() ? "" : ",");
+    }
+    out += std::format("]}}{}\n", i + 1 == w4_walls.size() ? "" : ",");
+  }
   out += "  ]\n}\n";
   return out;
 }
 
 [[nodiscard]] auto table_report(const Options& options,
                                 const std::vector<Result>& results,
-                                const std::vector<Wall>& walls) -> std::string {
+                                const std::vector<Wall>& walls,
+                                const std::vector<W4Result>& w4_results,
+                                const std::vector<W4Wall>& w4_walls)
+    -> std::string {
   std::string out = std::format("TermForge {} performance evidence\n{}\n{}\n\n",
                                 TERMFORGE_BENCH_VERSION, __VERSION__, host_name());
   out += std::format("kernel tier: {} -> {}\n\n",
@@ -578,6 +963,43 @@ struct W3Case {
                          w.content, w.dirty_percent, w.budget_ms,
                          w.largest_passing,
                          w.first_failing.value_or("not reached"));
+    }
+  }
+  if (!w4_results.empty()) {
+    out += "\nW4 many-region steady state\n";
+    out += std::format(
+        "{:<11} {:>7} {:>7} {:>9} {:>9} {:>9} {:>9} {:>10} {:>12} {:>10}\n",
+        "mode", "regions", "cells", "app ms", "fw ms", "sink ms",
+        "frame ms", "median tx", "resident", "payload");
+    for (const auto& r : w4_results) {
+      out += std::format(
+          "{:<11} {:>7} {:>3}x{:<3} {:>9.4f} {:>9.4f} {:>9.4f} {:>9.4f} "
+          "{:>10} {:>5}+{:<5} {:>10}\n",
+          r.mode, r.region_count, r.cell_w, r.cell_h,
+          r.application_render.median_ms, r.framework_submission.median_ms,
+          r.sink_write.median_ms, r.frame_work.median_ms,
+          r.bytes.image_transmit, r.residency.region_images,
+          r.residency.pinned_images, r.residency.source_payload_bytes);
+    }
+  }
+  if (!w4_walls.empty()) {
+    out += "\nW4 walls\n";
+    for (const auto& wall : w4_walls) {
+      out += std::format("  {:<10} {:>2}x{:<2}: retransmit {}",
+                         wall.mode, wall.cell_w, wall.cell_h,
+                         wall.first_retransmit_count
+                             ? std::to_string(*wall.first_retransmit_count)
+                             : "not reached");
+      for (const auto& budget : wall.budgets) {
+        out += std::format(", {:>4.1f} ms pass {} fail {}", budget.budget_ms,
+                           budget.largest_passing_count
+                               ? std::to_string(*budget.largest_passing_count)
+                               : "none",
+                           budget.first_failing_count
+                               ? std::to_string(*budget.first_failing_count)
+                               : "not reached");
+      }
+      out += '\n';
     }
   }
   return out;
@@ -607,10 +1029,16 @@ int main(int argc, char** argv) {
       results.insert(results.end(), std::make_move_iterator(w3.begin()),
                      std::make_move_iterator(w3.end()));
     }
+    std::vector<W4Result> w4_results;
+    if (options.suite == Suite::W4 || options.suite == Suite::All)
+      w4_results = run_w4(options);
     const auto walls = derive_walls(results);
+    const auto w4_walls = derive_w4_walls(w4_results);
     const std::string report = options.format == Format::Json
-                                   ? json_report(options, results, walls)
-                                   : table_report(options, results, walls);
+                                   ? json_report(options, results, walls,
+                                                 w4_results, w4_walls)
+                                   : table_report(options, results, walls,
+                                                  w4_results, w4_walls);
     if (options.output) {
       std::ofstream file{*options.output};
       if (!file) throw std::runtime_error{"cannot open output file"};

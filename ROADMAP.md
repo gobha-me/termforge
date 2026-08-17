@@ -175,6 +175,15 @@ completed items.
 > handoff. Disabled telemetry takes no timing stamps; demand-idle iterations
 > stay silent. The game workload now uses this API for attribution without
 > making ordinary interactive output travel through a forwarding sink.
+>
+> **2026-08-17 — many-region performance evidence.** The W4 slice of **#88**
+> drives Immediate and Persistent pixel regions through App's production frame
+> cadence while recording #258 phase timings, exact frame meters and #112
+> committed residency. Immediate's fixed 16-slot cache begins retransmitting
+> unchanged content at 17 regions and cycles every offered region; Persistent
+> reaches 64 regions with zero steady image bytes. Benchmark JSON schema 3
+> records the retransmit and 16.6/33.3 ms walls without timing assertions.
+> #88 remains open for W2 paint and the broader W5 terminal-throughput matrix.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 

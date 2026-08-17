@@ -6,7 +6,25 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-17, latest)
 
-**Current stable release: v0.47.0 — opt-in frame timing observations.** #258
+**Current stable release: v0.48.0 — many-region performance evidence.** The W4
+slice of #88 extends the Release-only benchmark with App-cadence Immediate and
+Persistent region sweeps across 1/8/16/17/32/64 regions and three cell sizes.
+Schema 3 records `FrameObservation` phase medians/p95, an exact median-total
+`FrameBytes` sample, committed `ImageResidency`, and both retransmit and
+16.6/33.3 ms walls. CI validates shape and accounting without timing gates.
+
+On the GCC 14.2 reference host, Immediate regions begin retransmitting
+unchanged content at count 17 for every size: the 16-slot LRU cycle then
+re-uploads every offered region while retaining only 16 payloads. Persistent
+regions—the forge-top architecture—reach 64 with zero steady image traffic and
+all content accounted as pins. Every headless case remains within both CPU
+budgets, while the largest Immediate case offers 1.41 MB/frame; W5 still owns
+the pty/emulator throughput claim. No installed API or terminal wire behavior
+changed, and #88 remains open for W2/W5.
+
+## Previous stable release: v0.47.0
+
+**v0.47.0 — opt-in frame timing observations.** #258
 adds an App-owned callback after every rendered frame's single write boundary.
 It reports real wall time spent in tick, primary application render, framework
 submission and the blocking sink handoff alongside the existing `FrameBytes`
