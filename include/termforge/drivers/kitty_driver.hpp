@@ -86,9 +86,9 @@ class KittyDriver final : public TerminalDriver {
                  Attr attrs) -> void override;
   auto draw_image(Rect cells, const Image& image)
       -> std::expected<void, ErrorEvent> override;
-  // Pre-encoded payloads (#163): Png rides f=100, Rgba32 rides f=32. Both go
-  // through the same slot keying, chunking, LRU and placement as an Image --
-  // only the f= value and the source of the bytes differ.
+  // Pre-encoded payloads (#163/#166): Png rides f=100, Rgba32 rides f=32, and
+  // application-compressed Rgba32Zlib rides f=32,o=z. All go through the same
+  // slot keying, chunking, LRU and placement as an Image.
   auto draw_image(Rect cells, const EncodedImage& image)
       -> std::expected<void, ErrorEvent> override;
   // PlacementFit::Exact omits c=/r= so the terminal places the selected
@@ -101,9 +101,9 @@ class KittyDriver final : public TerminalDriver {
       -> std::expected<void, ErrorEvent> override;
   // The two composed (#169): a pre-encoded plate at its native resolution,
   // which is the combination baked art actually wants. The fit is enforced
-  // against the DECLARED extent for both formats -- see TerminalDriver for
-  // why that is the only number available and what an under-declared Png
-  // costs.
+  // against the DECLARED extent for every format -- see TerminalDriver for
+  // why that is the only number available and what an under-declared opaque
+  // payload costs.
   auto draw_image(Rect cells, const EncodedImage& image, PlacementFit fit)
       -> std::expected<void, ErrorEvent> override;
   auto draw_image(Rect cells, const EncodedImage& image,
@@ -274,7 +274,7 @@ class KittyDriver final : public TerminalDriver {
   // structural rather than a condition someone can delete.
   struct PinnedEntry {
     Extent px{};  // the declared extent -- what Exact is enforced against
-    int format_code{0};
+    ImageFormat format{ImageFormat::Rgba32};
     std::uint64_t content_hash{0};
     bool accepted{true};
     // Monotonic per driver and NEVER reused, unlike the map key. Terminal-side
@@ -302,7 +302,7 @@ class KittyDriver final : public TerminalDriver {
     };
 
     Extent px{};
-    int format_code{0};
+    ImageFormat format{ImageFormat::Rgba32};
     std::size_t frame_count{0};
     std::uint32_t serial{0};
     bool written{false};
@@ -376,7 +376,8 @@ class KittyDriver final : public TerminalDriver {
     std::uint64_t previous_content_hash{0};
     // Registration is one operation containing one opaque transfer per frame.
     // Replies for one image id are ordered on the terminal stream, so this
-    // count lets the operation remain singular while acknowledging every PNG.
+    // count lets the operation remain singular while acknowledging every
+    // opaque frame.
     std::size_t remaining_replies{1};
   };
 
@@ -427,7 +428,7 @@ class KittyDriver final : public TerminalDriver {
                       bool content_changed, bool placement_changed) -> void;
 
   // Everything both pin_image overloads share once the payload is in hand.
-  auto pin_payload(std::span<const std::byte> payload, int format_code,
+  auto pin_payload(std::span<const std::byte> payload, ImageFormat format,
                    Extent px, bool request_reply)
       -> std::expected<PinnedImage, ErrorEvent>;
 
@@ -443,13 +444,13 @@ class KittyDriver final : public TerminalDriver {
   // Extent and wire format are immutable for a handle, and validation happens
   // before this queues anything so refusal preserves the last good frame.
   auto replace_payload(std::uint32_t id, PinnedEntry& entry,
-                       std::span<const std::byte> payload, int format_code,
+                       std::span<const std::byte> payload, ImageFormat format,
                        Extent px, bool request_reply)
       -> std::expected<void, ErrorEvent>;
 
   auto edit_payload(std::uint32_t id, PinnedEntry& entry,
                     PixelPoint destination,
-                    std::span<const std::byte> payload, int format_code,
+                    std::span<const std::byte> payload, ImageFormat format,
                     Extent px, ImageComposition composition,
                     bool request_reply) -> std::expected<void, ErrorEvent>;
 
@@ -480,19 +481,20 @@ class KittyDriver final : public TerminalDriver {
       -> std::expected<std::uint32_t, ErrorEvent>;
 
   // Transmit an opaque payload under `id` via chunked APC sequences.
-  // `format_code` is the kitty f= value (32 = raw RGBA, 100 = PNG); `px` is
-  // the declared pixel extent, emitted as s=/v=. Retransmit with an existing
-  // id replaces that image's data on the terminal.
-  auto transmit(std::span<const std::byte> payload, int format_code, Extent px,
+  // `format` determines Kitty's f=/o= envelope; `px` is the declared pixel
+  // extent, emitted as s=/v=. Retransmit with an existing id replaces that
+  // image's data on the terminal.
+  auto transmit(std::span<const std::byte> payload, ImageFormat format,
+                Extent px,
                 std::uint32_t id, bool request_reply) -> void;
 
   // Edit the existing root frame in place. This is data transmission, not an
   // image delete/recreate and not a placement edit.
-  auto replace_root_frame(std::span<const std::byte> payload, int format_code,
-                          Extent px, std::uint32_t id,
+  auto replace_root_frame(std::span<const std::byte> payload,
+                          ImageFormat format, Extent px, std::uint32_t id,
                           bool request_reply) -> void;
 
-  auto edit_root_frame(std::span<const std::byte> payload, int format_code,
+  auto edit_root_frame(std::span<const std::byte> payload, ImageFormat format,
                        Extent px, std::uint32_t id, PixelPoint destination,
                        ImageComposition composition,
                        bool request_reply) -> void;
@@ -500,7 +502,7 @@ class KittyDriver final : public TerminalDriver {
   // Add a NEW animation frame. Unlike root-frame edits, this intentionally
   // omits r=; continuations repeat only a=f,m= as the protocol requires.
   auto transmit_animation_frame(std::span<const std::byte> payload,
-                                int format_code, Extent px,
+                                ImageFormat format, Extent px,
                                 std::uint32_t id,
                                 std::chrono::milliseconds gap,
                                 bool request_reply) -> void;
@@ -514,7 +516,7 @@ class KittyDriver final : public TerminalDriver {
   // makes "the format participates in image identity" impossible to forget at
   // a call site.
   auto draw_payload(Rect cells, std::span<const std::byte> payload,
-                    int format_code, Extent px,
+                    ImageFormat format, Extent px,
                     ImagePlacementOptions options, bool request_reply)
       -> std::expected<void, ErrorEvent>;
 
@@ -701,7 +703,7 @@ class KittyDriver final : public TerminalDriver {
   std::uint32_t m_next_pin_serial{0};
   std::uint32_t m_next_animation_serial{0};
   std::uint32_t m_next_region_serial{0};
-  // A failed multi-PNG registration can leave several replies in flight for
+  // A failed multi-opaque registration can leave several replies in flight for
   // one now-dead id. Keep it unavailable until every ordered late reply has
   // been consumed; a set would release it after the first and let the next
   // stale OK bless a later resident object.

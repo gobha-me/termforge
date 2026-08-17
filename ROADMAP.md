@@ -146,6 +146,13 @@ completed items.
 > preserves split UTF-8, and finalizes into oldest-first retention; a scrolled
 > view anchors by entry/row instead of moving when the tail grows. Existing
 > `append` callers remain source-compatible finalized-entry producers.
+>
+> **2026-08-17 — application-supplied zlib RGBA.** The first half of **#166**
+> adds `ImageFormat::Rgba32Zlib` as an opaque caller-owned payload. Kitty emits
+> `f=32,o=z` across direct, resident-edit and animation paths; acknowledgement,
+> metering and residency use the compressed input bytes without adding a zlib
+> dependency. Non-Kitty tiers refuse honestly. `Rgb24` remains independently
+> measured on #166; #167 is next so widget regions can carry encoded payloads.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
@@ -162,6 +169,9 @@ completed items.
 - Mutable resident frames + dirty submission (#196/#197) — stable Kitty image
   id/root-frame edits, placement-only moves, accepted-write acknowledgement,
   and clean-frame suppression on both enhanced tiers
+- Application-supplied zlib RGBA (#166 slice) — opaque `Rgba32Zlib` bytes ride
+  Kitty as `f=32,o=z` without a codec dependency and retain correlated replies,
+  exact compressed-byte accounting and format-distinct resident identity
 - Resident-image invalidation (#113) — explicit suspend/reattach/reset events,
   payload-free Kitty state reset, stale-handle refusal, and automatic
   Persistent-region recreation while resize retains payloads

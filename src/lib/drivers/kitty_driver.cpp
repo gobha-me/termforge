@@ -243,10 +243,35 @@ constexpr int kFormatPng = 100;
 // -Wswitch error under CI rather than silently transmitted as RGBA.
 [[nodiscard]] auto wire_format(ImageFormat format) noexcept -> int {
   switch (format) {
-    case ImageFormat::Rgba32: return kFormatRgba32;
-    case ImageFormat::Png:    return kFormatPng;
+    case ImageFormat::Rgba32:
+    case ImageFormat::Rgba32Zlib: return kFormatRgba32;
+    case ImageFormat::Png:        return kFormatPng;
   }
   return kFormatRgba32;
+}
+
+// Compression is an independent Kitty key: raw and zlib-compressed RGBA both
+// use f=32, and only the latter adds o=z. Keep it in the format identity all
+// the way to this final wire mapping so cache and resident state cannot
+// collapse the two envelopes merely because their f= values match.
+[[nodiscard]] auto wire_compression(ImageFormat format) noexcept
+    -> std::string_view {
+  switch (format) {
+    case ImageFormat::Rgba32:     return {};
+    case ImageFormat::Rgba32Zlib: return ",o=z";
+    case ImageFormat::Png:        return {};
+  }
+  return {};
+}
+
+[[nodiscard]] auto wire_format_name(ImageFormat format) noexcept
+    -> std::string_view {
+  switch (format) {
+    case ImageFormat::Rgba32:     return "f=32";
+    case ImageFormat::Rgba32Zlib: return "f=32,o=z";
+    case ImageFormat::Png:        return "f=100";
+  }
+  return "f=?";
 }
 
 // Classic image-display keys (#115). Defaults are omitted so
@@ -497,6 +522,7 @@ auto KittyDriver::supports_image_format(ImageFormat f) const noexcept -> bool {
   // yes.
   switch (f) {
     case ImageFormat::Rgba32:
+    case ImageFormat::Rgba32Zlib:
     case ImageFormat::Png:
       return true;
   }
@@ -570,7 +596,8 @@ auto KittyDriver::draw_image(Rect cells, const Image& image,
   auto geometry = detail::validate_placement(options, cells, root, *this,
                                              "kitty", "draw_image");
   if (!geometry) return std::unexpected{geometry.error()};
-  return draw_payload(cells, std::as_bytes(image.pixels()), kFormatRgba32,
+  return draw_payload(cells, std::as_bytes(image.pixels()),
+                      ImageFormat::Rgba32,
                       root, options, false);
 }
 
@@ -596,9 +623,9 @@ auto KittyDriver::draw_image(Rect cells, const EncodedImage& image,
                              ImagePlacementOptions options)
     -> std::expected<void, ErrorEvent> {
   // Empty, empty rect, the supports_image_format() check, and the Rgba32
-  // length check. Png is deliberately unvalidated for length: we do not parse
-  // the datastream, so we have no opinion about whether its header agrees
-  // with the declared extent.
+  // length check. Opaque formats are deliberately unvalidated for length: we
+  // do not decode them, so we have no opinion about whether their content
+  // agrees with the declared extent.
   //
   // FIRST, and not merely by habit: validate_fit measures the rect with
   // preferred_pixel_extent(), which is Extent{} for an empty one -- so an
@@ -612,14 +639,13 @@ auto KittyDriver::draw_image(Rect cells, const EncodedImage& image,
         Severity::Warning, "kitty",
         "draw_image: image layer rank is outside the protocol range"}};
   }
-  // Against the DECLARED extent, for both formats (#169, #115). Before
+  // Against the DECLARED extent, for every format (#169, #115). Before
   // draw_payload and never after: a refusal must not have paid for the upload.
   auto geometry = detail::validate_placement(options, cells, image.pixels,
                                              *this, "kitty", "draw_image");
   if (!geometry) return std::unexpected{geometry.error()};
-  return draw_payload(cells, image.bytes, wire_format(image.format),
-                      image.pixels, options,
-                      image.format == ImageFormat::Png);
+  return draw_payload(cells, image.bytes, image.format, image.pixels, options,
+                      detail::requires_terminal_reply(image.format));
 }
 
 // ── resident images (#109) ──────────────────────────────────────────────────
@@ -658,7 +684,7 @@ auto KittyDriver::register_animation(std::span<const AnimationFrame> frames)
 
   struct PreparedFrame {
     std::span<const std::byte> payload;
-    int format_code{0};
+    ImageFormat format{ImageFormat::Rgba32};
     Extent px{};
     std::chrono::milliseconds gap{};
     bool request_reply{false};
@@ -689,7 +715,7 @@ auto KittyDriver::register_animation(std::span<const AnimationFrame> frames)
             std::format("register_animation: frame {} is empty", index + 1)}};
       }
       frame.payload = std::as_bytes((*raw)->pixels());
-      frame.format_code = kFormatRgba32;
+      frame.format = ImageFormat::Rgba32;
       frame.px = Extent{(*raw)->width(), (*raw)->height()};
     } else {
       const auto& encoded = std::get<EncodedImage>(frames[index].payload());
@@ -699,9 +725,9 @@ auto KittyDriver::register_animation(std::span<const AnimationFrame> frames)
         return std::unexpected{ok.error()};
       }
       frame.payload = encoded.bytes;
-      frame.format_code = wire_format(encoded.format);
+      frame.format = encoded.format;
       frame.px = encoded.pixels;
-      frame.request_reply = encoded.format == ImageFormat::Png;
+      frame.request_reply = detail::requires_terminal_reply(encoded.format);
     }
 
     if (!prepared.empty() && frame.px != prepared.front().px) {
@@ -713,13 +739,13 @@ auto KittyDriver::register_animation(std::span<const AnimationFrame> frames)
                       prepared.front().px.w, prepared.front().px.h)}};
     }
     if (!prepared.empty() &&
-        frame.format_code != prepared.front().format_code) {
+        frame.format != prepared.front().format) {
       return std::unexpected{ErrorEvent{
           Severity::Warning, "kitty",
-          std::format("register_animation: frame {} format f={} does not "
-                      "match root format f={}",
-                      index + 1, frame.format_code,
-                      prepared.front().format_code)}};
+          std::format("register_animation: frame {} format {} does not "
+                      "match root format {}",
+                      index + 1, wire_format_name(frame.format),
+                      wire_format_name(prepared.front().format))}};
     }
     if (frame.payload.size() >
         std::numeric_limits<std::uint64_t>::max() - source_bytes) {
@@ -752,7 +778,7 @@ auto KittyDriver::register_animation(std::span<const AnimationFrame> frames)
     tally_image_transmit(m_buf.size() - before);
   };
   emit_transmit([&] {
-    transmit(prepared.front().payload, prepared.front().format_code,
+    transmit(prepared.front().payload, prepared.front().format,
              prepared.front().px, id, prepared.front().request_reply);
   });
   if (prepared.front().request_reply) ++reply_count;
@@ -765,7 +791,7 @@ auto KittyDriver::register_animation(std::span<const AnimationFrame> frames)
   for (std::size_t index = 1; index < prepared.size(); ++index) {
     emit_transmit([&] {
       transmit_animation_frame(
-          prepared[index].payload, prepared[index].format_code,
+          prepared[index].payload, prepared[index].format,
           prepared[index].px, id, prepared[index].gap,
           prepared[index].request_reply);
     });
@@ -776,7 +802,7 @@ auto KittyDriver::register_animation(std::span<const AnimationFrame> frames)
   gaps.reserve(prepared.size());
   for (const auto& frame : prepared) gaps.push_back(frame.gap);
   m_animations.emplace(
-      id, AnimationEntry{prepared.front().px, prepared.front().format_code,
+      id, AnimationEntry{prepared.front().px, prepared.front().format,
                          prepared.size(), serial, false, false,
                          std::move(gaps), AnimationEntry::Playback{},
                          AnimationEntry::Playback{}});
@@ -1059,7 +1085,7 @@ auto KittyDriver::pin_image(const Image& image)
     return std::unexpected{
         ErrorEvent{Severity::Warning, "kitty", "pin_image: empty image"}};
   }
-  return pin_payload(std::as_bytes(image.pixels()), kFormatRgba32,
+  return pin_payload(std::as_bytes(image.pixels()), ImageFormat::Rgba32,
                      Extent{image.width(), image.height()}, false);
 }
 
@@ -1073,12 +1099,12 @@ auto KittyDriver::pin_image(const EncodedImage& image)
       !ok) {
     return std::unexpected{ok.error()};
   }
-  return pin_payload(image.bytes, wire_format(image.format), image.pixels,
-                     image.format == ImageFormat::Png);
+  return pin_payload(image.bytes, image.format, image.pixels,
+                     detail::requires_terminal_reply(image.format));
 }
 
 auto KittyDriver::pin_payload(std::span<const std::byte> payload,
-                              int format_code, Extent px,
+                              ImageFormat format, Extent px,
                               bool request_reply)
     -> std::expected<PinnedImage, ErrorEvent> {
   // Downward from the configured ceiling, leaving the region pool the bottom
@@ -1113,13 +1139,13 @@ auto KittyDriver::pin_payload(std::span<const std::byte> payload,
   // bytes sit in m_buf until the next flush() -- pin_image does not write, it
   // queues, exactly like every draw does.
   const std::size_t before = m_buf.size();
-  transmit(payload, format_code, px, id, request_reply);
+  transmit(payload, format, px, id, request_reply);
   tally_image_transmit(m_buf.size() - before);
 
   const std::uint32_t serial = ++m_next_pin_serial;
-  const auto hash = detail::payload_hash(payload, px, format_code);
+  const auto hash = detail::payload_hash(payload, px, format);
   m_pinned.emplace(id, PinnedEntry{.px = px,
-                                   .format_code = format_code,
+                                   .format = format,
                                    .content_hash = request_reply ? 0 : hash,
                                    .accepted = !request_reply,
                                    .serial = serial});
@@ -1162,7 +1188,7 @@ auto KittyDriver::replace_pinned(PinnedImage image, const Image& frame)
         ErrorEvent{Severity::Warning, "kitty", "replace_pinned: empty image"}};
   }
   return replace_payload(image.id, **entry, std::as_bytes(frame.pixels()),
-                         kFormatRgba32,
+                         ImageFormat::Rgba32,
                          Extent{frame.width(), frame.height()}, false);
 }
 
@@ -1175,9 +1201,9 @@ auto KittyDriver::replace_pinned(PinnedImage image, const EncodedImage& frame)
       !ok) {
     return std::unexpected{ok.error()};
   }
-  return replace_payload(image.id, **entry, frame.bytes,
-                         wire_format(frame.format), frame.pixels,
-                         frame.format == ImageFormat::Png);
+  return replace_payload(
+      image.id, **entry, frame.bytes, frame.format, frame.pixels,
+      detail::requires_terminal_reply(frame.format));
 }
 
 auto KittyDriver::edit_pinned(PinnedImage image, PixelPoint destination,
@@ -1191,7 +1217,7 @@ auto KittyDriver::edit_pinned(PinnedImage image, PixelPoint destination,
         ErrorEvent{Severity::Warning, "kitty", "edit_pinned: empty image"}};
   }
   return edit_payload(image.id, **entry, destination,
-                      std::as_bytes(block.pixels()), kFormatRgba32,
+                      std::as_bytes(block.pixels()), ImageFormat::Rgba32,
                       Extent{block.width(), block.height()}, composition,
                       false);
 }
@@ -1207,14 +1233,14 @@ auto KittyDriver::edit_pinned(PinnedImage image, PixelPoint destination,
       !ok) {
     return std::unexpected{ok.error()};
   }
-  return edit_payload(image.id, **entry, destination, block.bytes,
-                      wire_format(block.format), block.pixels, composition,
-                      block.format == ImageFormat::Png);
+  return edit_payload(
+      image.id, **entry, destination, block.bytes, block.format, block.pixels,
+      composition, detail::requires_terminal_reply(block.format));
 }
 
 auto KittyDriver::replace_payload(std::uint32_t id, PinnedEntry& entry,
                                   std::span<const std::byte> payload,
-                                  int format_code, Extent px,
+                                  ImageFormat format, Extent px,
                                   bool request_reply)
     -> std::expected<void, ErrorEvent> {
   // Root-frame editing composes into the image's existing canvas. Making
@@ -1227,18 +1253,19 @@ auto KittyDriver::replace_payload(std::uint32_t id, PinnedEntry& entry,
         std::format("replace_pinned: extent must remain {}x{} (got {}x{})",
                     entry.px.w, entry.px.h, px.w, px.h)}};
   }
-  if (entry.format_code != format_code) {
+  if (entry.format != format) {
     return std::unexpected{ErrorEvent{
         Severity::Warning, "kitty",
-        std::format("replace_pinned: image format must remain f={} (got f={})",
-                    entry.format_code, format_code)}};
+        std::format("replace_pinned: image format must remain {} (got {})",
+                    wire_format_name(entry.format),
+                    wire_format_name(format))}};
   }
   if (!entry.accepted) {
     return std::unexpected{pending_warning("replace_pinned", id)};
   }
 
   const std::uint64_t hash =
-      detail::payload_hash(payload, px, format_code);
+      detail::payload_hash(payload, px, format);
   if (const auto pending = m_pending_replies.find(id);
       pending != m_pending_replies.end()) {
     if (pending->second.kind == PendingKind::PinnedReplace &&
@@ -1257,7 +1284,7 @@ auto KittyDriver::replace_payload(std::uint32_t id, PinnedEntry& entry,
       projected_content_hash(id, entry);
 
   const std::size_t before = m_buf.size();
-  replace_root_frame(payload, format_code, px, id, request_reply);
+  replace_root_frame(payload, format, px, id, request_reply);
   tally_image_transmit(m_buf.size() - before);
   stage_residency_set(id, entry.serial, ResidencyKind::Pinned, payload.size());
   if (request_reply) {
@@ -1274,7 +1301,7 @@ auto KittyDriver::replace_payload(std::uint32_t id, PinnedEntry& entry,
 auto KittyDriver::edit_payload(std::uint32_t id, PinnedEntry& entry,
                                PixelPoint destination,
                                std::span<const std::byte> payload,
-                               int format_code, Extent px,
+                               ImageFormat format, Extent px,
                                ImageComposition composition,
                                bool request_reply)
     -> std::expected<void, ErrorEvent> {
@@ -1318,7 +1345,7 @@ auto KittyDriver::edit_payload(std::uint32_t id, PinnedEntry& entry,
   const bool previously_accounted = previous_source_payload_bytes != 0;
 
   const std::size_t before = m_buf.size();
-  edit_root_frame(payload, format_code, px, id, destination, composition,
+  edit_root_frame(payload, format, px, id, destination, composition,
                   request_reply);
   tally_image_edit(m_buf.size() - before);
   stage_content_hash(id, entry.serial, 0);
@@ -1676,7 +1703,7 @@ auto KittyDriver::retain_pinned(Rect cells, PinnedImage image,
 }
 
 auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
-                               int format_code, Extent px,
+                               ImageFormat format, Extent px,
                                ImagePlacementOptions options,
                                bool request_reply)
     -> std::expected<void, ErrorEvent> {
@@ -1724,7 +1751,7 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
     return std::unexpected{pending_warning("draw_image", slot.image_id)};
   }
   bool content_changed = false;
-  const auto hash = detail::payload_hash(payload, px, format_code);
+  const auto hash = detail::payload_hash(payload, px, format);
   if (const auto pending = m_pending_replies.find(slot.image_id);
       pending != m_pending_replies.end()) {
     const auto key = region_key(dest.x, dest.y, dest.w, dest.h);
@@ -1736,7 +1763,7 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
     }
   } else if (hash != slot.content_hash) {
     const std::size_t before = m_buf.size();
-    transmit(payload, format_code, px, slot.image_id, request_reply);
+    transmit(payload, format, px, slot.image_id, request_reply);
     tally.transmitted = m_buf.size() - before;
     stage_residency_set(slot.image_id, slot.serial, ResidencyKind::Region,
                         payload.size());
@@ -2394,8 +2421,8 @@ auto KittyDriver::prepend_placeholder_clears() -> std::size_t {
 
 // ── Kitty APC protocol ──────────────────────────────────────────────────────
 
-auto KittyDriver::transmit(std::span<const std::byte> payload, int format_code,
-                           Extent px, std::uint32_t id,
+auto KittyDriver::transmit(std::span<const std::byte> payload,
+                           ImageFormat format, Extent px, std::uint32_t id,
                            bool request_reply) -> void {
   // Initial image transmission makes terminal-side ownership real; root-frame
   // replacement below can only operate on an image this path already created.
@@ -2405,21 +2432,24 @@ auto KittyDriver::transmit(std::span<const std::byte> payload, int format_code,
                    // First chunk: full transmission parameters.
                    // a=t (transmit only, no display — display happens via
                    // placeholders), t=d (direct), f=<32 RGBA | 100 PNG>,
+                   // optional o=z for compressed RGBA,
                    // i=<id>, s=W, v=H, m=<more>, q=2 (quiet).
                    //
                    // s=/v= are load-bearing for f=32 and redundant for f=100
                    // (kitty reads a PNG's geometry out of the datastream).
-                   // Emitted for both anyway: kitty ignores them where they do
-                   // not apply, and one format string beats two that can drift.
+                   // Emitted for every format anyway: kitty ignores them where
+                   // they do not apply, and one format string beats several
+                   // that can drift.
                    m_buf += std::format(
-                       "\033_Ga=t,t=d,f={},i={},s={},v={},m={},q={};{}\033\\",
-                       format_code, id, px.w, px.h, more ? 1 : 0, quiet,
-                       chunk);
+                       "\033_Ga=t,t=d,f={}{}"
+                       ",i={},s={},v={},m={},q={};{}\033\\",
+                       wire_format(format), wire_compression(format), id, px.w,
+                       px.h, more ? 1 : 0, quiet, chunk);
                  });
 }
 
 auto KittyDriver::replace_root_frame(std::span<const std::byte> payload,
-                                     int format_code, Extent px,
+                                     ImageFormat format, Extent px,
                                      std::uint32_t id,
                                      bool request_reply) -> void {
   m_transmitted = true;
@@ -2430,14 +2460,15 @@ auto KittyDriver::replace_root_frame(std::span<const std::byte> payload,
                    // full canvas. Unlike a=t under the same image id, this
                    // operation leaves placements intact.
                    m_buf += std::format(
-                       "\033_Ga=f,t=d,f={},i={},s={},v={},r=1,X=1,m={},q={};{}\033\\",
-                       format_code, id, px.w, px.h, more ? 1 : 0, quiet,
-                       chunk);
+                       "\033_Ga=f,t=d,f={}{}"
+                       ",i={},s={},v={},r=1,X=1,m={},q={};{}\033\\",
+                       wire_format(format), wire_compression(format), id, px.w,
+                       px.h, more ? 1 : 0, quiet, chunk);
                  });
 }
 
 auto KittyDriver::edit_root_frame(std::span<const std::byte> payload,
-                                  int format_code, Extent px,
+                                  ImageFormat format, Extent px,
                                   std::uint32_t id, PixelPoint destination,
                                   ImageComposition composition,
                                   bool request_reply) -> void {
@@ -2451,15 +2482,17 @@ auto KittyDriver::edit_root_frame(std::span<const std::byte> payload,
                    const std::string overwrite =
                        composition == ImageComposition::Overwrite ? ",X=1" : "";
                    m_buf += std::format(
-                       "\033_Ga=f,t=d,f={},i={},s={},v={},r=1,x={},y={}{}"
+                       "\033_Ga=f,t=d,f={}{}"
+                       ",i={},s={},v={},r=1,x={},y={}{}"
                        ",m={},q={};{}\033\\",
-                       format_code, id, px.w, px.h, destination.x,
-                       destination.y, overwrite, more ? 1 : 0, quiet, chunk);
+                       wire_format(format), wire_compression(format), id, px.w,
+                       px.h, destination.x, destination.y, overwrite,
+                       more ? 1 : 0, quiet, chunk);
                  });
 }
 
 auto KittyDriver::transmit_animation_frame(
-    std::span<const std::byte> payload, int format_code, Extent px,
+    std::span<const std::byte> payload, ImageFormat format, Extent px,
     std::uint32_t id, std::chrono::milliseconds gap,
     bool request_reply) -> void {
   m_transmitted = true;
@@ -2472,9 +2505,10 @@ auto KittyDriver::transmit_animation_frame(
                    // default alpha composition could discard RGB under alpha
                    // zero even though the caller registered exact frames.
                    m_buf += std::format(
-                       "\033_Ga=f,t=d,f={},i={},s={},v={},z={},X=1,m={},q={};{}\033\\",
-                       format_code, id, px.w, px.h, wire_gap,
-                       more ? 1 : 0, quiet, chunk);
+                       "\033_Ga=f,t=d,f={}{}"
+                       ",i={},s={},v={},z={},X=1,m={},q={};{}\033\\",
+                       wire_format(format), wire_compression(format), id, px.w,
+                       px.h, wire_gap, more ? 1 : 0, quiet, chunk);
                  });
 }
 

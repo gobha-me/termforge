@@ -418,7 +418,7 @@ offset counts too: a 12×20 crop at `{3,4}` needs 15×24 pixels of destination
 capacity. For `Stretch`, the terminal scales the selected source into the
 declared cell rect and applies the sub-cell origin. A crop must be wholly
 inside `Image`'s real extent or `EncodedImage`'s caller-declared extent. The
-library uses that declaration for opaque PNG exactly as it already does for
+library uses that declaration for opaque payloads exactly as it already does for
 `s=`/`v=`, hashing and fit checks; it never parses the payload.
 
 Invalid offsets, empty/out-of-bounds crops and overflow are refused with a
@@ -615,7 +615,7 @@ already, where a dependency is free. What was missing was a way to hand
 TermForge bytes it should ship verbatim.
 
 ```cpp
-enum class ImageFormat { Rgba32, Png };
+enum class ImageFormat { Rgba32, Png, Rgba32Zlib };
 
 struct EncodedImage {
   ImageFormat format;
@@ -629,11 +629,16 @@ auto draw_image(Rect cells, const EncodedImage& image, PlacementFit fit)
     -> std::expected<void, ErrorEvent>;
 ```
 
-| tier | `Rgba32` | `Png` |
-|---|---|---|
-| Kitty | `f=32` — identical bytes to the `Image` overload | `f=100`, the terminal decodes |
-| AnsiRgb | half-blocks, resampled straight off the span | `Warning`, nothing emitted |
-| Fallback | ramp glyphs, resampled straight off the span | `Warning`, nothing emitted |
+| tier | `Rgba32` | `Rgba32Zlib` | `Png` |
+|---|---|---|---|
+| Kitty | `f=32` — identical bytes to the `Image` overload | `f=32,o=z` — the terminal decompresses | `f=100`, the terminal decodes |
+| AnsiRgb | half-blocks, resampled straight off the span | `Warning`, nothing emitted | `Warning`, nothing emitted |
+| Fallback | ramp glyphs, resampled straight off the span | `Warning`, nothing emitted | `Warning`, nothing emitted |
+
+`Rgba32Zlib` is application-supplied zlib data whose decompressed form is
+row-major RGBA32. TermForge does not compress, decompress, link zlib, or ship a
+codec helper; consumers that already own an encoder hand over its borrowed
+output directly.
 
 Ask `supports_image_format()` before committing to an art set. An application
 picking its assets at cold start needs the answer at cold start; a `Warning`
@@ -646,14 +651,14 @@ an answer.
 geometry out of the datastream. It is there because the *library* needs it: to
 check an `Rgba32` payload against its declared length, to key the content hash,
 and to answer `image_cell_extent(Extent)` for a caller that never decoded
-anything. `s=`/`v=` are emitted for both formats regardless; kitty ignores them
+anything. `s=`/`v=` are emitted for every format regardless; kitty ignores them
 where they do not apply, and one format string beats two that can drift.
 
-For `Png` the field is therefore unverifiable and deliberately unverified. An
-`EncodedImage` whose declared extent disagrees with its header still transmits.
-Having an opinion would mean owning a decoder — the dependency the whole design
-exists to avoid — so the disagreement is not an error the library can see or
-will invent.
+For `Png` and `Rgba32Zlib` the field is therefore unverifiable and deliberately
+unverified. An `EncodedImage` whose declared extent disagrees with its decoded
+payload still transmits. Having an opinion would mean owning a decoder or
+decompressor — the dependency the whole design exists to avoid — so the
+disagreement is not an error the library can see or will invent.
 
 > Since #169 that sentence needs one qualifier: the disagreement is still never
 > detected, but under `PlacementFit::Exact` the *declared* extent decides
@@ -665,8 +670,8 @@ will invent.
 ### The declared extent decides the fit (#169)
 
 `PlacementFit::Exact` on this overload is enforced against `pixels` — the
-number the *caller* declared — for both formats, with no `Png`/`Rgba32`
-asymmetry. #163 deferred the overload on exactly this ground, so it is worth
+number the *caller* declared — for every format, with no opaque/raw asymmetry.
+#163 deferred the overload on exactly this ground, so it is worth
 saying why it is now the answer rather than a compromise: the declared extent
 is the only number that exists, and the library already rests on it everywhere
 else. `s=`/`v=` are emitted from it, the content hash is keyed on it, and
@@ -713,15 +718,16 @@ only the first one ever uploads.
 ### Opaque success is correlated (#165)
 
 Raw RGBA remains locally length-validated and uses `q=2`: there is no decoder
-failure left for the terminal to reveal. PNG is opaque, so each transmit or
-root-frame edit uses `q=2` on intermediate chunks and `q=0` on the final chunk.
+failure left for the terminal to reveal. PNG and Rgba32Zlib are opaque, so each
+transmit or root-frame edit uses `q=2` on intermediate chunks and `q=0` on the
+final chunk.
 `Input` recognizes the returned Kitty APC as control-plane traffic, keeps it
 out of application `Event`s, and `App` offers it to the selected driver before
 ordinary input.
 
 The drawing APIs remain asynchronous: immediate success means the request was
 validated and queued, while a later terminal rejection arrives as an
-`ErrorEvent`. An opaque PNG pin returns its handle immediately, but that handle
+`ErrorEvent`. An opaque pin returns its handle immediately, but that handle
 refuses draw, retain and replace operations until the initial transmit says
 `OK`; a rejection makes the handle stale.
 
@@ -734,9 +740,9 @@ state mutation. An unanswered operation times out after 120 driver flushes;
 the driver rolls it back and quarantines the numeric id until the late reply
 arrives, preventing that reply from committing a later image that reused it.
 
-`tools/png_repro.sh` remains the empirical protocol check: it lets a human
-compare the exact bytes and terminal replies across real emulators without
-adding a PNG parser to the library.
+`tools/png_repro.sh` and `tools/zlib_repro.sh` are the empirical protocol
+checks: they let a human compare exact bytes and terminal replies across real
+emulators without adding a decoder to the library.
 
 ### What this does not deliver
 
@@ -775,7 +781,7 @@ with what `pin_image` actually does. Ask before committing to an art set.
 
 `residency()` is the driver's accepted-write snapshot. It splits region-cache
 and pinned image counts and reports their combined source payload bytes. Those
-bytes are exact inputs — raw RGBA bytes or the compressed PNG payload — rather
+bytes are exact inputs — raw RGBA bytes or a compressed payload — rather
 than an estimate of decoded terminal memory. Queueing a draw does not change the
 snapshot; its frame must first be accepted by the sink. Opaque uploads are then
 counted as believed resident while their reply is pending, and a later rejection
@@ -797,11 +803,11 @@ auto animation = driver.register_animation(frames);
 
 Every frame must have the root's pixel extent and wire format. The complete
 sequence is validated before any wire or state changes. `Image` pixels and
-`EncodedImage::bytes` are borrowed for the call only, PNG stays opaque and
-verbatim, and a zero-millisecond gap means a gapless composition frame.
+`EncodedImage::bytes` are borrowed for the call only, compressed formats stay
+opaque and verbatim, and a zero-millisecond gap means a gapless composition frame.
 Negative gaps and values outside Kitty's signed 32-bit millisecond domain are
 refused. Raw `Image` and encoded `Rgba32` frames may compose because they share
-one wire format; mixing either with PNG is refused.
+one format; mixing them with `Rgba32Zlib` or `Png` is refused.
 
 Kitty creates the root with `a=t`, adds each later frame with `a=f` and no `r=`,
 and uses `X=1` so full-frame registration is replacement rather than alpha
@@ -823,7 +829,7 @@ there is no implicit dedup because playback and lifecycle state must not alias.
 It consumes one slot from the same 256-id application-resident pool as pins.
 `ImageResidency::pinned_images` therefore counts one animation root, while
 `source_payload_bytes` sums every frame's exact input bytes. Both commit only
-when the frame write is accepted. Each opaque PNG transfer must then receive its
+when the frame write is accepted. Each opaque frame transfer must then receive its
 ordered `OK`; rejection or timeout rolls back the whole sequence, schedules a
 root delete, and quarantines the id until every late reply has arrived.
 
@@ -896,7 +902,7 @@ The handle's declared extent and wire format are immutable. A mismatch returns
 a `Warning` before any bytes or bookkeeping change, leaving the last
 successfully queued frame resident. An identical payload is a no-op. The raw
 and encoded overloads retain their existing contracts: RGBA length is
-validated, while PNG is opaque, unparsed, and shipped verbatim.
+validated, while compressed formats are opaque, unparsed, and shipped verbatim.
 
 The replacement edits content lifetime only. Placement lifetime remains the
 separate rule below: omit `draw_pinned` for a frame and normal collection may
@@ -929,7 +935,7 @@ residency adds the block's exact input bytes because the accepted root now
 depends on the prior content plus that edit. A later full replacement resets
 the source-byte count to its new payload. An edit also makes the full-frame
 hash unknown, so a later replacement cannot incorrectly deduplicate against
-the pre-edit root. Sink refusal discards those changes, and an opaque PNG
+the pre-edit root. Sink refusal discards those changes, and an opaque-format
 rejection or timeout restores the previous accepted belief.
 
 ### TGP support is per feature, not per terminal name

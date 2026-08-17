@@ -6,7 +6,7 @@
 namespace termforge::detail {
 
 auto payload_hash(std::span<const std::byte> payload, Extent px,
-                  int format_code) noexcept -> std::uint64_t {
+                  ImageFormat format) noexcept -> std::uint64_t {
   constexpr std::uint64_t kOffset = 14695981039346656037ULL;
   constexpr std::uint64_t kPrime = 1099511628211ULL;
   constexpr std::array<std::uint64_t, 8> kSeeds = {
@@ -49,7 +49,7 @@ auto payload_hash(std::span<const std::byte> payload, Extent px,
   for (const std::uint64_t field : {
            static_cast<std::uint64_t>(static_cast<std::uint32_t>(px.w)),
            static_cast<std::uint64_t>(static_cast<std::uint32_t>(px.h)),
-           static_cast<std::uint64_t>(static_cast<std::uint32_t>(format_code)),
+           static_cast<std::uint64_t>(format),
            static_cast<std::uint64_t>(payload.size())}) {
     hash ^= avalanche(field + 0x9E3779B97F4A7C15ULL);
     hash *= kPrime;

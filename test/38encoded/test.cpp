@@ -133,6 +133,52 @@ TEST_CASE("encoded: a PNG rides f=100, and nothing rides f=32",
   CHECK(count_of(out, "f=32") == 0);
 }
 
+TEST_CASE("encoded: zlib RGBA rides f=32,o=z and is shipped verbatim",
+          "[encoded][kitty][zlib][reply]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const auto compressed = blob(37, 4);
+  const EncodedImage img{ImageFormat::Rgba32Zlib, as_span(compressed),
+                         Extent{640, 480}};
+
+  REQUIRE(d.draw_image(Rect{0, 0, 8, 4}, img));
+  d.flush();
+
+  const auto chunks = transmit_chunks(apcs(out));
+  REQUIRE(chunks.size() == 1);
+  CHECK(chunks.front().keys.find("f=32") != std::string::npos);
+  CHECK(chunks.front().keys.find("o=z") != std::string::npos);
+  CHECK(chunks.front().keys.find("f=100") == std::string::npos);
+  CHECK(chunks.front().keys.find("s=640,v=480") != std::string::npos);
+  CHECK(chunks.front().keys.find("q=0") != std::string::npos);
+  CHECK(reassemble(out) == compressed);
+}
+
+TEST_CASE("encoded: zlib compression key appears only on the chunk opener",
+          "[encoded][kitty][zlib][reply]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const auto compressed = blob(5000, 5);
+  REQUIRE(d.draw_image(
+      Rect{0, 0, 8, 4},
+      EncodedImage{ImageFormat::Rgba32Zlib, as_span(compressed),
+                   Extent{50, 25}}));
+  d.flush();
+
+  const auto chunks = transmit_chunks(apcs(out));
+  REQUIRE(chunks.size() >= 2);
+  for (std::size_t i = 0; i < chunks.size(); ++i) {
+    const bool last = i + 1 == chunks.size();
+    CHECK(chunks[i].keys.find(last ? "q=0" : "q=2") !=
+          std::string::npos);
+    CHECK((chunks[i].keys.find("o=z") != std::string::npos) == (i == 0));
+    if (i > 0) CHECK(chunks[i].keys.find("f=") == std::string::npos);
+  }
+  CHECK(reassemble(out) == compressed);
+}
+
 TEST_CASE("encoded: the payload the terminal reassembles is the one we gave it",
           "[encoded][kitty]") {
   SECTION("a small PNG, one chunk") {
@@ -325,6 +371,26 @@ TEST_CASE("encoded: s=/v= carry the DECLARED extent, because we never parse",
   CHECK(reassemble(out) == want);
 }
 
+TEST_CASE("encoded: zlib RGBA length is opaque despite a declared extent",
+          "[encoded][kitty][zlib]") {
+  // Three bytes cannot be raw 640x480 RGBA, but they can be an arbitrary
+  // prefix of the opaque compressed domain as far as this dependency-free
+  // library can know. Applying Rgba32's length check here would silently turn
+  // TermForge into a decompressor-shaped validator it cannot implement.
+  const auto compressed = blob(3, 9);
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  REQUIRE(d.draw_image(
+      Rect{0, 0, 4, 4},
+      EncodedImage{ImageFormat::Rgba32Zlib, as_span(compressed),
+                   Extent{640, 480}}));
+  d.flush();
+  CHECK(out.find("f=32,o=z") != std::string::npos);
+  CHECK(out.find("s=640,v=480") != std::string::npos);
+  CHECK(reassemble(out) == compressed);
+}
+
 TEST_CASE("encoded: Exact places against the DECLARED extent, still unparsed",
           "[encoded][kitty]") {
   // #169's posture, and the case above is why it needs stating. The same
@@ -446,10 +512,18 @@ TEST_CASE("encoded: the same bytes in a different format are a different image",
 
   REQUIRE(d.draw_image(
       Rect{0, 0, 4, 4},
+      EncodedImage{ImageFormat::Rgba32Zlib, as_span(bytes), Extent{4, 4}}));
+  d.flush();
+  CHECK(d.last_frame_bytes().image_transmit > 0);
+  d.consume_reply(termforge::TerminalReply{1, std::nullopt, "OK"});
+
+  REQUIRE(d.draw_image(
+      Rect{0, 0, 4, 4},
       EncodedImage{ImageFormat::Png, as_span(bytes), Extent{4, 4}}));
   d.flush();
   CHECK(d.last_frame_bytes().image_transmit > 0);
-  CHECK(count_of(out, "f=32") == 1);
+  CHECK(count_of(out, "f=32") == 2);
+  CHECK(count_of(out, "o=z") == 1);
   CHECK(count_of(out, "f=100") == 1);
 }
 
@@ -630,6 +704,30 @@ TEST_CASE("encoded: a tier that cannot decode PNG warns and emits nothing",
   }
 }
 
+TEST_CASE("encoded: flat tiers name and refuse compressed RGBA",
+          "[encoded][zlib][failure]") {
+  const auto compressed = blob(17, 7);
+  const EncodedImage img{ImageFormat::Rgba32Zlib, as_span(compressed),
+                         Extent{2, 2}};
+
+  auto check = [&](auto& d, std::string_view source) {
+    std::string out;
+    d.set_output(&out);
+    const auto result = d.draw_image(Rect{0, 0, 2, 2}, img);
+    REQUIRE_FALSE(result);
+    CHECK(result.error().severity == Severity::Warning);
+    CHECK(result.error().source == source);
+    CHECK(result.error().message.find("Rgba32Zlib") != std::string::npos);
+    d.flush();
+    CHECK(out.empty());
+  };
+
+  AnsiRgbDriver ansi;
+  check(ansi, "ansi_rgb");
+  FallbackDriver fallback;
+  check(fallback, "fallback");
+}
+
 TEST_CASE("encoded: supports_image_format answers before anything is drawn",
           "[encoded]") {
   // An application choosing an art set at cold start needs the answer at cold
@@ -637,14 +735,17 @@ TEST_CASE("encoded: supports_image_format answers before anything is drawn",
   // was already made is not an answer.
   KittyDriver k;
   CHECK(k.supports_image_format(ImageFormat::Rgba32));
+  CHECK(k.supports_image_format(ImageFormat::Rgba32Zlib));
   CHECK(k.supports_image_format(ImageFormat::Png));
 
   AnsiRgbDriver a;
   CHECK(a.supports_image_format(ImageFormat::Rgba32));
+  CHECK_FALSE(a.supports_image_format(ImageFormat::Rgba32Zlib));
   CHECK_FALSE(a.supports_image_format(ImageFormat::Png));
 
   FallbackDriver f;
   CHECK(f.supports_image_format(ImageFormat::Rgba32));
+  CHECK_FALSE(f.supports_image_format(ImageFormat::Rgba32Zlib));
   CHECK_FALSE(f.supports_image_format(ImageFormat::Png));
 
   // And it agrees with what actually happens. A capability query that can
@@ -721,6 +822,7 @@ TEST_CASE("encoded: a driver written before #163 still compiles and degrades",
   // The inherited default is honest about itself, so an application asks and
   // gets a usable answer rather than discovering it a frame later.
   CHECK_FALSE(base.supports_image_format(ImageFormat::Png));
+  CHECK_FALSE(base.supports_image_format(ImageFormat::Rgba32Zlib));
   CHECK(base.supports_image_format(ImageFormat::Rgba32));
 
   // And the overload it DOES implement is untouched.

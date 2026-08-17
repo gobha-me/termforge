@@ -201,7 +201,7 @@ TEST_CASE("residency: opaque replies reconcile committed beliefs",
   const auto rejected = bytes(7, 3);
 
   const auto pin = d.pin_image(
-      EncodedImage{ImageFormat::Png, first, Extent{4, 4}});
+      EncodedImage{ImageFormat::Rgba32Zlib, first, Extent{4, 4}});
   REQUIRE(pin);
   d.flush();
   CHECK(d.residency() == ImageResidency{0, 1, 11});
@@ -209,14 +209,15 @@ TEST_CASE("residency: opaque replies reconcile committed beliefs",
   CHECK(d.residency() == ImageResidency{0, 1, 11});
 
   REQUIRE(d.replace_pinned(
-      *pin, EncodedImage{ImageFormat::Png, replacement, Extent{4, 4}}));
+      *pin,
+      EncodedImage{ImageFormat::Rgba32Zlib, replacement, Extent{4, 4}}));
   d.flush();
   CHECK(d.residency() == ImageResidency{0, 1, 19});
   d.consume_reply(TerminalReply{pin->id, std::nullopt, "EINVAL"});
   CHECK(d.residency() == ImageResidency{0, 1, 11});
 
   const auto doomed = d.pin_image(
-      EncodedImage{ImageFormat::Png, rejected, Extent{2, 2}});
+      EncodedImage{ImageFormat::Rgba32Zlib, rejected, Extent{2, 2}});
   REQUIRE(doomed);
   d.flush();
   CHECK(d.residency() == ImageResidency{0, 2, 18});

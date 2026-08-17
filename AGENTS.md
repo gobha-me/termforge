@@ -68,7 +68,7 @@ file is the tactical version.
 - **Image residency is committed at the same accepted-write boundary** (#112).
   `ImageResidency` reports a driver's belief, never invented terminal capacity:
   region-cache and pinned counts plus the exact source payload bytes believed
-  resident (compressed input bytes for opaque PNG, not decoded memory). Kitty
+  resident (compressed input bytes for opaque payloads, not decoded memory). Kitty
   stages ordered, generation-qualified mutations because one frame may evict
   and reuse an id; `emit_frame` acceptance commits them, sink refusal discards
   them, and a later Kitty rejection/timeout invalidates or restores the relevant
@@ -146,7 +146,7 @@ file is the tactical version.
   `source` is a positive `PixelRect` wholly inside the real `Image` extent or
   the caller-declared `EncodedImage`/pin extent. Validate both before cache
   lookup, mutation or wire, with 64-bit intermediate arithmetic; never parse an
-  opaque PNG to check its declaration. The selected crop is the effective
+  opaque payload to check its declaration. The selected crop is the effective
   `Exact` extent and its pixel offset counts toward the containing cell rect.
   Kitty Classic emits `X=`/`Y=` and `x=`/`y=`/`w=`/`h=` only when requested,
   so the default wire remains byte-identical. Geometry changes re-place
@@ -162,8 +162,10 @@ file is the tactical version.
   inspects or resamples them — that is the application's asset pipeline's job,
   and it is the only reason a compressed wire format can exist here without
   breaking the stdlib-only rule. Never add a check that requires parsing the
-  payload: `Rgba32`'s length is derivable and is validated, `Png`'s is not and
-  deliberately is not. #169 sharpened rather than weakened this — the declared
+  payload: `Rgba32`'s length is derivable and is validated; `Rgba32Zlib` and
+  `Png` are opaque and deliberately are not. `Rgba32Zlib` is caller-compressed
+  and rides Kitty as `f=32,o=z`; TermForge never links zlib or offers a codec
+  helper. #169 sharpened rather than weakened this — the declared
   extent is precisely *why* no parse is needed, and a guard built on it stays
   inside the rule. A tier that cannot carry a format says so via
   `supports_image_format` *and* returns a `Warning` — never a guess.
@@ -177,7 +179,7 @@ file is the tactical version.
   fit mode and adds no border policy. Since #169 it applies to `EncodedImage`
   too — a pre-rendered plate is by definition pre-encoded, so the two features
   had to compose or neither was usable for shipped art. There the fit is
-  enforced against the caller-**declared** extent, for both formats: it is the
+  enforced against the caller-**declared** extent, for every format: it is the
   only number that exists, and `s=`/`v=`, the content hash and
   `image_cell_extent(Extent)` already rest on it. Still nothing parses the
   payload.
@@ -186,12 +188,12 @@ file is the tactical version.
   never turns them into application `Event`s; `App` offers them to the selected
   driver's non-pure `consume_reply` hook before ordinary input, even while an
   `EventSource` replaces terminal keystrokes. Raw RGBA remains locally
-  validated and fully quiet. An opaque PNG transfer uses `q=2` on intermediate
-  chunks and `q=0` on the final chunk, and Kitty commits its content hash only
-  after the correlated `i=` reply says `OK`. Synchronous API success means only
-  "validated and queued"; a PNG pin's handle cannot draw, retain or replace
-  until its initial `OK`. A rejection is a `Warning` and rolls back the
-  relevant belief: a region retries, a rejected pin becomes
+  validated and fully quiet. Opaque PNG and Rgba32Zlib transfers use `q=2` on
+  intermediate chunks and `q=0` on the final chunk, and Kitty commits their
+  content hash only after the correlated `i=` reply says `OK`. Synchronous API
+  success means only "validated and queued"; an opaque pin's handle cannot
+  draw, retain or replace until its initial `OK`. A rejection is a `Warning`
+  and rolls back the relevant belief: a region retries, a rejected pin becomes
   stale, and a rejected root edit preserves its last accepted frame. Only one
   operation may await an id; different work refuses without mutation. After
   120 driver flushes an unanswered operation warns, rolls back and quarantines
@@ -254,8 +256,8 @@ file is the tactical version.
   gaps are signed-32-bit milliseconds: zero means protocol gapless (`z=-1`) for
   later frames, while the root already defaults gapless and needs `a=a,r=1,z=`
   only for a positive gap. Mixed extents/formats refuse before any partial
-  sequence; PNG bytes stay opaque/verbatim and every PNG transfer awaits its
-  ordered reply. A registration owns one id in the shared 256-slot
+  sequence; compressed bytes stay opaque/verbatim and every opaque transfer
+  awaits its ordered reply. A registration owns one id in the shared 256-slot
   application-resident pool, is never implicitly deduplicated, and counts as
   one pinned residency root whose bytes sum every frame payload. Sink refusal,
   rejection, timeout, invalidation and shutdown follow the same accepted-write,

@@ -12,9 +12,9 @@
 //
 //  * the guards. Empty is empty on every tier, and Rgba32 is the one format
 //    whose length is derivable, so it is the one format where a caller's
-//    extent/buffer disagreement is visible at all. Png gets no such check --
-//    parsing the datastream to invent one would mean shipping a PNG decoder,
-//    the dependency the whole path exists to avoid.
+//    extent/buffer disagreement is visible at all. Opaque formats get no such
+//    check -- decoding or decompressing them to invent one would add the
+//    dependency the whole path exists to avoid.
 //
 //  * reading a pixel back out. The half-block and ASCII tiers resample, so
 //    they need pixel access; routing them through a reconstructed Image would
@@ -57,16 +57,30 @@ namespace termforge::detail {
 }
 
 // An ImageFormat's spelling, for diagnostics. An exhaustive switch rather than
-// a ternary: a third enumerator added later must not silently come out named
-// as one of these two, and -Wswitch (an error under CI's -Werror) is what
+// a ternary: a later enumerator must not silently come out named as an existing
+// one, and -Wswitch (an error under CI's -Werror) is what
 // stops it.
 [[nodiscard]] inline auto format_name(ImageFormat format) noexcept
     -> std::string_view {
   switch (format) {
-    case ImageFormat::Rgba32: return "Rgba32";
-    case ImageFormat::Png:    return "Png";
+    case ImageFormat::Rgba32:     return "Rgba32";
+    case ImageFormat::Rgba32Zlib: return "Rgba32Zlib";
+    case ImageFormat::Png:        return "Png";
   }
   return "?";
+}
+
+// A format is locally acknowledged only when the library can validate the
+// complete payload before it reaches the terminal. Opaque formats can fail in
+// Kitty's decoder, so their success is correlated through the control plane.
+[[nodiscard]] inline auto requires_terminal_reply(ImageFormat format) noexcept
+    -> bool {
+  switch (format) {
+    case ImageFormat::Rgba32:     return false;
+    case ImageFormat::Rgba32Zlib:
+    case ImageFormat::Png:        return true;
+  }
+  return true;
 }
 
 // The guards that are about the PAYLOAD rather than about where it is going:
