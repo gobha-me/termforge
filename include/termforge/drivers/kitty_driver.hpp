@@ -121,6 +121,8 @@ class KittyDriver final : public TerminalDriver {
   [[nodiscard]] auto max_pinned_images() const noexcept
       -> std::size_t override;
   [[nodiscard]] auto residency() const noexcept -> ImageResidency override;
+  [[nodiscard]] auto pinned_image_status(PinnedImage image) const noexcept
+      -> PinnedImageStatus override;
   auto register_animation(std::span<const AnimationFrame> frames)
       -> std::expected<AnimationHandle, ErrorEvent> override;
   auto play_animation(AnimationHandle animation, AnimationPlayMode mode,
@@ -276,6 +278,7 @@ class KittyDriver final : public TerminalDriver {
     Extent px{};  // the declared extent -- what Exact is enforced against
     ImageFormat format{ImageFormat::Rgba32};
     std::uint64_t content_hash{0};
+    std::uint64_t content_revision{0};
     bool accepted{true};
     // Monotonic per driver and NEVER reused, unlike the map key. Terminal-side
     // image ids are recycled inside the finite public budget, so
@@ -405,6 +408,7 @@ class KittyDriver final : public TerminalDriver {
     std::uint32_t image_id{0};
     std::uint32_t serial{0};
     std::uint64_t content_hash{0};
+    bool advance_revision{false};
   };
 
   // RAII byte attribution for a draw path (#139). Everything appended to
@@ -582,7 +586,8 @@ class KittyDriver final : public TerminalDriver {
                          std::uint64_t source_payload_bytes,
                          bool previously_accounted) -> void;
   auto stage_content_hash(std::uint32_t image_id, std::uint32_t serial,
-                          std::uint64_t content_hash) -> void;
+                          std::uint64_t content_hash,
+                          bool advance_revision = false) -> void;
   [[nodiscard]] auto projected_content_hash(std::uint32_t image_id,
                                             const PinnedEntry& entry) const
       noexcept -> std::uint64_t;

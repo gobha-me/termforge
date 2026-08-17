@@ -28,6 +28,7 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include "detail/encoded.hpp"
 #include "detail/keyboard.hpp"
 #include "detail/placement.hpp"
 #include "detail/requirements.hpp"
@@ -1041,9 +1042,12 @@ auto App::apply_image_invalidation() -> void {
     // checking, delete a newly recycled stranger.  Widget storage remains the
     // source of truth and recreate asks for it again in this frame.
     state.pin = {};
+    state.content_ready = false;
     state.visible = false;
     state.recreate = true;
+    state.awaiting_terminal = false;
     state.pending_content = false;
+    state.pending_terminal = false;
     state.pending_visible = false;
     state.touched_wire = false;
   }
@@ -1587,6 +1591,7 @@ auto App::frame_step() -> void {
     for (auto& region : m_persistent_pixels) {
       region.seen = false;
       region.pending_content = false;
+      region.pending_terminal = false;
       region.pending_visible = false;
       region.touched_wire = false;
     }
@@ -2252,14 +2257,11 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
   const auto regions = widget.pixel_regions();
   for (std::size_t ordinal = 0; ordinal < regions.size(); ++ordinal) {
     const Rect region = regions[ordinal];
-    const PixelRegionState state = widget.pixel_region_state(region);
+    PixelRegionState state = widget.pixel_region_state(region);
     const ImagePlacementOptions placement = widget.pixel_placement(region);
 
-    // Ask before borrowing a raster or blanking its authored cell Baseline.
-    // Unsupported direct draws are Warnings because nothing was emitted; a
-    // widget has already supplied the complete lesser route, so App honours
-    // the request through that route and reports one Info per transition.
-    if (!m_driver->supports_image_placement(placement)) {
+    auto report_fallback = [&](PixelFallbackSignature signature,
+                               ErrorEvent error) {
       const auto fallback = std::find_if(
           m_pixel_placement_fallbacks.begin(),
           m_pixel_placement_fallbacks.end(),
@@ -2270,22 +2272,28 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
         m_pixel_placement_fallbacks.push_back(
             PixelPlacementFallback{.owner = &widget,
                                    .ordinal = ordinal,
-                                   .placement = placement,
+                                   .signature = signature,
                                    .seen = true});
-        m_input.push_error(ErrorEvent{
-            Severity::Info, "app",
-            "pixel region: requested image placement is unsupported; using "
-            "the widget's cell Baseline"});
-      } else {
-        if (fallback->placement != placement) {
-          fallback->placement = placement;
-          m_input.push_error(ErrorEvent{
-              Severity::Info, "app",
-              "pixel region: requested image placement is unsupported; "
-              "using the widget's cell Baseline"});
-        }
-        fallback->seen = true;
+        m_input.push_error(std::move(error));
+        return;
       }
+      if (fallback->signature != signature) {
+        fallback->signature = signature;
+        m_input.push_error(std::move(error));
+      }
+      fallback->seen = true;
+    };
+
+    // Ask before borrowing a raster or blanking its authored cell Baseline.
+    if (!m_driver->supports_image_placement(placement)) {
+      report_fallback(
+          PixelFallbackSignature{
+              .reason = PixelFallbackSignature::Reason::PlacementUnsupported,
+              .placement = placement},
+          ErrorEvent{
+              Severity::Info, "app",
+              "pixel region: requested image placement is unsupported; using "
+              "the widget's cell Baseline"});
       continue;
     }
 
@@ -2305,24 +2313,52 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
         retained = &*it;
       }
       retained->seen = true;
+
+      // An opaque initial pin is not drawable until Kitty answers OK. A
+      // replacement keeps its previously accepted root drawable while the new
+      // bytes are pending. Reconcile before borrowing or blanking.
+      if (retained->awaiting_terminal && retained->pin) {
+        const auto status = m_driver->pinned_image_status(retained->pin);
+        if (!status.valid) {
+          retained->pin = {};
+          retained->content_ready = false;
+          retained->visible = false;
+          retained->awaiting_terminal = false;
+          retained->recreate = true;
+        } else if (!status.update_pending) {
+          retained->awaiting_terminal = false;
+          if (status.content_ready &&
+              status.content_revision >= retained->expected_revision) {
+            retained->content_ready = true;
+            retained->recreate = false;
+            if (state.content_revision ==
+                retained->acknowledgement_content_revision) {
+              retained->owner->pixel_region_submitted(
+                  retained->acknowledgement_rect,
+                  retained->acknowledgement_content_revision);
+            }
+            state = widget.pixel_region_state(region);
+          } else {
+            // A rejected replacement leaves the old accepted root usable, but
+            // the dirty candidate was not accepted and must be asked for again.
+            retained->recreate = !status.content_ready;
+          }
+        }
+      }
     }
 
-    // The widget cannot ask the driver itself, so hand it the answer.
+    // The widget cannot ask the driver itself, so hand generated pixels the
+    // active tier's preferred extent. Encoded assets own a fixed declaration.
     const Extent px = m_driver->preferred_pixel_extent(region);
     bool needs_image = state.mode == PixelRegionMode::Immediate;
     if (retained != nullptr) {
-      // A generated raster may depend on the destination's cell extent and on
-      // the driver's current pixels-per-cell answer. Ask again at those two
-      // boundaries; fixed-grid producers simply return the same-sized image,
-      // which leaves their content resident and changes placement only.
       const bool destination_extent_changed =
-          retained->content_ready &&
+          retained->content_ready && !retained->encoded &&
           (retained->rect.w != region.w || retained->rect.h != region.h);
       needs_image = !retained->content_ready || state.content_dirty ||
                     retained->recreate || destination_extent_changed ||
                     m_pixel_force_repaint;
-      // A non-resident enhanced tier (currently ANSI) needs the source again
-      // when placement must be repainted; App never borrows it across frames.
+      if (retained->awaiting_terminal) needs_image = false;
       if (m_driver->max_pinned_images() == 0 &&
           (!retained->visible || retained->rect != region ||
            retained->placement != placement || m_pixel_force_repaint)) {
@@ -2330,72 +2366,103 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
       }
     }
 
-    const Image* image = needs_image ? widget.draw_pixels(region, px) : nullptr;
-    // Non-empty as well as non-null: an engaged optional holding an Image{}
-    // used to blank the covered cells here and then be rejected by the driver
-    // as "draw_image: empty image", leaving a hole in the UI.
+    const EncodedImage* encoded =
+        needs_image ? widget.draw_encoded_pixels(region) : nullptr;
+    const Image* image = nullptr;
+    bool payload_encoded = encoded != nullptr;
+    if (needs_image && encoded == nullptr) image = widget.draw_pixels(region, px);
+    if (!needs_image && retained != nullptr)
+      payload_encoded = retained->encoded;
+
+    if (payload_encoded) {
+      const ImageFormat format = encoded != nullptr ? encoded->format
+                                                    : retained->format;
+      const Extent extent = encoded != nullptr ? encoded->pixels
+                                               : retained->extent;
+      const std::size_t payload_bytes =
+          encoded != nullptr ? encoded->bytes.size() : 0;
+      const PixelFallbackSignature signature{
+          .reason = PixelFallbackSignature::Reason::FormatUnsupported,
+          .placement = placement,
+          .format = format,
+          .extent = extent,
+          .payload_bytes = payload_bytes};
+      if (!m_driver->supports_image_format(format)) {
+        report_fallback(
+            signature,
+            ErrorEvent{Severity::Info, "app",
+                       "pixel region: encoded image format is unsupported; "
+                       "using the widget's cell Baseline"});
+        if (retained != nullptr) retained->visible = false;
+        continue;
+      }
+      if (encoded != nullptr) {
+        if (auto valid = detail::validate_payload(
+                *encoded, *m_driver, m_driver->name(), "pixel region");
+            !valid) {
+          auto invalid_signature = signature;
+          invalid_signature.reason =
+              PixelFallbackSignature::Reason::PayloadInvalid;
+          report_fallback(invalid_signature, std::move(valid.error()));
+          if (retained != nullptr) retained->visible = false;
+          continue;
+        }
+      }
+    }
+
+    const bool supplied = payload_encoded ? encoded != nullptr
+                                          : image != nullptr && !image->empty();
     const bool cached = retained != nullptr && retained->content_ready;
-    if ((image != nullptr && !image->empty()) || (!needs_image && cached)) {
+    if (supplied || (!needs_image && cached)) {
       const Extent source_extent =
-          image != nullptr
-              ? Extent{image->width(), image->height()}
-              : retained->extent;
-      // Validate before blanking the authored Baseline. A crop outside this
-      // frame or an invalid sub-cell offset is a Warning and no enhanced draw,
-      // not a one-frame hole followed by a driver refusal in the image window.
+          payload_encoded
+              ? (encoded != nullptr ? encoded->pixels : retained->extent)
+              : (image != nullptr
+                     ? Extent{image->width(), image->height()}
+                     : retained->extent);
       if (auto valid = detail::validate_placement(
               placement, region, source_extent, *m_driver, m_driver->name(),
               "pixel region");
           !valid) {
-        // The driver supports the feature, but this particular value cannot
-        // be honoured. Use the same per-region transition latch as a
-        // capability refusal: continuous rendering must not turn one bad crop
-        // into an ErrorEvent storm. Unlike the supported-lesser-route case
-        // above this remains Warning, because the requested image was not
-        // drawn at all.
-        const auto fallback = std::find_if(
-            m_pixel_placement_fallbacks.begin(),
-            m_pixel_placement_fallbacks.end(),
-            [&](const PixelPlacementFallback& candidate) {
-              return candidate.owner == &widget &&
-                     candidate.ordinal == ordinal;
-            });
-        bool report = false;
-        if (fallback == m_pixel_placement_fallbacks.end()) {
-          m_pixel_placement_fallbacks.push_back(
-              PixelPlacementFallback{.owner = &widget,
-                                     .ordinal = ordinal,
-                                     .placement = placement,
-                                     .seen = true});
-          report = true;
-        } else {
-          report = fallback->placement != placement;
-          fallback->placement = placement;
-          fallback->seen = true;
-        }
-        if (report) m_input.push_error(std::move(valid.error()));
+        report_fallback(
+            PixelFallbackSignature{
+                .reason = PixelFallbackSignature::Reason::PlacementInvalid,
+                .placement = placement,
+                .format = payload_encoded
+                              ? (encoded != nullptr ? encoded->format
+                                                    : retained->format)
+                              : ImageFormat::Rgba32,
+                .extent = source_extent,
+                .payload_bytes = encoded != nullptr ? encoded->bytes.size()
+                                                     : 0},
+            std::move(valid.error()));
         if (retained != nullptr) retained->visible = false;
         continue;
       }
       m_pixel_regions.push_back({.owner = &widget,
                                  .ordinal = ordinal,
                                  .rect = region,
-                                 .image = image,
+                                 .payload = payload_encoded
+                                                ? PixelRegion::Payload{encoded}
+                                                : PixelRegion::Payload{image},
                                  .placement = placement,
                                  .mode = state.mode,
-                                 .content_dirty = state.content_dirty});
+                                 .content_dirty = state.content_dirty && supplied,
+                                 .content_revision = state.content_revision});
 
-      // Clear the Screen cells in this region so the cell diff does not emit
-      // the fallback underneath the image. This is load-bearing on ANSI too:
-      // when the region disappears, the next authored cell path then differs
-      // from blank and is repainted instead of leaving the old half-blocks.
-      for (int y = region.y; y < region.y + region.h; ++y)
-        for (int x = region.x; x < region.x + region.w; ++x)
-          m_screen->at(x, y) = Cell{};
+      // An opaque Persistent root cannot be placed until its first terminal
+      // OK. Keep the Baseline in that upload frame; the accepted cached arm
+      // will blank it when the handle becomes drawable.
+      const bool awaiting_initial_opaque =
+          retained != nullptr && !retained->content_ready &&
+          encoded != nullptr &&
+          detail::requires_terminal_reply(encoded->format);
+      if (!awaiting_initial_opaque) {
+        for (int y = region.y; y < region.y + region.h; ++y)
+          for (int x = region.x; x < region.x + region.w; ++x)
+            m_screen->at(x, y) = Cell{};
+      }
     } else if (retained != nullptr) {
-      // No enhanced frame exists for this visible region. Its placement will
-      // be collected at this frame boundary; remember that so a later retry
-      // uses draw_pinned rather than a no-wire retain of a vanished placement.
       retained->visible = false;
     }
   }
@@ -2422,8 +2489,15 @@ auto App::flush_pixel_regions() -> void {
   // already passed the same test.
   for (const auto& pr : m_pixel_regions) {
     if (pr.mode == PixelRegionMode::Immediate) {
-      if (auto drawn = m_driver->draw_image(pr.rect, *pr.image, pr.placement);
-          !drawn) {
+      std::expected<void, ErrorEvent> drawn;
+      if (const auto* raw = std::get_if<const Image*>(&pr.payload)) {
+        drawn = m_driver->draw_image(pr.rect, **raw, pr.placement);
+      } else {
+        drawn = m_driver->draw_image(
+            pr.rect, **std::get_if<const EncodedImage*>(&pr.payload),
+            pr.placement);
+      }
+      if (!drawn) {
         m_input.push_error(std::move(drawn.error()));
       }
       continue;
@@ -2438,27 +2512,43 @@ auto App::flush_pixel_regions() -> void {
     if (state_it == m_persistent_pixels.end()) continue;
     auto& state = *state_it;
 
+    const auto* raw = std::get_if<const Image*>(&pr.payload);
+    const auto* encoded = std::get_if<const EncodedImage*>(&pr.payload);
+    const bool has_payload =
+        (raw != nullptr && *raw != nullptr) ||
+        (encoded != nullptr && *encoded != nullptr);
+    const bool next_encoded = has_payload ? encoded != nullptr : state.encoded;
+    const ImageFormat next_format =
+        encoded != nullptr && *encoded != nullptr ? (*encoded)->format
+                                                  : state.format;
     const Extent next_extent =
-        pr.image != nullptr
-            ? Extent{pr.image->width(), pr.image->height()}
-            : state.extent;
-    const bool extent_changed =
-        state.content_ready && pr.image != nullptr &&
-        state.extent != next_extent;
+        raw != nullptr && *raw != nullptr
+            ? Extent{(*raw)->width(), (*raw)->height()}
+            : encoded != nullptr && *encoded != nullptr ? (*encoded)->pixels
+                                                        : state.extent;
+    const bool identity_changed =
+        state.content_ready && has_payload &&
+        (state.extent != next_extent || state.encoded != next_encoded ||
+         (next_encoded && state.format != next_format));
 
     if (m_driver->max_pinned_images() == 0) {
       const bool placement_changed = !state.visible || state.rect != pr.rect ||
                                      state.placement != pr.placement ||
                                      m_pixel_force_repaint;
       const bool submit_content = !state.content_ready || pr.content_dirty ||
-                                  state.recreate || extent_changed;
+                                  state.recreate || identity_changed;
       if (submit_content || placement_changed) {
         // collect_pixel_regions asks for the image when either predicate can
         // reach here; keep the guard defensive because a null borrowed view is
         // a fallback request, never permission to dereference it.
-        if (pr.image == nullptr) continue;
-        if (auto drawn = m_driver->draw_image(pr.rect, *pr.image, pr.placement);
-            !drawn) {
+        if (!has_payload) continue;
+        std::expected<void, ErrorEvent> drawn;
+        if (raw != nullptr) {
+          drawn = m_driver->draw_image(pr.rect, **raw, pr.placement);
+        } else {
+          drawn = m_driver->draw_image(pr.rect, **encoded, pr.placement);
+        }
+        if (!drawn) {
           m_input.push_error(std::move(drawn.error()));
           continue;
         }
@@ -2468,43 +2558,68 @@ auto App::flush_pixel_regions() -> void {
         state.touched_wire = true;
         if (submit_content) {
           state.pending_content = true;
-          state.pending_extent =
-              Extent{pr.image->width(), pr.image->height()};
+          state.pending_extent = next_extent;
+          state.pending_encoded = next_encoded;
+          state.pending_format = next_format;
+          state.pending_content_revision = pr.content_revision;
         }
       }
       continue;
     }
 
     const bool submit_content = !state.content_ready || pr.content_dirty ||
-                                state.recreate || extent_changed;
-    if ((state.recreate || extent_changed) && state.pin) {
+                                state.recreate || identity_changed;
+    if ((state.recreate || identity_changed) && state.pin) {
       if (auto released = m_driver->unpin_image(state.pin); !released) {
         m_input.push_error(std::move(released.error()));
         continue;
       }
       state.pin = {};
+      state.content_ready = false;
       state.visible = false;
+      state.awaiting_terminal = false;
       state.touched_wire = true;
     }
 
     bool content_ok = true;
+    bool pending_terminal = false;
+    std::uint64_t expected_revision = 0;
     if (!state.pin) {
-      if (pr.image == nullptr) continue;
-      auto pinned = m_driver->pin_image(*pr.image);
+      if (!has_payload) continue;
+      std::expected<PinnedImage, ErrorEvent> pinned;
+      if (raw != nullptr) {
+        pinned = m_driver->pin_image(**raw);
+      } else {
+        pinned = m_driver->pin_image(**encoded);
+      }
       if (!pinned) {
         m_input.push_error(std::move(pinned.error()));
         continue;
       }
       state.pin = *pinned;
       state.touched_wire = true;
-    } else if (submit_content && pr.image != nullptr && !state.recreate &&
-               !extent_changed) {
-      if (auto replaced = m_driver->replace_pinned(state.pin, *pr.image);
-          !replaced) {
+      const auto status = m_driver->pinned_image_status(state.pin);
+      pending_terminal = status.update_pending;
+      expected_revision = status.content_revision +
+                          (status.update_pending ? 1u : 0u);
+    } else if (submit_content && has_payload && !state.recreate &&
+               !identity_changed) {
+      const auto prior = m_driver->pinned_image_status(state.pin);
+      std::expected<void, ErrorEvent> replaced;
+      if (raw != nullptr) {
+        replaced = m_driver->replace_pinned(state.pin, **raw);
+      } else {
+        replaced = m_driver->replace_pinned(state.pin, **encoded);
+      }
+      if (!replaced) {
         m_input.push_error(std::move(replaced.error()));
         content_ok = false;
       } else {
         state.touched_wire = true;
+        const auto status = m_driver->pinned_image_status(state.pin);
+        pending_terminal = status.update_pending;
+        expected_revision = prior.content_revision +
+                            (status.update_pending ? 1u : 0u);
       }
     }
     if (!content_ok) {
@@ -2522,10 +2637,26 @@ auto App::flush_pixel_regions() -> void {
       continue;
     }
 
+    const auto status = m_driver->pinned_image_status(state.pin);
+    if (!status.content_ready) {
+      state.pending_content = submit_content;
+      state.pending_extent = next_extent;
+      state.pending_encoded = next_encoded;
+      state.pending_format = next_format;
+      state.pending_terminal = pending_terminal || status.update_pending;
+      state.pending_expected_revision =
+          expected_revision != 0 ? expected_revision
+                                 : status.content_revision + 1;
+      state.pending_content_revision = pr.content_revision;
+      state.pending_rect = pr.rect;
+      state.pending_visible = false;
+      continue;
+    }
+
     const bool placement_changed = !state.visible || state.rect != pr.rect ||
                                    state.placement != pr.placement ||
                                    m_pixel_force_repaint || state.recreate ||
-                                   extent_changed;
+                                   identity_changed;
     // retain_pinned is a non-pure compatibility hook: Kitty's override is a
     // no-wire clock refresh, while an older driver inherits the honest
     // draw_pinned fallback and may append placement bytes. Treat either route
@@ -2545,6 +2676,11 @@ auto App::flush_pixel_regions() -> void {
     if (submit_content) {
       state.pending_content = true;
       state.pending_extent = next_extent;
+      state.pending_encoded = next_encoded;
+      state.pending_format = next_format;
+      state.pending_terminal = pending_terminal;
+      state.pending_expected_revision = expected_revision;
+      state.pending_content_revision = pr.content_revision;
     }
   }
 
@@ -2621,6 +2757,7 @@ auto App::finish_pixel_frame(bool output_accepted) -> void {
         state.recreate = true;
       }
       state.pending_content = false;
+      state.pending_terminal = false;
       state.pending_visible = false;
       state.touched_wire = false;
       continue;
@@ -2632,15 +2769,27 @@ auto App::finish_pixel_frame(bool output_accepted) -> void {
       state.placement = state.pending_placement;
     }
     if (state.pending_content) {
-      state.content_ready = true;
       state.extent = state.pending_extent;
+      state.encoded = state.pending_encoded;
+      state.format = state.pending_format;
       state.recreate = false;
-      // The key may be stale only after an unseen region was erased, and those
-      // entries are removed before this walk. Seen owners remain alive for the
-      // complete on_render -> flush -> acknowledgement window.
-      state.owner->pixel_region_submitted(state.pending_rect);
+      if (state.pending_terminal) {
+        state.awaiting_terminal = true;
+        state.expected_revision = state.pending_expected_revision;
+        state.acknowledgement_rect = state.pending_rect;
+        state.acknowledgement_content_revision =
+            state.pending_content_revision;
+      } else {
+        state.content_ready = true;
+        // The key may be stale only after an unseen region was erased, and
+        // those entries are removed before this walk. Seen owners remain alive
+        // for the complete on_render -> flush -> acknowledgement window.
+        state.owner->pixel_region_submitted(state.pending_rect,
+                                            state.pending_content_revision);
+      }
     }
     state.pending_content = false;
+    state.pending_terminal = false;
     state.pending_visible = false;
     state.touched_wire = false;
   }

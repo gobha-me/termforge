@@ -32,8 +32,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <expected>
 #include <set>
@@ -55,6 +57,7 @@
 #include "termforge/widgets/widget.hpp"
 
 using namespace termforge;
+using tfsupport::apcs;
 using tfsupport::data_deletes_of;
 using tfsupport::frame_updates_of;
 using tfsupport::ids_named;
@@ -347,6 +350,146 @@ class FailingMapSink final : public ByteSink {
   std::string accepted;
 };
 
+// #167's production shape: an authored cell Baseline plus a pre-encoded asset
+// whose storage stays owned by the widget. Encoded pixels take precedence over
+// the raw hook; the latter is a sentinel that must never be reached while an
+// encoded payload is present.
+class EncodedPlateWidget final : public Widget {
+ public:
+  EncodedPlateWidget() { set_payload(ImageFormat::Png, Extent{4, 4}, 1); }
+
+  Rect region{0, 0, 4, 2};
+  PixelRegionState state{.mode = PixelRegionMode::Persistent};
+  ImagePlacementOptions placement{};
+  int encoded_calls{0};
+  int raw_calls{0};
+  int submissions{0};
+  bool present{true};
+
+  auto set_payload(ImageFormat format, Extent extent,
+                   std::uint8_t marker) -> void {
+    const std::size_t size =
+        format == ImageFormat::Rgba32
+            ? static_cast<std::size_t>(extent.w) *
+                  static_cast<std::size_t>(extent.h) * 4
+            : 7;
+    m_bytes.assign(size, static_cast<std::byte>(marker));
+    if (format == ImageFormat::Rgba32) {
+      for (std::size_t i = 3; i < m_bytes.size(); i += 4)
+        m_bytes[i] = std::byte{0xFF};
+    }
+    m_encoded = EncodedImage{format, m_bytes, extent};
+    state.content_dirty = true;
+    ++state.content_revision;
+  }
+
+  auto truncate_payload() -> void {
+    if (!m_bytes.empty()) m_bytes.pop_back();
+    m_encoded.bytes = m_bytes;
+    state.content_dirty = true;
+    ++state.content_revision;
+  }
+
+  auto draw(Screen& screen) -> void override {
+    screen.write_text(region.x, region.y, "QZJV", Rgb{220, 220, 220},
+                      Rgb{10, 10, 10});
+  }
+  auto pixel_regions() -> std::vector<Rect> override { return {region}; }
+  [[nodiscard]] auto pixel_region_state(Rect) const noexcept
+      -> PixelRegionState override {
+    return state;
+  }
+  [[nodiscard]] auto pixel_placement(Rect) const noexcept
+      -> ImagePlacementOptions override {
+    return placement;
+  }
+  auto draw_encoded_pixels(Rect) -> const EncodedImage* override {
+    ++encoded_calls;
+    return present ? &m_encoded : nullptr;
+  }
+  auto draw_pixels(Rect, Extent) -> const Image* override {
+    ++raw_calls;
+    return &m_raw;
+  }
+  auto pixel_region_submitted(Rect, std::uint64_t revision) noexcept
+      -> void override {
+    ++submissions;
+    if (revision == state.content_revision) state.content_dirty = false;
+  }
+
+ private:
+  std::vector<std::byte> m_bytes;
+  EncodedImage m_encoded{};
+  Image m_raw = tfsupport::solid(4, 4, Pixel{20, 220, 90, 255});
+};
+
+class EncodedPixelApp final : public App {
+ public:
+  EncodedPlateWidget plate;
+  std::vector<ErrorEvent> errors;
+  std::vector<std::pair<int, std::string>> replies;
+  int mutate_on_frame{-1};
+  int mutate_after_collect_on_frame{-1};
+  int enable_encoded_on_frame{-1};
+  ImageFormat mutated_format{ImageFormat::Png};
+  Extent mutated_extent{4, 4};
+
+  auto on_render(Screen& screen) -> void override {
+    if (m_frame == enable_encoded_on_frame) {
+      plate.present = true;
+      plate.state.content_dirty = true;
+      ++plate.state.content_revision;
+    }
+    if (m_frame == mutate_on_frame)
+      plate.set_payload(mutated_format, mutated_extent, 2);
+    plate.draw(screen);
+    render_pixel_regions(plate);
+    if (m_frame == mutate_after_collect_on_frame)
+      plate.set_payload(mutated_format, mutated_extent, 2);
+    ++m_frame;
+  }
+
+  auto run_with(std::unique_ptr<TerminalDriver> selected, int frames) -> void {
+    test_run_frames(frames, 20, 8, &wire, std::move(selected));
+  }
+
+  std::string wire;
+
+ protected:
+  auto on_event(const Event& event) -> void override {
+    if (const auto* error = std::get_if<ErrorEvent>(&event)) {
+      errors.push_back(*error);
+      return;
+    }
+    App::on_event(event);
+  }
+  [[nodiscard]] auto now_steady() const
+      -> std::chrono::steady_clock::time_point override {
+    return m_now;
+  }
+  auto wait_readable(int timeout_ms) -> bool override {
+    m_now += std::chrono::milliseconds(timeout_ms);
+    return std::ranges::any_of(replies, [&](const auto& reply) {
+      return reply.first == m_frame;
+    });
+  }
+  auto read_available(char* out, int max) -> int override {
+    const auto reply = std::ranges::find_if(replies, [&](const auto& candidate) {
+      return candidate.first == m_frame;
+    });
+    if (reply == replies.end() || max < static_cast<int>(reply->second.size()))
+      return 0;
+    std::copy(reply->second.begin(), reply->second.end(), out);
+    const int size = static_cast<int>(reply->second.size());
+    replies.erase(reply);
+    return size;
+  }
+
+ private:
+  int m_frame{0};
+  std::chrono::steady_clock::time_point m_now{};
+};
+
 // A sink that counts the frame's writes. The redirect happens
 // in the first on_render because that is the earliest App hook after the
 // harness has wired a driver and before anything has been flushed.
@@ -470,6 +613,210 @@ TEST_CASE("app pixels: the harness can put a graphics driver in App's loop",
   CHECK(app.plate.last_extent == Extent{32, 32});
   CHECK(total_transmits(app.wire()) == 1);
   CHECK(ids_named(app.wire()) == std::set<std::uint32_t>{1});
+}
+
+TEST_CASE("app pixels: an encoded PNG takes precedence on Kitty",
+          "[apppixels][encoded][kitty][issue167]") {
+  EncodedPixelApp app;
+  app.plate.state.mode = PixelRegionMode::Immediate;
+  app.run_with(std::make_unique<KittyDriver>(), 1);
+
+  CHECK(app.plate.encoded_calls == 1);
+  CHECK(app.plate.raw_calls == 0);
+  CHECK(total_data_transmits(app.wire) == 1);
+  const auto commands = apcs(app.wire);
+  const auto transmission = std::ranges::find_if(commands, [](const auto& c) {
+    return key_value(c, "a") == "t";
+  });
+  REQUIRE(transmission != commands.end());
+  CHECK(key_value(*transmission, "f") == "100");
+}
+
+TEST_CASE("app pixels: raw encoded bytes reach ANSI without the Image hook",
+          "[apppixels][encoded][ansi][issue167]") {
+  EncodedPixelApp app;
+  app.plate.state.mode = PixelRegionMode::Immediate;
+  app.plate.set_payload(ImageFormat::Rgba32, Extent{4, 4}, 7);
+  app.run_with(std::make_unique<AnsiRgbDriver>(), 1);
+
+  CHECK(app.plate.encoded_calls == 1);
+  CHECK(app.plate.raw_calls == 0);
+  CHECK(app.wire.find("\xE2\x96\x80") != std::string::npos);
+  CHECK(app.errors.empty());
+}
+
+TEST_CASE("app pixels: unsupported encoded formats retain the Baseline once",
+          "[apppixels][encoded][ansi][fallback][issue167]") {
+  EncodedPixelApp app;
+  app.plate.set_payload(ImageFormat::Rgba32Zlib, Extent{4, 4}, 7);
+  app.run_with(std::make_unique<AnsiRgbDriver>(), 3);
+
+  CHECK(app.plate.raw_calls == 0);
+  REQUIRE(app.errors.size() == 1);
+  CHECK(app.errors[0].severity == Severity::Info);
+  tfsupport::TerminalGrid grid{20, 8};
+  grid.feed(app.wire);
+  CHECK(grid.row_text(0).substr(0, 4) == "QZJV");
+}
+
+TEST_CASE("app pixels: malformed raw encoded bytes retain the Baseline once",
+          "[apppixels][encoded][failure][issue167]") {
+  EncodedPixelApp app;
+  app.plate.set_payload(ImageFormat::Rgba32, Extent{4, 4}, 7);
+  app.plate.truncate_payload();
+  app.run_with(std::make_unique<KittyDriver>(), 3);
+
+  CHECK(app.plate.raw_calls == 0);
+  REQUIRE(app.errors.size() == 1);
+  CHECK(app.errors[0].severity == Severity::Warning);
+  CHECK(total_data_transmits(app.wire) == 0);
+  tfsupport::TerminalGrid grid{20, 8};
+  grid.feed(app.wire);
+  CHECK(grid.row_text(0).substr(0, 4) == "QZJV");
+}
+
+TEST_CASE("app pixels: an opaque persistent root waits for terminal OK",
+          "[apppixels][encoded][persistent][reply][issue167]") {
+  EncodedPixelApp app;
+  app.replies.emplace_back(1, "\033_Gi=272;OK\033\\");
+  app.run_with(std::make_unique<KittyDriver>(), 3);
+
+  CHECK(app.plate.encoded_calls == 1);
+  CHECK(app.plate.raw_calls == 0);
+  CHECK(app.plate.submissions == 1);
+  CHECK(total_data_transmits(app.wire) == 1);
+  CHECK(placements_of(app.wire, 272) == 1);
+  CHECK(app.wire.find("QZJV") != std::string::npos);
+  CHECK(app.errors.empty());
+}
+
+TEST_CASE("app pixels: a rejected opaque root retries before acknowledgement",
+          "[apppixels][encoded][persistent][reply][failure][issue167]") {
+  EncodedPixelApp app;
+  app.replies.emplace_back(1, "\033_Gi=272;EINVAL\033\\");
+  app.replies.emplace_back(2, "\033_Gi=272;OK\033\\");
+  app.run_with(std::make_unique<KittyDriver>(), 4);
+
+  CHECK(app.plate.encoded_calls == 2);
+  CHECK(app.plate.submissions == 1);
+  CHECK(total_data_transmits(app.wire) == 2);
+  CHECK(placements_of(app.wire, 272) == 1);
+  REQUIRE(app.errors.size() == 1);
+  CHECK(app.errors[0].severity == Severity::Warning);
+}
+
+TEST_CASE("app pixels: accepted opaque replacement acknowledges once",
+          "[apppixels][encoded][persistent][replace][issue167]") {
+  EncodedPixelApp app;
+  app.replies.emplace_back(1, "\033_Gi=272;OK\033\\");
+  app.replies.emplace_back(3, "\033_Gi=272;OK\033\\");
+  app.mutate_after_collect_on_frame = 1;
+  app.run_with(std::make_unique<KittyDriver>(), 5);
+
+  CHECK(app.plate.encoded_calls == 2);
+  CHECK(app.plate.submissions == 2);
+  CHECK(transmits_of(app.wire, 272) == 1);
+  CHECK(frame_updates_of(app.wire, 272) == 1);
+  CHECK(placements_of(app.wire, 272) == 1);
+  CHECK(app.errors.empty());
+}
+
+TEST_CASE("app pixels: rejected opaque replacement keeps and retries its root",
+          "[apppixels][encoded][persistent][replace][failure][issue167]") {
+  EncodedPixelApp app;
+  app.replies.emplace_back(1, "\033_Gi=272;OK\033\\");
+  app.replies.emplace_back(3, "\033_Gi=272;EINVAL\033\\");
+  app.replies.emplace_back(4, "\033_Gi=272;OK\033\\");
+  app.mutate_after_collect_on_frame = 1;
+  app.run_with(std::make_unique<KittyDriver>(), 5);
+
+  CHECK(app.plate.encoded_calls == 3);
+  CHECK(app.plate.submissions == 2);
+  CHECK(transmits_of(app.wire, 272) == 1);
+  CHECK(frame_updates_of(app.wire, 272) == 2);
+  CHECK(data_deletes_of(app.wire, 272) == 0);
+  REQUIRE(app.errors.size() == 1);
+  CHECK(app.errors[0].severity == Severity::Warning);
+}
+
+TEST_CASE("app pixels: a late OK cannot clear a newer widget generation",
+          "[apppixels][encoded][persistent][reply][generation][issue167]") {
+  EncodedPixelApp app;
+  app.replies.emplace_back(1, "\033_Gi=272;OK\033\\");
+  app.replies.emplace_back(2, "\033_Gi=272;OK\033\\");
+  app.mutate_on_frame = 1;
+  app.run_with(std::make_unique<KittyDriver>(), 4);
+
+  CHECK(app.plate.encoded_calls == 2);
+  CHECK(app.plate.submissions == 1);
+  CHECK_FALSE(app.plate.state.content_dirty);
+  CHECK(transmits_of(app.wire, 272) == 1);
+  CHECK(frame_updates_of(app.wire, 272) == 1);
+  CHECK(app.errors.empty());
+}
+
+TEST_CASE("app pixels: same-format raw updates reuse their resident identity",
+          "[apppixels][encoded][persistent][replace][issue167]") {
+  EncodedPixelApp app;
+  app.plate.set_payload(ImageFormat::Rgba32, Extent{4, 4}, 1);
+  app.mutate_on_frame = 1;
+  app.mutated_format = ImageFormat::Rgba32;
+  app.run_with(std::make_unique<KittyDriver>(), 3);
+
+  CHECK(app.plate.encoded_calls == 2);
+  CHECK(app.plate.submissions == 2);
+  CHECK(transmits_of(app.wire, 272) == 1);
+  CHECK(frame_updates_of(app.wire, 272) == 1);
+  CHECK(data_deletes_of(app.wire, 272) == 0);
+}
+
+TEST_CASE("app pixels: encoded extent changes recreate resident identity",
+          "[apppixels][encoded][persistent][identity][issue167]") {
+  EncodedPixelApp app;
+  app.plate.set_payload(ImageFormat::Rgba32, Extent{4, 4}, 1);
+  app.mutate_on_frame = 1;
+  app.mutated_format = ImageFormat::Rgba32;
+  app.mutated_extent = Extent{2, 8};
+  app.run_with(std::make_unique<KittyDriver>(), 3);
+
+  CHECK(app.plate.encoded_calls == 2);
+  CHECK(app.plate.submissions == 2);
+  CHECK(total_data_transmits(app.wire) == 2);
+  CHECK(frame_updates_of(app.wire, 272) == 0);
+  CHECK(data_deletes_of(app.wire, 272) == 1);
+}
+
+TEST_CASE("app pixels: raw-to-encoded changes recreate resident identity",
+          "[apppixels][encoded][persistent][identity][issue167]") {
+  EncodedPixelApp app;
+  app.plate.set_payload(ImageFormat::Rgba32, Extent{4, 4}, 1);
+  app.plate.present = false;
+  app.enable_encoded_on_frame = 1;
+  app.run_with(std::make_unique<KittyDriver>(), 3);
+
+  CHECK(app.plate.encoded_calls == 2);
+  CHECK(app.plate.raw_calls == 1);
+  CHECK(app.plate.submissions == 2);
+  CHECK(transmits_of(app.wire, 272) == 2);
+  CHECK(frame_updates_of(app.wire, 272) == 0);
+  CHECK(data_deletes_of(app.wire, 272) == 1);
+}
+
+TEST_CASE("app pixels: encoded format changes recreate resident identity",
+          "[apppixels][encoded][persistent][identity][issue167]") {
+  EncodedPixelApp app;
+  app.plate.set_payload(ImageFormat::Rgba32, Extent{4, 4}, 1);
+  app.mutate_on_frame = 1;
+  app.mutated_format = ImageFormat::Png;
+  app.replies.emplace_back(2, "\033_Gi=272;OK\033\\");
+  app.run_with(std::make_unique<KittyDriver>(), 3);
+
+  CHECK(app.plate.encoded_calls == 2);
+  CHECK(app.plate.submissions == 2);
+  CHECK(transmits_of(app.wire, 272) == 2);
+  CHECK(frame_updates_of(app.wire, 272) == 0);
+  CHECK(data_deletes_of(app.wire, 272) == 1);
+  CHECK(app.errors.empty());
 }
 
 TEST_CASE("app pixels: a widget layer reaches Kitty's production image pass",

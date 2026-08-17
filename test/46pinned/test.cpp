@@ -1239,6 +1239,12 @@ TEST_CASE("pinned: a driver that never heard of pinning refuses honestly",
   CHECK(base.take_driver_events().empty());
 
   CHECK(base.max_pinned_images() == 0);
+  CHECK_FALSE(base.pinned_image_status(PinnedImage{}).valid);
+  const auto legacy_status =
+      base.pinned_image_status(PinnedImage{1, 1, 1});
+  CHECK(legacy_status.valid);
+  CHECK(legacy_status.content_ready);
+  CHECK_FALSE(legacy_status.update_pending);
   // #113 is also non-pure.  A legacy tier has no resident belief to clear, so
   // the inherited no-op is the exact answer and remains callable.
   base.invalidate_images();
@@ -1316,6 +1322,60 @@ TEST_CASE("pinned: a driver that never heard of pinning refuses honestly",
         "unpin_image: this tier cannot hold an image resident");
 
   CHECK_FALSE(legacy.drew_image());  // none of it reached the draw path
+}
+
+TEST_CASE("pinned: status separates pending opaque content from its accepted root",
+          "[pinned][encoded][reply][issue167]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const std::array<std::byte, 4> first{
+      std::byte{0x89}, std::byte{'P'}, std::byte{'N'}, std::byte{'G'}};
+  const std::array<std::byte, 4> second{
+      std::byte{0x89}, std::byte{'P'}, std::byte{'N'}, std::byte{1}};
+
+  const auto pin = d.pin_image(
+      EncodedImage{ImageFormat::Png, first, Extent{4, 4}});
+  REQUIRE(pin.has_value());
+  auto status = d.pinned_image_status(*pin);
+  CHECK(status.valid);
+  CHECK_FALSE(status.content_ready);
+  CHECK(status.update_pending);
+  CHECK(status.content_revision == 0);
+
+  d.flush();
+  d.consume_reply(TerminalReply{pin->id, std::nullopt, "OK"});
+  status = d.pinned_image_status(*pin);
+  CHECK(status.content_ready);
+  CHECK_FALSE(status.update_pending);
+  CHECK(status.content_revision == 1);
+
+  REQUIRE(d.replace_pinned(
+      *pin, EncodedImage{ImageFormat::Png, second, Extent{4, 4}}));
+  status = d.pinned_image_status(*pin);
+  CHECK(status.content_ready);
+  CHECK(status.update_pending);
+  CHECK(status.content_revision == 1);
+
+  d.flush();
+  d.consume_reply(TerminalReply{pin->id, std::nullopt, "EINVAL"});
+  status = d.pinned_image_status(*pin);
+  CHECK(status.content_ready);
+  CHECK_FALSE(status.update_pending);
+  CHECK(status.content_revision == 1);
+
+  REQUIRE(d.edit_pinned(
+      *pin, PixelPoint{},
+      EncodedImage{ImageFormat::Png, second, Extent{1, 1}},
+      ImageComposition::AlphaBlend));
+  status = d.pinned_image_status(*pin);
+  CHECK(status.update_pending);
+  CHECK(status.content_revision == 1);
+  d.flush();
+  d.consume_reply(TerminalReply{pin->id, std::nullopt, "OK"});
+  status = d.pinned_image_status(*pin);
+  CHECK_FALSE(status.update_pending);
+  CHECK(status.content_revision == 2);
 }
 
 TEST_CASE("pinned: retain keeps a placement live without emitting it again",

@@ -402,6 +402,19 @@ class TerminalDriver {
     return {};
   }
 
+  // State of one handle returned by pin_image(). NON-PURE so an out-of-tree
+  // driver written before asynchronous image acknowledgements keeps compiling.
+  // The compatibility default describes the historical synchronous contract:
+  // a non-empty returned handle is immediately usable and has no pending
+  // terminal-side decision. Drivers whose decoder can reject after the write
+  // boundary override this so App can keep a widget's Baseline visible and
+  // delay its Persistent submission acknowledgement honestly.
+  [[nodiscard]] virtual auto pinned_image_status(
+      PinnedImage image) const noexcept -> PinnedImageStatus {
+    const bool valid = static_cast<bool>(image);
+    return PinnedImageStatus{.valid = valid, .content_ready = valid};
+  }
+
   // Whether the selected terminal session has proved the image-animation
   // action, not merely the basic kitty graphics query (#116). This is
   // base-owned, non-virtual STATE for the same reason sync_updates is: the

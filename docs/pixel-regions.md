@@ -55,7 +55,8 @@ Kitty native graphics or ANSI truecolour raster.
 │       if enhanced image tier:               │
 │         state = widget->pixel_region_state  │
 │         if immediate or content dirty:      │
-│           img = widget->draw_pixels(...)    │
+│           encoded = draw_encoded_pixels(...)│
+│           or img = draw_pixels(...)         │
 │         submit or retain content + place    │
 │         acknowledge accepted dirty content │
 └─────────────────────────────────────────────┘
@@ -87,6 +88,12 @@ class Widget {
     return nullptr;
   }
 
+  // Provide a fixed-resolution pre-encoded payload. A non-null result takes
+  // precedence over draw_pixels; nullptr falls through to the raw hook.
+  virtual auto draw_encoded_pixels(Rect region) -> const EncodedImage* {
+    return nullptr;
+  }
+
   // Immediate is the backward-compatible default. Persistent content is
   // retained by App and requests draw_pixels only while dirty.
   virtual auto pixel_region_state(Rect region) const noexcept
@@ -97,6 +104,11 @@ class Widget {
   // Called after a dirty Persistent submission's complete frame write was
   // accepted. A driver refusal or sink rejection is not acknowledged.
   virtual auto pixel_region_submitted(Rect region) noexcept -> void {}
+
+  // Generation-qualified form used by asynchronous opaque submissions. The
+  // default delegates to the original hook for source compatibility.
+  virtual auto pixel_region_submitted(Rect region,
+                                      std::uint64_t revision) noexcept -> void;
 
   // How the returned image maps into this region. Existing widgets inherit
   // Stretch; shipped/pre-rendered pixel grids may opt into Exact.
@@ -113,17 +125,27 @@ class Widget {
 };
 ```
 
-**The widget owns the buffer; the App borrows it** (#84). The returned
-pixels must stay valid and unmodified until this widget's next
-`draw_pixels()` call or its destruction. Returning the address of a member
-satisfies that, and a widget that builds a fresh image every frame simply
-keeps a scratch member.
+**The widget owns the buffer; the App borrows it** (#84, #167). The returned
+`Image`, or both the returned `EncodedImage` descriptor and its nested byte
+span, must stay valid and unmodified until this widget's next matching draw
+call or its destruction. Returning the address of a member satisfies that,
+provided an encoded descriptor's backing vector is not reallocated without
+refreshing its span.
 
 A widget declaring *N* regions must own *N* distinct buffers: the App
 calls `draw_pixels` once per region and holds every view at once, so two
 regions served from one scratch member leave the first pointer valid and
 its contents overwritten. That is the one sharp edge in this contract that
-no type catches.
+no type catches. Encoded regions likewise need one distinct descriptor and
+backing buffer per simultaneously declared region.
+
+`draw_encoded_pixels` is asked first. A non-null payload is an explicit route:
+an invalid payload produces a transition-latched `Warning`, and a format the
+selected tier cannot carry produces one `Info`; both preserve the authored
+cell Baseline and neither silently falls through to decoded pixels. Only
+`nullptr` requests the `draw_pixels` route. Encoded assets carry their own
+declared extent, so App does not ask them to rerasterize to
+`preferred_pixel_extent`.
 
 The return was `std::optional<Image>` by value until #84. That cost
 nothing while the path ran at one pixel per cell — an 80×24 region was
@@ -152,11 +174,12 @@ frame. A widget using this mode must keep its region ordering stable for the
 life of each region. App asks for the borrowed buffer only for the initial
 frame, after `content_dirty`, or when recovery requires recreation.
 
-On Kitty, App pins the initial image, uses `replace_pinned` for accepted-size
+On Kitty, App pins the initial image, uses `replace_pinned` for same-identity
 content changes, and refreshes the existing placement without re-hashing the
-buffer. A changed logical extent explicitly unpins and repins because pinned
-handle extent is immutable. Fit and layer are placement state: changing either
-re-places the resident image without borrowing or transmitting its content.
+buffer. A changed logical extent, raw/encoded kind, or encoded format explicitly
+unpins and repins because those properties are immutable resident identity.
+Fit and layer are placement state: changing either re-places the resident image
+without borrowing or transmitting its content.
 On ANSI truecolour there is no resident image
 store, so clean stable frames emit nothing; dirty content, movement, and a
 full repaint still rasterize through `draw_image`.
@@ -168,6 +191,17 @@ The producer acknowledgement runs after the frame's one sink write succeeds,
 never merely because bytes were queued. A persistent widget must therefore
 remain alive through that frame's render/write boundary, just as its borrowed
 image must remain valid for the complete pixel pass.
+
+Opaque PNG and zlib roots add a second boundary: Kitty must answer `OK` before
+an initial pin is drawable or acknowledged. App keeps the Baseline until that
+reply. An opaque replacement leaves the last accepted root visible and is
+acknowledged only after its own `OK`; rejection or timeout retries dirty
+content without blessing the candidate. `PixelRegionState::content_revision`
+qualifies that delayed acknowledgement. A producer that may mutate while a
+reply is in flight increments it for every new payload and overrides the
+two-argument acknowledgement hook, clearing dirty state only for the matching
+revision. Revision zero and the original one-argument hook preserve existing
+widgets' synchronous contract.
 
 ### PixelSurface: a persistent software framebuffer (#195)
 

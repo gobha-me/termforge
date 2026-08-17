@@ -610,6 +610,26 @@ struct PinnedImage {
   constexpr auto operator==(const PinnedImage&) const -> bool = default;
 };
 
+// Observable state for one application-resident image. The query that returns
+// this is primarily for framework-managed Persistent widget regions: an opaque
+// Kitty upload may have crossed the sink boundary while the terminal is still
+// deciding whether it can decode it.
+//
+// `content_ready` means the handle has an accepted root frame that may be
+// placed. It can remain true while a replacement is pending, because a
+// rejected replacement restores that last accepted frame. `content_revision`
+// advances only when a complete root frame is accepted; a caller can therefore
+// distinguish a successful opaque replacement from a rejected one without
+// parsing ErrorEvent text.
+struct PinnedImageStatus {
+  bool valid{true};
+  bool content_ready{true};
+  bool update_pending{false};
+  std::uint64_t content_revision{0};
+
+  constexpr auto operator==(const PinnedImageStatus&) const -> bool = default;
+};
+
 // Opaque handle to one registered terminal-driven animation (#116).
 //
 // It carries the same three-part identity as PinnedImage for the same reasons:

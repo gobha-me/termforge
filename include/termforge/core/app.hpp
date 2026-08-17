@@ -49,6 +49,7 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "termforge/core/input.hpp"
@@ -1245,21 +1246,25 @@ class App {
   // Pixel regions collected during on_render, issued in the frame's image
   // window (flush_pixel_regions), after the cell diff in one flush.
   //
-  // The image is BORROWED, never owned (#84): the widget holds the storage and
-  // guarantees it until its next draw_pixels() call. Both ends of that window
+  // The payload is BORROWED, never owned (#84, #167): the widget holds either
+  // the Image or the EncodedImage descriptor plus its nested byte span, and
+  // guarantees it until its next matching draw call. Both ends of that window
   // are inside one frame_step -- collect runs in on_render, the issue runs in
-  // flush_pixel_regions after present() -- and clearing this vector at the
-  // top of the next frame happens before any widget code runs. Owning it
-  // instead would copy the whole buffer out of a widget's cache every frame,
-  // which is the entire point of the change.
+  // flush_pixel_regions after present() -- and clearing this vector at the top
+  // of the next frame happens before any widget code runs. Owning it instead
+  // would copy the whole buffer out of a widget's cache every frame, which is
+  // the entire point of the change.
   struct PixelRegion {
+    using Payload = std::variant<const Image*, const EncodedImage*>;
+
     Widget* owner{nullptr};
     std::size_t ordinal{0};
     Rect rect;
-    const Image* image{nullptr};
+    Payload payload{static_cast<const Image*>(nullptr)};
     ImagePlacementOptions placement{};
     PixelRegionMode mode{PixelRegionMode::Immediate};
     bool content_dirty{true};
+    std::uint64_t content_revision{0};
   };
   std::vector<PixelRegion> m_pixel_regions;
 
@@ -1274,19 +1279,30 @@ class App {
     std::size_t ordinal{0};
     PinnedImage pin{};
     Extent extent{};
+    bool encoded{false};
+    ImageFormat format{ImageFormat::Rgba32};
     Rect rect{};
     ImagePlacementOptions placement{};
     bool content_ready{false};
     bool visible{false};
     bool seen{false};
     bool recreate{false};
+    bool awaiting_terminal{false};
+    std::uint64_t expected_revision{0};
+    Rect acknowledgement_rect{};
+    std::uint64_t acknowledgement_content_revision{0};
 
     // Changes queued into the current driver frame become accepted state only
     // after emit_frame's sink succeeds.
     Extent pending_extent{};
+    bool pending_encoded{false};
+    ImageFormat pending_format{ImageFormat::Rgba32};
     Rect pending_rect{};
     ImagePlacementOptions pending_placement{};
     bool pending_content{false};
+    bool pending_terminal{false};
+    std::uint64_t pending_expected_revision{0};
+    std::uint64_t pending_content_revision{0};
     bool pending_visible{false};
     bool touched_wire{false};
   };
@@ -1296,10 +1312,27 @@ class App {
   // Baseline before draw_pixels() is borrowed or those cells are blanked.
   // Keep one transition latch per declared region so a continuous renderer
   // reports the lesser route once rather than producing an ErrorEvent storm.
+  struct PixelFallbackSignature {
+    enum class Reason {
+      PlacementUnsupported,
+      PlacementInvalid,
+      FormatUnsupported,
+      PayloadInvalid,
+    };
+
+    Reason reason{Reason::PlacementUnsupported};
+    ImagePlacementOptions placement{};
+    ImageFormat format{ImageFormat::Rgba32};
+    Extent extent{};
+    std::size_t payload_bytes{0};
+
+    auto operator==(const PixelFallbackSignature&) const -> bool = default;
+  };
+
   struct PixelPlacementFallback {
     Widget* owner{nullptr};
     std::size_t ordinal{0};
-    ImagePlacementOptions placement{};
+    PixelFallbackSignature signature{};
     bool seen{false};
   };
   std::vector<PixelPlacementFallback> m_pixel_placement_fallbacks;
