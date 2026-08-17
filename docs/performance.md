@@ -28,15 +28,18 @@ telemetry deliberately measures real process wall time. With no callback there
 are no telemetry clock reads or allocations.
 
 This document begins with the game-readiness slice of issue #88. The broader
-paint, many-region and cross-terminal throughput sweeps remain open there.
+paint and cross-terminal throughput sweeps remain open there; the many-region
+W4 slice is recorded below.
 
 ## Reproducible kernel and cell-churn harness
 
 The default-off `termforge_BENCH` target is Release-only. Its output is a human
 table or schema-versioned JSON containing compiler/host metadata, calibrated
-sample batches, median/p95 durations, byte counts, and checksums. CI runs only
-`--smoke`, validates the JSON, and uploads it; no runner-dependent time is a
-pass/fail threshold.
+sample batches, median/p95 durations, byte counts, and checksums. Schema 3 adds
+W4's frame-phase, residency and retransmit-wall records without changing the
+existing kernel/W3 arrays. CI runs only `--smoke`, validates deterministic
+shape and accounting, and uploads it; no runner-dependent time is a pass/fail
+threshold.
 
 ```bash
 cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -Dtermforge_BENCH=ON
@@ -69,6 +72,48 @@ emitted bytes. At the same size, 100% ASCII churn was 5.234 ms and CJK-wide was
 3.195 ms. These measurements point
 to the serial payload hash and scalar frame-time work in #89 before #90 SIMD;
 they do not establish terminal throughput, which remains W5.
+
+## W4 many-region residency sweep
+
+W4 drives the production `App::frame_step` path over a Classic `KittyDriver`
+and an O(1) counting sink. Classic mode isolates image-cache and placement
+management from Unicode-placeholder cell traffic. One widget owns a stable
+vector of distinct buffers, and the matrix crosses 1/8/16/17/32/64 regions at
+1×1, 4×2 and 8×4 cells. The first population frame and configured warmups are
+excluded; sampled content is unchanged.
+
+The two modes answer different questions. `Immediate` re-offers every buffer
+on every frame and therefore exercises Kitty's 16-slot ordinary region cache.
+`Persistent` is the architecture used by forge-top's waveforms: App pins each
+root once and retains it without re-borrowing clean content. Every observation
+records the real tick/application/framework/sink partitions from
+`FrameObservation`, its exact driver byte buckets, and committed
+`ImageResidency`. Because recycled one- and two-digit ids can vary total wire
+length slightly, JSON's `frame_bytes` is the exact sampled frame at the median
+total byte count rather than a sum of independently rounded bucket medians.
+
+Reference run on 2026-08-17: GCC 14.2, Linux 6.12.74, x86-64 container host,
+nine measured frames after two warmups.
+
+| mode / region cells | count | frame median / p95 | image transmit / total bytes | committed residency |
+| --- | ---: | ---: | ---: | ---: |
+| Immediate, 4×2 | 16 | 0.075 / 0.076 ms | 0 / 0 | 16 regions, 64 KiB |
+| Immediate, 4×2 | 17 | 0.109 / 0.177 ms | 93,728 / 94,742 | 16 regions, 64 KiB |
+| Immediate, 4×2 | 64 | 0.284 / 0.302 ms | 352,860 / 356,700 | 16 regions, 64 KiB |
+| Persistent, 4×2 | 17 | 0.040 / 0.048 ms | 0 / 0 | 17 pins, 68 KiB |
+| Persistent, 4×2 | 64 | 0.052 / 0.060 ms | 0 / 0 | 64 pins, 256 KiB |
+| Immediate, 8×4 | 64 | 0.843 / 0.866 ms | 1,403,740 / 1,407,592 | 16 regions, 256 KiB |
+| Persistent, 8×4 | 64 | 0.064 / 0.075 ms | 0 / 0 | 64 pins, 1 MiB |
+
+The ordinary cache wall is exactly 17 regions for every swept size. Once the
+fixed draw order exceeds the pool, its LRU cycle retransmits every region on
+each unchanged frame; the cache still honestly reports only the 16 payloads it
+believes resident. Persistent mode reaches all 64 cases with no steady image
+bytes and no retransmit wall. All host-side cases remain below both frame
+budgets, but the largest Immediate case offers roughly 40.27 MiB/s at 30 FPS
+or 80.54 MiB/s at 60 FPS. Those are calculated wire loads, not terminal
+throughput results; W5 remains responsible for whether a pty and emulator can
+sustain them.
 
 ## Non-SIMD frame-time bundle
 
@@ -117,10 +162,10 @@ AVX2 copy measured no faster than the libc path. Non-x86 and x86 CPUs without
 AVX2 select scalar silently; the selection changes implementation, not the
 application-visible terminal tier.
 
-The benchmark schema is now version 2 and records both requested and resolved
-kernel tiers. Its `--kernel-tier auto|scalar|avx2` override is private to the
-benchmark/test surface; requesting unsupported AVX2 is an error rather than an
-illegal-instruction risk.
+Issue #90 moved the benchmark schema to version 2 to record both requested and
+resolved kernel tiers. Its `--kernel-tier auto|scalar|avx2` override is private
+to the benchmark/test surface; requesting unsupported AVX2 is an error rather
+than an illegal-instruction risk.
 
 Same-host forced-tier run on 2026-08-13: GCC 14.2, Linux 6.12.74, x86-64
 container host, Release build, nine calibrated samples after two warmups.
