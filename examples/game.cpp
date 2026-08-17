@@ -114,26 +114,16 @@ auto parse_u32(std::string_view text) -> std::optional<std::uint32_t> {
   return value;
 }
 
-class MeasuringSink final : public ByteSink {
+// Timing no longer depends on this sink (#258): App's frame observer supplies
+// the phase durations and byte meter. Capture/benchmark mode still needs to
+// inspect the wire for lifecycle evidence (logical uploads, root edits,
+// placements and deletes), because those historical JSON fields have no
+// public counter. Interactive mode therefore uses the driver's ordinary
+// output directly, while the two evidence modes install this audit-only sink.
+class ProtocolAuditSink final : public ByteSink {
  public:
   auto set_fd(int fd) noexcept -> void { m_fd = fd; }
   auto set_collect(bool collect) noexcept -> void { m_collect = collect; }
-
-  auto begin_frame(double tick_ms, bool unchanged,
-                   Clock::time_point render_started) noexcept -> void {
-    m_tick_ms = tick_ms;
-    m_unchanged = unchanged;
-    m_render_started = render_started;
-    m_generation_finished = render_started;
-    m_generation_ms = 0.0;
-    m_in_frame = true;
-  }
-
-  auto generation_finished(double generation_ms,
-                           Clock::time_point at) noexcept -> void {
-    m_generation_ms = generation_ms;
-    m_generation_finished = at;
-  }
 
   [[nodiscard]] auto write(std::span<const char> bytes)
       -> std::expected<void, ErrorEvent> override {
@@ -156,7 +146,6 @@ class MeasuringSink final : public ByteSink {
             std::format("frame sink write failed: {}", std::strerror(errno))}};
       }
     }
-    const auto write_finished = Clock::now();
     if (!m_collect) return {};
 
     const std::string_view wire{bytes.data(), bytes.size()};
@@ -164,44 +153,14 @@ class MeasuringSink final : public ByteSink {
     if (shutdown) {
       m_shutdown_bytes += bytes.size();
       m_live_ids.clear();
-      m_in_frame = false;
       return {};
     }
-
-    std::uint64_t image_bytes = 0;
-    for (std::size_t at = 0;
-         (at = wire.find("\033_G", at)) != std::string_view::npos;) {
-      const std::size_t end = wire.find("\033\\", at + 3);
-      if (end == std::string_view::npos) break;
-      image_bytes += end + 2 - at;
-      at = end + 2;
-    }
     parse_apcs(wire);
-
-    if (m_in_frame) {
-      const double submission =
-          elapsed_ms(m_generation_finished, write_finished);
-      const double total =
-          m_tick_ms + elapsed_ms(m_render_started, write_finished);
-      m_samples.push_back(FrameSample{
-          .bytes = bytes.size(),
-          .image_bytes = image_bytes,
-          .tick_ms = m_tick_ms,
-          .generation_ms = m_generation_ms,
-          .submission_ms = submission,
-          .frame_ms = total,
-          .unchanged = m_unchanged,
-      });
-      if (m_samples.size() == 1) m_first_frame = m_render_started;
-      m_last_frame = write_finished;
-    }
-    m_in_frame = false;
     return {};
   }
 
-  [[nodiscard]] auto summary() const -> CaptureSummary {
+  [[nodiscard]] auto lifecycle_summary() const -> CaptureSummary {
     CaptureSummary out;
-    out.frames = static_cast<int>(m_samples.size());
     out.shutdown_bytes = m_shutdown_bytes;
     out.data_transmits = m_data_transmits;
     out.root_updates = m_root_updates;
@@ -210,44 +169,6 @@ class MeasuringSink final : public ByteSink {
     out.placement_deletes = m_placement_deletes;
     out.unique_image_ids = m_all_ids.size();
     out.peak_live_image_ids = m_peak_live_ids;
-    std::vector<double> frame_times;
-    frame_times.reserve(m_samples.size());
-    for (const auto& sample : m_samples) {
-      out.wire_bytes += sample.bytes;
-      out.generation_avg_ms += sample.generation_ms;
-      out.submission_avg_ms += sample.submission_ms;
-      out.frame_avg_ms += sample.frame_ms;
-      out.generation_max_ms =
-          std::max(out.generation_max_ms, sample.generation_ms);
-      out.submission_max_ms =
-          std::max(out.submission_max_ms, sample.submission_ms);
-      out.frame_max_ms = std::max(out.frame_max_ms, sample.frame_ms);
-      if (sample.frame_ms > kBudgetMs) ++out.missed_deadlines;
-      if (sample.unchanged) {
-        ++out.unchanged_frames;
-        out.unchanged_image_bytes += sample.image_bytes;
-      }
-      frame_times.push_back(sample.frame_ms);
-    }
-    if (!m_samples.empty()) {
-      const double n = static_cast<double>(m_samples.size());
-      out.generation_avg_ms /= n;
-      out.submission_avg_ms /= n;
-      out.frame_avg_ms /= n;
-      out.bytes_per_frame = static_cast<double>(out.wire_bytes) / n;
-      out.elapsed_seconds =
-          std::chrono::duration<double>(m_last_frame - m_first_frame).count();
-      if (out.elapsed_seconds > 0.0) {
-        out.achieved_fps = n / out.elapsed_seconds;
-        out.bytes_per_second =
-            static_cast<double>(out.wire_bytes) / out.elapsed_seconds;
-      }
-      std::sort(frame_times.begin(), frame_times.end());
-      const std::size_t p95 = std::min(
-          frame_times.size() - 1,
-          static_cast<std::size_t>(std::ceil(frame_times.size() * 0.95)) - 1);
-      out.frame_p95_ms = frame_times[p95];
-    }
     return out;
   }
 
@@ -288,15 +209,6 @@ class MeasuringSink final : public ByteSink {
 
   int m_fd{-1};
   bool m_collect{false};
-  bool m_in_frame{false};
-  bool m_unchanged{false};
-  double m_tick_ms{};
-  double m_generation_ms{};
-  Clock::time_point m_render_started{};
-  Clock::time_point m_generation_finished{};
-  Clock::time_point m_first_frame{};
-  Clock::time_point m_last_frame{};
-  std::vector<FrameSample> m_samples;
   std::set<std::uint32_t> m_all_ids;
   std::set<std::uint32_t> m_live_ids;
   std::size_t m_peak_live_ids{};
@@ -336,14 +248,17 @@ class GameWorkload final : public App {
     set_tick_hz(120);
     set_max_tick_dt(std::chrono::duration<double>{0.125});
     set_mouse_mode(MouseMode::None);
-    m_sink.set_collect(capture_seconds > 0.0);
+    m_audit.set_collect(capture_seconds > 0.0);
+    if (capture_seconds > 0.0) enable_observation();
     render_frame();
   }
 
   auto on_start() -> void override {
-    m_sink.set_fd(terminal().io().out);
-    driver().set_output(&m_sink);
-    m_output_bound = true;
+    if (m_capture_seconds > 0.0) {
+      m_audit.set_fd(terminal().io().out);
+      driver().set_output(&m_audit);
+      m_audit_bound = true;
+    }
     if (m_capture_seconds > 0.0 && !capabilities().kitty_graphics) {
       m_capture_error =
           "capture mode requires a terminal that negotiated Kitty graphics";
@@ -360,17 +275,15 @@ class GameWorkload final : public App {
   }
 
   auto on_tick(std::chrono::duration<double> dt) -> void override {
-    const auto started = Clock::now();
     m_phase += dt.count();
-    m_tick_ms += elapsed_ms(started, Clock::now());
   }
 
   auto on_render(Screen& screen) -> void override {
     // test_run_frames does not call on_start, so the headless benchmark binds
     // its discard/count sink here before the frame's only flush.
-    if (!m_output_bound) {
-      driver().set_output(&m_sink);
-      m_output_bound = true;
+    if (m_headless && !m_audit_bound) {
+      driver().set_output(&m_audit);
+      m_audit_bound = true;
     }
 
     // The headless benchmark is uncapped so it measures work instead of a
@@ -379,18 +292,15 @@ class GameWorkload final : public App {
     if (m_headless) m_phase += 1.0 / 30.0;
 
     const bool unchanged = m_frame != 0 && m_frame % kHoldInterval == 0;
-    const auto render_started = Clock::now();
-    if (m_started == Clock::time_point{}) m_started = render_started;
-    m_sink.begin_frame(std::exchange(m_tick_ms, 0.0), unchanged,
-                       render_started);
+    if (m_started == Clock::time_point{}) m_started = Clock::now();
+    m_pending_unchanged = unchanged;
 
-    double generation_ms = 0.0;
+    m_pending_generation_ms = 0.0;
     if (!unchanged) {
       const auto generation_started = Clock::now();
       render_frame();
-      generation_ms = elapsed_ms(generation_started, Clock::now());
+      m_pending_generation_ms = elapsed_ms(generation_started, Clock::now());
     }
-    m_sink.generation_finished(generation_ms, Clock::now());
 
     screen.clear();
     const auto bytes = driver().total_bytes();
@@ -420,7 +330,8 @@ class GameWorkload final : public App {
 
   auto benchmark(int frames) -> void {
     m_headless = true;
-    m_sink.set_collect(true);
+    m_audit.set_collect(true);
+    enable_observation();
     set_frame_ms(0);
     auto selected = std::make_unique<KittyDriver>();
     selected->set_cell_pixel_size({8, 16});
@@ -428,7 +339,49 @@ class GameWorkload final : public App {
   }
 
   [[nodiscard]] auto summary() const -> CaptureSummary {
-    return m_sink.summary();
+    CaptureSummary out = m_audit.lifecycle_summary();
+    out.frames = static_cast<int>(m_samples.size());
+    std::vector<double> frame_times;
+    frame_times.reserve(m_samples.size());
+    for (const auto& sample : m_samples) {
+      out.wire_bytes += sample.bytes;
+      out.generation_avg_ms += sample.generation_ms;
+      out.submission_avg_ms += sample.submission_ms;
+      out.frame_avg_ms += sample.frame_ms;
+      out.generation_max_ms =
+          std::max(out.generation_max_ms, sample.generation_ms);
+      out.submission_max_ms =
+          std::max(out.submission_max_ms, sample.submission_ms);
+      out.frame_max_ms = std::max(out.frame_max_ms, sample.frame_ms);
+      if (sample.frame_ms > kBudgetMs) ++out.missed_deadlines;
+      if (sample.unchanged) {
+        ++out.unchanged_frames;
+        out.unchanged_image_bytes += sample.image_bytes;
+      }
+      frame_times.push_back(sample.frame_ms);
+    }
+    if (!m_samples.empty()) {
+      const double n = static_cast<double>(m_samples.size());
+      out.generation_avg_ms /= n;
+      out.submission_avg_ms /= n;
+      out.frame_avg_ms /= n;
+      out.bytes_per_frame = static_cast<double>(out.wire_bytes) / n;
+      out.elapsed_seconds =
+          std::chrono::duration<double>(m_last_observation -
+                                        m_first_observation)
+              .count();
+      if (out.elapsed_seconds > 0.0) {
+        out.achieved_fps = n / out.elapsed_seconds;
+        out.bytes_per_second =
+            static_cast<double>(out.wire_bytes) / out.elapsed_seconds;
+      }
+      std::sort(frame_times.begin(), frame_times.end());
+      const std::size_t p95 = std::min(
+          frame_times.size() - 1,
+          static_cast<std::size_t>(std::ceil(frame_times.size() * 0.95)) - 1);
+      out.frame_p95_ms = frame_times[p95];
+    }
+    return out;
   }
   [[nodiscard]] auto capture_error() const -> const std::string& {
     return m_capture_error;
@@ -438,6 +391,42 @@ class GameWorkload final : public App {
   }
 
  private:
+  static auto milliseconds(std::chrono::nanoseconds duration) noexcept
+      -> double {
+    return std::chrono::duration<double, std::milli>(duration).count();
+  }
+
+  auto enable_observation() -> void {
+    set_frame_observer([this](const FrameObservation& observation) {
+      const auto observed = Clock::now();
+      if (m_samples.empty()) m_first_observation = observed;
+      m_last_observation = observed;
+
+      const auto render_and_submission = observation.application_render +
+                                         observation.framework_submission +
+                                         observation.sink_write;
+      const double tick_ms = milliseconds(observation.tick);
+      const double frame_ms = tick_ms + milliseconds(render_and_submission);
+      // The procedural raster is the one application-private phase App cannot
+      // identify. Everything after it -- the rest of on_render, TermForge's
+      // submission, and the blocking sink handoff -- remains the historical
+      // "submission pipeline" field in the evidence JSON.
+      const double submission_ms =
+          std::max(0.0, milliseconds(render_and_submission) -
+                            m_pending_generation_ms);
+      m_samples.push_back(FrameSample{
+          .bytes = observation.bytes.total(),
+          .image_bytes = observation.bytes.image_transmit +
+                         observation.bytes.image_edit,
+          .tick_ms = tick_ms,
+          .generation_ms = m_pending_generation_ms,
+          .submission_ms = submission_ms,
+          .frame_ms = frame_ms,
+          .unchanged = m_pending_unchanged,
+      });
+    });
+  }
+
   auto render_frame() -> void {
     auto pixels = m_surface.pixels();
     const double ship_x = 160.0 + std::sin(m_phase * 1.7) * 90.0;
@@ -465,14 +454,18 @@ class GameWorkload final : public App {
   }
 
   PixelSurface m_surface{Extent{kWidth, kHeight}, Pixel{0, 0, 0, 255}};
-  MeasuringSink m_sink;
+  ProtocolAuditSink m_audit;
+  std::vector<FrameSample> m_samples;
   Clock::time_point m_started{};
+  Clock::time_point m_first_observation{};
+  Clock::time_point m_last_observation{};
   double m_capture_seconds{};
   double m_phase{};
-  double m_tick_ms{};
+  double m_pending_generation_ms{};
   int m_frame{};
+  bool m_pending_unchanged{false};
   bool m_headless{false};
-  bool m_output_bound{false};
+  bool m_audit_bound{false};
   std::string m_capture_error;
   std::string m_last_error;
 };

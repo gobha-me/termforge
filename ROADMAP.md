@@ -167,6 +167,14 @@ completed items.
 > keyboard-flags reply as a bounded raw-input barrier, then restore the main
 > screen and cooked termios. Legacy and known-unsupported routes stay quiet;
 > fatal signals retain the allocation-free leave-sequence backstop.
+>
+> **2026-08-17 — opt-in frame timing observations.** **#258** exposes one
+> rendered-frame callback after App's single write boundary, pairing the
+> existing byte meter and sink acceptance with real wall-time partitions for
+> tick, primary application render, framework submission and blocking sink
+> handoff. Disabled telemetry takes no timing stamps; demand-idle iterations
+> stay silent. The game workload now uses this API for attribution without
+> making ordinary interactive output travel through a forwarding sink.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
@@ -189,6 +197,8 @@ completed items.
 - Encoded widget pixel regions (#167) — fixed-resolution PNG/zlib/raw payloads
   reach the App-managed Kitty/ANSI enhancement path with Baseline-preserving
   degradation and terminal-acknowledged persistent submission
+- Frame timing observations (#258) — optional rendered-frame phase timings,
+  exact byte buckets and sink acceptance without replacing `ByteSink`
 - Resident-image invalidation (#113) — explicit suspend/reattach/reset events,
   payload-free Kitty state reset, stale-handle refusal, and automatic
   Persistent-region recreation while resize retains payloads

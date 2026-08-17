@@ -1580,7 +1580,17 @@ auto App::frame_step() -> void {
   // bound motion by screen().cols()/rows(), and the tick following a keypress
   // must be the tick that acts on it. Drawing then shows the state the tick
   // just produced rather than one frame of stale state.
+  const bool observing = static_cast<bool>(m_frame_observer);
+  FrameObservation observation;
+  auto phase_started =
+      observing ? std::chrono::steady_clock::now()
+                : std::chrono::steady_clock::time_point{};
   tick_step(frame_start);
+  if (observing) {
+    const auto now = std::chrono::steady_clock::now();
+    observation.tick = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        now - phase_started);
+  }
   const bool requested = std::exchange(m_render_requested, false);
   const bool rendered =
       m_render_mode == RenderMode::Continuous || requested;
@@ -1595,7 +1605,15 @@ auto App::frame_step() -> void {
       region.pending_visible = false;
       region.touched_wire = false;
     }
+    if (observing) phase_started = std::chrono::steady_clock::now();
     on_render(*m_screen);
+    if (observing) {
+      const auto now = std::chrono::steady_clock::now();
+      observation.application_render =
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              now - phase_started);
+      phase_started = now;
+    }
     render_overlays(*m_screen);
     m_renderer->present(*m_screen);
     restore_backdrop(*m_screen);  // the overlay pass leaves no trace behind
@@ -1610,6 +1628,7 @@ auto App::frame_step() -> void {
     // flush_pixel_regions drives kitty's collection on EVERY RENDERED frame; a
     // demand-idle frame deliberately does not touch driver state at all.
     flush_pixel_regions();
+    if (observing) m_driver->measure_next_frame_write();
     m_renderer->flush();  // #148: ONE write carries the whole rendered frame
     // #178: a sink that refused this frame's bytes surfaces as an ErrorEvent
     // rather than a silently dropped frame. flush() is `-> void` and pure, so
@@ -1619,10 +1638,25 @@ auto App::frame_step() -> void {
     // through the same channel setup() uses for degradations, so it drains on
     // the next frame's pump and dispatch_event routes it past the overlay stack.
     auto output_error = m_driver->take_output_error();
-    finish_pixel_frame(!output_error.has_value());
+    const bool output_accepted = !output_error.has_value();
+    finish_pixel_frame(output_accepted);
     if (output_error) m_input.push_error(std::move(*output_error));
     for (auto& error : m_driver->take_driver_events())
       m_input.push_error(std::move(error));
+    if (observing) {
+      const auto submission =
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now() - phase_started);
+      observation.sink_write =
+          m_driver->finish_frame_write_measurement();
+      observation.framework_submission =
+          submission > observation.sink_write
+              ? submission - observation.sink_write
+              : std::chrono::nanoseconds::zero();
+      observation.bytes = m_driver->last_frame_bytes();
+      observation.output_accepted = output_accepted;
+      m_frame_observer(observation);
+    }
   }
   m_trace_point = TracePoint::Wait;
   wait_frame(frame_start, rendered);

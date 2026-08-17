@@ -100,6 +100,14 @@ file is the tactical version.
   non-virtual data** — that has now been the right answer twice, here and for
   `Terminal::set_io` below, so treat it as settled rather than re-arguing it the
   third time. It sidesteps the pure/non-pure question instead of answering it.
+  **Frame timing observes that same boundary** (#258). `App` arms private,
+  base-owned timing only when a frame observer is installed; disabled telemetry
+  performs no clock reads. One observation follows each rendered frame's one
+  write and accepted-write bookkeeping, never a demand-idle iteration. Its byte
+  count is what was handed to the sink even on refusal, paired with an explicit
+  acceptance bit. `sink_write` is only the blocking `ByteSink::write` (or
+  stdout) handoff — never terminal decoding or presentation — and the timing
+  clock is real steady wall time, not `SyntheticClock` simulation time.
 - **Runtime polymorphism for drivers** (`std::unique_ptr<TerminalDriver>`);
   the `DriverImpl` concept is a `static_assert` check only, not dispatch.
   Don't convert drivers to a closed `std::variant`.

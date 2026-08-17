@@ -40,6 +40,7 @@
 #include <cstdint>
 #include <deque>
 #include <expected>
+#include <functional>
 #include <iosfwd>
 #include <limits>
 #include <memory>
@@ -110,6 +111,36 @@ enum class Backdrop { None, Dim, Fill };
 // into a source-only wait once no callback asks for another frame. Continuous
 // is the compatibility default; Demand is opt-in (#150).
 enum class RenderMode { Continuous, Demand };
+
+// Opt-in wall-time attribution for one rendered App frame (#258).
+//
+// All durations use the real steady clock, even when a SyntheticClock drives
+// simulation and replay. Synthetic time answers "what time does the app
+// believe it is?"; these fields answer "where did this process spend time?"
+// and must therefore remain independent.
+struct FrameObservation {
+  // The complete tick_step call, including fixed-step loop overhead and every
+  // on_tick invocation made for this rendered frame.
+  std::chrono::nanoseconds tick{};
+  // App::on_render only. Framework-invoked overlay drawing and on_pixels are
+  // part of framework_submission because they run inside that submission
+  // window rather than the app's primary render callback.
+  std::chrono::nanoseconds application_render{};
+  // Work after on_render through accepted-write bookkeeping, excluding the
+  // sink_write interval nested inside it: overlays, diffing, pixel submission,
+  // protocol assembly and output/error reconciliation.
+  std::chrono::nanoseconds framework_submission{};
+  // Time inside the frame's one ByteSink::write call, or fwrite+fflush when no
+  // sink is installed. This is the blocking handoff, never terminal decoding
+  // or presentation time.
+  std::chrono::nanoseconds sink_write{};
+  // What the driver handed to the sink. As with last_frame_bytes(), refused
+  // writes are still metered; output_accepted distinguishes that outcome.
+  FrameBytes bytes{};
+  bool output_accepted{true};
+};
+
+using FrameObserver = std::function<void(const FrameObservation&)>;
 
 struct OverlayOptions {
   Backdrop backdrop{Backdrop::Dim};
@@ -602,6 +633,28 @@ class App {
     return m_render_mode;
   }
   auto request_render() noexcept -> void { m_render_requested = true; }
+
+  // Observe complete rendered frames without replacing the driver's ByteSink.
+  // App owns the callable. Configure or clear it between runs; a live change
+  // is ignored, matching set_clock, so a callback cannot destroy the
+  // std::function whose body is currently running. An empty callable disables
+  // observation. Disabled observation performs no telemetry clock reads and
+  // allocates nothing.
+  //
+  // The callback runs after the frame's single write, pixel-state commit or
+  // rollback, and driver-event collection, but before wait_frame. Its own cost
+  // is intentionally outside the observation and comes out of the current
+  // frame budget. Demand-idle iterations have no write boundary and produce
+  // no observation. A throw is ordinary application failure: the run loop
+  // restores the terminal and propagates it.
+  auto set_frame_observer(FrameObserver observer) -> void {
+    if (m_loop_active) return;
+    m_frame_observer = std::move(observer);
+  }
+  auto clear_frame_observer() -> void { set_frame_observer({}); }
+  [[nodiscard]] auto has_frame_observer() const noexcept -> bool {
+    return static_cast<bool>(m_frame_observer);
+  }
 
   // Frame budget (ms) — authoritative, not a hint. The loop spends exactly
   // this long per frame: it renders, then waits out whatever is left of the
@@ -1379,6 +1432,7 @@ class App {
   // Borrowed deterministic time source, or nullptr for std::steady_clock.
   // Never changed by a live loop; see set_clock().
   SyntheticClock* m_clock{nullptr};
+  FrameObserver m_frame_observer;
   RenderMode m_render_mode{RenderMode::Continuous};
   // Coalesced loop-thread invalidation. Cleared at the render decision point,
   // so a request made from on_render() belongs to the following frame.

@@ -5,6 +5,28 @@ guarantees. Timing depends on the compiler, host, pty, transport and terminal;
 the deterministic properties belong in tests, while real-time numbers name the
 machine that produced them.
 
+## Runtime frame observation
+
+`App::set_frame_observer` installs an owned callback for rendered-frame
+telemetry. Each `FrameObservation` arrives after the frame's single write and
+accepted-write bookkeeping, before the frame wait, with the existing
+`FrameBytes` breakdown and four real steady-clock partitions:
+
+- `tick`: `tick_step`, including every fixed or variable `on_tick` call;
+- `application_render`: the application's primary `on_render` callback;
+- `framework_submission`: overlays, diffing, pixel/on-pixels submission,
+  protocol assembly and post-write reconciliation, excluding the nested sink
+  interval;
+- `sink_write`: the blocking `ByteSink::write` or stdout handoff.
+
+The last field does not measure terminal decoding, compositing, or display. A
+refused handoff still reports the bytes the driver attempted and sets
+`output_accepted` false, matching `last_frame_bytes()` and
+`take_output_error()`. Demand-idle loop iterations have no write and therefore
+no observation. Synthetic clocks and traces keep controlling application time;
+telemetry deliberately measures real process wall time. With no callback there
+are no telemetry clock reads or allocations.
+
 This document begins with the game-readiness slice of issue #88. The broader
 paint, many-region and cross-terminal throughput sweeps remain open there.
 
@@ -154,9 +176,16 @@ Reference run on 2026-08-10: GCC 14.2, Linux 6.12, Intel Core i9-13900H.
 | clean frames | 5, all with 0 image bytes |
 | resident lifecycle | 1 id, 1 upload, 174 updates, 1 placement, 0 deletes |
 
+The game now obtains phase timing and frame bytes from `FrameObservation`, so
+ordinary interactive use no longer replaces the driver's output sink. The
+headless and capture evidence modes retain a protocol-audit sink only because
+the historical JSON also counts logical uploads, root edits, placements and
+deletes, which have no public event counters. That sink no longer performs the
+timing attribution.
+
 The headless throughput number measures TermForge's generation, App traversal,
-hash/base64/protocol assembly and sink dispatch. It does **not** measure a pty
-or terminal decoder and must not be presented as terminal FPS.
+hash/base64/protocol assembly and audit-sink dispatch. It does **not** measure a
+pty or terminal decoder and must not be presented as terminal FPS.
 
 `generation` is the procedural raster write. `submission pipeline` begins
 after generation and includes the cell fallback draw, Screen diff, persistent
