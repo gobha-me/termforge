@@ -160,6 +160,13 @@ completed items.
 > the authored Baseline, persistent roots reuse or recreate identity correctly,
 > and generation-qualified acknowledgements keep late opaque replies from
 > clearing newer widget work.
+>
+> **2026-08-17 — enhanced-keyboard teardown barrier.** **#282** keeps a
+> queued or proxy-delayed Kitty release inside the session that requested it.
+> Normal and exception teardown disable input-producing modes, use the ordered
+> keyboard-flags reply as a bounded raw-input barrier, then restore the main
+> screen and cooked termios. Legacy and known-unsupported routes stay quiet;
+> fatal signals retain the allocation-free leave-sequence backstop.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 

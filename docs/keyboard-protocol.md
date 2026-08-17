@@ -185,6 +185,18 @@ writes, so `SIGSEGV`/`SIGTERM`/`exit()` all pop. Popping an empty stack is a
 documented no-op, which is what lets it live in a constant the signal path
 cannot branch on.
 
+**Normal and exception teardown quiesce releases before restoring cooked
+input.** A terminal or proxy may have accepted TermForge's keyboard-stack pop
+while an earlier release is still travelling back through the pty. TermForge
+therefore disables every input-producing screen mode, queries the now-current
+keyboard flags while the alternate screen is still active, and discards raw
+bytes through that ordered reply. Only then does it show the main screen and
+restore termios with `TCSAFLUSH`. A complete release queued before the pop or
+delivered during that exchange belongs to the ending session; input arriving
+after cooked mode returns is never read by TermForge. The barrier is bounded
+at 150 ms and is skipped when the startup probe already established that the
+terminal does not implement the protocol.
+
 ## Verifying on a real terminal
 
 ```sh

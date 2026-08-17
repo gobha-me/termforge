@@ -70,6 +70,13 @@ namespace termforge::detail {
 // crash must not leave the user's shell in an enhanced keyboard mode.
 inline constexpr std::string_view kKeyboardPop = "\033[<u";
 
+// Query the current flags: CSI ? u. During normal teardown this follows the
+// pop and the other input-mode disables while the alternate screen is still
+// active. Its ordered reply is the boundary after which every earlier
+// enhanced-keyboard event has reached the input stream and can be discarded
+// before cooked mode is restored (#282).
+inline constexpr std::string_view kKeyboardQuery = "\033[?u";
+
 // Degradation is an event (AGENTS.md): an app that asked for the protocol on
 // a terminal that does not have it gets told, rather than silently receiving
 // press-only input and wondering why hold-to-move never releases. Nullopt
