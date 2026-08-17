@@ -31,6 +31,8 @@
 
 namespace termforge {
 
+class App;
+
 // Which built-in rendering tier an application wants App/Terminal to select.
 // Automatic preserves capability-based selection; the concrete values are an
 // explicit diagnostic/recovery request and do not rewrite the terminal facts
@@ -1058,6 +1060,25 @@ class TerminalDriver {
   auto emit_frame(std::string_view bytes) -> bool;
 
  private:
+  friend class App;
+
+  // App's opt-in frame observer (#258) arms exactly the rendered frame's
+  // write. Keeping the timer at emit_frame makes sink_write the blocking
+  // handoff itself rather than an interval around flush that also includes
+  // driver bookkeeping. Private base-owned state preserves the open driver
+  // interface: an out-of-tree driver inherits this without a new virtual.
+  auto measure_next_frame_write() noexcept -> void {
+    m_measure_next_write = true;
+    m_last_frame_sink_write = std::chrono::nanoseconds::zero();
+  }
+  [[nodiscard]] auto finish_frame_write_measurement() noexcept
+      -> std::chrono::nanoseconds {
+    // A legacy driver may bypass emit_frame entirely. End the arm here too so
+    // a later shutdown write cannot inherit this frame's measurement request.
+    m_measure_next_write = false;
+    return m_last_frame_sink_write;
+  }
+
   // Set by set_sync_updates (#148); read by emit_frame(), which wraps the
   // frame in 2026 begin/end when it is set and within #269's transaction
   // budget, and leaves the bytes byte-identical when it is not.
@@ -1073,6 +1094,8 @@ class TerminalDriver {
   FrameBytes m_pending{};  // this frame, so far
   FrameBytes m_last_frame_bytes{};
   FrameBytes m_total_bytes{};
+  std::chrono::nanoseconds m_last_frame_sink_write{};
+  bool m_measure_next_write{false};
 
   // Borrowed, never owned; null means stdout. m_string_sink backs the
   // std::string* overload and m_sink may point AT it, which is why copy and

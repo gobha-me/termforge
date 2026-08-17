@@ -6,7 +6,26 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-17, latest)
 
-**Current stable release: v0.46.1 — safe enhanced-keyboard teardown.** #282
+**Current stable release: v0.47.0 — opt-in frame timing observations.** #258
+adds an App-owned callback after every rendered frame's single write boundary.
+It reports real wall time spent in tick, primary application render, framework
+submission and the blocking sink handoff alongside the existing `FrameBytes`
+meter and explicit sink acceptance. Demand-idle iterations stay silent, and a
+disabled observer takes no telemetry clock reads or allocations.
+
+The timer lives as private base-owned state at `emit_frame`, so no driver
+virtual changed and out-of-tree drivers remain source-compatible. Sink time is
+the blocking handoff only—not terminal decoding or presentation—and remains
+independent of synthetic/replay time. `examples/game.cpp` now uses the observer
+for timing and bytes; ordinary interactive output no longer replaces the sink,
+while evidence modes retain an audit-only sink for lifecycle counters that have
+no public event source. Production-order tests cover empty rendered writes,
+phase partitions, refused-write delivery, demand-idle suppression, callback
+lifetime and exception teardown.
+
+## Previous stable release: v0.46.1
+
+**v0.46.1 — safe enhanced-keyboard teardown.** #282
 closes the window in which a Kitty release accepted before shutdown could
 arrive through a terminal proxy after `TCSAFLUSH` and become cooked shell
 input. Normal and exception teardown now disable keyboard, mouse and paste
@@ -50,8 +69,7 @@ accounted. Offline tests cover direct/chunked wire, identity, tier refusal,
 pin/replace/edit, animation and residency. `tools/zlib_repro.sh` compares the
 same raw card with its `f=32,o=z` form on a real terminal.
 
-`Rgb24` remains open on #166 as an independently measured follow-up. #167 is
-next: carry encoded payloads through persistent widget pixel regions.
+`Rgb24` remains open on #166 as an independently measured follow-up.
 
 ## Previous stable release: v0.44.0
 

@@ -120,6 +120,13 @@ auto TerminalDriver::emit_frame(std::string_view bytes) -> bool {
     wrapped += kSyncEnd;
     frame = wrapped;
   }
+  // Armed only by App when a frame observer exists. Exchange before calling
+  // user-owned sink code so an exception cannot leave shutdown() timing the
+  // wrong write during run_loop's unwind.
+  const bool measure_write = std::exchange(m_measure_next_write, false);
+  const auto write_started =
+      measure_write ? std::chrono::steady_clock::now()
+                    : std::chrono::steady_clock::time_point{};
   bool accepted = true;
   if (m_sink != nullptr) {
     if (auto r = m_sink->write(std::span<const char>{frame.data(),
@@ -132,6 +139,11 @@ auto TerminalDriver::emit_frame(std::string_view bytes) -> bool {
   } else {
     std::fwrite(frame.data(), 1, frame.size(), stdout);
     std::fflush(stdout);
+  }
+  if (measure_write) {
+    m_last_frame_sink_write =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - write_started);
   }
   if (accepted && oversized_sync_frame && !m_warned_sync_limit) {
     // Info, not Warning: the complete frame was accepted, just by the lesser

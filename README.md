@@ -158,6 +158,13 @@ select the run. The W3 sweep records cell-rendering walls at 16.6 and 33.3 ms;
 results describe the named host/compiler and are not portable guarantees. See
 [docs/performance.md](docs/performance.md).
 
+Applications can collect the same rendered-frame byte breakdown together with
+tick, render, framework-submission, and blocking sink-write wall time through
+`App::set_frame_observer`. Observation is opt-in; without a callback TermForge
+does not take the additional timing stamps. The sink interval ends when the
+configured output accepts or refuses the frame—it does not claim when a
+terminal decodes or presents it.
+
 ## Using TermForge in your project
 
 TermForge is stdlib-only — there are no transitive dependencies to satisfy.
