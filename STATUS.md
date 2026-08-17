@@ -6,7 +6,28 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-17, latest)
 
-**Current stable release: v0.44.0 — mutable bounded TextBox streaming.** #217
+**Current stable release: v0.45.0 — application-supplied zlib RGBA.** #166 adds
+`ImageFormat::Rgba32Zlib` for caller-compressed runtime frames. TermForge keeps
+its stdlib-only boundary: it never links zlib, compresses, decompresses, or
+validates decompressed length. Kitty maps the borrowed bytes to `f=32,o=z`,
+while ANSI, Fallback and legacy tiers answer unsupported and return a
+`Warning` without output.
+
+The enum remains the complete payload identity through region hashes, pins,
+root replacements, partial edits and animation frames, so raw and compressed
+RGBA cannot alias merely because both use `f=32`. Compressed transfers follow
+#165's opaque path: the final chunk requests a correlated reply, rejection or
+timeout rolls back residency, and exact compressed input bytes are metered and
+accounted. Offline tests cover direct/chunked wire, identity, tier refusal,
+pin/replace/edit, animation and residency. `tools/zlib_repro.sh` compares the
+same raw card with its `f=32,o=z` form on a real terminal.
+
+`Rgb24` remains open on #166 as an independently measured follow-up. #167 is
+next: carry encoded payloads through persistent widget pixel regions.
+
+## Previous stable release: v0.44.0
+
+**v0.44.0 — mutable bounded TextBox streaming.** #217
 adds a generation-qualified `TextEntryHandle` lifecycle over one mutable live
 tail while preserving the existing finalized `append` path. Plain or styled
 chunks can append or replace the tail, split UTF-8 is held until complete, and

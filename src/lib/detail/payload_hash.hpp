@@ -16,6 +16,6 @@ namespace termforge::detail {
 // Hash every field that determines the terminal-side image identity. Never
 // returns zero: zero is KittyDriver's "nothing transmitted" sentinel.
 [[nodiscard]] auto payload_hash(std::span<const std::byte> payload, Extent px,
-                                int format_code) noexcept -> std::uint64_t;
+                                ImageFormat format) noexcept -> std::uint64_t;
 
 }  // namespace termforge::detail

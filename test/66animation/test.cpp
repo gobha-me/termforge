@@ -201,8 +201,8 @@ TEST_CASE("animation: complete preflight refuses without wire or state",
   }
   SECTION("format mismatch") {
     const Image raw = art(1);
-    const auto png = bytes(9);
-    const EncodedImage opaque{ImageFormat::Png, png, Extent{2, 2}};
+    const auto zlib = bytes(9);
+    const EncodedImage opaque{ImageFormat::Rgba32Zlib, zlib, Extent{2, 2}};
     const std::array frames{AnimationFrame{raw, 10ms},
                             AnimationFrame{opaque, 10ms}};
     CHECK_FALSE(d.register_animation(frames));
@@ -240,8 +240,8 @@ TEST_CASE("animation: unsupported capability and legacy tier refuse honestly",
   CHECK(compatible_default.error().severity == Severity::Warning);
 }
 
-TEST_CASE("animation: encoded bytes are verbatim and every frame is acknowledged",
-          "[animation][kitty][png][reply]") {
+TEST_CASE("animation: zlib bytes are verbatim and every frame is acknowledged",
+          "[animation][kitty][zlib][reply]") {
   KittyDriver d;
   d.set_image_animation_support(true);
   std::string out;
@@ -249,8 +249,10 @@ TEST_CASE("animation: encoded bytes are verbatim and every frame is acknowledged
   const auto a = bytes(10);
   const auto b = bytes(30);
   const std::array frames{
-      AnimationFrame{EncodedImage{ImageFormat::Png, a, Extent{8, 8}}, 10ms},
-      AnimationFrame{EncodedImage{ImageFormat::Png, b, Extent{8, 8}}, 0ms}};
+      AnimationFrame{
+          EncodedImage{ImageFormat::Rgba32Zlib, a, Extent{8, 8}}, 10ms},
+      AnimationFrame{
+          EncodedImage{ImageFormat::Rgba32Zlib, b, Extent{8, 8}}, 0ms}};
 
   const auto handle = d.register_animation(frames);
   REQUIRE(handle);
@@ -258,6 +260,13 @@ TEST_CASE("animation: encoded bytes are verbatim and every frame is acknowledged
   expected.insert(expected.end(), b.begin(), b.end());
   d.flush();
   CHECK(tfsupport::reassemble(out) == expected);
+  const auto chunks = tfsupport::transmit_chunks(tfsupport::apcs(out));
+  REQUIRE(chunks.size() == 2);
+  for (const auto& chunk : chunks) {
+    CHECK(tfsupport::key_value(chunk, "f") == "32");
+    CHECK(tfsupport::key_value(chunk, "o") == "z");
+    CHECK(tfsupport::key_value(chunk, "q") == "0");
+  }
   CHECK(d.residency() == ImageResidency{0, 1, a.size() + b.size()});
 
   d.consume_reply(TerminalReply{handle->id, std::nullopt, "OK"});

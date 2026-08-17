@@ -68,10 +68,10 @@ struct FrameBytes {
 //
 // This is DRIVER-ACCOUNTED residency, not a claim about terminal allocation:
 // `source_payload_bytes` is the exact number of source bytes handed to the
-// terminal for the currently believed-resident payloads. For an opaque Png it
-// is therefore the compressed input size, never decoded bytes or inferred
-// terminal memory. Region-cache and application-pinned images are split
-// because their ownership and eviction policies differ; bytes cover both.
+// terminal for the currently believed-resident payloads. For an opaque Png or
+// Rgba32Zlib it is therefore the compressed input size, never decoded bytes or
+// inferred terminal memory. Region-cache and application-pinned images are
+// split because their ownership and eviction policies differ; bytes cover both.
 //
 // The snapshot advances only after the frame write is accepted. A later
 // control-plane rejection may invalidate that committed belief. Terminal byte

@@ -267,7 +267,8 @@ template <typename Operation>
   };
 
   out.push_back(measure(options, base("payload_hash"), iterations, [&] {
-    return detail::payload_hash(bytes, Extent{width, height}, 32);
+    return detail::payload_hash(bytes, Extent{width, height},
+                                ImageFormat::Rgba32);
   }));
   Result base64_result = base("base64_encode");
   base64_result.output_bytes = ((bytes.size() + 2) / 3) * 4;

@@ -329,8 +329,9 @@ class Image {
 // Before this, the only wire format was raw RGBA base64'd, so a plate cost
 // `w*h*4*4/3` no matter how compressible the art was: 205,283 bytes for a
 // 240x160 plate, measured with #139's meter, against a downstream budget of
-// 8,192. Closing that gap needs compression, and compression in the library
-// needs zlib or a PNG encoder -- the third-party dependency AGENTS.md forbids.
+// 8,192. Closing that gap needs compression, but compression in the library
+// would need zlib or a PNG encoder -- the third-party dependency AGENTS.md
+// forbids.
 //
 // The rule also points at the answer. Applications with graphics budgets bake
 // their art offline already, where a dependency is free; what was missing was
@@ -343,6 +344,10 @@ enum class ImageFormat {
   // A complete PNG datastream. Kitty decodes it itself (f=100); no other tier
   // can, and they answer with a Warning rather than guessing.
   Png,
+  // A zlib stream whose decompressed bytes are row-major 32-bit RGBA. The
+  // application owns compression; TermForge ships the opaque stream verbatim
+  // and Kitty decodes it as f=32,o=z. No in-library length check is possible.
+  Rgba32Zlib,
 };
 
 struct EncodedImage {
@@ -367,15 +372,16 @@ struct EncodedImage {
   // its declared extent, to key the content hash, and to answer
   // image_cell_extent for a caller that never decoded anything.
   //
-  // For Png this field is therefore unverifiable, and deliberately
-  // unverified: we do not parse the header, so a disagreement between it and
-  // the payload is not an error the library can see or will invent.
+  // For Png and Rgba32Zlib this field is therefore unverifiable, and
+  // deliberately unverified: we do not parse or decompress the payload, so a
+  // disagreement is not an error the library can see or will invent.
   //
   // Since #169 it is also what a PlacementFit::Exact fit is enforced against.
   // That does not make it verified -- nothing here parses anything -- but it
   // does make it load-bearing in a second way: over-declare and Exact refuses
-  // a rect the image would have fitted, under-declare a Png and the terminal
-  // paints outside the rect the caller named. Declare it accurately.
+  // a rect the image would have fitted, under-declare an opaque payload and
+  // the terminal may paint outside the rect the caller named. Declare it
+  // accurately.
   Extent pixels;
 
   // Empty is the union of both ways to have nothing: no bytes, or no extent.
@@ -560,8 +566,8 @@ struct ImagePlacementOptions {
   PixelPoint pixel_offset{};
   // Optional source crop in the transmitted image's pixel coordinates (Kitty
   // x=/y=/w=/h=). The complete crop must lie inside the source's real Image
-  // extent or the EncodedImage extent the caller declared; PNG is never
-  // parsed to verify that declaration.
+  // extent or the EncodedImage extent the caller declared; opaque formats are
+  // never decoded to verify that declaration.
   std::optional<PixelRect> source{};
 
   constexpr auto operator==(const ImagePlacementOptions&) const noexcept

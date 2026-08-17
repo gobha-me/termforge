@@ -260,6 +260,13 @@ TEST_CASE("pinned: replacement refusal preserves the last queued frame",
   CHECK(wrong_format.error().message ==
         "replace_pinned: image format must remain f=32 (got f=100)");
 
+  const auto wrong_compression = d.replace_pinned(
+      *pinned,
+      EncodedImage{ImageFormat::Rgba32Zlib, png, Extent{2, 2}});
+  REQUIRE_FALSE(wrong_compression.has_value());
+  CHECK(wrong_compression.error().message ==
+        "replace_pinned: image format must remain f=32 (got f=32,o=z)");
+
   d.flush();
   CHECK(frame_updates_of(out, pinned->id) == 1);  // refusals emitted nothing
   REQUIRE(d.replace_pinned(*pinned, changed).has_value());
@@ -916,6 +923,61 @@ TEST_CASE("pinned: a pre-encoded plate pins on its own wire format",
   CHECK(tfsupport::key_value(ts[0], "i") == std::to_string(p->id));
   // Shipped verbatim: the terminal reassembles exactly what was handed over.
   CHECK(tfsupport::reassemble(out) == png);
+}
+
+TEST_CASE("pinned: zlib format survives pin, replace, and partial edit",
+          "[pinned][kitty][encoded][zlib][reply]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const std::vector<std::byte> initial(5000, std::byte{0x31});
+  const auto pin = d.pin_image(
+      EncodedImage{ImageFormat::Rgba32Zlib, initial, Extent{32, 32}});
+  REQUIRE(pin);
+  d.flush();
+
+  auto chunks = tfsupport::transmit_chunks(tfsupport::apcs(out));
+  REQUIRE(chunks.size() >= 2);
+  CHECK(tfsupport::key_value(chunks.front(), "f") == "32");
+  CHECK(tfsupport::key_value(chunks.front(), "o") == "z");
+  for (std::size_t i = 1; i < chunks.size(); ++i)
+    CHECK_FALSE(tfsupport::has_key(chunks[i], "o"));
+  CHECK(tfsupport::reassemble(out) == initial);
+
+  const auto early = d.draw_pinned(Rect{0, 0, 4, 2}, *pin);
+  REQUIRE_FALSE(early);
+  d.consume_reply(TerminalReply{pin->id, std::nullopt, "OK"});
+
+  out.clear();
+  const std::vector<std::byte> replacement(41, std::byte{0x42});
+  REQUIRE(d.replace_pinned(
+      *pin,
+      EncodedImage{ImageFormat::Rgba32Zlib, replacement, Extent{32, 32}}));
+  d.flush();
+  chunks = tfsupport::transmit_chunks(tfsupport::apcs(out));
+  REQUIRE(chunks.size() == 1);
+  CHECK(tfsupport::key_value(chunks.front(), "a") == "f");
+  CHECK(tfsupport::key_value(chunks.front(), "r") == "1");
+  CHECK(tfsupport::key_value(chunks.front(), "o") == "z");
+  CHECK(tfsupport::reassemble(out) == replacement);
+  d.consume_reply(TerminalReply{pin->id, std::nullopt, "OK"});
+
+  out.clear();
+  const std::vector<std::byte> block(23, std::byte{0x53});
+  REQUIRE(d.edit_pinned(
+      *pin, PixelPoint{3, 5},
+      EncodedImage{ImageFormat::Rgba32Zlib, block, Extent{2, 2}},
+      ImageComposition::Overwrite));
+  d.flush();
+  chunks = tfsupport::transmit_chunks(tfsupport::apcs(out));
+  REQUIRE(chunks.size() == 1);
+  CHECK(tfsupport::key_value(chunks.front(), "a") == "f");
+  CHECK(tfsupport::key_value(chunks.front(), "r") == "1");
+  CHECK(tfsupport::key_value(chunks.front(), "x") == "3");
+  CHECK(tfsupport::key_value(chunks.front(), "y") == "5");
+  CHECK(tfsupport::key_value(chunks.front(), "o") == "z");
+  CHECK(tfsupport::key_value(chunks.front(), "q") == "0");
+  CHECK(tfsupport::reassemble(out) == block);
 }
 
 TEST_CASE("pinned: an opaque pin becomes usable only after OK",
