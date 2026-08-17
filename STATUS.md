@@ -4,9 +4,38 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-16, latest)
+## Where we are (2026-08-17, latest)
 
-**Current stable release: v0.43.0 — word-aware text wrapping.** #24 makes
+**Current stable release: v0.44.0 — mutable bounded TextBox streaming.** #217
+adds a generation-qualified `TextEntryHandle` lifecycle over one mutable live
+tail while preserving the existing finalized `append` path. Plain or styled
+chunks can append or replace the tail, split UTF-8 is held until complete, and
+finalization makes the entry eligible for oldest-first logical-entry and byte
+retention limits. The live tail is never truncated or evicted; an honest
+over-budget query reports when it alone exceeds the configured floor.
+
+Each entry caches its wrapped rows by content revision, width and wrapping
+policy. Unchanged draws no longer rebuild or copy the full logical history,
+one mutation invalidates one entry, and a deterministic build counter proves
+the cache behavior without timing assertions. A scrolled view keeps a stable
+entry/row anchor across producer updates and clamps to the oldest surviving
+row only when retention evicts that anchor. Empty/stale/finalized handles
+refuse without mutation, and slot generations prevent a recycled index from
+resurrecting an old handle.
+
+The failure matrix covers mutation before and after draw, width changes,
+plain/styled chunks, split and malformed UTF-8, empty deltas, finalization,
+clear, slot reuse, independent entry/byte limits, an oversized live tail,
+cache selectivity, viewport anchoring and bounded chunked/one-shot equivalence.
+GCC 14.2, Clang 20.1 and GCC 14 ASan+UBSan each pass all 73 suites; both
+compilers also pass the subdirectory, installed-package and vendored consumer
+paths. Four targeted mutations prove the stale-handle, cache-selectivity,
+live-tail retention and viewport-anchor cases fail when their guards are
+removed.
+
+## Previous stable release: v0.43.0
+
+**v0.43.0 — word-aware text wrapping.** #24 makes
 TextBox and Dialog choose the last fitting ASCII-space boundary instead of
 breaking ordinary prose mid-word. The one private wrapper treats styled spans
 as a continuous logical line, preserves source whitespace and style on both
@@ -4475,9 +4504,9 @@ The open queue, in rough priority order:
   so that column is still free.
 - **TF-01/02/03/05 (#24, #25, #26, #28)** — ~~TextBox word-wrap~~ **#24
   LANDED (v0.43.0)**, ~~styled spans~~ **#25 LANDED**, Composer
-  widget #26, and ~~App post_event~~ **#28 LANDED**. #217 follows #24 with
-  mutable streaming entries, bounded retention and cached wrapping. (#27
-  landed in v0.1.7.)
+  widget #26, and ~~App post_event~~ **#28 LANDED**. ~~#217 mutable streaming,
+  bounded retention and cached wrapping~~ **LANDED (v0.44.0)**. (#27 landed in
+  v0.1.7.)
 - **#16** (forge-top demo) — the larger dogfooding epic.
 
 Surfaced by #59, not fixed by it: `ProgressBar`'s indeterminate pulse
