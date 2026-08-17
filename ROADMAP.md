@@ -139,6 +139,13 @@ completed items.
 > falling back to its existing display-width-safe hard split. Styled rows keep
 > source whitespace and style across span boundaries, so the fix also supplies
 > the final wrapping policy #217's mutable-entry cache will key against.
+>
+> **2026-08-17 — mutable bounded TextBox streaming.** **#217** replaces the
+> full-history per-frame rewrap with generation-qualified document entries and
+> per-entry width/revision caches. One live tail accepts plain or styled chunks,
+> preserves split UTF-8, and finalizes into oldest-first retention; a scrolled
+> view anchors by entry/row instead of moving when the tail grows. Existing
+> `append` callers remain source-compatible finalized-entry producers.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 

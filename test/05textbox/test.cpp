@@ -526,3 +526,223 @@ TEST_CASE("TextBox: plain append is a single-span wrapper (#25)",
   plain.draw(s);
   REQUIRE(s.at(0, 0).fg == termforge::theme::kFg);
 }
+
+TEST_CASE("TextBox: a live entry appends, replaces, and finalizes (#217)",
+          "[textbox][stream]") {
+  TextBox box;
+  const auto entry = box.begin_entry("hel");
+  REQUIRE(entry);
+  CHECK(box.line_count() == 1);
+  CHECK(box.retained_bytes() == 3);
+  CHECK(render_row(box, 20, 3, 0) == "hel");
+
+  REQUIRE(box.append_to_entry(entry, "lo"));
+  CHECK(box.retained_bytes() == 5);
+  CHECK(render_row(box, 20, 3, 0) == "hello");
+  CHECK(box.at_bottom());
+
+  REQUIRE(box.replace_entry(entry, "world"));
+  CHECK(box.retained_bytes() == 5);
+  CHECK(render_row(box, 20, 3, 0) == "world");
+
+  REQUIRE(box.finalize_entry(entry));
+  CHECK_FALSE(box.append_to_entry(entry, "!"));
+  CHECK_FALSE(box.replace_entry(entry, "replacement"));
+  CHECK_FALSE(box.finalize_entry(entry));
+  CHECK(render_row(box, 20, 3, 0) == "world");
+}
+
+TEST_CASE("TextBox: beginning a new tail finalizes the prior one (#217)",
+          "[textbox][stream][failure]") {
+  TextBox box;
+  const auto first = box.begin_entry("first");
+  const auto second = box.begin_entry("second");
+
+  CHECK_FALSE(box.append_to_entry(first, " stale"));
+  REQUIRE(box.append_to_entry(second, " live"));
+  CHECK(box.line_count() == 2);
+  CHECK(render_row(box, 20, 3, 0) == "first");
+  CHECK(render_row(box, 20, 3, 1) == "second live");
+}
+
+TEST_CASE("TextBox: streaming UTF-8 survives chunk boundaries (#217)",
+          "[textbox][stream][utf8][failure]") {
+  TextBox box;
+  const auto entry = box.begin_entry();
+  const std::string b1(1, static_cast<char>(0xE7));
+  const std::string b2(1, static_cast<char>(0x95));
+  const std::string b3(1, static_cast<char>(0x8C));
+
+  REQUIRE(box.append_to_entry(entry, b1));
+  CHECK(box.retained_bytes() == 1);
+  CHECK(render_row(box, 10, 2, 0).empty());
+  REQUIRE(box.append_to_entry(entry, b2));
+  CHECK(box.retained_bytes() == 2);
+  REQUIRE(box.append_to_entry(entry, b3));
+  CHECK(box.retained_bytes() == 3);
+  CHECK(render_row(box, 10, 2, 0) ==
+        std::string{"\xE7\x95\x8C", 3} + std::string(1, '\0'));
+
+  REQUIRE(box.append_to_entry(entry, termforge::StyledText{
+                                         {"!", {Rgb{1, 2, 3}, {}}}}));
+  Screen styled{10, 2};
+  box.set_geometry({0, 0, 10, 2});
+  box.draw(styled);
+  CHECK(styled.at(0, 0).text == "\xE7\x95\x8C");
+  CHECK(styled.at(1, 0).text == std::string(1, '\0'));
+  CHECK(styled.at(2, 0).text == "!");
+  CHECK(styled.at(2, 0).fg == Rgb{1, 2, 3});
+
+  const auto incomplete = box.begin_entry(b1);
+  CHECK(box.retained_bytes() == 5);  // completed glyph + ! + held lead
+  REQUIRE(box.finalize_entry(incomplete));
+  CHECK(box.retained_bytes() == 4);  // finalization drops the held lead
+
+  TextBox malformed;
+  const auto malformed_entry = malformed.begin_entry(b1);
+  REQUIRE(malformed.append_to_entry(malformed_entry, "A"));
+  CHECK(render_row(malformed, 10, 2, 0) == "A");
+}
+
+TEST_CASE("TextBox: empty stream deltas are successful cache-stable no-ops (#217)",
+          "[textbox][stream][cache]") {
+  TextBox box;
+  const auto entry = box.begin_entry("stable");
+  Screen screen{20, 3};
+  box.set_geometry({0, 0, 20, 3});
+  box.draw(screen);
+  const auto builds = box.wrap_build_count();
+
+  REQUIRE(box.append_to_entry(entry, std::string{}));
+  REQUIRE(box.append_to_entry(entry, termforge::StyledText{}));
+  box.draw(screen);
+  CHECK(box.wrap_build_count() == builds);
+  CHECK(box.retained_bytes() == 6);
+}
+
+TEST_CASE("TextBox: wrap caches rebuild only for changed entries and widths (#217)",
+          "[textbox][stream][cache]") {
+  TextBox box;
+  box.append("alpha beta");
+  box.append("gamma delta");
+  const auto live = box.begin_entry("epsilon");
+  Screen screen{12, 8};
+  box.set_geometry({0, 0, 12, 8});
+
+  box.draw(screen);
+  CHECK(box.wrap_build_count() == 3);
+  box.draw(screen);
+  CHECK(box.wrap_build_count() == 3);
+
+  REQUIRE(box.append_to_entry(live, " zeta"));
+  box.draw(screen);
+  CHECK(box.wrap_build_count() == 4);
+
+  Screen narrow{8, 8};
+  box.set_geometry({0, 0, 8, 8});
+  box.draw(narrow);
+  CHECK(box.wrap_build_count() == 7);
+  box.draw(narrow);
+  CHECK(box.wrap_build_count() == 7);
+
+  REQUIRE(box.append_to_entry(live, " eta"));
+  box.draw(narrow);
+  CHECK(box.wrap_build_count() == 8);
+}
+
+TEST_CASE("TextBox: retention evicts finalized entries but exempts the live tail (#217)",
+          "[textbox][stream][retention][failure]") {
+  using termforge::TextBoxRetention;
+
+  TextBox box;
+  box.set_retention(TextBoxRetention{.max_entries = 2, .max_bytes = 4});
+  box.append("old");
+  const auto live = box.begin_entry("12345");
+
+  CHECK(box.line_count() == 1);  // old was the oldest finalized victim
+  CHECK(box.retained_bytes() == 5);
+  CHECK(box.retention_over_budget());
+  REQUIRE(box.append_to_entry(live, "6"));
+  CHECK(box.retained_bytes() == 6);
+  CHECK(box.retention_over_budget());
+
+  REQUIRE(box.finalize_entry(live));
+  CHECK(box.line_count() == 0);  // now eligible, the oversized tail is evicted
+  CHECK(box.retained_bytes() == 0);
+  CHECK_FALSE(box.retention_over_budget());
+}
+
+TEST_CASE("TextBox: an evicted handle stays stale after its slot is reused (#217)",
+          "[textbox][stream][retention][failure]") {
+  using termforge::TextBoxRetention;
+
+  TextBox box;
+  box.set_retention(
+      TextBoxRetention{.max_entries = 1, .max_bytes = std::nullopt});
+  const auto old = box.begin_entry("old");
+  REQUIRE(box.finalize_entry(old));
+  const auto middle = box.begin_entry("middle");  // evicts old
+  const auto replacement = box.begin_entry("replacement");
+
+  CHECK(old.index == replacement.index);  // the physical slot was recycled
+  CHECK(old.generation != replacement.generation);
+  CHECK_FALSE(box.append_to_entry(old, " corrupt"));
+  REQUIRE(box.append_to_entry(replacement, " safe"));
+  CHECK_FALSE(box.append_to_entry(middle, " finalized"));
+  CHECK(render_row(box, 30, 3, 0) == "replacement safe");
+
+  box.clear();
+  CHECK_FALSE(box.append_to_entry(replacement, " after clear"));
+}
+
+TEST_CASE("TextBox: streaming growth preserves a scrolled viewport anchor (#217)",
+          "[textbox][stream][scroll]") {
+  using termforge::TextBoxRetention;
+
+  TextBox box;
+  box.set_geometry({0, 0, 20, 3});
+  for (int i = 0; i < 10; ++i) box.append("line " + std::to_string(i));
+  Screen screen{20, 3};
+  box.draw(screen);
+  box.scroll(-3);
+  box.draw(screen);
+  CHECK(render_row(box, 20, 3, 0).starts_with("line 4"));
+
+  const auto live = box.begin_entry("stream");
+  REQUIRE(box.append_to_entry(live, " grows"));
+  CHECK(render_row(box, 20, 3, 0).starts_with("line 4"));
+  CHECK_FALSE(box.at_bottom());
+
+  box.set_retention(
+      TextBoxRetention{.max_entries = 5, .max_bytes = std::nullopt});
+  CHECK(render_row(box, 20, 3, 0).starts_with("line 6"));
+  CHECK_FALSE(box.at_bottom());
+}
+
+TEST_CASE("TextBox: a bounded chunked tail matches one-shot wrapping (#217)",
+          "[textbox][stream][retention]") {
+  std::string accumulated;
+  for (int i = 0; i < 100; ++i)
+    accumulated += std::to_string(i) + (i == 99 ? "" : " ");
+
+  TextBox chunked;
+  chunked.set_retention(termforge::TextBoxRetention{
+      .max_entries = 1, .max_bytes = accumulated.size()});
+  const auto live = chunked.begin_entry();
+  std::size_t offset = 0;
+  for (int i = 0; i < 100; ++i) {
+    const std::string chunk = std::to_string(i) + (i == 99 ? "" : " ");
+    REQUIRE(chunked.append_to_entry(live, chunk));
+    offset += chunk.size();
+    CHECK(chunked.line_count() == 1);
+    CHECK(chunked.retained_bytes() == offset);
+    CHECK_FALSE(chunked.retention_over_budget());
+  }
+
+  TextBox one_shot;
+  one_shot.append(accumulated);
+  CHECK(chunked.retained_bytes() == accumulated.size());
+  for (int row = 0; row < 8; ++row)
+    CHECK(render_row(chunked, 24, 8, row) ==
+          render_row(one_shot, 24, 8, row));
+}

@@ -2,6 +2,8 @@
 //
 // Demonstrates the TextBox widget for multi-line scrollable text. Shows how to:
 //   - Use TextBox::append() to add lines
+//   - Build and finalize one mutable streaming entry
+//   - Bound retained logical entries and source bytes
 //   - TextBox::scroll() for manual scrolling
 //   - TextBox::draw() to render the widget
 //   - Keyboard shortcuts (Ctrl+L to clear, arrows to scroll)
@@ -16,6 +18,8 @@ using namespace termforge;
 class ChatApp final : public App {
  public:
   ChatApp() {
+    m_textbox.set_retention(
+        TextBoxRetention{.max_entries = 200, .max_bytes = 64 * 1024});
     m_textbox.append("Welcome to TermForge Chat Demo!");
     m_textbox.append("");
     m_textbox.append("This is a scrollable text box widget.");
@@ -30,6 +34,11 @@ class ChatApp final : public App {
     for (int i = 1; i <= 20; ++i) {
       m_textbox.append(std::format("Sample message #{}", i));
     }
+
+    const auto streamed = m_textbox.begin_entry("Streaming entry: ");
+    (void)m_textbox.append_to_entry(streamed, "chunks update one stable ");
+    (void)m_textbox.append_to_entry(streamed, "document entry.");
+    (void)m_textbox.finalize_entry(streamed);
   }
 
   auto on_event(const Event& ev) -> void override {
