@@ -169,6 +169,16 @@ file is the tactical version.
   extent is precisely *why* no parse is needed, and a guard built on it stays
   inside the rule. A tier that cannot carry a format says so via
   `supports_image_format` *and* returns a `Warning` — never a guess.
+  **Widget pixel regions carry that same payload without decoding** (#167).
+  `draw_encoded_pixels` is queried before `draw_pixels`; non-null means the
+  encoded route was chosen, so invalid or unsupported bytes preserve the cell
+  Baseline and report the degradation instead of silently falling through to
+  raw pixels. App borrows both the descriptor and its nested span. Persistent
+  identity includes raw/encoded kind, encoded format and declared extent;
+  opaque initial pins keep the Baseline until terminal `OK`, while replacements
+  keep the last accepted root visible. Delayed acknowledgements are qualified
+  by `PixelRegionState::content_revision` so an old reply cannot clear newer
+  dirty content.
 - **Scaling is the default, not the only option** (#137). Stretch-to-fill is
   right for content a widget *generates*, because it can re-rasterize at
   `preferred_pixel_extent`. `PlacementFit::Exact` is for content the app

@@ -668,6 +668,30 @@ auto KittyDriver::residency() const noexcept -> ImageResidency {
   return result;
 }
 
+auto KittyDriver::pinned_image_status(PinnedImage image) const noexcept
+    -> PinnedImageStatus {
+  if (!image || image.owner != instance_token()) {
+    return {.valid = false, .content_ready = false};
+  }
+  const auto entry = m_pinned.find(image.id);
+  if (entry == m_pinned.end() || entry->second.serial != image.serial) {
+    return {.valid = false, .content_ready = false};
+  }
+  bool pending = false;
+  if (const auto reply = m_pending_replies.find(image.id);
+      reply != m_pending_replies.end()) {
+    pending = reply->second.serial == image.serial &&
+              (reply->second.kind == PendingKind::PinTransmit ||
+               reply->second.kind == PendingKind::PinnedReplace ||
+               reply->second.kind == PendingKind::PinnedEdit);
+  }
+  return PinnedImageStatus{
+      .valid = true,
+      .content_ready = entry->second.accepted,
+      .update_pending = pending,
+      .content_revision = entry->second.content_revision};
+}
+
 auto KittyDriver::register_animation(std::span<const AnimationFrame> frames)
     -> std::expected<AnimationHandle, ErrorEvent> {
   if (!supports_image_animation()) {
@@ -1147,6 +1171,7 @@ auto KittyDriver::pin_payload(std::span<const std::byte> payload,
   m_pinned.emplace(id, PinnedEntry{.px = px,
                                    .format = format,
                                    .content_hash = request_reply ? 0 : hash,
+                                   .content_revision = request_reply ? 0U : 1U,
                                    .accepted = !request_reply,
                                    .serial = serial});
   stage_residency_set(id, serial, ResidencyKind::Pinned, payload.size());
@@ -1293,7 +1318,7 @@ auto KittyDriver::replace_payload(std::uint32_t id, PinnedEntry& entry,
                          m_flush_count, previous_source_payload_bytes,
                          previously_accounted, previous_content_hash});
   } else {
-    stage_content_hash(id, entry.serial, hash);
+    stage_content_hash(id, entry.serial, hash, true);
   }
   return {};
 }
@@ -1348,7 +1373,7 @@ auto KittyDriver::edit_payload(std::uint32_t id, PinnedEntry& entry,
   edit_root_frame(payload, format, px, id, destination, composition,
                   request_reply);
   tally_image_edit(m_buf.size() - before);
-  stage_content_hash(id, entry.serial, 0);
+  stage_content_hash(id, entry.serial, 0, !request_reply);
   stage_residency_add(id, entry.serial, payload.size());
   if (request_reply) {
     m_pending_replies.emplace(
@@ -1914,9 +1939,10 @@ auto KittyDriver::restore_accounted(std::uint32_t image_id,
 
 auto KittyDriver::stage_content_hash(std::uint32_t image_id,
                                      std::uint32_t serial,
-                                     std::uint64_t content_hash) -> void {
+                                     std::uint64_t content_hash,
+                                     bool advance_revision) -> void {
   m_content_mutations.push_back(
-      ContentMutation{image_id, serial, content_hash});
+      ContentMutation{image_id, serial, content_hash, advance_revision});
 }
 
 auto KittyDriver::projected_content_hash(std::uint32_t image_id,
@@ -1934,8 +1960,10 @@ auto KittyDriver::finish_content_frame(bool accepted) -> void {
   if (accepted) {
     for (const auto& change : m_content_mutations) {
       const auto it = m_pinned.find(change.image_id);
-      if (it != m_pinned.end() && it->second.serial == change.serial)
+      if (it != m_pinned.end() && it->second.serial == change.serial) {
         it->second.content_hash = change.content_hash;
+        if (change.advance_revision) ++it->second.content_revision;
+      }
     }
   }
   m_content_mutations.clear();
@@ -2002,6 +2030,7 @@ auto KittyDriver::finish_pending(std::uint32_t image_id,
         if (success) {
           it->second.content_hash = pending.candidate_hash;
           it->second.accepted = true;
+          ++it->second.content_revision;
         } else {
           std::erase_if(m_pin_places, [&](const auto& item) {
             return item.second.image_id == image_id;
@@ -2017,6 +2046,7 @@ auto KittyDriver::finish_pending(std::uint32_t image_id,
       if (success && it != m_pinned.end() &&
           it->second.serial == pending.serial) {
         it->second.content_hash = pending.candidate_hash;
+        ++it->second.content_revision;
       }
       if (!success) {
         if (it != m_pinned.end() && it->second.serial == pending.serial)
@@ -2032,6 +2062,7 @@ auto KittyDriver::finish_pending(std::uint32_t image_id,
       if (it != m_pinned.end() && it->second.serial == pending.serial) {
         if (success) {
           it->second.content_hash = 0;
+          ++it->second.content_revision;
         } else {
           it->second.content_hash = pending.previous_content_hash;
         }

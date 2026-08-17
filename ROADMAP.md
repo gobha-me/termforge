@@ -152,7 +152,14 @@ completed items.
 > `f=32,o=z` across direct, resident-edit and animation paths; acknowledgement,
 > metering and residency use the compressed input bytes without adding a zlib
 > dependency. Non-Kitty tiers refuse honestly. `Rgb24` remains independently
-> measured on #166; #167 is next so widget regions can carry encoded payloads.
+> measured on #166.
+>
+> **2026-08-17 — encoded widget pixel regions.** **#167** carries borrowed
+> `EncodedImage` payloads through Widget and App without decoding them. The
+> encoded hook is preferred explicitly, unsupported/invalid payloads preserve
+> the authored Baseline, persistent roots reuse or recreate identity correctly,
+> and generation-qualified acknowledgements keep late opaque replies from
+> clearing newer widget work.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
@@ -172,6 +179,9 @@ completed items.
 - Application-supplied zlib RGBA (#166 slice) — opaque `Rgba32Zlib` bytes ride
   Kitty as `f=32,o=z` without a codec dependency and retain correlated replies,
   exact compressed-byte accounting and format-distinct resident identity
+- Encoded widget pixel regions (#167) — fixed-resolution PNG/zlib/raw payloads
+  reach the App-managed Kitty/ANSI enhancement path with Baseline-preserving
+  degradation and terminal-acknowledged persistent submission
 - Resident-image invalidation (#113) — explicit suspend/reattach/reset events,
   payload-free Kitty state reset, stale-handle refusal, and automatic
   Persistent-region recreation while resize retains payloads

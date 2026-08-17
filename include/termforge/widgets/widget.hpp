@@ -30,6 +30,7 @@
 // draw() is the always-present fallback; draw_pixels() is the enhancement.
 
 #include <chrono>
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -53,6 +54,11 @@ enum class PixelRegionMode { Immediate, Persistent };
 struct PixelRegionState {
   PixelRegionMode mode{PixelRegionMode::Immediate};
   bool content_dirty{true};
+  // Generation of the content described by content_dirty. Persistent
+  // producers that can mutate while an opaque terminal acknowledgement is in
+  // flight increment this value with each new payload; App then cannot let an
+  // older OK clear newer dirty work. Zero preserves the pre-#167 contract.
+  std::uint64_t content_revision{0};
 };
 
 class Widget {
@@ -142,6 +148,22 @@ class Widget {
     return nullptr;
   }
 
+  // Provide a pre-encoded fixed-resolution payload for this region. Unlike
+  // draw_pixels(), no preferred Extent is supplied: the caller-declared extent
+  // inside EncodedImage is the asset's resolution. A non-null return takes
+  // precedence over draw_pixels(); nullptr lets App try the generated-raster
+  // path, while an empty/unsupported returned payload keeps the authored cell
+  // Baseline rather than silently changing enhancement routes.
+  //
+  // NON-PURE so every existing out-of-tree Widget remains source-compatible.
+  // The widget owns both the descriptor and its byte storage. They must remain
+  // valid and unmodified through the frame's write/submission boundary. As
+  // with draw_pixels(), N simultaneous regions require N distinct descriptors
+  // and backing buffers.
+  virtual auto draw_encoded_pixels(Rect /*region*/) -> const EncodedImage* {
+    return nullptr;
+  }
+
   // Submission policy for one declared region (#197). Non-pure so existing
   // out-of-tree widgets keep their immediate-mode behaviour on recompilation.
   // A Persistent widget must keep pixel_regions() ordering stable while a
@@ -156,6 +178,16 @@ class Widget {
   // accepted by the configured ByteSink. A driver refusal or sink rejection
   // does not acknowledge the frame, so the producer can retry it unchanged.
   virtual auto pixel_region_submitted(Rect /*region*/) noexcept -> void {}
+
+  // Generation-qualified acknowledgement for asynchronous encoded payloads.
+  // The non-pure default preserves existing widgets by delegating to the
+  // original hook; a revision-aware producer may override this overload and
+  // clear dirty state only when the supplied generation is still current.
+  virtual auto pixel_region_submitted(Rect region,
+                                      std::uint64_t /*revision*/) noexcept
+      -> void {
+    pixel_region_submitted(region);
+  }
 
   // Placement policy for one declared pixel region. Stretch preserves the
   // historical widget contract: generated content is rasterized for, or

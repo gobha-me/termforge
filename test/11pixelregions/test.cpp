@@ -37,6 +37,7 @@ TEST_CASE("Widget: default draw_pixels returns nullptr", "[pixelregions]") {
   };
   MinimalWidget m;
   REQUIRE(m.draw_pixels({0, 0, 10, 10}, Extent{10, 10}) == nullptr);
+  REQUIRE(m.draw_encoded_pixels({0, 0, 10, 10}) == nullptr);
 }
 
 TEST_CASE("Widget: default pixel submission remains immediate mode",
@@ -50,6 +51,7 @@ TEST_CASE("Widget: default pixel submission remains immediate mode",
   CHECK(state.content_dirty);
   // The non-pure acknowledgement hook is a no-op for old widgets.
   m.pixel_region_submitted(Rect{0, 0, 2, 1});
+  m.pixel_region_submitted(Rect{0, 0, 2, 1}, 7);
 }
 
 // ── WaveformWidget pixel path ───────────────────────────────────────────────
