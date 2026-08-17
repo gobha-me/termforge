@@ -6,7 +6,35 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-17, latest)
 
-**Current stable release: v0.45.0 — application-supplied zlib RGBA.** #166 adds
+**Current stable release: v0.46.1 — safe enhanced-keyboard teardown.** #282
+closes the window in which a Kitty release accepted before shutdown could
+arrive through a terminal proxy after `TCSAFLUSH` and become cooked shell
+input. Normal and exception teardown now disable keyboard, mouse and paste
+input while the alternate screen is still active, query the post-pop keyboard
+flags as an ordered barrier, and discard raw bytes through that reply before
+showing the main screen and restoring termios.
+
+The barrier uses fixed storage, is bounded by the established 150 ms probe
+window, and is skipped for terminals already known not to implement the
+protocol. The complete async-signal-safe leave sequence remains unchanged for
+fatal signals. A production-order pty suite covers a release queued before
+normal teardown, a fragmented reply with a proxy-delayed release during
+exception teardown, exact cleanup, and shell input typed after restore. The
+normal and exception paths were also exercised on Kitty 0.32.2 with paired
+press/release events; the restored Bash prompt received only input sent after
+the app had exited.
+
+## Previous stable release: v0.46.0
+
+**v0.46.0 — encoded widget pixel regions.** #167 carries borrowed raw, PNG and
+caller-compressed RGBA payloads through Widget and App without decoding them.
+Invalid or unsupported payloads preserve the authored cell Baseline;
+persistent identities distinguish payload kind, format and declared extent,
+and delayed opaque replies are qualified by content revision.
+
+## Previous stable release: v0.45.0
+
+**v0.45.0 — application-supplied zlib RGBA.** #166 adds
 `ImageFormat::Rgba32Zlib` for caller-compressed runtime frames. TermForge keeps
 its stdlib-only boundary: it never links zlib, compresses, decompresses, or
 validates decompressed length. Kitty maps the borrowed bytes to `f=32,o=z`,

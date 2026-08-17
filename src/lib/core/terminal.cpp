@@ -51,6 +51,11 @@ struct Terminal::Impl {
   // serves this and touches neither stream until clear_capabilities() gives the
   // probe back its job.
   std::optional<Capabilities> pushed_caps;
+  // Last startup answer for the teardown barrier (#282). Unknown is retained
+  // for direct Terminal users that enter a screen without querying first; the
+  // safe choice there is to attempt the bounded barrier. Known-unsupported
+  // terminals skip it, since they cannot have produced enhanced events.
+  std::optional<bool> kitty_keyboard_support;
   // The F_GETFL word enter_raw() replaced on a stream with no termios, and its
   // validity witness. The termios pair above is the same idea for a tty; a
   // Terminal is only ever in one of the two modes, never both.
@@ -108,6 +113,7 @@ auto Terminal::set_io(TerminalIo io) -> std::expected<void, ErrorEvent> {
   m_impl->tty_fd = io.in;
   m_impl->out_fd = io.out;  // < 0 is the documented "emit nothing" sentinel
   m_impl->injected = true;
+  m_impl->kitty_keyboard_support.reset();
   return {};
 }
 
@@ -155,6 +161,7 @@ auto Terminal::set_capabilities(Capabilities caps) -> std::expected<void, ErrorE
     return std::unexpected{ErrorEvent{Severity::Error, "terminal",
                                       "set_capabilities: a screen is up"}};
   }
+  m_impl->kitty_keyboard_support = caps.kitty_keyboard;
   m_impl->pushed_caps = std::move(caps);
   return {};
 }
@@ -169,6 +176,7 @@ auto Terminal::has_pushed_capabilities() const noexcept -> bool {
 
 auto Terminal::clear_capabilities() noexcept -> void {
   m_impl->pushed_caps.reset();
+  m_impl->kitty_keyboard_support.reset();
 }
 
 auto Terminal::owns_termios() const noexcept -> bool {
@@ -372,10 +380,10 @@ auto contains(const char* value, const char* needle) -> bool {
 // into routine, and half an escape sequence is worse than none. Wait for the
 // stream to drain instead. Bounded, because a peer that never reads must not
 // wedge a frame.
-void emit(int fd, const char* seq) {
+void emit(int fd, std::string_view seq) {
   if (fd < 0) return;
-  const char* p = seq;
-  std::size_t left = std::strlen(seq);
+  const char* p = seq.data();
+  std::size_t left = seq.size();
   while (left > 0) {
     const ssize_t n = ::write(fd, p, left);
     if (n > 0) {
@@ -391,6 +399,56 @@ void emit(int fd, const char* seq) {
     }
   }
 }
+
+// Incremental, allocation-free recognition of CSI ? <digits> u. Teardown
+// discards every byte it reads; the only semantic question is whether the
+// ordered reply boundary has arrived, including when a proxy splits it across
+// reads. Other CSI/private reports and enhanced key events cannot satisfy it.
+class KeyboardFlagsReplyScanner {
+ public:
+  [[nodiscard]] auto feed(std::string_view bytes) noexcept -> bool {
+    for (const char byte : bytes) {
+      switch (m_state) {
+        case State::Ground:
+          m_state = byte == '\033' ? State::Escape : State::Ground;
+          break;
+        case State::Escape:
+          if (byte == '[')
+            m_state = State::Csi;
+          else
+            restart(byte);
+          break;
+        case State::Csi:
+          if (byte == '?')
+            m_state = State::Private;
+          else
+            restart(byte);
+          break;
+        case State::Private:
+          if (byte >= '0' && byte <= '9')
+            m_state = State::Digits;
+          else
+            restart(byte);
+          break;
+        case State::Digits:
+          if (byte >= '0' && byte <= '9') break;
+          if (byte == 'u') return true;
+          restart(byte);
+          break;
+      }
+    }
+    return false;
+  }
+
+ private:
+  enum class State { Ground, Escape, Csi, Private, Digits };
+
+  auto restart(char byte) noexcept -> void {
+    m_state = byte == '\033' ? State::Escape : State::Ground;
+  }
+
+  State m_state{State::Ground};
+};
 
 // #75: the enable/disable pair for a tracking mode. SGR (?1006h) is the
 // coordinate *encoding*, not a mode — it goes with any non-None mode and is
@@ -431,7 +489,10 @@ auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
   // nothing from it — no probe bytes, no response window, no swallowed first
   // keystrokes. Deliberately BEFORE the enter_raw() below: the probe needs raw
   // mode to talk to the terminal, and a push means there is no talking to do.
-  if (m_impl->pushed_caps) return *m_impl->pushed_caps;
+  if (m_impl->pushed_caps) {
+    m_impl->kitty_keyboard_support = m_impl->pushed_caps->kitty_keyboard;
+    return *m_impl->pushed_caps;
+  }
 
   Capabilities caps;
 
@@ -485,6 +546,7 @@ auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
   // Kitty keyboard protocol (#60): the terminal answered CSI ? u with a flags
   // report. Drives the fallback ErrorEvent, never the bytes we push.
   if (detail::probe_kitty_keyboard(reply)) caps.kitty_keyboard = true;
+  m_impl->kitty_keyboard_support = caps.kitty_keyboard;
 
   // Synchronized output (#148): a DECRPM reporting driven or undriven means
   // the wire honors `\033[?2026h` / `l` around a frame.
@@ -643,19 +705,53 @@ auto Terminal::set_keyboard_mode(KeyboardMode mode) -> void {
   emit(m_impl->out_fd, detail::keyboard_set_seq(mode));
 }
 
+auto Terminal::quiesce_keyboard_input() noexcept -> void {
+  emit(m_impl->out_fd, detail::kKeyboardQuery);
+
+  KeyboardFlagsReplyScanner scanner;
+  char bytes[256];
+  using clock = std::chrono::steady_clock;
+  const auto deadline = clock::now() + std::chrono::milliseconds(150);
+
+  while (true) {
+    const auto remaining =
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - clock::now());
+    if (remaining.count() <= 0) return;
+    const int timeout_ms = static_cast<int>(remaining.count());
+    if (!wait_readable(timeout_ms > 0 ? timeout_ms : 1)) return;
+    const int count = read_input(bytes, static_cast<int>(sizeof(bytes)));
+    if (count <= 0) return;
+    if (scanner.feed(
+            std::string_view{bytes, static_cast<std::size_t>(count)}))
+      return;
+  }
+}
+
 auto Terminal::leave_screen() -> void {
-  // Undo enter_screen in reverse: disable paste/mouse tracking, reset attrs,
-  // show cursor, main screen. Byte-for-byte the detail::kLeaveSequence constant.
+  // Undo enter_screen in reverse: pop keyboard mode, disable paste/mouse
+  // tracking, reset attrs, show cursor, main screen. The signal path still
+  // writes the one complete kLeaveSequence. On the normal enhanced path, keep
+  // the alternate screen up while an ordered flags query proves that every
+  // earlier input event has reached the raw stream and can be discarded before
+  // leave_raw() gives cooked input back to the shell (#282).
+  constexpr auto kVisualRestore = detail::kLeaveSequence.find("\033[0m");
+  static_assert(kVisualRestore != std::string_view::npos);
+  const bool barrier_needed =
+      m_kb_pushed && m_raw && m_impl->out_fd >= 0 &&
+      m_impl->kitty_keyboard_support.value_or(true);
+  if (barrier_needed) {
+    emit(m_impl->out_fd, detail::kLeaveSequence.substr(0, kVisualRestore));
+    quiesce_keyboard_input();
+    emit(m_impl->out_fd, detail::kLeaveSequence.substr(kVisualRestore));
+  } else {
+    emit(m_impl->out_fd, detail::kLeaveSequence);
+  }
+
   detail::restore_state().in_screen = 0;
   m_impl->in_screen = false;
-  // The leave sequence pops our keyboard entry (#60), so a later
-  // enter_screen() must push a fresh one rather than overwrite a stale claim.
+  // The leave sequence popped our entry, so a later enter_screen() must push a
+  // fresh one rather than overwrite a stale claim.
   m_kb_pushed = false;
-  // .data(), not a std::string copy: kLeaveSequence is a view over a string
-  // literal, so it is already NUL-terminated — and this runs from teardown(),
-  // which ~App calls and must therefore never throw. The copy allocated, which
-  // on a bad_alloc unwind meant std::terminate with the alt-screen still up.
-  emit(m_impl->out_fd, detail::kLeaveSequence.data());
 }
 
 auto Terminal::is_console_vt() const noexcept -> bool {

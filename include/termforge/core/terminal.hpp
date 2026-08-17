@@ -311,6 +311,11 @@ class Terminal {
   // have an entry on the stack" witness that decides push vs. overwrite.
   auto emit_keyboard_mode() -> void;
 
+  // After the normal-path keyboard pop, discard input through the terminal's
+  // ordered flags reply before cooked mode gives the shell ownership. Fixed
+  // storage and a bounded wait keep exception/destructor teardown non-throwing.
+  auto quiesce_keyboard_input() noexcept -> void;
+
   // enter_raw()'s non-termios arm, and the read modes' spelling of it (#179).
   auto enter_nonblocking() -> std::expected<void, ErrorEvent>;
   auto set_nonblocking(bool on) -> void;

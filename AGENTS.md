@@ -296,6 +296,14 @@ file is the tactical version.
   mode, SIGWINCH, the resize registration. The fatal-signal backstop is for
   crashes, not for exceptions;
   if it is what restores your terminal, that is the bug (#71).
+  **Enhanced keyboard teardown has an input barrier (#282).** On a normal or
+  exception exit, disable the keyboard/mouse/paste input modes while the
+  alternate screen is still active, then query `CSI ? u` and discard raw input
+  through its ordered reply before the visual leave and `TCSAFLUSH` restore.
+  This is what keeps a proxy-delayed release from becoming cooked shell input.
+  The fixed-storage wait is bounded, skipped for known-unsupported terminals,
+  and never reads after cooked mode returns. The fatal-signal path cannot poll;
+  it retains the complete async-signal-safe `kLeaveSequence` as its backstop.
 - **The fds are injectable, and the backstop follows the tty — not the
   `Terminal`** (#179). `Terminal::set_io` hands over the two streams instead of
   discovering stdin/stdout; it is base-owned non-virtual state for the same
