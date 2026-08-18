@@ -162,6 +162,13 @@ completed items.
 > flat tiers refuse honestly. W5 schema 2 distinguishes RGBA32 and RGB24 so a
 > direct-terminal capture can measure the 25% source-payload reduction.
 >
+> **2026-08-18 — multiline Composer input.** **#26** adds a separate editable
+> Composer rather than making TextInput mode-dependent. It shares TextBox's
+> display-width/word-wrap boundaries, grows to a caller-set height, keeps the
+> UTF-8 cursor visible, inserts multiline paste safely, and recalls editable
+> history only after vertical navigation reaches a document edge. Submission
+> remains parent-owned; the chat example demonstrates the complete call order.
+>
 > **2026-08-17 — application-supplied zlib RGBA.** The first half of **#166**
 > adds `ImageFormat::Rgba32Zlib` as an opaque caller-owned payload. Kitty emits
 > `f=32,o=z` across direct, resident-edit and animation paths; acknowledgement,

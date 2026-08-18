@@ -14,6 +14,7 @@ add_library(${PROJECT_NAME}_lib STATIC
   detail/simd_avx2.cpp
   detail/trace.cpp
   widgets/text_box.cpp
+  widgets/composer.cpp
   widgets/table_widget.cpp
   widgets/list_widget.cpp
   widgets/waveform_widget.cpp

@@ -14,7 +14,9 @@
 //   detail::wrap_into(out, "a long line", 40);   // appends
 //   auto lines = detail::wrap_to_width("a long line", 40);   // returns
 
+#include <algorithm>
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -57,6 +59,62 @@ struct Unit {
   bool breakable_space{false};
 };
 
+[[nodiscard]] inline auto next_unit(const StyledText& line,
+                                    Position pos) noexcept -> Unit;
+
+template <typename Emit>
+inline auto for_each_range(const StyledText& line, int width, Emit&& emit)
+    -> void {
+  Position row_start = normalize(line, {});
+  if (at_end(line, row_start)) {
+    std::invoke(emit, row_start, row_start);
+    return;
+  }
+
+  while (!at_end(line, row_start)) {
+    Position scan = row_start;
+    Position last_break{};
+    bool has_break = false;
+    bool saw_word = false;
+    int columns = 0;
+
+    while (!at_end(line, scan)) {
+      const Unit unit = next_unit(line, scan);
+      if (width > 0 && columns + unit.columns > width) {
+        Position cut;
+        if (scan == row_start) {
+          // A width-2 glyph in a one-column row: preserve the old progress
+          // rule and give the painter the whole glyph to clip/pad honestly.
+          cut = unit.end;
+        } else {
+          cut = has_break ? last_break : scan;
+        }
+        std::invoke(emit, row_start, cut);
+        row_start = cut;
+        break;
+      }
+
+      columns += unit.columns;
+      scan = unit.end;
+      if (unit.breakable_space) {
+        // A leading space is data, not a word boundary: choosing it would
+        // manufacture a whitespace-only row before an overlong first word.
+        if (saw_word) {
+          last_break = scan;
+          has_break = true;
+        }
+      } else {
+        saw_word = true;
+      }
+    }
+
+    if (at_end(line, scan)) {
+      std::invoke(emit, row_start, scan);
+      break;
+    }
+  }
+}
+
 // Read one UTF-8 code point (or one malformed byte, matching display_width's
 // zero-column recovery) without crossing a source span. TextBox sanitizes its
 // document before it reaches this helper; the malformed-byte arm keeps the
@@ -97,66 +155,61 @@ inline auto append_range(StyledText& row, const StyledText& line,
 // width decisions; they matter only when append_range reconstructs each row.
 inline auto wrap_styled(std::vector<StyledText>& out, const StyledText& line,
                         int width) -> void {
-  if (width <= 0) {
-    out.push_back(line);
-    return;
-  }
+  for_each_range(line, width, [&](Position begin, Position end) {
+    StyledText row;
+    append_range(row, line, begin, end);
+    out.push_back(std::move(row));
+  });
+}
 
-  Position row_start = normalize(line, {});
-  if (at_end(line, row_start)) {
-    out.emplace_back();
-    return;
-  }
-
-  while (!at_end(line, row_start)) {
-    Position scan = row_start;
-    Position last_break{};
-    bool has_break = false;
-    bool saw_word = false;
-    int columns = 0;
-
-    while (!at_end(line, scan)) {
-      const Unit unit = next_unit(line, scan);
-      if (columns + unit.columns > width) {
-        Position cut;
-        if (scan == row_start) {
-          // A width-2 glyph in a one-column row: preserve the old progress
-          // rule and give the painter the whole glyph to clip/pad honestly.
-          cut = unit.end;
-        } else {
-          cut = has_break ? last_break : scan;
-        }
-        StyledText row;
-        append_range(row, line, row_start, cut);
-        out.push_back(std::move(row));
-        row_start = cut;
-        break;
-      }
-
-      columns += unit.columns;
-      scan = unit.end;
-      if (unit.breakable_space) {
-        // A leading space is data, not a word boundary: choosing it would
-        // manufacture a whitespace-only row before an overlong first word.
-        if (saw_word) {
-          last_break = scan;
-          has_break = true;
-        }
-      } else {
-        saw_word = true;
-      }
-    }
-
-    if (at_end(line, scan)) {
-      StyledText row;
-      append_range(row, line, row_start, scan);
-      out.push_back(std::move(row));
-      break;
-    }
-  }
+[[nodiscard]] inline auto source_offset(const StyledText& line,
+                                        Position pos) noexcept -> std::size_t {
+  pos = normalize(line, pos);
+  std::size_t offset = 0;
+  const std::size_t stop = std::min(pos.span, line.size());
+  for (std::size_t i = 0; i < stop; ++i)
+    offset += line[i].text.size();
+  if (pos.span < line.size()) offset += pos.byte;
+  return offset;
 }
 
 } // namespace wrap_detail
+
+// Source byte interval for one visual row. Newline bytes are not part of a
+// row: a soft wrap has next.begin == current.end, while a hard newline leaves
+// a one-byte gap. Composer uses that distinction to move a byte cursor without
+// reimplementing TextBox/Dialog's line-breaking policy (#26).
+struct WrappedByteRange {
+  std::size_t begin{0};
+  std::size_t end{0};
+
+  constexpr auto operator==(const WrappedByteRange&) const noexcept
+      -> bool = default;
+};
+
+// Project a plain multi-line document onto source byte ranges using the exact
+// shared styled wrapping engine above. An empty document and every empty hard
+// line produce one empty range.
+inline auto wrap_byte_ranges(std::string_view text, int width)
+    -> std::vector<WrappedByteRange> {
+  std::vector<WrappedByteRange> out;
+  std::size_t start = 0;
+  while (true) {
+    const std::size_t nl = text.find('\n', start);
+    const std::string_view piece =
+        text.substr(start, nl == std::string_view::npos ? nl : nl - start);
+    const StyledText line{TextSpan{std::string{piece}, TextStyle{}}};
+    wrap_detail::for_each_range(
+        line, width,
+        [&](wrap_detail::Position begin, wrap_detail::Position end) {
+          out.push_back({start + wrap_detail::source_offset(line, begin),
+                         start + wrap_detail::source_offset(line, end)});
+        });
+    if (nl == std::string_view::npos) break;
+    start = nl + 1;
+  }
+  return out;
+}
 
 // Append wrapped styled rows. Span boundaries may fall mid-row or at the word
 // boundary; fragments keep their source style on either side. Spaces are
