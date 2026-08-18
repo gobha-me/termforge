@@ -30,6 +30,7 @@ add_library(${PROJECT_NAME}_lib STATIC
   widgets/dialog.cpp
   widgets/dialogs.cpp
   widgets/choice_dialog.cpp
+  widgets/choice_wizard_dialog.cpp
   widgets/checkbox.cpp
   widgets/radio_group.cpp
   widgets/select.cpp

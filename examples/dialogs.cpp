@@ -1,8 +1,9 @@
 // TermForge example: dialogs
 //
-// The modal overlay stack and the three standard dialogs. Three buttons raise
-// a MessageDialog, ConfirmDialog, PromptDialog, ChoiceDialog and file picker;
-// a status line reports what each one returned. While a dialog is up the
+// The modal overlay stack and the standard dialog compositions. Buttons raise
+// a MessageDialog, ConfirmDialog, PromptDialog, ChoiceDialog,
+// ChoiceWizardDialog and file picker; a status line reports what each returned.
+// While a dialog is up the
 // buttons underneath are
 // dead to both the keyboard and the mouse, and the background is dimmed —
 // that is the whole point of push_overlay().
@@ -37,6 +38,7 @@
 #include "termforge/core/app.hpp"
 #include "termforge/widgets/button.hpp"
 #include "termforge/widgets/choice_dialog.hpp"
+#include "termforge/widgets/choice_wizard_dialog.hpp"
 #include "termforge/widgets/dialogs.hpp"
 #include "termforge/widgets/file_picker_dialog.hpp"
 #include "termforge/widgets/focus_ring.hpp"
@@ -52,18 +54,21 @@ class DialogsDemo final : public App {
     m_btn_confirm.set_label("[ Confirm ]");
     m_btn_prompt.set_label("[ Prompt ]");
     m_btn_choice.set_label("[ Choose ]");
+    m_btn_wizard.set_label("[ Wizard ]");
     m_btn_open.set_label("[ Open File ]");
 
     m_btn_message.on_activate([this] { show(m_message); });
     m_btn_confirm.on_activate([this] { show(m_confirm); });
     m_btn_prompt.on_activate([this] { show(m_prompt); });
     m_btn_choice.on_activate([this] { show(m_choice); });
+    m_btn_wizard.on_activate([this] { show(m_wizard); });
     m_btn_open.on_activate([this] { show(m_open); });
 
     m_ring.add(&m_btn_message);
     m_ring.add(&m_btn_confirm);
     m_ring.add(&m_btn_prompt);
     m_ring.add(&m_btn_choice);
+    m_ring.add(&m_btn_wizard);
     m_ring.add(&m_btn_open);
 
     // Every dialog closes the same way: drop it off the overlay stack. The
@@ -72,6 +77,7 @@ class DialogsDemo final : public App {
     m_confirm.on_close([this] { pop_overlay(); });
     m_prompt.on_close([this] { pop_overlay(); });
     m_choice.on_close([this] { pop_overlay(); });
+    m_wizard.on_close([this] { pop_overlay(); });
     m_open.on_close([this] { pop_overlay(); });
     // The picker's read errors raise a MessageDialog as a nested overlay on
     // top of it; that error dialog pops only itself when dismissed. The
@@ -112,6 +118,36 @@ class DialogsDemo final : public App {
       m_status.set_text(std::move(summary));
     });
 
+    ChoiceWizardPage interface_page;
+    interface_page.title = "Interface";
+    interface_page.text = "Choose any useful interface features:";
+    interface_page.mode = ChoiceMode::Multiple;
+    interface_page.choices = {
+        {"Mouse", "Enable pointer interaction."},
+        {"Animations", "Keep motion and progress feedback."},
+    };
+    interface_page.minimum_selected = 1;
+
+    ChoiceWizardPage output_page;
+    output_page.title = "Output";
+    output_page.text = "Choose the preferred presentation:";
+    output_page.choices = {
+        {"Compact", "Use the smallest practical layout."},
+        {"Detailed", "Show descriptions and supporting context."},
+    };
+    output_page.other_enabled = true;
+    output_page.other_placeholder = "Another presentation style";
+    static_cast<void>(m_wizard.set_pages(
+        {std::move(interface_page), std::move(output_page)}));
+    m_wizard.on_result([this](std::optional<ChoiceWizardResult> result) {
+      if (!result) {
+        m_status.set_text("wizard: cancelled");
+        return;
+      }
+      m_status.set_text("wizard: " + std::to_string(result->pages.size()) +
+                        " pages submitted");
+    });
+
     // The file picker starts in the cwd and reports an optional<path>:
     // a path on OK/select, nullopt on cancel.
     m_open.set_start_dir(std::filesystem::current_path());
@@ -134,8 +170,8 @@ class DialogsDemo final : public App {
     // everything to the overlay instead. No modal guard needed.
     if (const auto* m = std::get_if<MouseEvent>(&ev)) {
       if (m->pressed) m_ring.focus_at(m->x, m->y);
-      route_mouse(*m,
-                  {&m_btn_message, &m_btn_confirm, &m_btn_prompt, &m_btn_open});
+      route_mouse(*m, {&m_btn_message, &m_btn_confirm, &m_btn_prompt,
+                       &m_btn_choice, &m_btn_wizard, &m_btn_open});
       return;
     }
     if (m_ring.handle_key(ev)) return;
@@ -152,7 +188,7 @@ class DialogsDemo final : public App {
     // boundary rather than by the app (#122). Forward a tick to a dialog only
     // when it holds something that animates while it is up.
     tick_widgets(dt, {&m_btn_message, &m_btn_confirm, &m_btn_prompt,
-                      &m_btn_choice, &m_btn_open});
+                      &m_btn_choice, &m_btn_wizard, &m_btn_open});
   }
 
   auto on_render(Screen& screen) -> void override {
@@ -165,7 +201,7 @@ class DialogsDemo final : public App {
 
     int x = inner.x + 1;
     for (auto* b : {&m_btn_message, &m_btn_confirm, &m_btn_prompt,
-                    &m_btn_choice, &m_btn_open}) {
+                    &m_btn_choice, &m_btn_wizard, &m_btn_open}) {
       const int bw = static_cast<int>(b->label().size()) + 1;
       b->set_geometry({x, inner.y + 1, bw, 1});
       b->draw(screen);
@@ -183,7 +219,8 @@ class DialogsDemo final : public App {
   auto show(Dialog& dialog) -> void { push_overlay(dialog); }
 
   Frame m_frame{"TermForge Dialogs"};
-  Button m_btn_message, m_btn_confirm, m_btn_prompt, m_btn_choice, m_btn_open;
+  Button m_btn_message, m_btn_confirm, m_btn_prompt, m_btn_choice, m_btn_wizard,
+      m_btn_open;
   Label m_status;
   FocusRing m_ring;
 
@@ -193,6 +230,7 @@ class DialogsDemo final : public App {
   PromptDialog m_prompt{"Prompt", "Name the new file:", {}};
   ChoiceDialog m_choice{"Rendering", "Choose one or two output preferences:",
                         ChoiceMode::Multiple};
+  ChoiceWizardDialog m_wizard;
   FilePickerDialog m_open{"Open File"};
 };
 
