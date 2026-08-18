@@ -149,6 +149,10 @@ to check the complete tracked C++ tree or `tools/format.sh --fix` to apply the
 policy. The selected LLVM-derived options and their rationale are documented
 in [docs/code-style.md](docs/code-style.md).
 
+Static analysis is pinned to clang-tidy 20.x. Run `tools/lint.sh` to configure
+and check the shipped library with the same focused policy as CI. Its scope and
+rationale are documented in [docs/static-analysis.md](docs/static-analysis.md).
+
 Performance evidence is a separate, Release-only developer target. It emits a
 human table or schema-versioned JSON and never fails on a timing threshold:
 
