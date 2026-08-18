@@ -72,6 +72,7 @@ struct PhaseStats {
 
 struct Result {
   std::string route;
+  std::string image_format;
   int pixels_w{};
   int pixels_h{};
   int cols{};
@@ -92,6 +93,7 @@ struct Result {
 
 struct Wall {
   std::string route;
+  std::string image_format;
   double budget_ms{};
   std::optional<std::string> largest_passing;
   std::optional<std::string> first_failing;
@@ -206,6 +208,17 @@ struct Wall {
                       static_cast<std::uint8_t>(state >> 8), 255};
   }
   return Image{width, height, std::move(pixels)};
+}
+
+[[nodiscard]] auto packed_rgb(const Image& image) -> std::vector<std::byte> {
+  std::vector<std::byte> bytes;
+  bytes.reserve(image.pixels().size() * 3U);
+  for (const Pixel pixel : image.pixels()) {
+    bytes.push_back(static_cast<std::byte>(pixel.r));
+    bytes.push_back(static_cast<std::byte>(pixel.g));
+    bytes.push_back(static_cast<std::byte>(pixel.b));
+  }
+  return bytes;
 }
 
 [[nodiscard]] auto frame_total(FrameBytes bytes) -> std::uint64_t {
@@ -397,10 +410,10 @@ auto drain_driver(TerminalDriver& driver) -> void {
 
 template <typename Draw>
 [[nodiscard]] auto measure_live_case(const Options& options, std::string route,
-                                     Extent pixels, Rect cells,
-                                     TerminalDriver& driver, MeasuredSink& sink,
-                                     Terminal& terminal, Fence fence,
-                                     Draw&& draw) -> Result {
+                                     std::string image_format, Extent pixels,
+                                     Rect cells, TerminalDriver& driver,
+                                     MeasuredSink& sink, Terminal& terminal,
+                                     Fence fence, Draw&& draw) -> Result {
   // One untimed frame establishes the exact driver wire size from the same
   // call sequence the measured batches use.
   sink.reset_batch();
@@ -462,6 +475,7 @@ template <typename Draw>
 
   const auto total = stats(total_samples);
   return Result{.route = std::move(route),
+                .image_format = std::move(image_format),
                 .pixels_w = pixels.w,
                 .pixels_h = pixels.h,
                 .cols = cells.w,
@@ -495,16 +509,29 @@ template <typename Draw>
   for (const auto extent : extents) {
     auto first = make_image(extent.w, extent.h, 0x12345678U);
     auto second = make_image(extent.w, extent.h, 0xA5A5A5A5U);
+    const auto first_rgb = packed_rgb(first);
+    const auto second_rgb = packed_rgb(second);
     // W5 needs one route that every selected Kitty-protocol implementation
     // actually decodes. Mutable-root a=f,r=1 is a Kitty extension that broad
     // KGP implementations such as Ghostty may reject; draw_image retransmits
     // under the region's stable id with the baseline a=t action instead.
-    auto draw = [&](int frame) -> std::expected<void, ErrorEvent> {
-      return driver->draw_image(placement, frame % 2 == 0 ? second : first);
+    auto draw_rgba = [&](int frame) -> std::expected<void, ErrorEvent> {
+      const auto& image = frame % 2 == 0 ? second : first;
+      return driver->draw_image(
+          placement, EncodedImage{ImageFormat::Rgba32,
+                                  std::as_bytes(image.pixels()), extent});
     };
-    results.push_back(measure_live_case(options, "kitty-full-transmit", extent,
-                                        placement, *driver, sink, terminal,
-                                        Fence::Graphics, draw));
+    results.push_back(measure_live_case(
+        options, "kitty-full-transmit", "rgba32", extent, placement, *driver,
+        sink, terminal, Fence::Graphics, draw_rgba));
+    auto draw_rgb = [&](int frame) -> std::expected<void, ErrorEvent> {
+      const auto& bytes = frame % 2 == 0 ? second_rgb : first_rgb;
+      return driver->draw_image(
+          placement, EncodedImage{ImageFormat::Rgb24, bytes, extent});
+    };
+    results.push_back(measure_live_case(options, "kitty-full-transmit", "rgb24",
+                                        extent, placement, *driver, sink,
+                                        terminal, Fence::Graphics, draw_rgb));
   }
   driver->shutdown();
   drain_driver(*driver);
@@ -532,8 +559,8 @@ template <typename Draw>
       return driver->draw_image(cells, frame % 2 == 0 ? second : first,
                                 PlacementFit::Exact);
     };
-    results.push_back(measure_live_case(options, "ansi-half-block", pixels,
-                                        cells, *driver, sink, terminal,
+    results.push_back(measure_live_case(options, "ansi-half-block", "rgba32",
+                                        pixels, cells, *driver, sink, terminal,
                                         Fence::Da1, draw));
   }
   if (results.empty())
@@ -543,12 +570,18 @@ template <typename Draw>
   return results;
 }
 
-[[nodiscard]] auto smoke_result_kitty() -> Result {
+[[nodiscard]] auto smoke_result_kitty(ImageFormat format) -> Result {
   KittyDriver driver;
   CountingSink sink;
   driver.set_output(&sink);
   auto image = make_image(8, 4, 1);
-  if (const auto drawn = driver.draw_image(Rect{0, 0, 4, 2}, image); !drawn)
+  const auto rgb = packed_rgb(image);
+  const EncodedImage payload{format,
+                             format == ImageFormat::Rgb24
+                                 ? std::span<const std::byte>{rgb}
+                                 : std::as_bytes(image.pixels()),
+                             Extent{8, 4}};
+  if (const auto drawn = driver.draw_image(Rect{0, 0, 4, 2}, payload); !drawn)
     throw std::runtime_error{drawn.error().message};
   driver.flush();
   const auto bytes = driver.last_frame_bytes();
@@ -557,6 +590,8 @@ template <typename Draw>
   const auto checksum = sink.checksum();
   driver.shutdown();
   return Result{.route = "kitty-full-transmit",
+                .image_format =
+                    format == ImageFormat::Rgb24 ? "rgb24" : "rgba32",
                 .pixels_w = 8,
                 .pixels_h = 4,
                 .cols = 4,
@@ -592,6 +627,7 @@ template <typename Draw>
   const auto checksum = sink.checksum();
   driver.shutdown();
   return Result{.route = "ansi-half-block",
+                .image_format = "rgba32",
                 .pixels_w = 4,
                 .pixels_h = 4,
                 .cols = 4,
@@ -637,12 +673,19 @@ auto verify_reply_parser() -> void {
 [[nodiscard]] auto derive_walls(const std::vector<Result>& results)
     -> std::vector<Wall> {
   std::vector<Wall> walls;
-  for (const std::string_view route :
-       {"kitty-full-transmit", "ansi-half-block"}) {
+  constexpr std::array routes{std::pair{std::string_view{"kitty-full-transmit"},
+                                        std::string_view{"rgba32"}},
+                              std::pair{std::string_view{"kitty-full-transmit"},
+                                        std::string_view{"rgb24"}},
+                              std::pair{std::string_view{"ansi-half-block"},
+                                        std::string_view{"rgba32"}}};
+  for (const auto& [route, image_format] : routes) {
     for (const double budget : {1000.0 / 60.0, 1000.0 / 30.0}) {
-      Wall wall{std::string{route}, budget, std::nullopt, std::nullopt};
+      Wall wall{std::string{route}, std::string{image_format}, budget,
+                std::nullopt, std::nullopt};
       for (const auto& result : results) {
-        if (result.route != route) continue;
+        if (result.route != route || result.image_format != image_format)
+          continue;
         if (result.end_to_reply.median_ms <= budget && !wall.first_failing)
           wall.largest_passing = case_name(result);
         else if (!wall.first_failing)
@@ -704,7 +747,7 @@ auto verify_reply_parser() -> void {
     return value != nullptr ? value : "";
   };
   std::string out = std::format(
-      "{{\n  \"schema_version\":1,\n  \"termforge_version\":\"{}\",\n"
+      "{{\n  \"schema_version\":2,\n  \"termforge_version\":\"{}\",\n"
       "  \"live\":{},\n  \"compiler\":\"{}\",\n  \"host\":\"{}\",\n"
       "  \"terminal\":{{\"name\":\"{}\",\"version\":\"{}\","
       "\"term\":\"{}\",\"colorterm\":\"{}\",\"cols\":{},\"rows\":{},"
@@ -721,7 +764,8 @@ auto verify_reply_parser() -> void {
   for (std::size_t i = 0; i < results.size(); ++i) {
     const auto& result = results[i];
     out += std::format(
-        "    {{\"route\":\"{}\",\"pixels\":{{\"w\":{},\"h\":{}}},"
+        "    {{\"route\":\"{}\",\"image_format\":\"{}\","
+        "\"pixels\":{{\"w\":{},\"h\":{}}},"
         "\"cells\":{{\"w\":{},\"h\":{}}},\"frames_per_batch\":{},"
         "\"samples\":{},\"frame_bytes\":{{\"cells\":{},"
         "\"image_transmit\":{},\"image_edit\":{},\"total\":{}}},"
@@ -731,8 +775,8 @@ auto verify_reply_parser() -> void {
         "\"end_to_reply_per_frame\":{{\"median\":{:.6f},\"p95\":{:.6f}}}}},"
         "\"throughput_mib_s\":{:.6f},\"maximum_fps\":{:.6f},"
         "\"meets_30hz\":{},\"meets_60hz\":{},\"checksum\":\"{:016x}\"}}{}\n",
-        result.route, result.pixels_w, result.pixels_h, result.cols,
-        result.rows, result.frames_per_batch, result.samples,
+        result.route, result.image_format, result.pixels_w, result.pixels_h,
+        result.cols, result.rows, result.frames_per_batch, result.samples,
         result.bytes.cells, result.bytes.image_transmit,
         result.bytes.image_edit, frame_total(result.bytes),
         result.assembly.median_ms, result.assembly.p95_ms,
@@ -750,11 +794,13 @@ auto verify_reply_parser() -> void {
     const auto optional_json = [](const std::optional<std::string>& value) {
       return value ? std::format("\"{}\"", json_escape(*value)) : "null";
     };
-    out += std::format(
-        "    {{\"route\":\"{}\",\"budget_ms\":{:.6f},"
-        "\"largest_passing\":{},\"first_failing\":{}}}{}\n",
-        wall.route, wall.budget_ms, optional_json(wall.largest_passing),
-        optional_json(wall.first_failing), i + 1 == walls.size() ? "" : ",");
+    out += std::format("    {{\"route\":\"{}\",\"image_format\":\"{}\","
+                       "\"budget_ms\":{:.6f},"
+                       "\"largest_passing\":{},\"first_failing\":{}}}{}\n",
+                       wall.route, wall.image_format, wall.budget_ms,
+                       optional_json(wall.largest_passing),
+                       optional_json(wall.first_failing),
+                       i + 1 == walls.size() ? "" : ",");
   }
   out += "  ]\n}\n";
   return out;
@@ -766,7 +812,7 @@ auto verify_reply_parser() -> void {
                                 Extent terminal_cells) -> std::string {
   std::string out =
       std::format("TermForge W5 terminal throughput\nterminal: {} {} ({}x{})\n"
-                  "route/case                 bytes/frame  total ms   p95 ms   "
+                  "route/format/case          bytes/frame  total ms   p95 ms   "
                   "MiB/s    FPS  "
                   "30/60\n",
                   options.terminal, options.terminal_version, terminal_cells.w,
@@ -774,15 +820,16 @@ auto verify_reply_parser() -> void {
   for (const auto& result : results) {
     out += std::format(
         "{:<27} {:>11} {:>9.3f} {:>9.3f} {:>7.2f} {:>6.1f}  {}/{}\n",
-        result.route + "/" + case_name(result), frame_total(result.bytes),
-        result.end_to_reply.median_ms, result.end_to_reply.p95_ms,
-        result.throughput_mib_s, result.maximum_fps,
+        result.route + "/" + result.image_format + "/" + case_name(result),
+        frame_total(result.bytes), result.end_to_reply.median_ms,
+        result.end_to_reply.p95_ms, result.throughput_mib_s, result.maximum_fps,
         result.meets_30hz ? "Y" : "N", result.meets_60hz ? "Y" : "N");
   }
   out += "walls:\n";
   for (const auto& wall : walls) {
-    out += std::format("  {} {:.1f}ms: pass {}, fail {}\n", wall.route,
-                       wall.budget_ms, wall.largest_passing.value_or("none"),
+    out += std::format("  {}/{} {:.1f}ms: pass {}, fail {}\n", wall.route,
+                       wall.image_format, wall.budget_ms,
+                       wall.largest_passing.value_or("none"),
                        wall.first_failing.value_or("not reached"));
   }
   return out;
@@ -819,7 +866,10 @@ int main(int argc, char** argv) {
     Extent cells{80, 24};
     if (options.smoke) {
       verify_reply_parser();
-      if (options.route != Route::Ansi) results.push_back(smoke_result_kitty());
+      if (options.route != Route::Ansi) {
+        results.push_back(smoke_result_kitty(ImageFormat::Rgba32));
+        results.push_back(smoke_result_kitty(ImageFormat::Rgb24));
+      }
       if (options.route != Route::Kitty) results.push_back(smoke_result_ansi());
     } else {
       if (!options.output)

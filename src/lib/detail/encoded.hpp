@@ -10,11 +10,11 @@
 // things follow that every tier does identically, and so should not be
 // written three times:
 //
-//  * the guards. Empty is empty on every tier, and Rgba32 is the one format
-//    whose length is derivable, so it is the one format where a caller's
-//    extent/buffer disagreement is visible at all. Opaque formats get no such
-//    check -- decoding or decompressing them to invent one would add the
-//    dependency the whole path exists to avoid.
+//  * the guards. Empty is empty on every tier, and the raw Rgba32/Rgb24
+//    formats have derivable lengths, so a caller's extent/buffer disagreement
+//    is visible. Opaque formats get no such check -- decoding or decompressing
+//    them to invent one would add the dependency the whole path exists to
+//    avoid.
 //
 //  * reading a pixel back out. The half-block and ASCII tiers resample, so
 //    they need pixel access; routing them through a reconstructed Image would
@@ -66,6 +66,7 @@ namespace termforge::detail {
     case ImageFormat::Rgba32: return "Rgba32";
     case ImageFormat::Rgba32Zlib: return "Rgba32Zlib";
     case ImageFormat::Png: return "Png";
+    case ImageFormat::Rgb24: return "Rgb24";
   }
   return "?";
 }
@@ -76,7 +77,8 @@ namespace termforge::detail {
 [[nodiscard]] inline auto requires_terminal_reply(ImageFormat format) noexcept
     -> bool {
   switch (format) {
-    case ImageFormat::Rgba32: return false;
+    case ImageFormat::Rgba32:
+    case ImageFormat::Rgb24: return false;
     case ImageFormat::Rgba32Zlib:
     case ImageFormat::Png: return true;
   }
@@ -109,19 +111,23 @@ namespace termforge::detail {
                                "ask supports_image_format() before drawing",
                                fn, format_name(image.format))}};
   }
-  if (image.format == ImageFormat::Rgba32) {
-    // In 64 bits deliberately. `w * h * 4` in int overflows for extents a
-    // public API can be handed, and a wrapped product can COLLIDE with the
-    // real span length -- turning the one check that catches a caller's
-    // mistake into one that waves it through.
+  if (image.format == ImageFormat::Rgba32 ||
+      image.format == ImageFormat::Rgb24) {
+    const std::uint64_t bytes_per_pixel =
+        image.format == ImageFormat::Rgba32 ? 4U : 3U;
+    // In 64 bits deliberately. The obvious int multiplication overflows for
+    // extents a public API can be handed, and a wrapped product can COLLIDE
+    // with the real span length -- turning the one check that catches a
+    // caller's mistake into one that waves it through.
     const auto need = static_cast<std::uint64_t>(image.pixels.w) *
-                      static_cast<std::uint64_t>(image.pixels.h) * 4U;
+                      static_cast<std::uint64_t>(image.pixels.h) *
+                      bytes_per_pixel;
     if (image.bytes.size() != need) {
       return std::unexpected{ErrorEvent{
           Severity::Warning, std::string{source},
-          std::format("{}: Rgba32 payload is {} bytes, but {}x{} needs {}", fn,
-                      image.bytes.size(), image.pixels.w, image.pixels.h,
-                      need)}};
+          std::format("{}: {} payload is {} bytes, but {}x{} needs {}", fn,
+                      format_name(image.format), image.bytes.size(),
+                      image.pixels.w, image.pixels.h, need)}};
     }
   }
   return {};

@@ -649,7 +649,7 @@ already, where a dependency is free. What was missing was a way to hand
 TermForge bytes it should ship verbatim.
 
 ```cpp
-enum class ImageFormat { Rgba32, Png, Rgba32Zlib };
+enum class ImageFormat { Rgba32, Png, Rgba32Zlib, Rgb24 };
 
 struct EncodedImage {
   ImageFormat format;
@@ -663,16 +663,21 @@ auto draw_image(Rect cells, const EncodedImage& image, PlacementFit fit)
     -> std::expected<void, ErrorEvent>;
 ```
 
-| tier | `Rgba32` | `Rgba32Zlib` | `Png` |
-|---|---|---|---|
-| Kitty | `f=32` — identical bytes to the `Image` overload | `f=32,o=z` — the terminal decompresses | `f=100`, the terminal decodes |
-| AnsiRgb | half-blocks, resampled straight off the span | `Warning`, nothing emitted | `Warning`, nothing emitted |
-| Fallback | ramp glyphs, resampled straight off the span | `Warning`, nothing emitted | `Warning`, nothing emitted |
+| tier | `Rgba32` | `Rgb24` | `Rgba32Zlib` | `Png` |
+|---|---|---|---|---|
+| Kitty | `f=32` — identical bytes to the `Image` overload | `f=24` — packed, opaque RGB | `f=32,o=z` — the terminal decompresses | `f=100`, the terminal decodes |
+| AnsiRgb | half-blocks, resampled straight off the span | `Warning`, nothing emitted | `Warning`, nothing emitted | `Warning`, nothing emitted |
+| Fallback | ramp glyphs, resampled straight off the span | `Warning`, nothing emitted | `Warning`, nothing emitted | `Warning`, nothing emitted |
 
 `Rgba32Zlib` is application-supplied zlib data whose decompressed form is
 row-major RGBA32. TermForge does not compress, decompress, link zlib, or ship a
 codec helper; consumers that already own an encoder hand over its borrowed
 output directly.
+
+`Rgb24` is tightly packed row-major red, green, blue data with no alpha byte.
+TermForge validates exactly `width * height * 3` bytes and Kitty ships those
+bytes as `f=24`. Flat tiers refuse it because interpreting the new layout there
+would make the verbatim descriptor a second runtime pixel API.
 
 Ask `supports_image_format()` before committing to an art set. An application
 picking its assets at cold start needs the answer at cold start; a `Warning`
@@ -683,9 +688,9 @@ an answer.
 
 `pixels` is not there because kitty needs it — the protocol reads a PNG's
 geometry out of the datastream. It is there because the *library* needs it: to
-check an `Rgba32` payload against its declared length, to key the content hash,
-and to answer `image_cell_extent(Extent)` for a caller that never decoded
-anything. `s=`/`v=` are emitted for every format regardless; kitty ignores them
+check raw `Rgba32` and `Rgb24` payloads against their declared lengths, to key
+the content hash, and to answer `image_cell_extent(Extent)` for a caller that
+never decoded anything. `s=`/`v=` are emitted for every format regardless; kitty ignores them
 where they do not apply, and one format string beats two that can drift.
 
 For `Png` and `Rgba32Zlib` the field is therefore unverifiable and deliberately
@@ -731,11 +736,11 @@ to the declared extent, so `Exact`'s identity map is in bounds by construction.
 Declare the extent accurately. The library will not check it for you, and on
 this path that is a choice rather than an oversight.
 
-`Rgba32` is the one format whose length *is* derivable, so it is the one format
-where a caller's extent/buffer disagreement is visible at all, and it is
-checked. In 64 bits: `w * h * 4` in `int` overflows for extents a public API
-can be handed, and a wrapped product can collide with the real span length,
-turning the one check that catches the mistake into one that waves it through.
+`Rgba32` and `Rgb24` are the formats whose lengths *are* derivable, so a
+caller's extent/buffer disagreement is visible and checked for both. The
+products are calculated in 64 bits: `w * h * 4` or `w * h * 3` in `int` can
+overflow for extents a public API can be handed, and a wrapped product can
+collide with the real span length.
 
 ### Identity includes the format
 
@@ -751,10 +756,10 @@ only the first one ever uploads.
 
 ### Opaque success is correlated (#165)
 
-Raw RGBA remains locally length-validated and uses `q=2`: there is no decoder
-failure left for the terminal to reveal. PNG and Rgba32Zlib are opaque, so each
-transmit or root-frame edit uses `q=2` on intermediate chunks and `q=0` on the
-final chunk.
+Raw RGBA and RGB remain locally length-validated and use `q=2`: there is no
+decoder failure left for the terminal to reveal. PNG and Rgba32Zlib are opaque,
+so each transmit or root-frame edit uses `q=2` on intermediate chunks and `q=0`
+on the final chunk.
 `Input` recognizes the returned Kitty APC as control-plane traffic, keeps it
 out of application `Event`s, and `App` offers it to the selected driver before
 ordinary input.

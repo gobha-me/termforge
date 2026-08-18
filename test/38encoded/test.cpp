@@ -527,6 +527,64 @@ TEST_CASE("encoded: the same bytes in a different format are a different image",
 
 // ── the Rgba32 path is the old path ─────────────────────────────────────────
 
+// The new packed-RGB cases come first; the unchanged Rgba32 compatibility
+// proof follows them.
+TEST_CASE("encoded: Rgb24 rides f=24 verbatim without acknowledgement",
+          "[encoded][kitty][rgb24]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const auto bytes = blob(2 * 2 * 3, 24);
+
+  REQUIRE(d.draw_image(
+      Rect{0, 0, 2, 2},
+      EncodedImage{ImageFormat::Rgb24, as_span(bytes), Extent{2, 2}}));
+  d.flush();
+
+  const auto chunks = transmit_chunks(apcs(out));
+  REQUIRE(chunks.size() == 1);
+  CHECK(tfsupport::key_value(chunks.front(), "f") == "24");
+  CHECK(tfsupport::key_value(chunks.front(), "s") == "2");
+  CHECK(tfsupport::key_value(chunks.front(), "v") == "2");
+  CHECK_FALSE(tfsupport::has_key(chunks.front(), "o"));
+  CHECK(tfsupport::key_value(chunks.front(), "q") == "2");
+  CHECK(reassemble(out) == bytes);
+
+  const auto changed = blob(2 * 2 * 3, 25);
+  REQUIRE(d.draw_image(
+      Rect{0, 0, 2, 2},
+      EncodedImage{ImageFormat::Rgb24, as_span(changed), Extent{2, 2}}));
+  d.flush();
+  CHECK(count_of(out, "f=24") == 2);
+}
+
+TEST_CASE("encoded: Rgb24 continuations repeat no format or reply controls",
+          "[encoded][kitty][rgb24][chunk]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const auto bytes = blob(50 * 34 * 3, 26);
+  REQUIRE(d.draw_image(
+      Rect{0, 0, 50, 34},
+      EncodedImage{ImageFormat::Rgb24, as_span(bytes), Extent{50, 34}}));
+  d.flush();
+
+  const auto chunks = transmit_chunks(apcs(out));
+  REQUIRE(chunks.size() >= 2);
+  CHECK(tfsupport::key_value(chunks.front(), "f") == "24");
+  for (std::size_t i = 0; i < chunks.size(); ++i) {
+    if (i == 0) {
+      CHECK(tfsupport::key_value(chunks[i], "q") == "2");
+    } else {
+      CHECK_FALSE(tfsupport::has_key(chunks[i], "q"));
+      CHECK_FALSE(tfsupport::has_key(chunks[i], "f"));
+    }
+  }
+  CHECK(reassemble(out) == bytes);
+}
+
+// The cases above cover the packed RGB path; the original RGBA path remains
+// byte-identical across every tier below.
 TEST_CASE("encoded: Rgba32 emits exactly what the Image overload emits",
           "[encoded][kitty][ansi_rgb][fallback]") {
   // The refactor that made room for f=100 moved every tier's image path onto
@@ -665,6 +723,22 @@ TEST_CASE("encoded: an Rgba32 payload that disagrees with its extent warns",
 
 // ── degradation on the tiers that cannot carry a payload ────────────────────
 
+TEST_CASE("encoded: an Rgb24 payload must be exactly three bytes per pixel",
+          "[encoded][rgb24][failure]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const auto short_rgb = blob(2 * 2 * 3 - 1);
+  const auto result = d.draw_image(
+      Rect{0, 0, 2, 2},
+      EncodedImage{ImageFormat::Rgb24, as_span(short_rgb), Extent{2, 2}});
+  REQUIRE_FALSE(result);
+  CHECK(result.error().severity == Severity::Warning);
+  CHECK(result.error().message.find("Rgb24 payload") != std::string::npos);
+  d.flush();
+  CHECK(out.empty());
+}
+
 TEST_CASE("encoded: a tier that cannot decode PNG warns and emits nothing",
           "[encoded][failure]") {
   const EncodedImage img{ImageFormat::Png, png_bytes(), Extent{2, 2}};
@@ -726,6 +800,29 @@ TEST_CASE("encoded: flat tiers name and refuse compressed RGBA",
   check(fallback, "fallback");
 }
 
+TEST_CASE("encoded: flat tiers name and refuse packed RGB",
+          "[encoded][rgb24][failure]") {
+  const auto bytes = blob(2 * 2 * 3);
+  const EncodedImage img{ImageFormat::Rgb24, as_span(bytes), Extent{2, 2}};
+
+  auto check = [&](auto& d, std::string_view source) {
+    std::string out;
+    d.set_output(&out);
+    const auto result = d.draw_image(Rect{0, 0, 2, 2}, img);
+    REQUIRE_FALSE(result);
+    CHECK(result.error().severity == Severity::Warning);
+    CHECK(result.error().source == source);
+    CHECK(result.error().message.find("Rgb24") != std::string::npos);
+    d.flush();
+    CHECK(out.empty());
+  };
+
+  AnsiRgbDriver ansi;
+  check(ansi, "ansi_rgb");
+  FallbackDriver fallback;
+  check(fallback, "fallback");
+}
+
 TEST_CASE("encoded: supports_image_format answers before anything is drawn",
           "[encoded]") {
   // An application choosing an art set at cold start needs the answer at cold
@@ -733,16 +830,19 @@ TEST_CASE("encoded: supports_image_format answers before anything is drawn",
   // was already made is not an answer.
   KittyDriver k;
   CHECK(k.supports_image_format(ImageFormat::Rgba32));
+  CHECK(k.supports_image_format(ImageFormat::Rgb24));
   CHECK(k.supports_image_format(ImageFormat::Rgba32Zlib));
   CHECK(k.supports_image_format(ImageFormat::Png));
 
   AnsiRgbDriver a;
   CHECK(a.supports_image_format(ImageFormat::Rgba32));
+  CHECK_FALSE(a.supports_image_format(ImageFormat::Rgb24));
   CHECK_FALSE(a.supports_image_format(ImageFormat::Rgba32Zlib));
   CHECK_FALSE(a.supports_image_format(ImageFormat::Png));
 
   FallbackDriver f;
   CHECK(f.supports_image_format(ImageFormat::Rgba32));
+  CHECK_FALSE(f.supports_image_format(ImageFormat::Rgb24));
   CHECK_FALSE(f.supports_image_format(ImageFormat::Rgba32Zlib));
   CHECK_FALSE(f.supports_image_format(ImageFormat::Png));
 
@@ -821,6 +921,7 @@ TEST_CASE("encoded: a driver written before #163 still compiles and degrades",
   // gets a usable answer rather than discovering it a frame later.
   CHECK_FALSE(base.supports_image_format(ImageFormat::Png));
   CHECK_FALSE(base.supports_image_format(ImageFormat::Rgba32Zlib));
+  CHECK_FALSE(base.supports_image_format(ImageFormat::Rgb24));
   CHECK(base.supports_image_format(ImageFormat::Rgba32));
 
   // And the overload it DOES implement is untouched.

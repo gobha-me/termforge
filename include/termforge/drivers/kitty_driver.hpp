@@ -86,9 +86,10 @@ class KittyDriver final : public TerminalDriver {
                  Attr attrs) -> void override;
   auto draw_image(Rect cells, const Image& image)
       -> std::expected<void, ErrorEvent> override;
-  // Pre-encoded payloads (#163/#166): Png rides f=100, Rgba32 rides f=32, and
-  // application-compressed Rgba32Zlib rides f=32,o=z. All go through the same
-  // slot keying, chunking, LRU and placement as an Image.
+  // Pre-encoded payloads (#163/#166): Png rides f=100, Rgba32 rides f=32,
+  // Rgb24 rides f=24, and application-compressed Rgba32Zlib rides f=32,o=z.
+  // All go through the same slot keying, chunking, LRU and placement as an
+  // Image.
   auto draw_image(Rect cells, const EncodedImage& image)
       -> std::expected<void, ErrorEvent> override;
   // PlacementFit::Exact omits c=/r= so the terminal places the selected

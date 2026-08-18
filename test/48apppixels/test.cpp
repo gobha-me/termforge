@@ -374,10 +374,13 @@ class EncodedPlateWidget final : public Widget {
 
   auto set_payload(ImageFormat format, Extent extent, std::uint8_t marker)
       -> void {
-    const std::size_t size = format == ImageFormat::Rgba32
-                                 ? static_cast<std::size_t>(extent.w) *
-                                       static_cast<std::size_t>(extent.h) * 4
-                                 : 7;
+    const std::size_t raw_bytes = format == ImageFormat::Rgba32  ? 4U
+                                  : format == ImageFormat::Rgb24 ? 3U
+                                                                 : 0U;
+    const std::size_t size =
+        raw_bytes != 0 ? static_cast<std::size_t>(extent.w) *
+                             static_cast<std::size_t>(extent.h) * raw_bytes
+                       : 7;
     m_bytes.assign(size, static_cast<std::byte>(marker));
     if (format == ImageFormat::Rgba32) {
       for (std::size_t i = 3; i < m_bytes.size(); i += 4)
@@ -772,6 +775,22 @@ TEST_CASE("app pixels: same-format raw updates reuse their resident identity",
   CHECK(transmits_of(app.wire, 272) == 1);
   CHECK(frame_updates_of(app.wire, 272) == 1);
   CHECK(data_deletes_of(app.wire, 272) == 0);
+}
+
+TEST_CASE("app pixels: persistent Rgb24 submits and replaces without replies",
+          "[apppixels][encoded][persistent][rgb24]") {
+  EncodedPixelApp app;
+  app.plate.set_payload(ImageFormat::Rgb24, Extent{4, 4}, 1);
+  app.mutate_on_frame = 1;
+  app.mutated_format = ImageFormat::Rgb24;
+  app.run_with(std::make_unique<KittyDriver>(), 3);
+
+  CHECK(app.plate.encoded_calls == 2);
+  CHECK(app.plate.submissions == 2);
+  CHECK(transmits_of(app.wire, 272) == 1);
+  CHECK(frame_updates_of(app.wire, 272) == 1);
+  CHECK(tfsupport::count_of(app.wire, "f=24") == 2);
+  CHECK(app.errors.empty());
 }
 
 TEST_CASE("app pixels: encoded extent changes recreate resident identity",

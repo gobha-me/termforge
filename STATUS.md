@@ -6,7 +6,24 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-18, latest)
 
-**Current stable release: v0.51.0 — W5 live-terminal throughput matrix.** The
+**Current stable release: v0.52.0 — dependency-free packed RGB.** #166 adds
+`ImageFormat::Rgb24`, a tightly packed row-major RGB descriptor that Kitty
+ships verbatim as `f=24`. Exact three-byte-per-pixel validation makes the route
+locally checked: it uses quiet protocol transfers and never waits for an opaque
+terminal acknowledgement. Direct draws, resident pins/replacements/edits,
+animations and App-managed persistent regions share the same path, identity,
+metering and accepted-write residency boundaries. AnsiRgb, Fallback and legacy
+drivers report unsupported and emit nothing.
+
+The W5 terminal benchmark moves to JSON schema 2, labels every result by image
+format, and runs paired RGBA32/RGB24 Kitty cases. Its offline smoke proves the
+RGB wire is smaller without treating runner timing as evidence. This automation
+environment has no controlling tty, so v0.52.0 adds no invented live-terminal
+timings; the v0.51.0 RGBA reference matrix remains the latest capture.
+
+## Previous stable release: v0.51.0
+
+**v0.51.0 — W5 live-terminal throughput matrix.** The
 final slice of #88 adds a separate Release-only `termforge_terminal_bench`
 whose live batches cross the terminal's direct child pty and end at an ordered
 graphics/DA1 reply. Its schema-1 JSON records terminal metadata, exact driver

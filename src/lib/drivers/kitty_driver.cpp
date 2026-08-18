@@ -235,6 +235,7 @@ auto append_chunked(std::string& out, std::span<const std::byte> payload,
 // a format is only supportable if the application can hand us bytes already
 // in it (#163).
 constexpr int kFormatRgba32 = 32;
+constexpr int kFormatRgb24 = 24;
 constexpr int kFormatPng = 100;
 
 // ImageFormat -> the f= value on the wire. An exhaustive switch with no
@@ -245,6 +246,7 @@ constexpr int kFormatPng = 100;
     case ImageFormat::Rgba32:
     case ImageFormat::Rgba32Zlib: return kFormatRgba32;
     case ImageFormat::Png: return kFormatPng;
+    case ImageFormat::Rgb24: return kFormatRgb24;
   }
   return kFormatRgba32;
 }
@@ -259,6 +261,7 @@ constexpr int kFormatPng = 100;
     case ImageFormat::Rgba32: return {};
     case ImageFormat::Rgba32Zlib: return ",o=z";
     case ImageFormat::Png: return {};
+    case ImageFormat::Rgb24: return {};
   }
   return {};
 }
@@ -269,6 +272,7 @@ constexpr int kFormatPng = 100;
     case ImageFormat::Rgba32: return "f=32";
     case ImageFormat::Rgba32Zlib: return "f=32,o=z";
     case ImageFormat::Png: return "f=100";
+    case ImageFormat::Rgb24: return "f=24";
   }
   return "f=?";
 }
@@ -529,7 +533,8 @@ auto KittyDriver::supports_image_format(ImageFormat f) const noexcept -> bool {
   switch (f) {
     case ImageFormat::Rgba32:
     case ImageFormat::Rgba32Zlib:
-    case ImageFormat::Png: return true;
+    case ImageFormat::Png:
+    case ImageFormat::Rgb24: return true;
   }
   return false;
 }

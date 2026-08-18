@@ -47,7 +47,7 @@ cmake --build build-bench -j4 --target termforge_bench termforge_terminal_bench
 ./build-bench/bench/termforge_bench --format json --output benchmark.json
 ```
 
-`termforge_terminal_bench` is the separate schema-1 live harness described in
+`termforge_terminal_bench` is the separate schema-2 live harness described in
 W5 below. Its smoke mode is offline and deterministic; live runs require an
 explicit report path and a direct terminal child pty.
 
@@ -199,9 +199,9 @@ sustain them.
 W5 measures the boundary deliberately excluded from the headless harness. The
 live executable writes through the terminal's child pty with a blocking
 `ByteSink`, then sends an ordered protocol query after each batch and waits for
-its reply. The Kitty-protocol route alternates two deterministic opaque RGBA
-buffers, retransmits them under one stable ordinary-region image id with
-`a=t`, and retains one placement. Using the baseline full-transmit action is
+its reply. The Kitty-protocol route runs paired deterministic RGBA32 and packed
+RGB24 buffers, retransmits each pair under one stable ordinary-region image id
+with `a=t`, and retains one placement. Using the baseline full-transmit action is
 intentional: Ghostty 1.3.1 accepts broad Kitty graphics but rejects Kitty's
 mutable-root `a=f,r=1` action, so measuring that action would count discarded
 bytes rather than decoded frames. The xterm route sends exact ANSI truecolour
@@ -220,6 +220,11 @@ uncompressed RGBA, batches run back-to-back with no application think time,
 and the largest frames exceed any ordinary terminal viewport. It finds a
 worst-case full-transmit wall. Static regions, dirty rectangles, compressible
 art, demand rendering, and normal user-paced interaction can be much cheaper.
+
+The current schema labels every result and wall by `image_format`; its offline
+smoke proves the RGB24 wire is smaller than RGBA32. The automation environment
+used for this release has no controlling tty, so no live timing is inferred
+from that smoke. The reference table below remains the earlier RGBA-only run.
 
 Reference run on 2026-08-18: GCC 14.2 Release in a Linux 6.12.74 x86-64
 Kubernetes pod on an MS-01 desktop. The emulator child ptys were direct and
@@ -261,9 +266,10 @@ For architecture, a 320×180 full RGBA frame offers about 8.81 MiB/s at 30 Hz.
 That is viable on the reference Kitty but not a portable cross-terminal floor;
 larger compose-and-transmit surfaces need damage rectangles, atlas placement,
 or a smaller wire format. W2 already proves that partial edits are the correct
-paint path. The next cheap full-frame lever is #166's opaque `Rgb24` route: an
-opaque composed frame has no useful alpha and can shed 25% of its payload
-without a runtime codec dependency. Application-supplied zlib remains
+paint path. #166 now supplies the dependency-free `Rgb24` route: an opaque
+composed frame with no useful alpha sheds 25% of its source payload without a
+runtime codec dependency. A fresh direct-terminal capture is still required to
+quantify the resulting end-to-reply wall. Application-supplied zlib remains
 available for assets that can pay the terminal decode cost, but these results
 do not justify adding a library-owned compression dependency.
 

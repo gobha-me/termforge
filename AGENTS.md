@@ -170,10 +170,12 @@ file is the tactical version.
   inspects or resamples them — that is the application's asset pipeline's job,
   and it is the only reason a compressed wire format can exist here without
   breaking the stdlib-only rule. Never add a check that requires parsing the
-  payload: `Rgba32`'s length is derivable and is validated; `Rgba32Zlib` and
-  `Png` are opaque and deliberately are not. `Rgba32Zlib` is caller-compressed
-  and rides Kitty as `f=32,o=z`; TermForge never links zlib or offers a codec
-  helper. #169 sharpened rather than weakened this — the declared
+  payload: `Rgba32` and `Rgb24` lengths are derivable and validated at four and
+  three bytes per pixel respectively; `Rgba32Zlib` and `Png` are opaque and
+  deliberately are not. `Rgb24` is Kitty-only `f=24` packed opaque RGB; flat
+  tiers refuse it rather than inventing a sampler. `Rgba32Zlib` is
+  caller-compressed and rides Kitty as `f=32,o=z`; TermForge never links zlib
+  or offers a codec helper. #169 sharpened rather than weakened this — the declared
   extent is precisely *why* no parse is needed, and a guard built on it stays
   inside the rule. A tier that cannot carry a format says so via
   `supports_image_format` *and* returns a `Warning` — never a guess.
@@ -205,7 +207,7 @@ file is the tactical version.
   recognizes Kitty graphics APC replies as terminal control-plane records and
   never turns them into application `Event`s; `App` offers them to the selected
   driver's non-pure `consume_reply` hook before ordinary input, even while an
-  `EventSource` replaces terminal keystrokes. Raw RGBA remains locally
+  `EventSource` replaces terminal keystrokes. Raw RGBA and RGB remain locally
   validated and fully quiet. Opaque PNG and Rgba32Zlib transfers use `q=2` on
   intermediate chunks and `q=0` on the final chunk, and Kitty commits their
   content hash only after the correlated `i=` reply says `OK`. Synchronous API

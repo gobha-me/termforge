@@ -350,6 +350,11 @@ enum class ImageFormat {
   // application owns compression; TermForge ships the opaque stream verbatim
   // and Kitty decodes it as f=32,o=z. No in-library length check is possible.
   Rgba32Zlib,
+  // Raw 24-bit RGB, row-major, with no alpha channel. The application supplies
+  // three bytes per pixel and Kitty treats every pixel as opaque (f=24).
+  // Non-Kitty tiers deliberately decline this layout instead of growing a
+  // second sampler stride without a consumer for it.
+  Rgb24,
 };
 
 struct EncodedImage {
@@ -370,8 +375,8 @@ struct EncodedImage {
   // The image's pixel dimensions. NOT, despite appearances, because kitty
   // needs them: the protocol reads a PNG's geometry out of the datastream
   // itself, and s=/v= are only load-bearing for the raw formats. They are
-  // here because the LIBRARY needs them -- to check an Rgba32 payload against
-  // its declared extent, to key the content hash, and to answer
+  // here because the LIBRARY needs them -- to check a raw Rgba32/Rgb24 payload
+  // against its declared extent, to key the content hash, and to answer
   // image_cell_extent for a caller that never decoded anything.
   //
   // For Png and Rgba32Zlib this field is therefore unverifiable, and
