@@ -169,6 +169,14 @@ completed items.
 > history only after vertical navigation reaches a document edge. Submission
 > remains parent-owned; the chat example demonstrates the complete call order.
 >
+> **2026-08-18 — multi-page choice wizard.** **#298** adds
+> `ChoiceWizardDialog`, a generic Back/Next/Submit/Cancel composition over
+> single- and multiple-choice pages. It preserves page-local selections and
+> Other drafts across navigation, validates before advancing, returns ordered
+> presentation-index results, and keeps cancellation distinct. Atomic
+> configuration, tiny terminals, resize, callback lifetime and duplicate
+> terminal activation are covered offline.
+>
 > **2026-08-17 — application-supplied zlib RGBA.** The first half of **#166**
 > adds `ImageFormat::Rgba32Zlib` as an opaque caller-owned payload. Kitty emits
 > `f=32,o=z` across direct, resident-edit and animation paths; acknowledgement,
@@ -308,6 +316,10 @@ completed items.
   closes on focus loss and closes-then-declines Tab; every control keys its
   ASCII variant off the same `BorderStyle` the frames use.
 
+- [x] **3.8 — Choice wizard (#298)** ✅
+  Multi-page choice composition with preserved page state, validated forward
+  navigation, explicit Back/Next/Submit/Cancel actions and ordered results.
+
 - [x] **3.5 — Mouse event routing in App** **DONE**
   SGR 1006/1002 mouse mode on enter, route_mouse dispatches by
   `Widget::hit_test` (topmost-first). All interactive widgets handle
@@ -335,7 +347,8 @@ completed items.
   ProgressBar, ListWidget, Frame, WaveformWidget. Focus model.
 
 - [x] **4.4 — dialogs.cpp** ✅
-  The modal overlay stack and the three standard dialogs (#18).
+  The modal overlay stack, standard dialogs, ChoiceDialog and
+  ChoiceWizardDialog (#18, #219, #298).
 
 - [x] **4.5 — forms.cpp** ✅
   Checkbox + RadioGroup + Select + Buttons in one FocusRing (#19). F1

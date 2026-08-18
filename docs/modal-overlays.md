@@ -186,6 +186,56 @@ text; call the setters before pushing it when a new question needs new defaults.
 Descriptions share one compact detail row for the currently selected/focused
 choice, while the choice list scrolls to keep keyboard focus visible.
 
+## Choice wizards
+
+`ChoiceWizardDialog` composes several bounded choice pages into one modal. Each
+page has its own title, body, single/multiple mode, choices, limits and optional
+Other field. Back preserves the current draft without validating it; Next and
+the final Submit validate before moving. Cancel is always distinct from an
+answered wizard.
+
+```cpp
+ChoiceWizardPage interface_page;
+interface_page.title = "Interface";
+interface_page.text = "Choose one or more features:";
+interface_page.mode = ChoiceMode::Multiple;
+interface_page.choices = {
+    {"Mouse", "Enable pointer interaction."},
+    {"Animations", "Keep motion and progress feedback."},
+};
+interface_page.minimum_selected = 1;
+
+ChoiceWizardPage output_page;
+output_page.title = "Output";
+output_page.text = "Choose the preferred presentation:";
+output_page.choices = {{"Compact", "Use the smallest layout."},
+                       {"Detailed", "Show supporting context."}};
+output_page.other_enabled = true;
+output_page.other_placeholder = "Another presentation style";
+
+ChoiceWizardDialog wizard;
+if (!wizard.set_pages({interface_page, output_page})) {
+  // Empty pages, max < min, or an invalid initial-page index.
+}
+wizard.on_close([this] { pop_overlay(); });
+wizard.on_result([](std::optional<ChoiceWizardResult> result) {
+  if (!result) return; // cancellation
+  // result->pages[i] is the ChoiceResult for configured page i.
+});
+```
+
+`set_pages(pages, initial_page)` is atomic. It rejects an empty vector, an
+out-of-range initial page, or any page whose maximum is below its minimum.
+Choice indices are normalized exactly like `ChoiceDialog`: stale
+and duplicate indices are dropped, single mode keeps the first valid index,
+and otherwise selects its first ordinary choice when one exists. Other counts
+toward selection limits and a selected empty Other remains invalid.
+
+Page navigation changes neither the overlay nor the showing boundary. Only
+Cancel and final Submit close and report, so an application receives exactly
+one terminal callback per showing. Re-showing preserves the current page and
+all page answers; call `set_pages` before pushing to start a new wizard.
+
 ## Interaction with pixel regions
 
 This is the one place the two mechanisms genuinely fight (see

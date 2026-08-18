@@ -18,7 +18,7 @@ for tests.
 ## Status
 
 Core framework, KittyDriver, the widget system, mouse routing, and the
-`forge-top` dogfooding application are landed and tested across 68 CTest targets;
+`forge-top` dogfooding application are landed and tested across 78 CTest targets;
 GCC 13/14 + Clang 19/20 are green in CI, ASan/UBSan is clean, and the
 cross-thread event path has a focused TSan gate.
 
@@ -78,9 +78,10 @@ Landed and verified:
 - **Modal dialogs** — an overlay stack in `App` that draws last and captures
   all input, plus `MessageDialog` / `ConfirmDialog` / `PromptDialog` that size
   and center themselves, `ChoiceDialog` for single/multiple choice with an
-  optional free-form answer, and `FilePickerDialog`, a modal file browser
-  composed from those pieces (path field + dirs-first listing + OK/Cancel)
-  with permission errors surfaced as a nested dialog. See
+  optional free-form answer, `ChoiceWizardDialog` for validated Back/Next flows
+  that preserve every page's answers, and `FilePickerDialog`, a modal file
+  browser composed from those pieces (path field + dirs-first listing +
+  OK/Cancel) with permission errors surfaced as a nested dialog. See
   `docs/modal-overlays.md`.
 - **Simulation split** — `App::on_tick(dt)` advances state, `on_render` only
   draws, so motion is measured in seconds rather than in frames and runs at the
@@ -247,8 +248,8 @@ and Clang.
   `pixel_surface` (the persistent framebuffer primitive), `dashboard`
   (TableWidget + WaveformWidget + TextBox), `motion` (`on_tick` — fixed vs
   variable timestep and the stall clamp, live), `widgets` (all primitives +
-  focus model), `image`, `chat` (TextBox + Composer), `input`, `colors`,
-  `low_level`, `hello`.
+  focus model), `dialogs` (single-page and wizard compositions), `image`,
+  `chat` (TextBox + Composer), `input`, `colors`, `low_level`, `hello`.
 
 The game workload can be measured without a TTY or captured on a real Kitty
 terminal. See [docs/performance.md](docs/performance.md) for commands, metric

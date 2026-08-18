@@ -6,7 +6,36 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-18, latest)
 
-**Current stable release: v0.53.0 — multiline Composer input.** #26 adds a
+**Current stable release: v0.55.0 — multi-page choice wizard.** #298 adds
+`ChoiceWizardDialog`, a reusable modal over ordered `ChoiceWizardPage` values.
+Each page owns its title/body, single- or multiple-choice mode, selection
+limits, descriptions and optional Other field while results remain presentation
+indices for the embedding application to map to stable identities.
+
+Back saves without validating; Next and final Submit validate before moving.
+Navigation and resize preserve every page's selections and Other draft, Cancel
+stays distinct from a valid empty answer, and only Cancel/final Submit close and
+report once per showing. Configuration rejects empty page sets, invalid initial
+indices and inverted limits atomically. The dialogs example demonstrates the
+complete overlay wiring. No terminal protocol behavior changed.
+
+## Previous stable release: v0.54.0
+
+**v0.54.0 — explicit Kitty shared-memory uploads.** #111 adds a base-owned,
+embedding-supplied image transport policy and an opt-in POSIX shared-memory
+strategy without inferring locality from terminal identity. Cold region and
+pinned-image uploads may use Kitty `t=s`; live replacements, edits and
+animations retain their action-specific direct paths.
+
+Staged resources remain owned through ordered replies. Strategy failure or
+terminal rejection falls back direct with one `Info`, rejection latches direct
+for the session, and accepted-write metering counts only the short command while
+residency retains exact source bytes. The reference 1 MiB startup upload reduced
+terminal wire bytes from 1,402,582 to 107.
+
+## Previous stable release: v0.53.0
+
+**v0.53.0 — multiline Composer input.** #26 adds a
 separate `Composer` widget rather than turning `TextInput` into a mode-dependent
 control. Its UTF-8 byte cursor projects through the same display-width and
 word-aware wrapping engine as TextBox/Dialog, with hard-newline navigation,
