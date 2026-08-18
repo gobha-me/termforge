@@ -7,6 +7,23 @@ on:
     branches: [main]
 
 jobs:
+  clang-tidy:
+    name: Clang Tidy 20
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clang Tidy 20
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 20
+          sudo apt-get install -y clang-tidy-20 clang-tools-20
+
+      - name: Check shipped library
+        run: tools/lint.sh
+
   format:
     name: Clang Format 20
     runs-on: ubuntu-latest

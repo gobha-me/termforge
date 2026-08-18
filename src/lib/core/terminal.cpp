@@ -172,7 +172,7 @@ auto Terminal::set_capabilities(Capabilities caps)
                                       "set_capabilities: a screen is up"}};
   }
   m_impl->kitty_keyboard_support = caps.kitty_keyboard;
-  m_impl->pushed_caps = std::move(caps);
+  m_impl->pushed_caps = caps;
   return {};
 }
 
@@ -365,7 +365,7 @@ auto read_available(int fd, int timeout_ms) -> std::string {
     fd_set rfds;
     FD_ZERO(&rfds);
     FD_SET(fd, &rfds);
-    timeval tv{0, 20 * 1000};
+    timeval tv{0, 20'000};
     const int r = select(fd + 1, &rfds, nullptr, nullptr, &tv);
     if (r > 0 && FD_ISSET(fd, &rfds)) {
       const ssize_t n = ::read(fd, buf, sizeof(buf));

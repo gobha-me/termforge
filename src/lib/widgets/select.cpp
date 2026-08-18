@@ -129,7 +129,7 @@ auto Select::commit(int index) -> void {
   // No-change commits stay silent -- the no-op-silence rule RadioGroup::select
   // and Checkbox::set_checked already follow (#36 item 3). Re-committing the
   // current value still closes the list, but fires nothing.
-  if (changed) detail::invoke_copy(m_on_change, index, std::move(item));
+  if (changed) detail::invoke_copy(m_on_change, index, item);
 }
 
 auto Select::draw(Screen& screen) -> void {
