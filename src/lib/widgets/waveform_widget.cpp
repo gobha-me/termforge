@@ -92,7 +92,8 @@ auto WaveformWidget::draw(Screen& screen) -> void {
   const int start = static_cast<int>(m_samples.size()) - visible;
 
   for (int col = 0; col < visible; ++col) {
-    const float val = m_samples[static_cast<std::size_t>(start + col)];
+    const float val = m_samples[static_cast<std::size_t>(start) +
+                                static_cast<std::size_t>(col)];
     const float norm = std::clamp((val - lo) / (hi - lo), 0.0f, 1.0f);
     const auto level = static_cast<int>(norm * static_cast<float>(vres));
 
@@ -158,7 +159,8 @@ auto WaveformWidget::draw_pixels(Rect region, Extent pixels) -> const Image* {
   const int start = static_cast<int>(m_samples.size()) - visible;
 
   const auto y_for = [&](int sample) {
-    const float val = m_samples[static_cast<std::size_t>(start + sample)];
+    const float val = m_samples[static_cast<std::size_t>(start) +
+                                static_cast<std::size_t>(sample)];
     const float norm = std::clamp((val - lo) / (hi - lo), 0.0f, 1.0f);
     // y=0 is top in image coordinates; norm=1 should be at top.
     return h - 1 - static_cast<int>(norm * static_cast<float>(h - 1));

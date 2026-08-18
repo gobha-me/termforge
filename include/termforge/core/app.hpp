@@ -335,7 +335,7 @@ class App {
   // ErrorEvent (source "requirements") and suppresses enhanced image submission
   // until restored; the framework does not invent a modal or layout policy.
   auto require(AppRequirements requirements) -> void {
-    m_requirements = std::move(requirements);
+    m_requirements = requirements;
   }
   [[nodiscard]] auto requirements() const noexcept -> const AppRequirements& {
     return m_requirements;

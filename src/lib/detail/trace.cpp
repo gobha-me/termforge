@@ -37,9 +37,9 @@ constexpr std::uint32_t kInputRelease{1U << 2};
 constexpr std::uint32_t kInputModifiers{1U << 3};
 constexpr std::uint32_t kInputMask =
     kInputPress | kInputRepeat | kInputRelease | kInputModifiers;
-constexpr std::size_t kMaxPayloadBytes{16U * 1024U * 1024U};
-constexpr std::size_t kMaxTraceBytes{256U * 1024U * 1024U};
-constexpr std::size_t kMaxRecords{4U * 1024U * 1024U};
+constexpr std::size_t kMaxPayloadBytes{std::size_t{16} * 1024 * 1024};
+constexpr std::size_t kMaxTraceBytes{std::size_t{256} * 1024 * 1024};
+constexpr std::size_t kMaxRecords{std::size_t{4} * 1024 * 1024};
 
 auto trace_error(std::string message) -> std::unexpected<ErrorEvent> {
   return std::unexpected{
@@ -574,7 +574,7 @@ auto decode_terminal_reply(const TraceRecord& record)
       const auto value = take_le<std::uint32_t>(bytes);
       if (!value || *value == 0)
         return trace_error("terminal-reply record is invalid");
-      placement_id = *value;
+      placement_id = value;
     }
     auto status = take_string(bytes);
     if (!status || status->empty() || !bytes.empty())

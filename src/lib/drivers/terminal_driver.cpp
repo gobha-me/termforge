@@ -98,7 +98,7 @@ constexpr std::string_view kSyncEnd = "\033[?2026l";
 // protocol standardizes no portable capacity/timeout query, so this is
 // deliberately sender policy, not a fabricated Capabilities field or an
 // emulator-version check.
-constexpr std::size_t kSyncPendingBudget = 1024U * 1024U;
+constexpr std::size_t kSyncPendingBudget = std::size_t{1024} * 1024;
 static_assert(kSyncEnd.size() < kSyncPendingBudget);
 constexpr std::size_t kMaxSyncFrameBytes = kSyncPendingBudget - kSyncEnd.size();
 
