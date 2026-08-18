@@ -6,7 +6,25 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-18, latest)
 
-**Current stable release: v0.48.1 — conversion-warning-clean library.** #287
+**Current stable release: v0.49.0 — partial-update paint evidence.** The W2
+slice of #88 drives one deterministic buttonless-motion record through App's
+real input-to-write cadence per frame, mutates one pinned canvas, and compares
+full-root `replace_pinned` with block-sized `edit_pinned` across 320×180 through
+1920×1080 canvases and 1×1 through 128×128 dirty rectangles. Benchmark schema
+4 adds exact phase, byte, offered-load and accepted-residency records while
+leaving the existing kernel/W3/W4 arrays intact.
+
+On the GCC 14.2 reference host every case remains under both headless CPU
+budgets. At 1920×1080, a one-pixel replacement costs 6.867 ms and 11,105,137
+wire bytes versus 0.048 ms and 68 bytes for the partial edit. The replacement's
+cost is independent of dirty size because it hashes and base64-encodes the
+whole root; the edit scales with the block and is independent of canvas size.
+These are O(1)-sink offered loads rather than terminal-throughput claims. #88
+remains open only for W5. No installed API or terminal wire behavior changed.
+
+## Previous stable release: v0.48.1
+
+**v0.48.1 — conversion-warning-clean library.** #287
 fixes the consumer build failure exposed by global `-Wconversion` and
 `-Wsign-conversion` flags. Signed cell/image dimensions now cross into indexing
 only after their existing validation or clipping proves them non-negative;
@@ -18,7 +36,7 @@ library with both conversion warnings promoted to errors. Existing failure
 tests continue to pin invalid dimensions and clipped image operations, while
 new cases cover negative Screen dimensions, four-byte UTF-8, high-bit Kitty
 status bytes and signed/high-bit trace fields. No public API, terminal wire or
-trace schema changed. #88 W2 remains next.
+trace schema changed.
 
 ## Previous stable release: v0.48.0
 

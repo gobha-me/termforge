@@ -27,19 +27,19 @@ no observation. Synthetic clocks and traces keep controlling application time;
 telemetry deliberately measures real process wall time. With no callback there
 are no telemetry clock reads or allocations.
 
-This document begins with the game-readiness slice of issue #88. The broader
-paint and cross-terminal throughput sweeps remain open there; the many-region
-W4 slice is recorded below.
+This document begins with the game-readiness slice of issue #88. The W2 paint
+and W4 many-region slices are recorded below; cross-terminal W5 throughput is
+the remaining open workload.
 
 ## Reproducible kernel and cell-churn harness
 
 The default-off `termforge_BENCH` target is Release-only. Its output is a human
 table or schema-versioned JSON containing compiler/host metadata, calibrated
-sample batches, median/p95 durations, byte counts, and checksums. Schema 3 adds
-W4's frame-phase, residency and retransmit-wall records without changing the
-existing kernel/W3 arrays. CI runs only `--smoke`, validates deterministic
-shape and accounting, and uploads it; no runner-dependent time is a pass/fail
-threshold.
+sample batches, median/p95 durations, byte counts, and checksums. Schema 4 adds
+W2's input-to-write paint records to schema 3's W4 frame-phase, residency and
+retransmit-wall data without changing the existing kernel/W3 arrays. CI runs
+only `--smoke`, validates deterministic shape and accounting, and uploads it;
+no runner-dependent time is a pass/fail threshold.
 
 ```bash
 cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -Dtermforge_BENCH=ON
@@ -72,6 +72,43 @@ emitted bytes. At the same size, 100% ASCII churn was 5.234 ms and CJK-wide was
 3.195 ms. These measurements point
 to the serial payload hash and scalar frame-time work in #89 before #90 SIMD;
 they do not establish terminal throughput, which remains W5.
+
+## W2 partial-update paint sweep
+
+W2 drives one deterministic SGR buttonless-motion event through the production
+`App::frame_step` input pump on every frame. The application mutates the same
+pinned RGBA canvas and submits the same visual result by two routes:
+
+- `replace` sends the complete root with `replace_pinned` after every stroke;
+- `edit` sends only the dirty block with overwrite `edit_pinned`.
+
+The matrix crosses 320×180, 640×360, 1280×720 and 1920×1080 canvases with
+1×1, 8×8, 32×32 and 128×128 dirty blocks. `input_to_write` starts when the
+synthetic fd exposes the mouse record and stops at the frame's one sink write,
+so it includes parsing and dispatch that `FrameObservation` intentionally does
+not. The ordinary tick/application/framework/sink partitions remain alongside
+it for attribution. Each case also records one accepted pinned root, the exact
+median-total byte buckets, accepted residency before/after the sample window,
+and offered wire load at 30 and 60 strokes per second.
+
+Reference run on 2026-08-18: GCC 14.2, Linux 6.12.74, x86-64 container host,
+AVX2 auto-selected, nine measured frames after two warmups.
+
+| path / dirty block at 1920×1080 | input-to-write median / p95 | app / framework median | wire bytes | offered load at 30 / 60 Hz |
+| --- | ---: | ---: | ---: | ---: |
+| replace, 1×1 | 6.867 / 7.676 ms | 0.009 / 6.855 ms | 11,105,137 | 317.721 / 635.441 MiB/s |
+| edit, 1×1 | 0.048 / 0.052 ms | 0.004 / 0.042 ms | 68 | 0.002 / 0.004 MiB/s |
+| replace, 128×128 | 6.801 / 6.891 ms | 0.015 / 6.784 ms | 11,105,137 | 317.721 / 635.441 MiB/s |
+| edit, 128×128 | 0.079 / 0.080 ms | 0.011 / 0.068 ms | 87,805 | 2.512 / 5.024 MiB/s |
+
+Every headless case remains below both CPU budgets through 1920×1080, so no
+host-side wall was reached. The one-pixel result nevertheless exposes the
+architecture wall: full replacement is about 144× slower in the library and
+163,000× larger on the wire than a block edit, and its cost is independent of
+dirty size because hashing/base64 cover the complete root. Partial edits scale
+with the dirty block and remain independent of canvas size. These are offered
+loads into an O(1) sink, not claims that a pty or emulator can sustain them;
+the W5 matrix remains responsible for that boundary.
 
 ## W4 many-region residency sweep
 

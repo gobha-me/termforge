@@ -184,6 +184,16 @@ completed items.
 > reaches 64 regions with zero steady image bytes. Benchmark JSON schema 3
 > records the retransmit and 16.6/33.3 ms walls without timing assertions.
 > #88 remains open for W2 paint and the broader W5 terminal-throughput matrix.
+>
+> **2026-08-18 — partial-update paint evidence.** The W2 slice of **#88**
+> drives deterministic SGR motion through App's real input-to-write cadence,
+> comparing complete `replace_pinned` roots with equivalent `edit_pinned`
+> blocks across 320×180 through 1920×1080 canvases and four dirty sizes.
+> Benchmark JSON schema 4 records input latency, frame phases, exact byte
+> buckets, accepted residency and 30/60 Hz offered load. Both routes remain
+> inside the headless CPU budgets, but a 1920×1080 one-pixel replacement is
+> 11.1 MB versus 68 bytes for the edit. #88 now retains only the W5
+> pty/emulator throughput matrix.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
