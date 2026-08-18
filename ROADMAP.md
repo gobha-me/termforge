@@ -202,6 +202,18 @@ completed items.
 > inside the headless CPU budgets, but a 1920×1080 one-pixel replacement is
 > 11.1 MB versus 68 bytes for the edit. #88 now retains only the W5
 > pty/emulator throughput matrix.
+>
+> **2026-08-18 — live-terminal throughput evidence.** W5 completes **#88**
+> with a separate Release-only live harness and ordered-reply batches through
+> direct Kitty 0.32.2, Ghostty 1.3.1 and xterm 390 child ptys. The constrained
+> environment is a Kubernetes pod on an MS-01 desktop with Guacamole as its
+> viewport. Its adversarial fully dirty, high-entropy full-transmit stream
+> reaches 30 Hz at 320×180 on Kitty but not at 640×360; the measured
+> Ghostty/X11 path misses 30 Hz at the smallest RGBA case, while xterm's ANSI
+> path reaches 120×40 cells at 60 Hz and 200×50 at 30 Hz. These are
+> workload-specific worst-case walls, not terminal rankings. They prioritize
+> #166's dependency-free Rgb24 reduction and damage/atlas architectures over
+> more host-side SIMD.
 
 **Cut:** FramebufferDriver (no target use case), AIForge (separate project).
 
@@ -247,8 +259,8 @@ completed items.
   decoder, resize/post boundaries, synthetic time and production frame loop
 - Demand-driven rendering (#150) — opt-in source-woken idle, coalesced
   invalidation and zero draw/flush work once the application settles
-- Performance baseline (#88 slice) — Release-only kernel and W3 cell-churn
-  evidence with JSON artifacts and no host-speed CI assertions
+- Performance baseline (#88) — Release-only kernels plus W2/W3/W4 headless
+  and W5 live-terminal evidence with JSON artifacts and no speed assertions
 - Scalar frame-time bundle (#89) — portable hash/base64/text/width/shadow-copy
   fast paths and shared cursor-aware driver output assembly
 

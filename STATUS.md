@@ -6,7 +6,44 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-18, latest)
 
-**Current stable release: v0.50.0 — compact, lossless Cell storage.** #92
+**Current stable release: v0.51.0 — W5 live-terminal throughput matrix.** The
+final slice of #88 adds a separate Release-only `termforge_terminal_bench`
+whose live batches cross the terminal's direct child pty and end at an ordered
+graphics/DA1 reply. Its schema-1 JSON records terminal metadata, exact driver
+byte buckets, library assembly, blocking write, fence and total timings,
+sustained MiB/s, and explicit 16.6/33.3 ms walls. An offline smoke validates
+the two real driver paths without making runner speed a CI gate.
+
+The 2026-08-18 GCC 14.2 reference matrix runs in a Kubernetes pod on an MS-01
+desktop with Guacamole as the graphical viewport. It uses deliberately
+adversarial, fully dirty high-entropy frames in back-to-back 16 MiB batches.
+Kitty 0.32.2 sustains 30 Hz at 320×180 RGBA but not 640×360; Ghostty 1.3.1 on
+the measured X11 path misses 30 Hz at the smallest RGBA case; xterm 390
+sustains 60 Hz through 120×40 ANSI cells and 30 Hz through 200×50. These are
+constrained, workload-specific stress walls, not typical UI performance or
+terminal rankings. They make #166's 25% Rgb24 reduction the next cheap
+full-frame lever and reinforce W2's damage-edit result. No installed API or
+terminal wire behavior changed.
+
+## Previous stable release: v0.50.2
+
+**v0.50.2 — focused clang-tidy policy.** The shipped library now has an
+explicit Clang Tidy 20 allowlist, a reproducible `tools/lint.sh` entry point,
+documented analyzer scope and an independent CI gate. Reviewed baseline fixes
+remove ineffective moves and clarify integer-width/optional expressions.
+Tests, examples, generated code, dependencies and system headers remain out of
+the focused gate. No API, ABI, wire or intended runtime behavior changed.
+
+## Previous stable release: v0.50.1
+
+**v0.50.1 — project-wide clang-format policy.** A checked-in LLVM-derived
+Clang Format 20 policy, `tools/format.sh`, contributor documentation and CI
+gate now keep the tracked C++ tree mechanically consistent. No API, ABI, wire
+or runtime behavior changed.
+
+## Previous stable release: v0.50.0
+
+**v0.50.0 — compact, lossless Cell storage.** #92
 replaces each 48-byte `std::string` Cell with an exactly 24-byte trivially
 copyable token. UTF-8 scalars through four bytes stay inline; longer grapheme
 clusters spill into Screen-owned storage without a length cap or truncation.

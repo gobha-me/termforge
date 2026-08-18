@@ -2,6 +2,10 @@ add_executable(${PROJECT_NAME}_bench
   main.cpp
 )
 
+add_executable(${PROJECT_NAME}_terminal_bench
+  terminal.cpp
+)
+
 target_include_directories(${PROJECT_NAME}_bench PRIVATE
   ${PROJECT_SOURCE_DIR}/include
   ${PROJECT_SOURCE_DIR}/src/lib
@@ -13,6 +17,17 @@ target_compile_definitions(${PROJECT_NAME}_bench PRIVATE
   TERMFORGE_BENCH_VERSION="${PROJECT_VERSION}"
 )
 
+target_include_directories(${PROJECT_NAME}_terminal_bench PRIVATE
+  ${PROJECT_SOURCE_DIR}/include
+  ${PROJECT_SOURCE_DIR}/src/lib
+)
+
+target_link_libraries(${PROJECT_NAME}_terminal_bench PRIVATE ${PROJECT_NAME}::lib)
+target_compile_features(${PROJECT_NAME}_terminal_bench PRIVATE cxx_std_23)
+target_compile_definitions(${PROJECT_NAME}_terminal_bench PRIVATE
+  TERMFORGE_BENCH_VERSION="${PROJECT_VERSION}"
+)
+
 if (${PROJECT_NAME}_TESTS AND BUILD_TESTING)
   add_test(
     NAME benchmark-smoke
@@ -20,5 +35,12 @@ if (${PROJECT_NAME}_TESTS AND BUILD_TESTING)
       -DBENCHMARK=$<TARGET_FILE:${PROJECT_NAME}_bench>
       -DOUTPUT=${PROJECT_BINARY_DIR}/benchmark-smoke.json
       -P ${CMAKE_CURRENT_LIST_DIR}/check_smoke.cmake
+  )
+  add_test(
+    NAME terminal-benchmark-smoke
+    COMMAND ${CMAKE_COMMAND}
+      -DBENCHMARK=$<TARGET_FILE:${PROJECT_NAME}_terminal_bench>
+      -DOUTPUT=${PROJECT_BINARY_DIR}/terminal-benchmark-smoke.json
+      -P ${CMAKE_CURRENT_LIST_DIR}/check_terminal_smoke.cmake
   )
 endif ()
