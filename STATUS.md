@@ -6,7 +6,26 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-18, latest)
 
-**Current stable release: v0.52.0 — dependency-free packed RGB.** #166 adds
+**Current stable release: v0.53.0 — multiline Composer input.** #26 adds a
+separate `Composer` widget rather than turning `TextInput` into a mode-dependent
+control. Its UTF-8 byte cursor projects through the same display-width and
+word-aware wrapping engine as TextBox/Dialog, with hard-newline navigation,
+mouse placement, cursor-following vertical scroll and an advisory growing
+height capped by the parent.
+
+Up/Down cross wrapped rows before entering shell-style history; edited recalls
+survive the browse and returning to the bottom restores the exact draft and
+cursor. Bracketed paste retains line structure and normalizes CRLF while the
+renderer keeps terminal control bytes from reaching the driver. Plain Enter
+stays unconsumed for the
+parent submit path, while distinguishable Shift/Alt+Enter inserts a newline;
+Legacy terminals honestly fall back to submission. `examples/chat.cpp` now
+demonstrates the complete TextBox + Composer call order. This release changes
+no terminal wire behavior.
+
+## Previous stable release: v0.52.0
+
+**v0.52.0 — dependency-free packed RGB.** #166 adds
 `ImageFormat::Rgb24`, a tightly packed row-major RGB descriptor that Kitty
 ships verbatim as `f=24`. Exact three-byte-per-pixel validation makes the route
 locally checked: it uses quiet protocol transfers and never waits for an opaque

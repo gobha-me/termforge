@@ -52,7 +52,8 @@ Landed and verified:
 - **Widgets** — `Widget` base (with immediate and persistent pixel-region
   support), `PixelSurface` (an owned, fixed-resolution software framebuffer
   with producer-directed dirty submission and an ASCII cell fallback),
-  TextBox scrollback, TableWidget, ListWidget, WaveformWidget, MapWidget (tile
+  TextBox scrollback, Composer multiline input/history, TableWidget,
+  ListWidget, WaveformWidget, MapWidget (tile
   maps: TileSet + camera + layers + a persistent atlas-sprite tier), and the
   primitives Label, Button, ProgressBar, TextInput, Frame, MenuBar, TabBar.
   Mouse event routing via
@@ -243,7 +244,8 @@ and Clang.
   `pixel_surface` (the persistent framebuffer primitive), `dashboard`
   (TableWidget + WaveformWidget + TextBox), `motion` (`on_tick` — fixed vs
   variable timestep and the stall clamp, live), `widgets` (all primitives +
-  focus model), `image`, `chat`, `input`, `colors`, `low_level`, `hello`.
+  focus model), `image`, `chat` (TextBox + Composer), `input`, `colors`,
+  `low_level`, `hello`.
 
 The game workload can be measured without a TTY or captured on a real Kitty
 terminal. See [docs/performance.md](docs/performance.md) for commands, metric
