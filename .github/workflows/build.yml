@@ -7,6 +7,23 @@ on:
     branches: [main]
 
 jobs:
+  format:
+    name: Clang Format 20
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clang Format 20
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 20
+          sudo apt-get install -y clang-format-20
+
+      - name: Check formatting
+        run: tools/format.sh --check
+
   gcc:
     name: GCC ${{ matrix.version }} (Ubuntu ${{ matrix.os }})
     runs-on: ubuntu-${{ matrix.os }}

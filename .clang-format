@@ -1,0 +1,50 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+
+# TermForge is C++23, but clang-format's Latest spelling is the stable way to
+# select the newest grammar understood by the pinned formatter major.
+Standard: Latest
+
+# Keep the tree compact enough for side-by-side protocol review without
+# sacrificing the whitespace that separates logical units.
+ColumnLimit: 80
+IndentWidth: 2
+ContinuationIndentWidth: 4
+TabWidth: 8
+UseTab: Never
+AccessModifierOffset: -1
+IndentCaseLabels: true
+NamespaceIndentation: None
+
+BreakBeforeBraces: Attach
+BreakAfterReturnType: None
+PenaltyReturnTypeOnItsOwnLine: 500
+AlignAfterOpenBracket: Align
+BinPackArguments: true
+BinPackParameters: BinPack
+Cpp11BracedListStyle: true
+SpacesInContainerLiterals: true
+
+# Guard clauses and lookup-style switches stay compact. Functions, loops and
+# compound control flow retain visible structure.
+AllowShortBlocksOnASingleLine: Never
+AllowShortFunctionsOnASingleLine: InlineOnly
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: true
+
+DerivePointerAlignment: false
+PointerAlignment: Left
+ReferenceAlignment: Pointer
+QualifierAlignment: Leave
+
+# Preserve intentional system/project include groups while sorting each group.
+IncludeBlocks: Preserve
+SortIncludes: CaseSensitive
+SortUsingDeclarations: LexicographicNumeric
+
+FixNamespaceComments: true
+ReflowComments: true
+SeparateDefinitionBlocks: Leave
+InsertNewlineAtEOF: true
