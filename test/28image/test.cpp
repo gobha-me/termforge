@@ -40,7 +40,7 @@ auto same(const Image& l, const Image& r) -> bool {
   return true;
 }
 
-}  // namespace
+} // namespace
 
 // ── Rect ────────────────────────────────────────────────────────────────────
 //
@@ -102,7 +102,8 @@ TEST_CASE("Rect: intersect does not overflow on extreme coordinates",
   REQUIRE(low.intersect(Rect{0, 0, 4, 4}).empty());
 }
 
-TEST_CASE("Rect: contains still tests the half-open interior", "[image][rect]") {
+TEST_CASE("Rect: contains still tests the half-open interior",
+          "[image][rect]") {
   const Rect r{2, 3, 4, 5};
   REQUIRE(r.contains(2, 3));
   REQUIRE(r.contains(5, 7));
@@ -160,7 +161,7 @@ TEST_CASE("Image: a moved-from image is a valid empty image",
   REQUIRE(moved.width() == 8);
   REQUIRE(moved.height() == 8);
 
-  REQUIRE(src.width() == 0);          // NOLINT(bugprone-use-after-move)
+  REQUIRE(src.width() == 0); // NOLINT(bugprone-use-after-move)
   REQUIRE(src.height() == 0);
   REQUIRE(src.empty());
   REQUIRE(src.pixels().empty());
@@ -176,7 +177,7 @@ TEST_CASE("Image: a moved-from image is a valid empty image",
   Image b;
   b = std::move(a);
   REQUIRE(b.width() == 4);
-  REQUIRE(a.width() == 0);            // NOLINT(bugprone-use-after-move)
+  REQUIRE(a.width() == 0); // NOLINT(bugprone-use-after-move)
   REQUIRE(a.empty());
   a.fill(Rect{0, 0, 4, 4}, kBg);
   REQUIRE(a.empty());
@@ -304,13 +305,13 @@ TEST_CASE("Image: blit clips at each of the four edges", "[image][failure]") {
   const Image src = solid(2, 2, kMark);
 
   struct Case {
-    int dx, dy, cx, cy;  // placement, and the one cell that must be covered
+    int dx, dy, cx, cy; // placement, and the one cell that must be covered
   };
   const Case cases[] = {
-      {-1, 1, 0, 1},  // clipped left
-      {1, -1, 1, 0},  // clipped top
-      {3, 1, 3, 1},   // clipped right
-      {1, 3, 1, 3},   // clipped bottom
+      {-1, 1, 0, 1}, // clipped left
+      {1, -1, 1, 0}, // clipped top
+      {3, 1, 3, 1},  // clipped right
+      {1, 3, 1, 3},  // clipped bottom
   };
 
   for (const auto& c : cases) {
@@ -318,8 +319,7 @@ TEST_CASE("Image: blit clips at each of the four edges", "[image][failure]") {
     dst.blit(src, c.dx, c.dy);
     REQUIRE(dst.at(c.cx, c.cy) == kMark);
     // Every cell outside the clipped placement is byte-identical to before.
-    const Rect covered =
-        Rect{c.dx, c.dy, 2, 2}.intersect(Rect{0, 0, 4, 4});
+    const Rect covered = Rect{c.dx, c.dy, 2, 2}.intersect(Rect{0, 0, 4, 4});
     for (int y = 0; y < 4; ++y)
       for (int x = 0; x < 4; ++x)
         if (!covered.contains(x, y)) REQUIRE(dst.at(x, y) == kBg);
@@ -346,7 +346,8 @@ TEST_CASE("Image: blit clips origin and extent on all sides at once",
   // The source is larger than the destination and starts outside it: both the
   // origin and the extent have to clip.
   for (int y = 0; y < 4; ++y)
-    for (int x = 0; x < 4; ++x) REQUIRE(dst.at(x, y) == kMark);
+    for (int x = 0; x < 4; ++x)
+      REQUIRE(dst.at(x, y) == kMark);
 }
 
 TEST_CASE("Image: the blit source-rect overload matches slicing first",
@@ -371,7 +372,7 @@ TEST_CASE("Image: a partially clipped source rect does not slide the paste",
   const Image atlas = checker(4, 4, kA, kB);
   Image dst = solid(6, 6, kBg);
   dst.blit(atlas, Rect{-2, 0, 4, 1}, 0, 0);
-  REQUIRE(dst.at(0, 0) == kBg);   // trimmed columns leave the dst untouched
+  REQUIRE(dst.at(0, 0) == kBg); // trimmed columns leave the dst untouched
   REQUIRE(dst.at(1, 0) == kBg);
   REQUIRE(dst.at(2, 0) == atlas.at(0, 0));
   REQUIRE(dst.at(3, 0) == atlas.at(1, 0));
@@ -461,7 +462,8 @@ TEST_CASE("Image: blend's general path is correctly rounded Porter-Duff",
   for (int as = 1; as <= 254; ++as) {
     for (int ad = 1; ad <= 255; ++ad) {
       const auto inv = static_cast<std::uint64_t>(255 - as);
-      const std::uint64_t den = static_cast<std::uint64_t>(as) * 255U + ad * inv;
+      const std::uint64_t den =
+          static_cast<std::uint64_t>(as) * 255U + ad * inv;
       const auto exact = [&](std::uint64_t cs, std::uint64_t cd) {
         const std::uint64_t num = cs * static_cast<std::uint64_t>(as) * 255U +
                                   cd * static_cast<std::uint64_t>(ad) * inv;
@@ -474,8 +476,8 @@ TEST_CASE("Image: blend's general path is correctly rounded Porter-Duff",
       REQUIRE(got.g == exact(s.g, d.g));
       REQUIRE(got.b == exact(s.b, d.b));
       // a_o is round((a_s*255 + a_d*(255-a_s))/255) either way.
-      REQUIRE(got.a == termforge::detail::div255(
-                           static_cast<std::uint32_t>(den)));
+      REQUIRE(got.a ==
+              termforge::detail::div255(static_cast<std::uint32_t>(den)));
     }
   }
 }
@@ -627,7 +629,8 @@ TEST_CASE("Image: blitting an image onto itself shifts without smearing",
                                Pixel{50, 0, 0, 255}, Pixel{60, 0, 0, 255}}};
   img.blit(img, Rect{0, 0, 5, 1}, 1, 0);
   const std::uint8_t want[] = {10, 10, 20, 30, 40, 50};
-  for (int x = 0; x < 6; ++x) REQUIRE(img.at(x, 0).r == want[x]);
+  for (int x = 0; x < 6; ++x)
+    REQUIRE(img.at(x, 0).r == want[x]);
 }
 
 TEST_CASE("Image: blitting an image onto itself shifts the other way too",
@@ -639,7 +642,8 @@ TEST_CASE("Image: blitting an image onto itself shifts the other way too",
                                Pixel{50, 0, 0, 255}, Pixel{60, 0, 0, 255}}};
   img.blit(img, Rect{1, 0, 5, 1}, 0, 0);
   const std::uint8_t want[] = {20, 30, 40, 50, 60, 60};
-  for (int x = 0; x < 6; ++x) REQUIRE(img.at(x, 0).r == want[x]);
+  for (int x = 0; x < 6; ++x)
+    REQUIRE(img.at(x, 0).r == want[x]);
 }
 
 TEST_CASE("Image: self-blit matches going through an explicit copy",
@@ -689,9 +693,13 @@ TEST_CASE("Image: a trimmed source rect with an extreme offset does not "
   const Image src = solid(8, 8, kMark);
   const Image before = checker(4, 4, kA, kB);
 
-  for (const auto& [dx, dy] : std::vector<std::pair<int, int>>{
-           {INT_MAX, 0}, {0, INT_MAX}, {INT_MIN, 0}, {0, INT_MIN},
-           {INT_MAX, INT_MAX}, {INT_MIN, INT_MIN}}) {
+  for (const auto& [dx, dy] :
+       std::vector<std::pair<int, int>>{{INT_MAX, 0},
+                                        {0, INT_MAX},
+                                        {INT_MIN, 0},
+                                        {0, INT_MIN},
+                                        {INT_MAX, INT_MAX},
+                                        {INT_MIN, INT_MIN}}) {
     Image dst = before;
     dst.blit(src, Rect{-4, -4, 8, 8}, dx, dy);
     dst.blend(src, Rect{-4, -4, 8, 8}, dx, dy);

@@ -36,8 +36,8 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
-#include <memory>
 #include <expected>
+#include <memory>
 #include <set>
 #include <span>
 #include <string>
@@ -47,9 +47,9 @@
 #include "support/image.hpp"
 #include "support/terminal_grid.hpp"
 #include "termforge/core/app.hpp"
+#include "termforge/core/byte_sink.hpp"
 #include "termforge/core/screen.hpp"
 #include "termforge/core/types.hpp"
-#include "termforge/core/byte_sink.hpp"
 #include "termforge/drivers/ansi_rgb_driver.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
 #include "termforge/drivers/kitty_driver.hpp"
@@ -129,8 +129,7 @@ class PixelApp : public App {
   }
   auto run_unicode(int frames) -> void {
     auto driver = std::make_unique<KittyDriver>();
-    driver->set_placement_mode(
-        KittyDriver::PlacementMode::UnicodePlaceholders);
+    driver->set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
     test_run_frames(frames, 20, 8, &m_sink, std::move(driver));
   }
   auto run_ansi(int frames) -> void {
@@ -146,7 +145,9 @@ class PixelApp : public App {
   // one test/37bytes' MeterProbe re-exports for the same reason.
   [[nodiscard]] auto caps() -> Capabilities { return driver().capabilities(); }
   [[nodiscard]] auto meter() -> FrameBytes { return m_frame_meter; }
-  [[nodiscard]] auto cumulative() -> FrameBytes { return driver().total_bytes(); }
+  [[nodiscard]] auto cumulative() -> FrameBytes {
+    return driver().total_bytes();
+  }
 
  protected:
   auto on_event(const Event& event) -> void override {
@@ -227,7 +228,8 @@ class SpriteApp final : public PixelApp {
       // firing mid-frame aborts the case before its own assertion gets to say
       // what went wrong. A tier that cannot pin refuses honestly, and the case
       // that cares reads refusals().
-      auto pinned = d.pin_image(tfsupport::solid(4, 4, Pixel{20, 220, 90, 255}));
+      auto pinned =
+          d.pin_image(tfsupport::solid(4, 4, Pixel{20, 220, 90, 255}));
       if (!pinned) {
         ++m_refusals;
         return;
@@ -241,7 +243,7 @@ class SpriteApp final : public PixelApp {
   int m_frame{0};
   PinnedImage m_pin{};
   int m_refusals{0};
-  PlateWidget m_dialog;  // a modal that draws nothing but occupies the stack
+  PlateWidget m_dialog; // a modal that draws nothing but occupies the stack
 };
 
 // #196's production shape: one logical framebuffer, one resident handle, new
@@ -257,7 +259,10 @@ class MutableSpriteApp final : public PixelApp {
   auto on_pixels(TerminalDriver& d) -> void override {
     ++pixel_calls;
     const std::array<std::byte, 6> bytes{
-        std::byte{0x89}, std::byte{'P'}, std::byte{'N'}, std::byte{'G'},
+        std::byte{0x89},
+        std::byte{'P'},
+        std::byte{'N'},
+        std::byte{'G'},
         static_cast<std::byte>(m_frame & 0xFF),
         static_cast<std::byte>((m_frame >> 8) & 0xFF)};
     const EncodedImage frame{ImageFormat::Png, bytes, Extent{320, 180}};
@@ -322,10 +327,11 @@ class AnsiHookApp final : public PixelApp {
 class WriteCounter final : public ByteSink {
  public:
   int writes{0};
-  std::vector<std::string> segments;  // one entry per write, in order
+  std::vector<std::string> segments; // one entry per write, in order
   std::string bytes;
 
-  auto write(std::span<const char> b) -> std::expected<void, ErrorEvent> override {
+  auto write(std::span<const char> b)
+      -> std::expected<void, ErrorEvent> override {
     ++writes;
     segments.emplace_back(b.data(), b.size());
     bytes.append(b.data(), b.size());
@@ -366,13 +372,12 @@ class EncodedPlateWidget final : public Widget {
   int submissions{0};
   bool present{true};
 
-  auto set_payload(ImageFormat format, Extent extent,
-                   std::uint8_t marker) -> void {
-    const std::size_t size =
-        format == ImageFormat::Rgba32
-            ? static_cast<std::size_t>(extent.w) *
-                  static_cast<std::size_t>(extent.h) * 4
-            : 7;
+  auto set_payload(ImageFormat format, Extent extent, std::uint8_t marker)
+      -> void {
+    const std::size_t size = format == ImageFormat::Rgba32
+                                 ? static_cast<std::size_t>(extent.w) *
+                                       static_cast<std::size_t>(extent.h) * 4
+                                 : 7;
     m_bytes.assign(size, static_cast<std::byte>(marker));
     if (format == ImageFormat::Rgba32) {
       for (std::size_t i = 3; i < m_bytes.size(); i += 4)
@@ -469,14 +474,14 @@ class EncodedPixelApp final : public App {
   }
   auto wait_readable(int timeout_ms) -> bool override {
     m_now += std::chrono::milliseconds(timeout_ms);
-    return std::ranges::any_of(replies, [&](const auto& reply) {
-      return reply.first == m_frame;
-    });
+    return std::ranges::any_of(
+        replies, [&](const auto& reply) { return reply.first == m_frame; });
   }
   auto read_available(char* out, int max) -> int override {
-    const auto reply = std::ranges::find_if(replies, [&](const auto& candidate) {
-      return candidate.first == m_frame;
-    });
+    const auto reply =
+        std::ranges::find_if(replies, [&](const auto& candidate) {
+          return candidate.first == m_frame;
+        });
     if (reply == replies.end() || max < static_cast<int>(reply->second.size()))
       return 0;
     std::copy(reply->second.begin(), reply->second.end(), out);
@@ -509,7 +514,8 @@ class CountedApp final : public App {
     if (m_graphics) {
       test_run_frames(frames, 20, 8, nullptr, std::make_unique<KittyDriver>());
     } else {
-      test_run_frames(frames, 20, 8, nullptr, std::make_unique<FallbackDriver>());
+      test_run_frames(frames, 20, 8, nullptr,
+                      std::make_unique<FallbackDriver>());
     }
   }
 
@@ -541,8 +547,7 @@ class MapSpriteApp final : public App {
     std::vector<Pixel> pixels(8, Pixel{220, 30, 30, 255});
     for (int y = 0; y < 2; ++y)
       for (int x = 2; x < 4; ++x)
-        pixels[static_cast<std::size_t>(y) * 4 + x] =
-            Pixel{30, 60, 220, 255};
+        pixels[static_cast<std::size_t>(y) * 4 + x] = Pixel{30, 60, 220, 255};
 
     TileSet tiles;
     tiles.set_atlas(Image{4, 2, std::move(pixels)}, Extent{2, 2});
@@ -597,7 +602,7 @@ class MapSpriteApp final : public App {
   std::chrono::steady_clock::time_point m_now{};
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("app pixels: the harness can put a graphics driver in App's loop",
           "[apppixels][kitty]") {
@@ -625,9 +630,8 @@ TEST_CASE("app pixels: an encoded PNG takes precedence on Kitty",
   CHECK(app.plate.raw_calls == 0);
   CHECK(total_data_transmits(app.wire) == 1);
   const auto commands = apcs(app.wire);
-  const auto transmission = std::ranges::find_if(commands, [](const auto& c) {
-    return key_value(c, "a") == "t";
-  });
+  const auto transmission = std::ranges::find_if(
+      commands, [](const auto& c) { return key_value(c, "a") == "t"; });
   REQUIRE(transmission != commands.end());
   CHECK(key_value(*transmission, "f") == "100");
 }
@@ -1091,9 +1095,10 @@ TEST_CASE("app pixels: moving placeholders clear the terminal cell grid",
   } app;
   app.go();
 
-  REQUIRE(app.sink.segments.size() == 4);  // 3 frames + shutdown
+  REQUIRE(app.sink.segments.size() == 4); // 3 frames + shutdown
   tfsupport::TerminalGrid grid{12, 4};
-  for (int frame = 0; frame < 3; ++frame) grid.feed(app.sink.segments[frame]);
+  for (int frame = 0; frame < 3; ++frame)
+    grid.feed(app.sink.segments[frame]);
 
   // Id 1 was reused at x=6. Without the cleanup, its old x=0 grid resolves to
   // the new image and this first assertion sees two placeholders, not blanks.
@@ -1105,8 +1110,9 @@ TEST_CASE("app pixels: moving placeholders clear the terminal cell grid",
   CHECK(grid.at(7, 1).placeholder());
 }
 
-TEST_CASE("app pixels: App's frame is ONE write carrying the whole frame (#148)",
-          "[apppixels][kitty]") {
+TEST_CASE(
+    "app pixels: App's frame is ONE write carrying the whole frame (#148)",
+    "[apppixels][kitty]") {
   // Before #148 a frame was two writes -- the cell diff, then the images --
   // and collection had to infer frame boundaries. Since #148 the frame is ONE
   // write: images queue
@@ -1123,7 +1129,7 @@ TEST_CASE("app pixels: App's frame is ONE write carrying the whole frame (#148)"
 
   const FrameBytes last = app.meter();
   CHECK(last.image_transmit > 0);
-  CHECK(last.cells > 0);  // the cell diff is in the SAME single write now
+  CHECK(last.cells > 0); // the cell diff is in the SAME single write now
   // One frame, one write: the whole frame's cost is the last frame, and the
   // cumulative total equals everything on the wire (which also carries the
   // trailing d=A the shutdown emits through the same sink).
@@ -1151,14 +1157,15 @@ TEST_CASE("app pixels: a sprite drawn from on_pixels is placed ONCE (#191)",
   CHECK(transmits_of(app.wire(), 1) == 1);
   CHECK(transmits_of(app.wire(), app.pin_id()) == 1);
   CHECK(total_transmits(app.wire()) == 2);
-  CHECK(ids_named(app.wire()).size() == 2);  // the plate and the pin
+  CHECK(ids_named(app.wire()).size() == 2); // the plate and the pin
   CHECK(data_deletes_of(app.wire(), 1) == 0);
   CHECK(placement_deletes_of(app.wire(), app.pin_id()) == 0);
   CHECK(placements_of(app.wire(), app.pin_id()) == 1);
 }
 
-TEST_CASE("app pixels: mutable resident frames keep one id and placement (#196)",
-          "[apppixels][kitty][pinned][replacement]") {
+TEST_CASE(
+    "app pixels: mutable resident frames keep one id and placement (#196)",
+    "[apppixels][kitty][pinned][replacement]") {
   MutableSpriteApp app;
   app.run(60);
 
@@ -1191,8 +1198,8 @@ TEST_CASE("app pixels: an app whose ONLY images come from on_pixels is written",
   app.run(6);
 
   REQUIRE(app.pixel_calls == 6);
-  CHECK(total_transmits(app.wire()) == 1);              // the pin, once
-  CHECK(placements_of(app.wire(), app.pin_id()) == 1);  // and placed once
+  CHECK(total_transmits(app.wire()) == 1);             // the pin, once
+  CHECK(placements_of(app.wire(), app.pin_id()) == 1); // and placed once
   CHECK(placement_deletes_of(app.wire(), app.pin_id()) == 0);
   // The placement is in the frame that drew it, which is the whole claim.
   SpriteApp one{Window::OnPixels};
@@ -1201,8 +1208,9 @@ TEST_CASE("app pixels: an app whose ONLY images come from on_pixels is written",
   CHECK(placements_of(one.wire(), one.pin_id()) == 1);
 }
 
-TEST_CASE("app pixels: the same sprite drawn from on_render no longer blinks (#148)",
-          "[apppixels][kitty][pinned]") {
+TEST_CASE(
+    "app pixels: the same sprite drawn from on_render no longer blinks (#148)",
+    "[apppixels][kitty][pinned]") {
   // The pre-#148 negative control, now OBSOLETE by construction -- and pinning
   // that is the point. Before #148 a frame was two writes split by present()'s
   // flush: draw_pinned from on_render landed in the first, App's regions in the
@@ -1222,18 +1230,18 @@ TEST_CASE("app pixels: the same sprite drawn from on_render no longer blinks (#1
   SpriteApp app{Window::OnRender};
   app.run(10);
 
-  REQUIRE(app.pixel_calls == 10);  // called, and deliberately does nothing
+  REQUIRE(app.pixel_calls == 10); // called, and deliberately does nothing
   // ONE upload of the plate plus the pin's at pin time -- not eleven.
   CHECK(total_transmits(app.wire()) == 2);
   CHECK(transmits_of(app.wire(), app.pin_id()) == 1);
-  CHECK(transmits_of(app.wire(), 1) == 1);  // the plate, once
+  CHECK(transmits_of(app.wire(), 1) == 1); // the plate, once
   CHECK(ids_named(app.wire()) == std::set<std::uint32_t>{1, app.pin_id()});
   int deleted = 0;
   for (const std::uint32_t id : ids_named(app.wire()))
     deleted += data_deletes_of(app.wire(), id);
-  CHECK(deleted == 0);                                     // no per-frame d=I (was 9)
-  CHECK(placement_deletes_of(app.wire(), app.pin_id()) == 0);  // (was 10)
-  CHECK(placements_of(app.wire(), app.pin_id()) == 1);         // (was 10)
+  CHECK(deleted == 0); // no per-frame d=I (was 9)
+  CHECK(placement_deletes_of(app.wire(), app.pin_id()) == 0); // (was 10)
+  CHECK(placements_of(app.wire(), app.pin_id()) == 1);        // (was 10)
 }
 
 TEST_CASE("app pixels: on_pixels draws AFTER App's own regions",
@@ -1277,7 +1285,7 @@ TEST_CASE("app pixels: a graphics frame is exactly ONE write, always (#148)",
     app.go(6);
     // Six frames, one write each. No image was transmitted, so shutdown owes
     // no d=A and emits no seventh write.
-    CHECK(app.sink.writes == 6);  // was 12
+    CHECK(app.sink.writes == 6); // was 12
   }
 
   SECTION("a non-graphics tier also writes once") {
@@ -1350,10 +1358,10 @@ TEST_CASE("app pixels: an overlay suppresses on_pixels, and retires the sprite",
   // boundary and the placement is retired there -- with the dialog, not one
   // frame behind it.
   SpriteApp app{Window::OnPixels};
-  app.dialog_on_frame = 3;  // frames 0-2 draw the sprite, 3 and 4 do not
+  app.dialog_on_frame = 3; // frames 0-2 draw the sprite, 3 and 4 do not
   app.run(5);
 
-  CHECK(app.pixel_calls == 3);  // three frames' worth, then suppressed
+  CHECK(app.pixel_calls == 3); // three frames' worth, then suppressed
   CHECK(placements_of(app.wire(), app.pin_id()) == 1);
   // Retired in the frame the dialog opened on, not one behind it: that frame
   // draws no image, so its (single, since #148) flush is the frame's own
@@ -1398,8 +1406,8 @@ TEST_CASE("a frame that draws no region collects on ITS OWN boundary (#148)",
   // one -- segments 1..4 are gap-adjacent, and 5 is where it lands.
   REQUIRE(app.sink.writes == 6);
   const auto& seg = app.sink.segments;
-  CHECK(data_deletes_of(seg[2], 1) == 1);  // the gap frame's OWN single write
-  CHECK(data_deletes_of(seg[3], 1) == 0);  // and not the next frame's
+  CHECK(data_deletes_of(seg[2], 1) == 1); // the gap frame's OWN single write
+  CHECK(data_deletes_of(seg[3], 1) == 0); // and not the next frame's
   // The trailing d=A is shutdown cleanup, not a per-id region deletion.
   CHECK(seg[5].find("a=d,d=A") != std::string::npos);
   // The cost, unchanged and stated: a full re-upload. The id is no longer part
@@ -1475,14 +1483,15 @@ TEST_CASE("app pixels: MapWidget sprites reach ANSI and glyphs remain Baseline",
   CHECK(baseline.map.submission_count() == 0);
 }
 
-TEST_CASE("app pixels: MapWidget retries an unacknowledged raster without rebuilding it",
+TEST_CASE("app pixels: MapWidget retries an unacknowledged raster without "
+          "rebuilding it",
           "[apppixels][mapwidget][kitty][persistent][sink]") {
   MapSpriteApp app;
   FailingMapSink sink;
   app.output_override = &sink;
   app.run_with(std::make_unique<KittyDriver>(), 2);
 
-  REQUIRE(sink.writes == 3);  // two frames plus explicit shutdown
+  REQUIRE(sink.writes == 3); // two frames plus explicit shutdown
   CHECK(app.content_dirty_on_second_frame);
   CHECK(app.map.rasterization_count() == 1);
   CHECK(app.map.submission_count() == 1);

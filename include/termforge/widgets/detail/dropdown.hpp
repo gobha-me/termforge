@@ -44,7 +44,7 @@
 #include <string>
 #include <string_view>
 
-#include "termforge/core/screen.hpp"  // also pulls in detail/width.hpp
+#include "termforge/core/screen.hpp" // also pulls in detail/width.hpp
 #include "termforge/widgets/detail/glyph_fit.hpp"
 #include "termforge/widgets/detail/scroll.hpp"
 #include "termforge/widgets/detail/width.hpp"
@@ -140,8 +140,8 @@ inline constexpr int kDropdownWheelStep = 1;
 // was already excluded from the label. glyphs.arrow_up marks a window cut off
 // above, glyphs.arrow_down one cut off below -- without them the extra options
 // are reachable but there is nothing on screen saying they exist, which is only
-// half of what #85 is about. Deliberately dumb: #21's draw_scrollbar claims this
-// same one-column strip and replaces these two glyphs with a real thumb.
+// half of what #85 is about. Deliberately dumb: #21's draw_scrollbar claims
+// this same one-column strip and replaces these two glyphs with a real thumb.
 //
 // The whole MarkGlyphs table is passed rather than the three views separately.
 // Three adjacent string_view parameters are swappable by mistake and the swap
@@ -172,8 +172,8 @@ auto draw_dropdown_rows(Screen& screen, Rect dr, int count, int highlight,
   // rect. Both in-tree families are one column, but this is a public building
   // block taking an arbitrary MarkGlyphs: the third-party dropdown is
   // precisely who the guard is for.
-  const std::string mark = fitted_glyph(glyphs.selector,
-                                        std::min(label_pad, dr.w));
+  const std::string mark =
+      fitted_glyph(glyphs.selector, std::min(label_pad, dr.w));
   const std::string up = fitted_glyph(glyphs.arrow_up, 1);
   const std::string down = fitted_glyph(glyphs.arrow_down, 1);
   // A RECT question, not a glyph one, which is why it stays separate from the
@@ -202,8 +202,8 @@ auto draw_dropdown_rows(Screen& screen, Rect dr, int count, int highlight,
     // in it. A one-row window is first AND last, so a list cut at both ends can
     // only state one of them; "more above" wins, since the row below the window
     // is the one the next keypress reveals anyway.
-    if (room_for_hint && ((vi == 0 && more_above) ||
-                          (vi == dr.h - 1 && more_below))) {
+    if (room_for_hint &&
+        ((vi == 0 && more_above) || (vi == dr.h - 1 && more_below))) {
       screen.write_text(dr.x + dr.w - 1, dy,
                         (vi == 0 && more_above) ? up : down, fg, bg);
     }
@@ -236,9 +236,9 @@ auto draw_dropdown_rows(Screen& screen, Rect dr, int count, int highlight,
 // bookkeeping themselves is the "fix lands in one dropdown, not the other"
 // drift (#38, #53) this whole header exists to end.
 enum class WheelResult {
-  Declined,   // not a wheel, or not ours: the caller keeps handling it
-  Consumed,   // ours, but at an end stop -- nothing moved, so nothing to repaint
-  Scrolled,   // the window moved; the caller marks dirty
+  Declined, // not a wheel, or not ours: the caller keeps handling it
+  Consumed, // ours, but at an end stop -- nothing moved, so nothing to repaint
+  Scrolled, // the window moved; the caller marks dirty
 };
 
 [[nodiscard]] inline auto dropdown_wheel(const MouseEvent& m, bool open,
@@ -251,9 +251,9 @@ enum class WheelResult {
   // left to clamp_scroll: that helper's visible_rows <= 0 leg deliberately
   // preserves the scroll it was handed (#48 item 4), which would be the
   // ALREADY-STEPPED value -- so every tick would move an unbounded offset and
-  // report Scrolled, marking dirty for a dropdown that paints nothing. Reachable
-  // whenever the box sits with no room below it: hit_test still covers rect(),
-  // so a wheel over the closed box gets this far.
+  // report Scrolled, marking dirty for a dropdown that paints nothing.
+  // Reachable whenever the box sits with no room below it: hit_test still
+  // covers rect(), so a wheel over the closed box gets this far.
   if (visible_rows <= 0) return WheelResult::Consumed;
   const int before = scroll;
   const int step = m.scroll_up ? -kDropdownWheelStep : kDropdownWheelStep;
@@ -380,4 +380,4 @@ struct DropdownPaintSnapshot {
   }
 };
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

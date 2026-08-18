@@ -18,7 +18,9 @@ namespace termforge {
 
 AnsiRgbDriver::AnsiRgbDriver() = default;
 
-auto AnsiRgbDriver::init() -> std::expected<void, ErrorEvent> { return {}; }
+auto AnsiRgbDriver::init() -> std::expected<void, ErrorEvent> {
+  return {};
+}
 
 auto AnsiRgbDriver::capabilities() const noexcept -> Capabilities {
   Capabilities c;
@@ -43,7 +45,7 @@ void AnsiRgbDriver::draw_text(int x, int y, std::string_view text, Rgb fg,
     m_buf += "\033[0m";
     detail::append_sgr_attrs_enable(m_buf, attrs);
     m_cur_attrs = attr_id;
-    m_cur_fg = m_cur_bg = -1;  // the reset cleared the colors too
+    m_cur_fg = m_cur_bg = -1; // the reset cleared the colors too
   }
 
   // Emit SGR only when the color actually changes (run coalescing across
@@ -85,8 +87,7 @@ auto AnsiRgbDriver::supports_placement_fit(PlacementFit f) const noexcept
   // Refusing here would make #137 kitty-only while looking portable.
   switch (f) {
     case PlacementFit::Stretch:
-    case PlacementFit::Exact:
-      return true;
+    case PlacementFit::Exact: return true;
   }
   return false;
 }
@@ -99,8 +100,8 @@ auto AnsiRgbDriver::draw_image(Rect cells, const Image& image)
 auto AnsiRgbDriver::draw_image(Rect cells, const Image& image, PlacementFit fit)
     -> std::expected<void, ErrorEvent> {
   if (image.empty()) {
-    return std::unexpected{ErrorEvent{Severity::Warning, "ansi_rgb",
-                                      "draw_image: empty image"}};
+    return std::unexpected{
+        ErrorEvent{Severity::Warning, "ansi_rgb", "draw_image: empty image"}};
   }
   if (cells.empty()) {
     return std::unexpected{ErrorEvent{Severity::Warning, "ansi_rgb",
@@ -142,9 +143,8 @@ auto AnsiRgbDriver::draw_image(Rect cells, const EncodedImage& image,
       !ok) {
     return ok;
   }
-  if (auto ok =
-          detail::validate_fit(fit, cells, image.pixels, *this, "ansi_rgb",
-                               "draw_image");
+  if (auto ok = detail::validate_fit(fit, cells, image.pixels, *this,
+                                     "ansi_rgb", "draw_image");
       !ok) {
     return ok;
   }
@@ -161,9 +161,9 @@ auto AnsiRgbDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
         static_cast<std::size_t>(px.w) * static_cast<std::size_t>(px.h);
     for (std::size_t i = 0; i < n; ++i) {
       if (std::to_integer<std::uint8_t>(rgba[i * 4U + 3U]) != 255) {
-        return std::unexpected{ErrorEvent{
-            Severity::Warning, "ansi_rgb",
-            "draw_image: ansi_rgb refuses translucent RGBA"}};
+        return std::unexpected{
+            ErrorEvent{Severity::Warning, "ansi_rgb",
+                       "draw_image: ansi_rgb refuses translucent RGBA"}};
       }
     }
   }
@@ -227,12 +227,12 @@ auto AnsiRgbDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
         detail::append_sgr_rgb(m_buf, 48, Rgb{lo.r, lo.g, lo.b});
         cur_bg = bg;
       }
-      m_buf += "\xE2\x96\x80";  // U+2580 UPPER HALF BLOCK
+      m_buf += "\xE2\x96\x80"; // U+2580 UPPER HALF BLOCK
     }
     detail::advance_cursor(m_cursor_known, m_cursor_x, cover_w);
   }
   m_buf += "\033[0m";
-  m_cur_fg = m_cur_bg = m_cur_attrs = -1;  // reset invalidated the SGR state
+  m_cur_fg = m_cur_bg = m_cur_attrs = -1; // reset invalidated the SGR state
   return {};
 }
 
@@ -249,4 +249,4 @@ void AnsiRgbDriver::flush() {
   m_cursor_known = false;
 }
 
-}  // namespace termforge
+} // namespace termforge

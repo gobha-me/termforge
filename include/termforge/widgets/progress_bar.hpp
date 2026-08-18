@@ -21,8 +21,8 @@
 #include <chrono>
 #include <string>
 
-#include "termforge/widgets/widget.hpp"
 #include "termforge/widgets/theme.hpp"
+#include "termforge/widgets/widget.hpp"
 
 namespace termforge {
 
@@ -102,4 +102,4 @@ class ProgressBar final : public Widget {
   Rgb m_bg{theme::kBg};
 };
 
-}  // namespace termforge
+} // namespace termforge

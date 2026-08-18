@@ -7,6 +7,8 @@
 #include <string>
 
 #include "detail/width.hpp"
+#include "support/events.hpp"
+#include "support/screen.hpp"
 #include "termforge/core/renderer.hpp"
 #include "termforge/core/screen.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
@@ -17,8 +19,6 @@
 #include "termforge/widgets/menu_bar.hpp"
 #include "termforge/widgets/progress_bar.hpp"
 #include "termforge/widgets/text_input.hpp"
-#include "support/events.hpp"
-#include "support/screen.hpp"
 
 using termforge::BorderGlyphs;
 using namespace tfsupport;
@@ -28,15 +28,14 @@ using termforge::Button;
 using termforge::Event;
 using termforge::FallbackDriver;
 using termforge::Frame;
-using termforge::GridGlyphs;
 using termforge::grid_glyphs;
+using termforge::GridGlyphs;
 using termforge::is_ascii;
 using termforge::Key;
 using termforge::KeyEvent;
 using termforge::Label;
 using termforge::Menu;
 using termforge::MenuBar;
-using termforge::Menu;
 using termforge::MenuItem;
 using termforge::MouseEvent;
 using termforge::ProgressBar;
@@ -63,7 +62,7 @@ auto border_ring(const Screen& s, termforge::Rect r) -> std::string {
   return out;
 }
 
-}  // namespace
+} // namespace
 
 // ── Label ───────────────────────────────────────────────────────────────────
 
@@ -107,7 +106,8 @@ TEST_CASE("Label: set_text updates content", "[primitives][label]") {
   REQUIRE(s.text_at(0, 0) == "n");
 }
 
-TEST_CASE("Label: zero-size rect doesn't crash", "[primitives][label][failure]") {
+TEST_CASE("Label: zero-size rect doesn't crash",
+          "[primitives][label][failure]") {
   Screen s{5, 5};
   Label l{"x"};
   l.set_geometry({0, 0, 0, 0});
@@ -174,7 +174,8 @@ TEST_CASE("Button: mouse click fires callback", "[primitives][button]") {
   REQUIRE(fired);
 }
 
-TEST_CASE("Button: mouse click outside rect doesn't fire", "[primitives][button][failure]") {
+TEST_CASE("Button: mouse click outside rect doesn't fire",
+          "[primitives][button][failure]") {
   Screen s{10, 3};
   Button b{"Click"};
   b.set_geometry({0, 0, 5, 3});
@@ -186,7 +187,8 @@ TEST_CASE("Button: mouse click outside rect doesn't fire", "[primitives][button]
   REQUIRE_FALSE(fired);
 }
 
-TEST_CASE("Button: right/middle click does not activate (#12)", "[primitives][button][failure]") {
+TEST_CASE("Button: right/middle click does not activate (#12)",
+          "[primitives][button][failure]") {
   Screen s{10, 3};
   Button b{"Click"};
   b.set_geometry({0, 0, 10, 3});
@@ -194,8 +196,8 @@ TEST_CASE("Button: right/middle click does not activate (#12)", "[primitives][bu
   bool fired = false;
   b.on_activate([&] { fired = true; });
 
-  REQUIRE_FALSE(b.on_event(press(5, 1, 2)));  // right
-  REQUIRE_FALSE(b.on_event(press(5, 1, 1)));  // middle
+  REQUIRE_FALSE(b.on_event(press(5, 1, 2))); // right
+  REQUIRE_FALSE(b.on_event(press(5, 1, 1))); // middle
   REQUIRE_FALSE(fired);
 
   // Left still works.
@@ -235,7 +237,8 @@ TEST_CASE("ProgressBar: 50% renders half filled", "[primitives][progress]") {
   REQUIRE(s.text_at(5, 0) == "─");
 }
 
-TEST_CASE("ProgressBar: value clamps to 0-1", "[primitives][progress][failure]") {
+TEST_CASE("ProgressBar: value clamps to 0-1",
+          "[primitives][progress][failure]") {
   ProgressBar p;
   p.set_value(-0.5f);
   REQUIRE(p.value() == 0.0f);
@@ -256,7 +259,8 @@ TEST_CASE("ProgressBar: label overlays the bar", "[primitives][progress]") {
   REQUIRE(s.text_at(5, 0) == "%");
 }
 
-TEST_CASE("ProgressBar: indeterminate mode animates", "[primitives][progress]") {
+TEST_CASE("ProgressBar: indeterminate mode animates",
+          "[primitives][progress]") {
   Screen s{20, 1};
   ProgressBar p;
   p.set_geometry({0, 0, 20, 1});
@@ -287,12 +291,14 @@ TEST_CASE("ProgressBar: drawing alone does not animate it (#69)",
   // design accepts for an app that forgets to forward ticks.
   const auto row = [&] {
     std::string out;
-    for (int x = 0; x < 20; ++x) out += s.text_at(x, 0);
+    for (int x = 0; x < 20; ++x)
+      out += s.text_at(x, 0);
     return out;
   };
   p.draw(s);
   const std::string first = row();
-  for (int i = 0; i < 20; ++i) p.draw(s);
+  for (int i = 0; i < 20; ++i)
+    p.draw(s);
   REQUIRE(row() == first);
 
   // Half a second at the default 30 cells/s carries the pulse into the bar.
@@ -308,7 +314,8 @@ TEST_CASE("ProgressBar: the sweep is wall-clock, not per-draw (#69)",
   // independent of how often the app happens to draw.
   const auto painted = [](const Screen& s) {
     std::string out;
-    for (int x = 0; x < 20; ++x) out += s.text_at(x, 0);
+    for (int x = 0; x < 20; ++x)
+      out += s.text_at(x, 0);
     return out;
   };
 
@@ -390,7 +397,8 @@ TEST_CASE("Button: set_flash_duration({}) puts a lit flash out now",
 
 // ── TextInput ───────────────────────────────────────────────────────────────
 
-TEST_CASE("TextInput: empty with placeholder shows dimmed text", "[primitives][input]") {
+TEST_CASE("TextInput: empty with placeholder shows dimmed text",
+          "[primitives][input]") {
   Screen s{20, 1};
   TextInput ti;
   ti.set_geometry({0, 0, 20, 1});
@@ -436,14 +444,15 @@ TEST_CASE("TextInput: Delete removes at cursor", "[primitives][input]") {
 
   // Move cursor to position 1, delete 'b'.
   Event left = KeyEvent{Key::Left};
-  ti.on_event(left);  // cursor at 2
-  ti.on_event(left);  // cursor at 1
+  ti.on_event(left); // cursor at 2
+  ti.on_event(left); // cursor at 1
   Event del = KeyEvent{Key::Delete};
   ti.on_event(del);
   REQUIRE(ti.text() == "ac");
 }
 
-TEST_CASE("TextInput: Left/Right/Home/End navigate cursor", "[primitives][input]") {
+TEST_CASE("TextInput: Left/Right/Home/End navigate cursor",
+          "[primitives][input]") {
   Screen s{20, 1};
   TextInput ti;
   ti.set_geometry({0, 0, 20, 1});
@@ -463,7 +472,8 @@ TEST_CASE("TextInput: Left/Right/Home/End navigate cursor", "[primitives][input]
   REQUIRE(ti.cursor_pos() == 4);
 }
 
-TEST_CASE("TextInput: cursor clamps at boundaries", "[primitives][input][failure]") {
+TEST_CASE("TextInput: cursor clamps at boundaries",
+          "[primitives][input][failure]") {
   Screen s{20, 1};
   TextInput ti;
   ti.set_geometry({0, 0, 20, 1});
@@ -473,17 +483,18 @@ TEST_CASE("TextInput: cursor clamps at boundaries", "[primitives][input][failure
   Event left = KeyEvent{Key::Left};
   Event home = KeyEvent{Key::Home};
   ti.on_event(home);
-  ti.on_event(left);  // past start
+  ti.on_event(left); // past start
   REQUIRE(ti.cursor_pos() == 0);
 
   Event end = KeyEvent{Key::End};
   Event right = KeyEvent{Key::Right};
   ti.on_event(end);
-  ti.on_event(right);  // past end
+  ti.on_event(right); // past end
   REQUIRE(ti.cursor_pos() == 2);
 }
 
-TEST_CASE("TextInput: unfocused ignores keyboard", "[primitives][input][failure]") {
+TEST_CASE("TextInput: unfocused ignores keyboard",
+          "[primitives][input][failure]") {
   Screen s{20, 1};
   TextInput ti;
   ti.set_geometry({0, 0, 20, 1});
@@ -530,11 +541,12 @@ TEST_CASE("TextInput: cursor renders as inverted cell", "[primitives][input]") {
 
   // Cursor at end (position 2). Cell (2, 0) should have inverted colors.
   const auto& cell = s.at(2, 0);
-  REQUIRE(cell.fg == Rgb(0x0A, 0x0A, 0x14));  // cursor_fg
-  REQUIRE(cell.bg == Rgb(0xE0, 0xE0, 0xF0));  // cursor_bg
+  REQUIRE(cell.fg == Rgb(0x0A, 0x0A, 0x14)); // cursor_fg
+  REQUIRE(cell.bg == Rgb(0xE0, 0xE0, 0xF0)); // cursor_bg
 }
 
-TEST_CASE("TextInput: set_text scrolls so the cursor stays visible (#12)", "[primitives][input]") {
+TEST_CASE("TextInput: set_text scrolls so the cursor stays visible (#12)",
+          "[primitives][input]") {
   Screen s{10, 1};
   TextInput ti;
   ti.set_geometry({0, 0, 10, 1});
@@ -544,24 +556,25 @@ TEST_CASE("TextInput: set_text scrolls so the cursor stays visible (#12)", "[pri
   // immediately after the programmatic replace, not after the next keypress.
   ti.set_text("0123456789abcdefghij");
   ti.draw(s);
-  REQUIRE(s.at(9, 0).fg == Rgb(0x0A, 0x0A, 0x14));  // cursor_fg
-  REQUIRE(s.at(9, 0).bg == Rgb(0xE0, 0xE0, 0xF0));  // cursor_bg
+  REQUIRE(s.at(9, 0).fg == Rgb(0x0A, 0x0A, 0x14)); // cursor_fg
+  REQUIRE(s.at(9, 0).bg == Rgb(0xE0, 0xE0, 0xF0)); // cursor_bg
 }
 
-TEST_CASE("TextInput: set_text BEFORE first layout still shows the cursor (#40)",
-          "[primitives][input][failure]") {
+TEST_CASE(
+    "TextInput: set_text BEFORE first layout still shows the cursor (#40)",
+    "[primitives][input][failure]") {
   // The #12 fix scrolled inside set_text, which no-ops at rect().w == 0 --
   // the exact ordering PromptDialog::set_value produces (layout_content runs
   // on first Dialog::draw). The window is now reconciled in draw(), which
   // always has geometry.
   Screen s{10, 1};
   TextInput ti;
-  ti.set_text("0123456789abcdefghij");  // no geometry yet
+  ti.set_text("0123456789abcdefghij"); // no geometry yet
   ti.set_geometry({0, 0, 10, 1});
   ti.set_focused(true);
 
   ti.draw(s);
-  REQUIRE(s.at(9, 0).fg == Rgb(0x0A, 0x0A, 0x14));  // cursor visible at col 9
+  REQUIRE(s.at(9, 0).fg == Rgb(0x0A, 0x0A, 0x14)); // cursor visible at col 9
   REQUIRE(s.at(9, 0).bg == Rgb(0xE0, 0xE0, 0xF0));
 }
 
@@ -572,12 +585,13 @@ TEST_CASE("TextInput: an unfocused pre-filled field head-anchors (#40)",
   Screen s{10, 1};
   TextInput ti;
   ti.set_geometry({0, 0, 10, 1});
-  ti.set_text("0123456789abcdefghij");  // 20 chars in a 10-wide field
+  ti.set_text("0123456789abcdefghij"); // 20 chars in a 10-wide field
   // deliberately NOT focused
 
   ti.draw(s);
   std::string row;
-  for (int x = 0; x < 10; ++x) row += s.text_at(x, 0);
+  for (int x = 0; x < 10; ++x)
+    row += s.text_at(x, 0);
   REQUIRE(row == "0123456789");
 }
 
@@ -591,11 +605,11 @@ TEST_CASE("TextInput: focusing a pre-filled field reveals the cursor",
   ti.set_text("0123456789abcdefghij");
 
   ti.draw(s);
-  REQUIRE(s.text_at(0, 0) == "0");  // head-anchored
+  REQUIRE(s.text_at(0, 0) == "0"); // head-anchored
 
   ti.set_focused(true);
   ti.draw(s);
-  REQUIRE(s.at(9, 0).fg == Rgb(0x0A, 0x0A, 0x14));  // cursor window active
+  REQUIRE(s.at(9, 0).fg == Rgb(0x0A, 0x0A, 0x14)); // cursor window active
   REQUIRE(s.at(9, 0).bg == Rgb(0xE0, 0xE0, 0xF0));
 }
 
@@ -617,10 +631,10 @@ TEST_CASE("Frame: draws horizontal and vertical edges", "[primitives][frame]") {
   Frame f;
   f.set_geometry({0, 0, 6, 4});
   f.draw(s);
-  REQUIRE(s.text_at(3, 0) == "─");   // top edge
-  REQUIRE(s.text_at(3, 3) == "─");   // bottom edge
-  REQUIRE(s.text_at(0, 2) == "│");   // left edge
-  REQUIRE(s.text_at(5, 2) == "│");   // right edge
+  REQUIRE(s.text_at(3, 0) == "─"); // top edge
+  REQUIRE(s.text_at(3, 3) == "─"); // bottom edge
+  REQUIRE(s.text_at(0, 2) == "│"); // left edge
+  REQUIRE(s.text_at(5, 2) == "│"); // right edge
 }
 
 TEST_CASE("Frame: title in top border", "[primitives][frame]") {
@@ -636,7 +650,7 @@ TEST_CASE("Frame: title in top border", "[primitives][frame]") {
   REQUIRE(s.text_at(10, 0) == "s");
   REQUIRE(s.text_at(11, 0) == " ");
   REQUIRE(s.text_at(12, 0) == "├");
-  REQUIRE(s.text_at(13, 0) == "─");  // border resumes after the title
+  REQUIRE(s.text_at(13, 0) == "─"); // border resumes after the title
   REQUIRE(s.text_at(19, 0) == "┐");
 }
 
@@ -710,7 +724,7 @@ TEST_CASE("Frame: Ascii style draws only 7-bit glyphs",
   REQUIRE(s.text_at(11, 3) == "+");
   REQUIRE(s.text_at(5, 3) == "-");
   REQUIRE(s.text_at(0, 1) == "|");
-  REQUIRE(s.text_at(1, 0) == "|");  // title delimiters too
+  REQUIRE(s.text_at(1, 0) == "|"); // title delimiters too
   REQUIRE(s.text_at(6, 0) == "|");
   REQUIRE(all_seven_bit(border_ring(s, f.rect())));
 }
@@ -750,7 +764,8 @@ TEST_CASE("Frame: a frame too narrow for one title column drops the title",
   Frame f{"abc"};
   f.set_geometry({0, 0, 6, 3});
   f.draw(s);
-  for (int x = 1; x <= 4; ++x) REQUIRE(s.text_at(x, 0) == "─");
+  for (int x = 1; x <= 4; ++x)
+    REQUIRE(s.text_at(x, 0) == "─");
   REQUIRE(s.text_at(0, 0) == "┌");
   REQUIRE(s.text_at(5, 0) == "┐");
 }
@@ -810,7 +825,8 @@ TEST_CASE("Frame: a shorter title leaves no stale glyphs",
   f.set_title("Hi");
   f.draw(s);
   REQUIRE(s.text_at(6, 0) == "├");
-  for (int x = 7; x <= 18; ++x) REQUIRE(s.text_at(x, 0) == "─");
+  for (int x = 7; x <= 18; ++x)
+    REQUIRE(s.text_at(x, 0) == "─");
 }
 
 TEST_CASE("Frame: content_rect is inside border", "[primitives][frame]") {
@@ -863,7 +879,8 @@ TEST_CASE("Frame: set_style marks it dirty and round-trips",
   REQUIRE(f.style() == BorderStyle::Heavy);
 }
 
-TEST_CASE("Frame: too-small rect doesn't crash", "[primitives][frame][failure]") {
+TEST_CASE("Frame: too-small rect doesn't crash",
+          "[primitives][frame][failure]") {
   Screen s{5, 5};
   Frame f{"X"};
   f.set_geometry({0, 0, 1, 1});
@@ -897,8 +914,8 @@ TEST_CASE("border_glyphs: every style is one column wide and Ascii is 7-bit",
        {BorderStyle::Single, BorderStyle::Double, BorderStyle::Rounded,
         BorderStyle::Heavy, BorderStyle::Ascii}) {
     const BorderGlyphs g = border_glyphs(style);
-    for (const auto glyph : {g.tl, g.tr, g.bl, g.br, g.hz, g.vt, g.title_left,
-                             g.title_right}) {
+    for (const auto glyph :
+         {g.tl, g.tr, g.bl, g.br, g.hz, g.vt, g.title_left, g.title_right}) {
       REQUIRE(termforge::detail::display_width(glyph) == 1);
       REQUIRE_FALSE(glyph.empty());
     }
@@ -954,14 +971,14 @@ TEST_CASE("MenuBar: draw before any menu is added is not UB (#52)",
   Screen s{80, 4};
   MenuBar mb;
   mb.set_geometry({0, 0, 80, 1});
-  mb.draw(s);          // must not index an empty m_menus
-  mb.draw(s);          // every frame, not just the first
+  mb.draw(s); // must not index an empty m_menus
+  mb.draw(s); // every frame, not just the first
 
   MenuBar cleared;
   cleared.set_geometry({0, 0, 80, 1});
   cleared.set_menus({{"File", {{"New", {}}}}});
   cleared.draw(s);
-  cleared.set_menus({});  // back to empty after having been populated
+  cleared.set_menus({}); // back to empty after having been populated
   cleared.draw(s);
 }
 
@@ -995,11 +1012,11 @@ TEST_CASE("MenuBar: Left/Right wraps around", "[primitives][menu]") {
   mb.add_menu({"B", {}});
 
   Event left = KeyEvent{Key::Left};
-  mb.on_event(left);  // wraps to B
+  mb.on_event(left); // wraps to B
   REQUIRE(mb.active_menu() == 1);
 
   Event right = KeyEvent{Key::Right};
-  mb.on_event(right);  // wraps to A
+  mb.on_event(right); // wraps to A
   REQUIRE(mb.active_menu() == 0);
 }
 
@@ -1050,8 +1067,8 @@ TEST_CASE("MenuBar: selecting item fires action", "[primitives][menu]") {
   mb.set_geometry({0, 0, 40, 1});
 
   Event enter = KeyEvent{Key::Enter};
-  mb.on_event(enter);  // open dropdown
-  mb.on_event(enter);  // select first item
+  mb.on_event(enter); // open dropdown
+  mb.on_event(enter); // select first item
   REQUIRE(fired);
   REQUIRE_FALSE(mb.dropdown_open());
 }
@@ -1059,13 +1076,14 @@ TEST_CASE("MenuBar: selecting item fires action", "[primitives][menu]") {
 TEST_CASE("MenuBar: Down/Up navigate dropdown items", "[primitives][menu]") {
   MenuBar mb;
   int selected_idx = -1;
-  mb.add_menu({"Edit", {{"Cut", [&] { selected_idx = 0; }},
-                         {"Copy", [&] { selected_idx = 1; }},
-                         {"Paste", [&] { selected_idx = 2; }}}});
+  mb.add_menu({"Edit",
+               {{"Cut", [&] { selected_idx = 0; }},
+                {"Copy", [&] { selected_idx = 1; }},
+                {"Paste", [&] { selected_idx = 2; }}}});
   mb.set_geometry({0, 0, 40, 1});
 
   Event enter = KeyEvent{Key::Enter};
-  mb.on_event(enter);  // open
+  mb.on_event(enter); // open
 
   Event down = KeyEvent{Key::Down};
   mb.on_event(down);  // select "Copy"
@@ -1073,8 +1091,9 @@ TEST_CASE("MenuBar: Down/Up navigate dropdown items", "[primitives][menu]") {
   REQUIRE(selected_idx == 1);
 }
 
-TEST_CASE("MenuBar: off-screen dropdown rows are unreachable and uncommittable (#53)",
-          "[primitives][menu][failure]") {
+TEST_CASE(
+    "MenuBar: off-screen dropdown rows are unreachable and uncommittable (#53)",
+    "[primitives][menu][failure]") {
   // #48 item 3 fixed the invisible-but-committable class in Select, but the
   // #42 item 2 skeleton left geometry per-widget and MenuBar kept sizing its
   // dropdown to items.size() with no screen clamp: arrows parked the
@@ -1090,20 +1109,21 @@ TEST_CASE("MenuBar: off-screen dropdown rows are unreachable and uncommittable (
   mb.add_menu(std::move(big));
 
   Event enter = KeyEvent{Key::Enter};
-  mb.on_event(enter);  // open; selection starts on row 0
-  mb.draw(s);          // a frame paints (and memoizes the screen height)
+  mb.on_event(enter); // open; selection starts on row 0
+  mb.draw(s);         // a frame paints (and memoizes the screen height)
 
   // Only rows 1..5 fit under a bar on row 0 of a 6-row screen: 5 visible.
   // Row 5 (the last that fits) holds item4 (MenuBar's label_pad is 2); a
   // 20-item unclamped menu would have painted through row 20+.
-  REQUIRE(s.text_at(2, 5) == "i");  // item4 on the last visible row
+  REQUIRE(s.text_at(2, 5) == "i"); // item4 on the last visible row
 
   // Hammering Down walks the whole menu (#85) -- the window is 5 rows, but the
   // ITEMS are 20 and all of them are reachable. What #53 still guarantees is
   // the part that matters: whatever Enter fires has been scrolled into view
   // first, so it is painted and marked rather than committed blind.
   Event down = KeyEvent{Key::Down};
-  for (int i = 0; i < 25; ++i) mb.on_event(down);
+  for (int i = 0; i < 25; ++i)
+    mb.on_event(down);
   mb.draw(s);
 
   // The window followed the selection to the tail: items 15..19 on rows 1..5,
@@ -1136,14 +1156,14 @@ TEST_CASE("MenuBar: set_menus resets a scrolled window (#85)",
   Event enter = KeyEvent{Key::Enter};
   mb.on_event(enter);
   mb.draw(s);
-  mb.on_event(Event{KeyEvent{Key::End}});  // scrolled to the tail
+  mb.on_event(Event{KeyEvent{Key::End}}); // scrolled to the tail
   mb.draw(s);
   REQUIRE(row_text(s, 5, 2, 6) == "item19");
 
   int fired = -1;
-  mb.set_menus({{"New", {{"alpha", [&] { fired = 0; }},
-                         {"beta", [&] { fired = 1; }}}}});
-  mb.on_event(enter);  // reopen: must start at the top of the NEW menu
+  mb.set_menus(
+      {{"New", {{"alpha", [&] { fired = 0; }}, {"beta", [&] { fired = 1; }}}}});
+  mb.on_event(enter); // reopen: must start at the top of the NEW menu
   mb.draw(s);
   REQUIRE(row_text(s, 1, 2, 5) == "alpha");
   mb.on_event(enter);
@@ -1167,40 +1187,44 @@ TEST_CASE("MenuBar: Home and End jump to the ends and reveal them (#85)",
 
   Event enter = KeyEvent{Key::Enter};
   mb.on_event(enter);
-  mb.draw(s);  // 5 rows fit, y=1..5
+  mb.draw(s); // 5 rows fit, y=1..5
 
   REQUIRE(mb.on_event(Event{KeyEvent{Key::End}}));
   mb.draw(s);
-  REQUIRE(row_text(s, 5, 2, 6) == "item19");  // scrolled into view
+  REQUIRE(row_text(s, 5, 2, 6) == "item19"); // scrolled into view
 
   REQUIRE(mb.on_event(Event{KeyEvent{Key::Home}}));
   mb.draw(s);
-  REQUIRE(row_text(s, 1, 2, 5) == "item0");  // and back to the top
+  REQUIRE(row_text(s, 1, 2, 5) == "item0"); // and back to the top
   mb.on_event(enter);
   REQUIRE(fired == 0);
 }
 
-TEST_CASE("MenuBar: a menu opened before any frame cannot commit off-screen (#53)",
-          "[primitives][menu][failure]") {
+TEST_CASE(
+    "MenuBar: a menu opened before any frame cannot commit off-screen (#53)",
+    "[primitives][menu][failure]") {
   // m_screen_rows == 0 (no draw yet) is the UNCLAMPED memo: all items are
   // reachable, matching Select's pre-frame behavior. Once a 6-row frame has
   // painted, the clamp applies (the case above) -- this pins the other leg.
   MenuBar mb;
   int fired = -1;
-  mb.add_menu({"File", {{"a", [&] { fired = 0; }},
-                        {"b", [&] { fired = 1; }},
-                        {"c", [&] { fired = 2; }}}});
+  mb.add_menu({"File",
+               {{"a", [&] { fired = 0; }},
+                {"b", [&] { fired = 1; }},
+                {"c", [&] { fired = 2; }}}});
   mb.set_geometry({0, 0, 40, 1});
   Event enter = KeyEvent{Key::Enter};
   Event down = KeyEvent{Key::Down};
   mb.on_event(enter);
   mb.on_event(down);
-  mb.on_event(down);  // item 2 reachable pre-frame (unclamped)
+  mb.on_event(down); // item 2 reachable pre-frame (unclamped)
   mb.on_event(enter);
   REQUIRE(fired == 2);
 }
 
-TEST_CASE("MenuBar: Left/Right onto an EMPTY menu opens no invisible dropdown (#12)", "[primitives][menu][failure]") {
+TEST_CASE(
+    "MenuBar: Left/Right onto an EMPTY menu opens no invisible dropdown (#12)",
+    "[primitives][menu][failure]") {
   MenuBar mb;
   bool file_fired = false;
   mb.add_menu({"File", {{"New", [&] { file_fired = true; }}}});
@@ -1208,30 +1232,29 @@ TEST_CASE("MenuBar: Left/Right onto an EMPTY menu opens no invisible dropdown (#
   mb.set_geometry({0, 0, 40, 1});
 
   Event enter = KeyEvent{Key::Enter};
-  mb.on_event(enter);  // open File
+  mb.on_event(enter); // open File
   REQUIRE(mb.dropdown_open());
 
   Event right = KeyEvent{Key::Right};
-  mb.on_event(right);  // land on the empty menu
+  mb.on_event(right); // land on the empty menu
   REQUIRE(mb.active_menu() == 1);
-  REQUIRE_FALSE(mb.dropdown_open());  // no invisible dropdown
+  REQUIRE_FALSE(mb.dropdown_open()); // no invisible dropdown
 
   // Keys are NOT trapped: with the dropdown closed, Enter just re-attempts
   // the (empty) active menu; Right moves on; nothing can fire a phantom item.
   mb.on_event(enter);
   REQUIRE_FALSE(mb.dropdown_open());
   REQUIRE_FALSE(file_fired);
-  mb.on_event(right);  // wraps back to File
+  mb.on_event(right); // wraps back to File
   REQUIRE(mb.active_menu() == 0);
 
   // And Left onto an empty menu behaves the same from the other side.
-  mb.on_event(enter);  // open File
+  mb.on_event(enter); // open File
   Event left = KeyEvent{Key::Left};
-  mb.on_event(left);  // wrap around onto Empty
+  mb.on_event(left); // wrap around onto Empty
   REQUIRE(mb.active_menu() == 1);
   REQUIRE_FALSE(mb.dropdown_open());
 }
-
 
 TEST_CASE("TextInput: UTF-8 aware backspace removes whole code point",
           "[primitives][input]") {
@@ -1241,7 +1264,7 @@ TEST_CASE("TextInput: UTF-8 aware backspace removes whole code point",
   ti.set_geometry({0, 0, 20, 1});
   ti.set_focused(true);
 
-  Event e_acute = KeyEvent{Key::Char, U'é'};  // é → C3 A9
+  Event e_acute = KeyEvent{Key::Char, U'é'}; // é → C3 A9
   ti.on_event(e_acute);
   REQUIRE(ti.text() == "\xC3\xA9");
 
@@ -1257,16 +1280,16 @@ TEST_CASE("TextInput: arrows step over multi-byte code points",
   TextInput ti;
   ti.set_geometry({0, 0, 20, 1});
   ti.set_focused(true);
-  ti.set_text("a\xC3\xA9z");  // a é z
+  ti.set_text("a\xC3\xA9z"); // a é z
 
   Event left = KeyEvent{Key::Left};
-  ti.on_event(left);  // before 'z' → byte 3
+  ti.on_event(left); // before 'z' → byte 3
   REQUIRE(ti.cursor_pos() == 3);
-  ti.on_event(left);  // before 'é' → byte 1, not mid-sequence byte 2
+  ti.on_event(left); // before 'é' → byte 1, not mid-sequence byte 2
   REQUIRE(ti.cursor_pos() == 1);
 
   Event del = KeyEvent{Key::Delete};
-  ti.on_event(del);  // deletes the whole é
+  ti.on_event(del); // deletes the whole é
   REQUIRE(ti.text() == "az");
 }
 
@@ -1276,7 +1299,7 @@ namespace {
 auto is_cursor_cell(const termforge::Cell& c) -> bool {
   return c.bg.r == 0xE0 && c.bg.g == 0xE0 && c.bg.b == 0xF0;
 }
-}  // namespace
+} // namespace
 
 TEST_CASE("TextInput: cursor column tracks display width, not byte length",
           "[primitives][input][width]") {
@@ -1284,7 +1307,7 @@ TEST_CASE("TextInput: cursor column tracks display width, not byte length",
   TextInput ti;
   ti.set_geometry({0, 0, 20, 1});
   ti.set_focused(true);
-  ti.set_text("h\xC3\xA9llo");  // héllo: 5 columns but 6 bytes; cursor at end
+  ti.set_text("h\xC3\xA9llo"); // héllo: 5 columns but 6 bytes; cursor at end
   ti.draw(s);
   // The cursor sits at column 5 (the display width), not column 6 (byte len).
   REQUIRE(is_cursor_cell(s.at(5, 0)));
@@ -1297,7 +1320,7 @@ TEST_CASE("TextInput: cursor sits just past a wide glyph",
   TextInput ti;
   ti.set_geometry({0, 0, 20, 1});
   ti.set_focused(true);
-  ti.set_text("\xE4\xB8\x96");  // 世 (width 2); cursor at end
+  ti.set_text("\xE4\xB8\x96"); // 世 (width 2); cursor at end
   ti.draw(s);
   // 世 occupies columns 0-1 (glyph + continuation cell); cursor at column 2.
   REQUIRE(s.text_at(0, 0) == "\xE4\xB8\x96");
@@ -1326,7 +1349,7 @@ auto open_file_menu(MenuBar& mb) -> void {
   mb.on_event(enter);
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("MenuBar: the open dropdown marks its selection with a glyph (#76)",
           "[primitives][menu][glyphs]") {
@@ -1335,9 +1358,9 @@ TEST_CASE("MenuBar: the open dropdown marks its selection with a glyph (#76)",
   open_file_menu(mb);
   mb.draw(s);
 
-  REQUIRE(s.text_at(0, 1) == "▸");   // selected item
-  REQUIRE(s.text_at(1, 1).empty());  // the separator column of the pad
-  REQUIRE(s.text_at(0, 2).empty());  // unselected: gutter stays blank
+  REQUIRE(s.text_at(0, 1) == "▸");  // selected item
+  REQUIRE(s.text_at(1, 1).empty()); // the separator column of the pad
+  REQUIRE(s.text_at(0, 2).empty()); // unselected: gutter stays blank
   REQUIRE(s.text_at(0, 3).empty());
   // The labels did not move: label_pad already reserved these two columns, so
   // this is exactly the geometry the pre-#76 test above asserts.
@@ -1370,8 +1393,8 @@ TEST_CASE("MenuBar: a hover moves the marker too (#76)",
   Screen s{40, 5};
   MenuBar mb;
   open_file_menu(mb);
-  mb.draw(s);  // the pointer can only target rows that have been painted (#96)
-  REQUIRE(mb.on_event(motion(3, 3)));  // third item's row
+  mb.draw(s); // the pointer can only target rows that have been painted (#96)
+  REQUIRE(mb.on_event(motion(3, 3))); // third item's row
   mb.draw(s);
 
   REQUIRE(s.text_at(0, 3) == "▸");
@@ -1391,7 +1414,8 @@ TEST_CASE("MenuBar: BorderStyle::Ascii keeps the open menu 7-bit (#76)",
   REQUIRE(mb.style() == BorderStyle::Ascii);
   REQUIRE(s.text_at(0, 1) == "*");
   for (int y = 0; y < 5; ++y)
-    for (int x = 0; x < 40; ++x) REQUIRE(all_seven_bit(s.text_at(x, y)));
+    for (int x = 0; x < 40; ++x)
+      REQUIRE(all_seven_bit(s.text_at(x, y)));
 }
 
 TEST_CASE("MenuBar: the selection survives a driver that drops colour (#76)",
@@ -1414,7 +1438,7 @@ TEST_CASE("MenuBar: the selection survives a driver that drops colour (#76)",
     row1 += s.text_at(x, 1).empty() ? " " : s.text_at(x, 1);
     row2 += s.text_at(x, 2).empty() ? " " : s.text_at(x, 2);
   }
-  REQUIRE(row1 != row2);  // in CELL TEXT, not only in colour
+  REQUIRE(row1 != row2); // in CELL TEXT, not only in colour
 
   // The DROPDOWN's marker, BY COLUMN. Since #129 the bar row carries a marker
   // too, so the whole-frame find() below no longer names this case's subject
@@ -1432,6 +1456,6 @@ TEST_CASE("MenuBar: the selection survives a driver that drops colour (#76)",
   d.set_output(&out);
   Renderer r(d);
   r.present(s);
-  r.flush();  // first frame: the renderer diffs, so assert on this one
+  r.flush(); // first frame: the renderer diffs, so assert on this one
   REQUIRE(out.find("▸") != std::string::npos);
 }

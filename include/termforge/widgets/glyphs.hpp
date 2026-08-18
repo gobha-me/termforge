@@ -83,16 +83,11 @@ struct BorderGlyphs {
 [[nodiscard]] constexpr auto border_glyphs(BorderStyle style) noexcept
     -> BorderGlyphs {
   switch (style) {
-    case BorderStyle::Single:
-      return {"┌", "┐", "└", "┘", "─", "│", "┤", "├"};
-    case BorderStyle::Double:
-      return {"╔", "╗", "╚", "╝", "═", "║", "╣", "╠"};
-    case BorderStyle::Rounded:
-      return {"╭", "╮", "╰", "╯", "─", "│", "┤", "├"};
-    case BorderStyle::Heavy:
-      return {"┏", "┓", "┗", "┛", "━", "┃", "┫", "┣"};
-    case BorderStyle::Ascii:
-      return {"+", "+", "+", "+", "-", "|", "|", "|"};
+    case BorderStyle::Single: return {"┌", "┐", "└", "┘", "─", "│", "┤", "├"};
+    case BorderStyle::Double: return {"╔", "╗", "╚", "╝", "═", "║", "╣", "╠"};
+    case BorderStyle::Rounded: return {"╭", "╮", "╰", "╯", "─", "│", "┤", "├"};
+    case BorderStyle::Heavy: return {"┏", "┓", "┗", "┛", "━", "┃", "┫", "┣"};
+    case BorderStyle::Ascii: return {"+", "+", "+", "+", "-", "|", "|", "|"};
   }
   // Unreachable: every enumerator returns above. There is no `default:` on
   // purpose, so -Wswitch (with CI's -Werror) flags a newly added style here
@@ -121,14 +116,10 @@ static_assert(sizeof(GridGlyphs) == 3 * sizeof(std::string_view),
     -> GridGlyphs {
   switch (style) {
     case BorderStyle::Single:
-    case BorderStyle::Rounded:
-      return {"─", "│", "┼"};
-    case BorderStyle::Double:
-      return {"═", "║", "╬"};
-    case BorderStyle::Heavy:
-      return {"━", "┃", "╋"};
-    case BorderStyle::Ascii:
-      return {"-", "|", "+"};
+    case BorderStyle::Rounded: return {"─", "│", "┼"};
+    case BorderStyle::Double: return {"═", "║", "╬"};
+    case BorderStyle::Heavy: return {"━", "┃", "╋"};
+    case BorderStyle::Ascii: return {"-", "|", "+"};
   }
   // Unreachable: every enumerator returns above. No `default:` so a new style
   // trips -Wswitch under CI's -Werror instead of silently borrowing Single.
@@ -201,9 +192,9 @@ struct MarkGlyphs {
   // Never "fix" a build by growing the extent alone.
   [[nodiscard]] constexpr auto all() const noexcept
       -> std::array<std::string_view, 11> {
-    return {check_open, check_close, check_mark, radio_open,
-            radio_close, radio_mark, arrow_down, selector,
-            arrow_up,   arrow_left,  arrow_right};
+    return {check_open,  check_close, check_mark, radio_open,
+            radio_close, radio_mark,  arrow_down, selector,
+            arrow_up,    arrow_left,  arrow_right};
   }
 };
 
@@ -231,12 +222,14 @@ static_assert(sizeof(MarkGlyphs) ==
                   kUnicodeMarks.all().size() * sizeof(std::string_view),
               "MarkGlyphs gained a field: add it to all() and to BOTH tables");
 
-static_assert([] {
-  for (const auto& table : {kUnicodeMarks, kAsciiMarks})
-    for (const auto glyph : table.all())
-      if (glyph.empty()) return false;
-  return true;
-}(), "a MarkGlyphs field is empty in one of the tables (positional init)");
+static_assert(
+    [] {
+      for (const auto& table : {kUnicodeMarks, kAsciiMarks})
+        for (const auto glyph : table.all())
+          if (glyph.empty()) return false;
+      return true;
+    }(),
+    "a MarkGlyphs field is empty in one of the tables (positional init)");
 
 // A fall-through switch rather than `is_ascii(style) ? ascii : unicode`,
 // which reads shorter but drops the -Wswitch tripwire — and rather than five
@@ -250,10 +243,8 @@ static_assert([] {
     case BorderStyle::Single:
     case BorderStyle::Double:
     case BorderStyle::Rounded:
-    case BorderStyle::Heavy:
-      return kUnicodeMarks;
-    case BorderStyle::Ascii:
-      return kAsciiMarks;
+    case BorderStyle::Heavy: return kUnicodeMarks;
+    case BorderStyle::Ascii: return kAsciiMarks;
   }
   // Unreachable: every enumerator returns above. No `default:` on purpose —
   // same reason as border_glyphs().
@@ -289,17 +280,20 @@ inline constexpr ScrollGlyphs kAsciiScroll{"|", "#"};
 inline constexpr ScrollGlyphs kUnicodeHScroll{"─", "█"};
 inline constexpr ScrollGlyphs kAsciiHScroll{"-", "#"};
 
-static_assert(sizeof(ScrollGlyphs) ==
-                  kUnicodeScroll.all().size() * sizeof(std::string_view),
-              "ScrollGlyphs gained a field: add it to all() and to BOTH tables");
+static_assert(
+    sizeof(ScrollGlyphs) ==
+        kUnicodeScroll.all().size() * sizeof(std::string_view),
+    "ScrollGlyphs gained a field: add it to all() and to BOTH tables");
 
-static_assert([] {
-  for (const auto& table : {kUnicodeScroll, kAsciiScroll, kUnicodeHScroll,
-                            kAsciiHScroll})
-    for (const auto glyph : table.all())
-      if (glyph.empty()) return false;
-  return true;
-}(), "a ScrollGlyphs field is empty in one of the tables (positional init)");
+static_assert(
+    [] {
+      for (const auto& table :
+           {kUnicodeScroll, kAsciiScroll, kUnicodeHScroll, kAsciiHScroll})
+        for (const auto glyph : table.all())
+          if (glyph.empty()) return false;
+      return true;
+    }(),
+    "a ScrollGlyphs field is empty in one of the tables (positional init)");
 
 // Same fall-through switch as mark_glyphs(), for the same reason. Orientation
 // defaults to Vertical so every #21 call site stays source-compatible; #131's
@@ -315,12 +309,11 @@ static_assert([] {
     case BorderStyle::Rounded:
     case BorderStyle::Heavy:
       return horizontal ? kUnicodeHScroll : kUnicodeScroll;
-    case BorderStyle::Ascii:
-      return horizontal ? kAsciiHScroll : kAsciiScroll;
+    case BorderStyle::Ascii: return horizontal ? kAsciiHScroll : kAsciiScroll;
   }
   // Unreachable: every enumerator returns above. No `default:` on purpose —
   // same reason as border_glyphs().
   return horizontal ? kUnicodeHScroll : kUnicodeScroll;
 }
 
-}  // namespace termforge
+} // namespace termforge

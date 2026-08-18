@@ -39,8 +39,8 @@ class ProbeDriver final : public TerminalDriver {
       -> std::expected<void, ErrorEvent> override {
     return {};
   }
-  [[nodiscard]] auto preferred_pixel_extent(
-      Rect cells) const noexcept -> Extent override {
+  [[nodiscard]] auto preferred_pixel_extent(Rect cells) const noexcept
+      -> Extent override {
     return Extent{cells.w, cells.h};
   }
   auto flush() -> void override {
@@ -212,7 +212,7 @@ class InputWakeApp final : public App {
   std::string wire;
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("continuous rendering remains the default", "[demand][compat]") {
   class ContinuousProbe final : public App {

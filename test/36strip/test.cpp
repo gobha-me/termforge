@@ -51,7 +51,8 @@ constexpr std::string_view kWide = "\xE4\xB8\x96\xE7\x95\x8C";
 // Widths 1, 4, 6, 4 -> spans 3, 6, 8, 6. No two adjacent spans are equal, and
 // the wide one is last so a byte-vs-column confusion in the advance shows up as
 // a wrong x for nothing else (it is the final span) but a wrong WIDTH here.
-const std::vector<std::string> kTitles{"A", "Beta", "Gamma!", std::string{kWide}};
+const std::vector<std::string> kTitles{"A", "Beta", "Gamma!",
+                                       std::string{kWide}};
 
 // The starting column for every layout in this file. Non-zero, and not 1: an
 // x0 of 1 makes "x0 + 0" and "0 + 1" the same number, which is the kind of
@@ -66,13 +67,15 @@ auto title_at(int i) -> std::string_view {
   return kTitles[static_cast<std::size_t>(i)];
 }
 
-auto count() -> int { return static_cast<int>(kTitles.size()); }
+auto count() -> int {
+  return static_cast<int>(kTitles.size());
+}
 
 auto lay(int first, int x0, int right, StripFit fit) -> std::vector<StripSpan> {
   return layout_spans(first, count(), x0, right, fit, title_at);
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("span_width: two pad columns on top of the title's COLUMNS",
           "[strip]") {
@@ -112,7 +115,8 @@ TEST_CASE("layout_spans: titles run left to right with one gap column",
     REQUIRE(spans[3].natural == 6);
 
     // Unclipped: w is natural everywhere.
-    for (const auto& s : spans) REQUIRE(s.w == s.natural);
+    for (const auto& s : spans)
+      REQUIRE(s.w == s.natural);
   }
 }
 
@@ -130,19 +134,19 @@ TEST_CASE("layout_spans: the gap column belongs to NO span", "[strip]") {
   }
   // And the columns either side of each gap DO belong, so the -1 above is the
   // gap and not an off-by-one swallowing a whole span.
-  REQUIRE(span_at(spans, 7) == 0);   // last column of "A"
-  REQUIRE(span_at(spans, 9) == 1);   // first column of "Beta"
-  REQUIRE(span_at(spans, 14) == 1);  // last column of "Beta"
-  REQUIRE(span_at(spans, 16) == 2);  // first column of "Gamma!"
+  REQUIRE(span_at(spans, 7) == 0);  // last column of "A"
+  REQUIRE(span_at(spans, 9) == 1);  // first column of "Beta"
+  REQUIRE(span_at(spans, 14) == 1); // last column of "Beta"
+  REQUIRE(span_at(spans, 16) == 2); // first column of "Gamma!"
 }
 
 TEST_CASE("span_at: off the strip in either direction is -1", "[strip]") {
   const auto spans = lay(0, kX0, kNoEdge, StripFit::Truncate);
-  REQUIRE(span_at(spans, 4) == -1);   // one column left of x0
-  REQUIRE(span_at(spans, 0) == -1);   // column 0, which the strip never reaches
-  REQUIRE(span_at(spans, -3) == -1);  // negative, as a bar at a negative x sees
-  REQUIRE(span_at(spans, 31) == -1);  // one past the last span's last column
-  REQUIRE(span_at(spans, 30) == 3);   // ...which is that last column
+  REQUIRE(span_at(spans, 4) == -1);  // one column left of x0
+  REQUIRE(span_at(spans, 0) == -1);  // column 0, which the strip never reaches
+  REQUIRE(span_at(spans, -3) == -1); // negative, as a bar at a negative x sees
+  REQUIRE(span_at(spans, 31) == -1); // one past the last span's last column
+  REQUIRE(span_at(spans, 30) == 3);  // ...which is that last column
 
   const std::vector<StripSpan> none;
   REQUIRE(span_at(none, kX0) == -1);
@@ -158,10 +162,10 @@ TEST_CASE("layout_spans: Truncate clips at the edge and keeps every index",
   for (int i = 0; i < 4; ++i)
     REQUIRE(spans[static_cast<std::size_t>(i)].index == i);
 
-  REQUIRE(spans[1].w == 6);  // "Beta" at 9..14, wholly inside
+  REQUIRE(spans[1].w == 6); // "Beta" at 9..14, wholly inside
   // "Gamma!" starts at 16 and wants 8; four columns remain.
   REQUIRE(spans[2].w == 4);
-  REQUIRE(spans[2].natural == 8);  // and it still remembers what it wanted
+  REQUIRE(spans[2].natural == 8); // and it still remembers what it wanted
   // The wide title starts at 25, past the edge entirely.
   REQUIRE(spans[3].x == 25);
   REQUIRE(spans[3].w == 0);
@@ -190,12 +194,13 @@ TEST_CASE("layout_spans: Whole drops a later title that does not fit",
   REQUIRE(lay(0, kX0, 20, StripFit::Truncate).size() == 4);
 }
 
-TEST_CASE("layout_spans: Whole emits the title at `first` even when it cannot fit",
-          "[strip][failure]") {
+TEST_CASE(
+    "layout_spans: Whole emits the title at `first` even when it cannot fit",
+    "[strip][failure]") {
   // The rule that keeps a scrolled strip alive: dropping the tab at the offset
   // would leave TabBar's m_first pointing at something neither painted nor
   // clickable, and there is no key that gets you back from there.
-  const auto spans = lay(2, kX0, 8, StripFit::Whole);  // "Gamma!" wants 8, has 3
+  const auto spans = lay(2, kX0, 8, StripFit::Whole); // "Gamma!" wants 8, has 3
   REQUIRE(spans.size() == 1);
   REQUIRE(spans[0].index == 2);
   REQUIRE(spans[0].x == kX0);
@@ -237,7 +242,8 @@ TEST_CASE("layout_spans: `first` starts the run, and is clamped", "[strip]") {
 TEST_CASE("layout_spans: degenerate geometry yields each policy's empty answer",
           "[strip][failure]") {
   // No titles: both policies, empty, no matter the edges.
-  REQUIRE(layout_spans(0, 0, kX0, kNoEdge, StripFit::Truncate, title_at).empty());
+  REQUIRE(
+      layout_spans(0, 0, kX0, kNoEdge, StripFit::Truncate, title_at).empty());
   REQUIRE(layout_spans(0, -3, kX0, kNoEdge, StripFit::Whole, title_at).empty());
 
   // x0 AT the right edge, and past it. This is the arm neither widget can
@@ -257,17 +263,19 @@ TEST_CASE("layout_spans: degenerate geometry yields each policy's empty answer",
   REQUIRE(span_at(truncated, kX0 - 7) == -1);
 }
 
-TEST_CASE("layout_spans: a wide title's continuation cell stays inside its span",
-          "[strip]") {
+TEST_CASE(
+    "layout_spans: a wide title's continuation cell stays inside its span",
+    "[strip]") {
   // A span must reserve COLUMNS, not bytes. The wide title alone, so a
   // byte-counting bug cannot be absorbed by a neighbour's slack: it would put
   // the right edge four columns out and the gap in the wrong place.
   const std::vector<std::string> one{std::string{kWide}};
-  const auto spans = layout_spans(
-      0, 1, kX0, kNoEdge, StripFit::Truncate,
-      [&](int i) -> std::string_view { return one[static_cast<std::size_t>(i)]; });
+  const auto spans = layout_spans(0, 1, kX0, kNoEdge, StripFit::Truncate,
+                                  [&](int i) -> std::string_view {
+                                    return one[static_cast<std::size_t>(i)];
+                                  });
   REQUIRE(spans.size() == 1);
-  REQUIRE(spans[0].natural == 6);  // 4 columns + 2 pad, not 6 bytes + 2
+  REQUIRE(spans[0].natural == 6); // 4 columns + 2 pad, not 6 bytes + 2
   REQUIRE(span_at(spans, kX0 + 5) == 0);
   REQUIRE(span_at(spans, kX0 + 6) == -1);
 }
@@ -284,9 +292,9 @@ TEST_CASE("layout_spans: it is exactly what MenuBar and TabBar each did (#130)",
   // code under test, which is #129's identity trap with new names.
   const std::vector<std::vector<std::string>> corpora{
       kTitles,
-      {"", "", ""},                          // empty titles, all pad
-      {"Wiiiiiiiiiiiiiiiiiiiiiiiiiiiide"},   // one title wider than any edge
-      {"a", "b", "c", "d", "e", "f", "g"},   // many narrow ones
+      {"", "", ""},                        // empty titles, all pad
+      {"Wiiiiiiiiiiiiiiiiiiiiiiiiiiiide"}, // one title wider than any edge
+      {"a", "b", "c", "d", "e", "f", "g"}, // many narrow ones
       {std::string{kWide}, "x", std::string{kWide} + "y"},
   };
 
@@ -306,12 +314,14 @@ TEST_CASE("layout_spans: it is exactly what MenuBar and TabBar each did (#130)",
         // the title budget, and handle_mouse tested the UNCLIPPED span behind
         // App::route_mouse's rect().contains gate.
         {
-          const auto got = layout_spans(0, n, x0, right, StripFit::Truncate, at);
+          const auto got =
+              layout_spans(0, n, x0, right, StripFit::Truncate, at);
           REQUIRE(got.size() == static_cast<std::size_t>(n));
           int x = x0;
           for (int i = 0; i < n; ++i) {
             const auto& s = got[static_cast<std::size_t>(i)];
-            const int w = display_width(titles[static_cast<std::size_t>(i)]) + 2;
+            const int w =
+                display_width(titles[static_cast<std::size_t>(i)]) + 2;
             INFO("menu " << i);
             REQUIRE(s.index == i);
             REQUIRE(s.x == x);
@@ -347,8 +357,9 @@ TEST_CASE("layout_spans: it is exactly what MenuBar and TabBar each did (#130)",
             int expect = -1;
             int ox = x0;
             for (int i = 0; i < n; ++i) {
-              const int w = display_width(titles[static_cast<std::size_t>(i)]) + 2;
-              if (px >= ox && px < ox + w) {  // the OLD, unclipped predicate
+              const int w =
+                  display_width(titles[static_cast<std::size_t>(i)]) + 2;
+              if (px >= ox && px < ox + w) { // the OLD, unclipped predicate
                 expect = i;
                 break;
               }
@@ -383,7 +394,8 @@ TEST_CASE("layout_spans: it is exactly what MenuBar and TabBar each did (#130)",
               x += natural + 1;
             }
           }
-          const auto got = layout_spans(first, n, x0, right, StripFit::Whole, at);
+          const auto got =
+              layout_spans(first, n, x0, right, StripFit::Whole, at);
           REQUIRE(got.size() == want.size());
           for (std::size_t k = 0; k < want.size(); ++k) {
             INFO("span " << k);

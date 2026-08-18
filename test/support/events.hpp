@@ -37,7 +37,9 @@ inline auto key(Key k, char32_t ch = 0, bool shift = false,
   e.action = action;
   return Event{e};
 }
-inline auto ch(char32_t c) -> Event { return key(Key::Char, c); }
+inline auto ch(char32_t c) -> Event {
+  return key(Key::Char, c);
+}
 
 // A key release (#60), as KeyboardMode::Enhanced delivers it: ESC[<code>;1:3u
 // for a text key, ESC[1;1:3A for an arrow. Only reachable when the app opted
@@ -77,7 +79,7 @@ inline auto motion(int x, int y) -> Event {
   MouseEvent e;
   e.x = x;
   e.y = y;
-  e.button = 3;  // buttonless motion, exactly as the decoder emits it
+  e.button = 3; // buttonless motion, exactly as the decoder emits it
   e.pressed = false;
   e.motion = true;
   return Event{e};
@@ -88,7 +90,7 @@ inline auto wheel(int x, int y, bool up = false) -> Event {
   MouseEvent e;
   e.x = x;
   e.y = y;
-  e.button = -1;  // wheel, input.cpp:222
+  e.button = -1; // wheel, input.cpp:222
   e.scroll_up = up;
   e.scroll_down = !up;
   return Event{e};
@@ -101,4 +103,4 @@ inline auto all_seven_bit(std::string_view s) -> bool {
   return true;
 }
 
-}  // namespace tfsupport
+} // namespace tfsupport

@@ -30,8 +30,7 @@ auto patterned(std::size_t size) -> std::vector<std::byte> {
   return bytes;
 }
 
-template <typename Driver>
-auto adjacent_text() -> std::string {
+template <typename Driver> auto adjacent_text() -> std::string {
   Driver driver;
   std::string out;
   driver.set_output(&out);
@@ -42,29 +41,29 @@ auto adjacent_text() -> std::string {
   return out;
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("payload hash: tails, metadata and every payload byte carry identity",
           "[frameperf][hash]") {
   std::set<std::uint64_t> tails;
   for (std::size_t size = 0; size <= 31; ++size) {
     const auto bytes = patterned(size);
-    const auto hash = detail::payload_hash(bytes, Extent{17, 19},
-                                           ImageFormat::Rgba32);
+    const auto hash =
+        detail::payload_hash(bytes, Extent{17, 19}, ImageFormat::Rgba32);
     INFO("size " << size);
     REQUIRE(hash != 0);
-    REQUIRE(detail::payload_hash(bytes, Extent{17, 19},
-                                 ImageFormat::Rgba32) == hash);
+    REQUIRE(detail::payload_hash(bytes, Extent{17, 19}, ImageFormat::Rgba32) ==
+            hash);
     REQUIRE(tails.insert(hash).second);
   }
 
   auto bytes = patterned(257);
-  const auto original = detail::payload_hash(bytes, Extent{17, 19},
-                                             ImageFormat::Rgba32);
-  REQUIRE(detail::payload_hash(bytes, Extent{18, 19},
-                               ImageFormat::Rgba32) != original);
-  REQUIRE(detail::payload_hash(bytes, Extent{17, 20},
-                               ImageFormat::Rgba32) != original);
+  const auto original =
+      detail::payload_hash(bytes, Extent{17, 19}, ImageFormat::Rgba32);
+  REQUIRE(detail::payload_hash(bytes, Extent{18, 19}, ImageFormat::Rgba32) !=
+          original);
+  REQUIRE(detail::payload_hash(bytes, Extent{17, 20}, ImageFormat::Rgba32) !=
+          original);
   REQUIRE(detail::payload_hash(bytes, Extent{17, 19},
                                ImageFormat::Rgba32Zlib) != original);
   REQUIRE(detail::payload_hash(bytes, Extent{17, 19}, ImageFormat::Png) !=
@@ -73,8 +72,8 @@ TEST_CASE("payload hash: tails, metadata and every payload byte carry identity",
     const auto saved = bytes[i];
     bytes[i] ^= std::byte{0x80};
     INFO("byte " << i);
-    REQUIRE(detail::payload_hash(bytes, Extent{17, 19},
-                                 ImageFormat::Rgba32) != original);
+    REQUIRE(detail::payload_hash(bytes, Extent{17, 19}, ImageFormat::Rgba32) !=
+            original);
     bytes[i] = saved;
   }
 }
@@ -98,9 +97,9 @@ TEST_CASE("sanitize borrow predicate is exactly Strip's identity predicate",
 
 TEST_CASE("text drivers omit only the adjacent CUP and share decimal spelling",
           "[frameperf][drivers]") {
-  for (const auto& out : {adjacent_text<FallbackDriver>(),
-                          adjacent_text<AnsiRgbDriver>(),
-                          adjacent_text<KittyDriver>()}) {
+  for (const auto& out :
+       {adjacent_text<FallbackDriver>(), adjacent_text<AnsiRgbDriver>(),
+        adjacent_text<KittyDriver>()}) {
     INFO(out);
     REQUIRE(out.find("\033[1;1H") != std::string::npos);
     REQUIRE(out.find("\033[1;2H") == std::string::npos);
@@ -115,8 +114,9 @@ TEST_CASE("text drivers omit only the adjacent CUP and share decimal spelling",
   }
 }
 
-TEST_CASE("cursor runs account for wide and combining graphemes and stop at flush",
-          "[frameperf][drivers][width]") {
+TEST_CASE(
+    "cursor runs account for wide and combining graphemes and stop at flush",
+    "[frameperf][drivers][width]") {
   FallbackDriver driver;
   std::string out;
   driver.set_output(&out);

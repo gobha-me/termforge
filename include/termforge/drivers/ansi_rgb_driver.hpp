@@ -82,8 +82,8 @@ class AnsiRgbDriver final : public TerminalDriver {
   // The sink lives on TerminalDriver since #178; m_buf stays per-driver
   // because hoisting the frame buffer is #148's business, not this one's.
   std::string m_buf;
-  int m_cur_fg{-1};  // active SGR foreground, -1 = no SGR emitted yet
-  int m_cur_bg{-1};  // active SGR background
+  int m_cur_fg{-1}; // active SGR foreground, -1 = no SGR emitted yet
+  int m_cur_bg{-1}; // active SGR background
   // Active SGR attributes (#62) as the Attr bitmask's underlying value, -1 =
   // none emitted yet. Tracked so a run breaks (and resets) on an attr change
   // exactly like a color change  a leaked SGR 1 is a visible bug.
@@ -93,4 +93,4 @@ class AnsiRgbDriver final : public TerminalDriver {
   int m_cursor_y{0};
 };
 
-}  // namespace termforge
+} // namespace termforge

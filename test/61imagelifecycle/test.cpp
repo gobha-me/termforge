@@ -27,9 +27,9 @@
 #include <signal.h>
 #include <span>
 #include <string>
+#include <unistd.h>
 #include <variant>
 #include <vector>
-#include <unistd.h>
 
 #include "support/apc.hpp"
 #include "support/image.hpp"
@@ -50,9 +50,9 @@ namespace {
 
 auto art(int seed) -> Image {
   const auto v = static_cast<std::uint8_t>(seed);
-  return tfsupport::checker(2, 2, Pixel{v, 0, 0, 255},
-                            Pixel{0, static_cast<std::uint8_t>(255 - v), 0,
-                                  255});
+  return tfsupport::checker(
+      2, 2, Pixel{v, 0, 0, 255},
+      Pixel{0, static_cast<std::uint8_t>(255 - v), 0, 255});
 }
 
 class SegmentSink final : public ByteSink {
@@ -61,8 +61,8 @@ class SegmentSink final : public ByteSink {
       -> std::expected<void, ErrorEvent> override {
     ++writes;
     if (refuse_on_write != 0 && writes == refuse_on_write) {
-      return std::unexpected{ErrorEvent{
-          Severity::Warning, "sink", "image invalidation frame refused"}};
+      return std::unexpected{ErrorEvent{Severity::Warning, "sink",
+                                        "image invalidation frame refused"}};
     }
     segments.emplace_back(bytes.data(), bytes.size());
     return {};
@@ -104,8 +104,8 @@ class ResizeLifecycleApp final : public App {
 
   auto run(int frames) -> void {
     // Seed a pushed size so current_size() is deterministic offline (no ioctl).
-    // Clear the arm set_size leaves: a pre-run push would otherwise make frame 0
-    // a resize and double-count ResizeEvent against the mid-run transition.
+    // Clear the arm set_size leaves: a pre-run push would otherwise make frame
+    // 0 a resize and double-count ResizeEvent against the mid-run transition.
     REQUIRE(set_size(Size{20, 8, 160, 128}).has_value());
     REQUIRE(test_take_resize());
     test_run_frames(frames, 20, 8, nullptr, std::make_unique<KittyDriver>());
@@ -133,8 +133,7 @@ class InvalidationLifecycleApp final : public App {
   SegmentSink sink;
   int invalidations{0};
   bool event_before_recreate{false};
-  ImageInvalidationReason last_reason{
-      ImageInvalidationReason::TerminalReset};
+  ImageInvalidationReason last_reason{ImageInvalidationReason::TerminalReset};
 
   auto on_event(const Event& ev) -> void override {
     if (const auto* invalidated = std::get_if<ImageInvalidatedEvent>(&ev)) {
@@ -251,10 +250,14 @@ class ResumeLifecycleApp final : public App {
 };
 
 volatile sig_atomic_t g_prior_cont_calls{0};
-void prior_cont_handler(int) { g_prior_cont_calls = 1; }
+void prior_cont_handler(int) {
+  g_prior_cont_calls = 1;
+}
 
 volatile sig_atomic_t g_newer_cont_calls{0};
-void newer_cont_handler(int) { g_newer_cont_calls = 1; }
+void newer_cont_handler(int) {
+  g_newer_cont_calls = 1;
+}
 
 class NewerContinueHandlerApp final : public App {
  public:
@@ -267,7 +270,7 @@ class NewerContinueHandlerApp final : public App {
   }
 
   auto on_start() -> void override {
-    struct sigaction action {};
+    struct sigaction action{};
     action.sa_handler = newer_cont_handler;
     ::sigemptyset(&action.sa_mask);
     installed = ::sigaction(SIGCONT, &action, nullptr) == 0;
@@ -292,11 +295,11 @@ class SignalActionGuard {
 
  private:
   int m_signal;
-  struct sigaction m_prior {};
+  struct sigaction m_prior{};
   bool m_ok{false};
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("in-session resize keeps one resident transmit (#113)",
           "[imagelifecycle][app][kitty][resize]") {
@@ -500,8 +503,8 @@ TEST_CASE("pending invalidations coalesce at one clean frame boundary (#113)",
   CHECK(app.count == 1);
   CHECK(app.reason == ImageInvalidationReason::Reattach);
 
-  const auto invalid = app.invalidate_images(
-      static_cast<ImageInvalidationReason>(99));
+  const auto invalid =
+      app.invalidate_images(static_cast<ImageInvalidationReason>(99));
   REQUIRE_FALSE(invalid.has_value());
   CHECK(invalid.error().severity == Severity::Warning);
 }
@@ -518,18 +521,20 @@ TEST_CASE("a refused invalidation frame retries Persistent recreation (#113)",
   CHECK(app.invalidations == 1);
   CHECK(app.event_before_recreate);
   CHECK(app.surface.submission_count() == 2);
-  CHECK(app.sink.writes == 6);  // five frames plus accepted shutdown
+  CHECK(app.sink.writes == 6); // five frames plus accepted shutdown
   std::string accepted;
-  for (const auto& segment : app.sink.segments) accepted += segment;
+  for (const auto& segment : app.sink.segments)
+    accepted += segment;
   CHECK(transmits_of(accepted, 272) == 2);
 }
 
-TEST_CASE("SIGCONT invalidates at the next frame and restores the prior handler "
-          "(#113)",
-          "[imagelifecycle][app][signal][invalidate]") {
+TEST_CASE(
+    "SIGCONT invalidates at the next frame and restores the prior handler "
+    "(#113)",
+    "[imagelifecycle][app][signal][invalidate]") {
   SignalActionGuard restore{SIGCONT};
   REQUIRE(restore.ok());
-  struct sigaction prior {};
+  struct sigaction prior{};
   prior.sa_handler = prior_cont_handler;
   ::sigemptyset(&prior.sa_mask);
   REQUIRE(::sigaction(SIGCONT, &prior, nullptr) == 0);
@@ -544,11 +549,12 @@ TEST_CASE("SIGCONT invalidates at the next frame and restores the prior handler 
   CHECK(app.invalidations == 1);
   CHECK(app.surface.submission_count() == 2);
   std::string wire;
-  for (const auto& segment : app.sink.segments) wire += segment;
+  for (const auto& segment : app.sink.segments)
+    wire += segment;
   CHECK(transmits_of(wire, 272) == 2);
   CHECK(data_deletes_of(wire, 272) == 0);
 
-  struct sigaction current {};
+  struct sigaction current{};
   REQUIRE(::sigaction(SIGCONT, nullptr, &current) == 0);
   REQUIRE((current.sa_flags & SA_SIGINFO) == 0);
   CHECK(current.sa_handler == prior_cont_handler);
@@ -569,7 +575,7 @@ TEST_CASE("SIGCONT teardown preserves a newer process handler (#113)",
   REQUIRE(app.run() == 0);
   REQUIRE(app.installed);
 
-  struct sigaction current {};
+  struct sigaction current{};
   REQUIRE(::sigaction(SIGCONT, nullptr, &current) == 0);
   REQUIRE((current.sa_flags & SA_SIGINFO) == 0);
   CHECK(current.sa_handler == newer_cont_handler);

@@ -44,7 +44,7 @@ struct ProcessRow {
   double cpu_seconds{};
   std::string command;
 
-  auto operator==(const ProcessRow &) const -> bool = default;
+  auto operator==(const ProcessRow&) const -> bool = default;
 };
 
 struct SystemSnapshot {
@@ -65,7 +65,7 @@ struct ProcReaderConfig {
 };
 
 class SystemReader {
-public:
+ public:
   virtual ~SystemReader() = default;
   virtual auto sample() -> std::expected<SystemSnapshot, ErrorEvent> = 0;
 };

@@ -6,9 +6,10 @@
 // a dialog (issue #23, "Layer 3 composition"). This assembles a path TextInput
 // (editable, Enter navigates), a ListWidget of the current directory's entries
 // (dirs first, a ".." entry to go up), and OK/Cancel Buttons into a Dialog,
-// and reports the outcome through on_result(std::optional<std::filesystem::path>)
-// — a path on OK/select, std::nullopt on cancel/Escape. It owns no new drawing
-// beyond the composed children.
+// and reports the outcome through
+// on_result(std::optional<std::filesystem::path>) — a path on OK/select,
+// std::nullopt on cancel/Escape. It owns no new drawing beyond the composed
+// children.
 //
 // Usage:
 //   FilePickerDialog m_open{"Open File"};
@@ -89,8 +90,8 @@ class FilePickerDialog final : public Dialog {
 
   // Fired exactly once per showing (see Dialog::begin_result): with the chosen
   // path on OK/select, or std::nullopt on cancel/Escape.
-  auto on_result(
-      std::function<void(std::optional<std::filesystem::path>)> cb) -> void {
+  auto on_result(std::function<void(std::optional<std::filesystem::path>)> cb)
+      -> void {
     m_on_result = std::move(cb);
   }
 
@@ -137,7 +138,9 @@ class FilePickerDialog final : public Dialog {
   // directory, and assert the list as the starting focus.
   auto on_show() -> void override;
   // Path field, entry list (filling the body), spacer, button row.
-  [[nodiscard]] auto content_rows() const -> int override { return kListRows + 3; }
+  [[nodiscard]] auto content_rows() const -> int override {
+    return kListRows + 3;
+  }
   [[nodiscard]] auto content_cols() const -> int override;
   auto layout_content(Rect area) -> void override;
   auto draw_content(Screen& screen) -> void override;
@@ -175,7 +178,7 @@ class FilePickerDialog final : public Dialog {
   // Raise (or, unwired, silently hold) a read-error MessageDialog.
   auto report_error(const std::string& message) -> void;
 
-  static constexpr int kListRows{8};  // visible directory rows
+  static constexpr int kListRows{8}; // visible directory rows
 
   // The error_code overload (#45 satellite 5): the throwing current_path()
   // would throw out of the app's constructor when the cwd is unlinked or
@@ -192,13 +195,13 @@ class FilePickerDialog final : public Dialog {
   // One ListWidget row = one m_entries entry. Directories carry a trailing
   // slash in the *display* string only; is_dir/leaf hold the real metadata.
   struct Entry {
-    std::string display;  // leaf name, dirs with a trailing '/'
-    std::string leaf;     // the actual filename (no slash)
+    std::string display; // leaf name, dirs with a trailing '/'
+    std::string leaf;    // the actual filename (no slash)
     bool is_dir{false};
-    bool is_up{false};  // the synthetic ".." entry
+    bool is_up{false}; // the synthetic ".." entry
   };
   std::vector<Entry> m_entries;
-  std::vector<std::string> m_filter;  // lowercased, each with a leading '.'
+  std::vector<std::string> m_filter; // lowercased, each with a leading '.'
 
   TextInput m_path;
   ListWidget m_list;
@@ -207,8 +210,8 @@ class FilePickerDialog final : public Dialog {
 
   MessageDialog m_error{"Cannot Read Directory", ""};
   std::function<void(Dialog&)> m_push_overlay;
-  std::function<bool()> m_error_up_query;  // flood-gate query (#45 item 3)
+  std::function<bool()> m_error_up_query; // flood-gate query (#45 item 3)
   std::function<void(std::optional<std::filesystem::path>)> m_on_result;
 };
 
-}  // namespace termforge
+} // namespace termforge

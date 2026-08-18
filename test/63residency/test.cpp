@@ -45,8 +45,9 @@ using termforge::TerminalReply;
 namespace {
 
 auto art(int w, int h, std::uint8_t seed) -> Image {
-  return tfsupport::solid(w, h, Pixel{seed, static_cast<std::uint8_t>(seed + 1),
-                                      static_cast<std::uint8_t>(seed + 2), 255});
+  return tfsupport::solid(w, h,
+                          Pixel{seed, static_cast<std::uint8_t>(seed + 1),
+                                static_cast<std::uint8_t>(seed + 2), 255});
 }
 
 auto bytes(std::size_t count, std::uint8_t seed) -> std::vector<std::byte> {
@@ -58,13 +59,14 @@ auto bytes(std::size_t count, std::uint8_t seed) -> std::vector<std::byte> {
 
 class FailingSink final : public ByteSink {
  public:
-  auto write(std::span<const char>) -> std::expected<void, ErrorEvent> override {
+  auto write(std::span<const char>)
+      -> std::expected<void, ErrorEvent> override {
     return std::unexpected{
         ErrorEvent{Severity::Error, "sink", "residency frame refused"}};
   }
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("residency: the compatible base default is empty", "[residency]") {
   tfsupport::LegacyDriver legacy;
@@ -83,9 +85,9 @@ TEST_CASE("residency: accepted regions and pins count source bytes once",
   std::string out;
   d.set_output(&out);
 
-  const Image a = art(2, 2, 10);  // 16 source bytes
-  const Image b = art(3, 2, 20);  // 24 source bytes
-  const Image pin = art(4, 2, 30);  // 32 source bytes
+  const Image a = art(2, 2, 10);   // 16 source bytes
+  const Image b = art(3, 2, 20);   // 24 source bytes
+  const Image pin = art(4, 2, 30); // 32 source bytes
   REQUIRE(d.draw_image(Rect{0, 0, 2, 2}, a));
   REQUIRE(d.draw_image(Rect{3, 0, 2, 2}, b));
   const auto pinned = d.pin_image(pin);
@@ -105,7 +107,7 @@ TEST_CASE("residency: accepted regions and pins count source bytes once",
 
   // Same region id, different source extent: one resident image with the new
   // accepted source byte count. Keep b alive in this frame too.
-  const Image changed = art(1, 2, 40);  // 8 source bytes
+  const Image changed = art(1, 2, 40); // 8 source bytes
   REQUIRE(d.draw_image(Rect{0, 0, 2, 2}, changed));
   REQUIRE(d.draw_image(Rect{3, 0, 2, 2}, b));
   d.flush();
@@ -200,8 +202,8 @@ TEST_CASE("residency: opaque replies reconcile committed beliefs",
   const auto replacement = bytes(19, 2);
   const auto rejected = bytes(7, 3);
 
-  const auto pin = d.pin_image(
-      EncodedImage{ImageFormat::Rgba32Zlib, first, Extent{4, 4}});
+  const auto pin =
+      d.pin_image(EncodedImage{ImageFormat::Rgba32Zlib, first, Extent{4, 4}});
   REQUIRE(pin);
   d.flush();
   CHECK(d.residency() == ImageResidency{0, 1, 11});
@@ -209,8 +211,7 @@ TEST_CASE("residency: opaque replies reconcile committed beliefs",
   CHECK(d.residency() == ImageResidency{0, 1, 11});
 
   REQUIRE(d.replace_pinned(
-      *pin,
-      EncodedImage{ImageFormat::Rgba32Zlib, replacement, Extent{4, 4}}));
+      *pin, EncodedImage{ImageFormat::Rgba32Zlib, replacement, Extent{4, 4}}));
   d.flush();
   CHECK(d.residency() == ImageResidency{0, 1, 19});
   d.consume_reply(TerminalReply{pin->id, std::nullopt, "EINVAL"});
@@ -237,7 +238,7 @@ TEST_CASE("residency: partial edits add accepted source blocks in order",
   KittyDriver d;
   std::string out;
   d.set_output(&out);
-  const Image root = art(4, 4, 10);  // 64 source bytes
+  const Image root = art(4, 4, 10); // 64 source bytes
   const auto pin = d.pin_image(root);
   REQUIRE(pin);
   d.flush();
@@ -291,10 +292,9 @@ TEST_CASE("residency: refused and rejected partial edits restore the root",
 
   const auto png = bytes(11, 70);
   d.set_output(&dead);
-  REQUIRE(d.edit_pinned(
-      *pin, PixelPoint{0, 0},
-      EncodedImage{ImageFormat::Png, png, Extent{2, 2}},
-      ImageComposition::AlphaBlend));
+  REQUIRE(d.edit_pinned(*pin, PixelPoint{0, 0},
+                        EncodedImage{ImageFormat::Png, png, Extent{2, 2}},
+                        ImageComposition::AlphaBlend));
   d.flush();
   CHECK(d.residency() == ImageResidency{0, 1, 64});
   REQUIRE(d.take_output_error());
@@ -303,10 +303,9 @@ TEST_CASE("residency: refused and rejected partial edits restore the root",
   // discarded at that boundary, so the same handle is immediately usable.
   accepted.clear();
   d.set_output(&accepted);
-  REQUIRE(d.edit_pinned(
-      *pin, PixelPoint{0, 0},
-      EncodedImage{ImageFormat::Png, png, Extent{2, 2}},
-      ImageComposition::AlphaBlend));
+  REQUIRE(d.edit_pinned(*pin, PixelPoint{0, 0},
+                        EncodedImage{ImageFormat::Png, png, Extent{2, 2}},
+                        ImageComposition::AlphaBlend));
   d.flush();
   CHECK(d.residency() == ImageResidency{0, 1, 75});
   d.consume_reply(TerminalReply{pin->id, std::nullopt, "EINVAL"});
@@ -329,14 +328,14 @@ TEST_CASE("residency: an opaque partial-edit timeout restores prior bytes",
   d.flush();
 
   const auto png = bytes(13, 90);
-  REQUIRE(d.edit_pinned(
-      *pin, PixelPoint{1, 1},
-      EncodedImage{ImageFormat::Png, png, Extent{2, 2}},
-      ImageComposition::Overwrite));
+  REQUIRE(d.edit_pinned(*pin, PixelPoint{1, 1},
+                        EncodedImage{ImageFormat::Png, png, Extent{2, 2}},
+                        ImageComposition::Overwrite));
   d.flush();
   REQUIRE(d.residency() == ImageResidency{0, 1, 77});
 
-  for (int i = 0; i < 119; ++i) d.flush();
+  for (int i = 0; i < 119; ++i)
+    d.flush();
   CHECK(d.residency() == ImageResidency{0, 1, 64});
   const auto events = d.take_driver_events();
   REQUIRE(events.size() == 1);
@@ -349,13 +348,14 @@ TEST_CASE("residency: an opaque timeout removes the committed pin belief",
   std::string out;
   d.set_output(&out);
   const auto payload = bytes(13, 4);
-  const auto pin = d.pin_image(
-      EncodedImage{ImageFormat::Png, payload, Extent{3, 3}});
+  const auto pin =
+      d.pin_image(EncodedImage{ImageFormat::Png, payload, Extent{3, 3}});
   REQUIRE(pin);
   d.flush();
   REQUIRE(d.residency() == ImageResidency{0, 1, 13});
 
-  for (int i = 0; i < 119; ++i) d.flush();
+  for (int i = 0; i < 119; ++i)
+    d.flush();
   CHECK(d.residency() == ImageResidency{});
   const auto events = d.take_driver_events();
   REQUIRE(events.size() == 1);

@@ -21,6 +21,8 @@
 #include <vector>
 
 #include "detail/width.hpp"
+#include "support/events.hpp"
+#include "support/screen.hpp"
 #include "termforge/core/renderer.hpp"
 #include "termforge/core/screen.hpp"
 #include "termforge/core/types.hpp"
@@ -32,8 +34,6 @@
 #include "termforge/widgets/radio_group.hpp"
 #include "termforge/widgets/select.hpp"
 #include "termforge/widgets/widget.hpp"
-#include "support/events.hpp"
-#include "support/screen.hpp"
 
 using termforge::BorderStyle;
 using namespace tfsupport;
@@ -44,8 +44,8 @@ using termforge::FocusRing;
 using termforge::is_ascii;
 using termforge::Key;
 using termforge::KeyEvent;
-using termforge::MarkGlyphs;
 using termforge::mark_glyphs;
+using termforge::MarkGlyphs;
 using termforge::MouseEvent;
 using termforge::RadioGroup;
 using termforge::Rect;
@@ -56,7 +56,6 @@ using termforge::Select;
 using termforge::Widget;
 
 namespace {
-
 
 // Every cell of a rect is 7-bit — the bare-TTY tier check.
 auto rect_is_ascii(const Screen& s, Rect r) -> bool {
@@ -77,7 +76,7 @@ const auto kStyles = {BorderStyle::Single, BorderStyle::Double,
                       BorderStyle::Rounded, BorderStyle::Heavy,
                       BorderStyle::Ascii};
 
-}  // namespace
+} // namespace
 
 // ── MarkGlyphs ──────────────────────────────────────────────────────────────
 
@@ -127,8 +126,8 @@ TEST_CASE("mark_glyphs: the four Unicode families share one table",
   // Pins the two-rows-not-five decision: a future edit that gives Heavy its
   // own marks has to change this test on purpose.
   const MarkGlyphs single = mark_glyphs(BorderStyle::Single);
-  for (const auto style : {BorderStyle::Double, BorderStyle::Rounded,
-                           BorderStyle::Heavy}) {
+  for (const auto style :
+       {BorderStyle::Double, BorderStyle::Rounded, BorderStyle::Heavy}) {
     const MarkGlyphs g = mark_glyphs(style);
     REQUIRE(g.radio_mark == single.radio_mark);
     REQUIRE(g.arrow_down == single.arrow_down);
@@ -142,7 +141,8 @@ TEST_CASE("mark_glyphs: the four Unicode families share one table",
 
 // ── Checkbox ────────────────────────────────────────────────────────────────
 
-TEST_CASE("Checkbox: renders the unchecked and checked marks", "[form][check]") {
+TEST_CASE("Checkbox: renders the unchecked and checked marks",
+          "[form][check]") {
   Screen s{14, 1};
   Checkbox c{"Wrap"};
   c.set_geometry({0, 0, 14, 1});
@@ -167,7 +167,7 @@ TEST_CASE("Checkbox: Space toggles; Enter is declined for dialog submit",
   REQUIRE(c.on_event(ch(U' ')));
   REQUIRE(c.checked());
   REQUIRE_FALSE(c.on_event(key(Key::Enter)));
-  REQUIRE(c.checked());  // unchanged -- no silent flip on Enter
+  REQUIRE(c.checked()); // unchanged -- no silent flip on Enter
   REQUIRE(seen == std::vector<bool>{true});
 }
 
@@ -180,8 +180,8 @@ TEST_CASE("Checkbox: a left click inside toggles, outside does not",
 
   REQUIRE(c.on_event(press(4, 3)));
   REQUIRE(c.checked());
-  REQUIRE_FALSE(c.on_event(press(1, 3)));   // left of the rect
-  REQUIRE_FALSE(c.on_event(press(4, 9)));   // below the rect
+  REQUIRE_FALSE(c.on_event(press(1, 3))); // left of the rect
+  REQUIRE_FALSE(c.on_event(press(4, 9))); // below the rect
   REQUIRE(c.checked());
   REQUIRE(calls == 1);
 }
@@ -193,8 +193,8 @@ TEST_CASE("Checkbox: a non-left press does not toggle",
   // for Checkbox.
   Checkbox c{"Enable"};
   c.set_geometry({0, 0, 12, 1});
-  REQUIRE_FALSE(c.on_event(press(1, 0, 1)));  // middle
-  REQUIRE_FALSE(c.on_event(press(1, 0, 2)));  // right
+  REQUIRE_FALSE(c.on_event(press(1, 0, 1))); // middle
+  REQUIRE_FALSE(c.on_event(press(1, 0, 2))); // right
   REQUIRE_FALSE(c.checked());
 }
 
@@ -210,7 +210,7 @@ TEST_CASE("Checkbox: set_checked does not fire on_change",
   c.set_checked(true);
   c.set_checked(false);
   REQUIRE(calls == 0);
-  c.toggle();  // the user-level action does fire
+  c.toggle(); // the user-level action does fire
   REQUIRE(calls == 1);
 }
 
@@ -228,7 +228,7 @@ TEST_CASE("Checkbox: Tab is declined so the focus ring cycles",
 
   REQUIRE(ring.handle_key(key(Key::Tab)));
   REQUIRE(ring.current() == &other);
-  REQUIRE_FALSE(c.checked());  // Tab must not have toggled anything
+  REQUIRE_FALSE(c.checked()); // Tab must not have toggled anything
 }
 
 TEST_CASE("Checkbox: a zero-size rect draws nothing and does not crash",
@@ -240,11 +240,11 @@ TEST_CASE("Checkbox: a zero-size rect draws nothing and does not crash",
   c.draw(s);
   REQUIRE(s.at(0, 0).blank());
 
-  c.set_geometry({0, 0, 10, 0});  // zero height, non-zero width
+  c.set_geometry({0, 0, 10, 0}); // zero height, non-zero width
   c.draw(s);
   REQUIRE(s.at(0, 0).blank());
 
-  c.set_geometry({0, 0, 0, 1});  // zero width, non-zero height
+  c.set_geometry({0, 0, 0, 1}); // zero width, non-zero height
   c.draw(s);
   REQUIRE(s.at(0, 0).blank());
 }
@@ -260,12 +260,14 @@ TEST_CASE("Checkbox: a rect narrower than the chrome truncates cleanly",
     c.set_geometry({0, 0, w, 1});
     c.draw(s);
     // Nothing past the rect.
-    for (int x = w; x < 20; ++x) REQUIRE(s.at(x, 0).blank());
+    for (int x = w; x < 20; ++x)
+      REQUIRE(s.at(x, 0).blank());
     // What did fit is a prefix of the full line.
     const std::string full = "[x] Enable";
     const std::string got = row_text(s, 0, 0, w);
-    REQUIRE(got == (full + std::string(20, ' ')).substr(0, static_cast<
-                       std::size_t>(w)));
+    REQUIRE(
+        got ==
+        (full + std::string(20, ' ')).substr(0, static_cast<std::size_t>(w)));
   }
 }
 
@@ -279,12 +281,13 @@ TEST_CASE("Checkbox: a wide label glyph is never split",
   c.set_geometry({0, 0, 6, 1});
   c.draw(s);
   REQUIRE(s.text_at(4, 0) == "日");
-  REQUIRE(s.text_at(5, 0) == kContinuation);  // continuation cell, not a second glyph
+  REQUIRE(s.text_at(5, 0) ==
+          kContinuation); // continuation cell, not a second glyph
 
   Screen s2{10, 1};
   c.set_geometry({0, 0, 5, 1});
   c.draw(s2);
-  REQUIRE(s2.at(4, 0).blank());  // dropped, not split
+  REQUIRE(s2.at(4, 0).blank()); // dropped, not split
 }
 
 TEST_CASE("Checkbox: the Ascii style emits only 7-bit glyphs",
@@ -363,7 +366,7 @@ auto make_group(RadioGroup& g, int h = 3) -> void {
   g.set_geometry({0, 0, 18, h});
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("RadioGroup: marks the selected option and only that one",
           "[form][radio]") {
@@ -395,7 +398,7 @@ TEST_CASE("RadioGroup: a height shrink re-clamps the scroll at draw (#41)",
   g.on_event(key(Key::End));
   REQUIRE(g.selected() == 5);
 
-  g.set_geometry({0, 0, 18, 2});  // shrink: rows 3-4 would show, mark invisible
+  g.set_geometry({0, 0, 18, 2}); // shrink: rows 3-4 would show, mark invisible
   g.draw(s);
   REQUIRE(row_text(s, 0, 0, 7) == "( ) o4 ");
   REQUIRE(row_text(s, 1, 0, 7) == "(•) o5 ");
@@ -415,8 +418,7 @@ TEST_CASE("RadioGroup: arrows move the selection and fire on_change",
   REQUIRE(seen == std::vector<int>{1, 2, 1});
 }
 
-TEST_CASE("RadioGroup: Left and Right behave as Up and Down",
-          "[form][radio]") {
+TEST_CASE("RadioGroup: Left and Right behave as Up and Down", "[form][radio]") {
   RadioGroup g;
   make_group(g);
   REQUIRE(g.on_event(key(Key::Right)));
@@ -444,12 +446,12 @@ TEST_CASE("RadioGroup: the selection clamps and a no-op move does not fire",
   int calls = 0;
   g.on_change([&](int) { ++calls; });
 
-  REQUIRE(g.on_event(key(Key::Up)));  // already at 0
+  REQUIRE(g.on_event(key(Key::Up))); // already at 0
   REQUIRE(g.selected() == 0);
   REQUIRE(calls == 0);
 
   g.set_selected(2);
-  REQUIRE(g.on_event(key(Key::Down)));  // already at the end
+  REQUIRE(g.on_event(key(Key::Down))); // already at the end
   REQUIRE(g.selected() == 2);
   REQUIRE(calls == 0);
 }
@@ -473,7 +475,7 @@ TEST_CASE("RadioGroup: Tab, Enter and Space are declined",
   // Tab must cycle the ring rather than being swallowed.
   REQUIRE(ring.handle_key(key(Key::Tab)));
   REQUIRE(ring.current() == &other);
-  REQUIRE(g.selected() == 0);  // none of it moved the selection
+  REQUIRE(g.selected() == 0); // none of it moved the selection
 }
 
 TEST_CASE("RadioGroup: an empty group declines every key and is not a tab stop",
@@ -494,25 +496,26 @@ TEST_CASE("RadioGroup: an empty group declines every key and is not a tab stop",
 
   g.draw(s);
   for (int y = 0; y < 3; ++y)
-    for (int x = 0; x < 18; ++x) REQUIRE(s.at(x, y).blank());
+    for (int x = 0; x < 18; ++x)
+      REQUIRE(s.at(x, y).blank());
 
   Probe other;
   other.set_geometry({0, 4, 18, 1});
   FocusRing ring;
   ring.add(&g);
   ring.add(&other);
-  REQUIRE(ring.current() == &other);  // the ring skipped the empty group
+  REQUIRE(ring.current() == &other); // the ring skipped the empty group
 }
 
 TEST_CASE("RadioGroup: a left click selects a row; a blank row is inert",
           "[form][radio][mouse]") {
   RadioGroup g;
   g.set_options({"Dark", "Light"});
-  g.set_geometry({2, 1, 18, 4});  // 4 rows, 2 options → 2 blank rows
+  g.set_geometry({2, 1, 18, 4}); // 4 rows, 2 options → 2 blank rows
   std::vector<int> seen;
   g.on_change([&](int i) { seen.push_back(i); });
 
-  REQUIRE(g.on_event(press(3, 2)));  // second option
+  REQUIRE(g.on_event(press(3, 2))); // second option
   REQUIRE(g.selected() == 1);
 
   // A press on a blank row is consumed (so it cannot fall through) but inert.
@@ -565,7 +568,7 @@ TEST_CASE("RadioGroup: more options than rows scroll into view",
 
   // The click → index map honours the scroll.
   REQUIRE(g.on_event(press(1, 0)));
-  REQUIRE(g.selected() == 3);  // row 0 shows option 3, not option 0
+  REQUIRE(g.selected() == 3); // row 0 shows option 3, not option 0
 
   REQUIRE(g.on_event(key(Key::Home)));
   REQUIRE(g.scroll_offset() == 0);
@@ -580,13 +583,13 @@ TEST_CASE("RadioGroup: only the selected row inverts, and only when focused",
 
   g.draw(s);
   const auto unfocused_bg = s.at(0, 1).bg;
-  REQUIRE(unfocused_bg == s.at(0, 0).bg);  // nothing inverted yet
-  REQUIRE(row_text(s, 1, 0, 3) == "(•)");  // the mark alone carries the value
+  REQUIRE(unfocused_bg == s.at(0, 0).bg); // nothing inverted yet
+  REQUIRE(row_text(s, 1, 0, 3) == "(•)"); // the mark alone carries the value
 
   g.set_focused(true);
   g.draw(s);
-  REQUIRE_FALSE(s.at(0, 1).bg == unfocused_bg);  // the selected row inverted
-  REQUIRE(s.at(0, 0).bg == unfocused_bg);        // and only that row
+  REQUIRE_FALSE(s.at(0, 1).bg == unfocused_bg); // the selected row inverted
+  REQUIRE(s.at(0, 0).bg == unfocused_bg);       // and only that row
   REQUIRE(s.at(0, 2).bg == unfocused_bg);
 }
 
@@ -600,10 +603,10 @@ TEST_CASE("RadioGroup: a zero-size rect draws nothing and does not crash",
   g.draw(s);
   REQUIRE(s.at(0, 0).blank());
 
-  g.set_geometry({0, 0, 18, 0});  // options present, no rows to show them in
+  g.set_geometry({0, 0, 18, 0}); // options present, no rows to show them in
   g.draw(s);
   REQUIRE(s.at(0, 0).blank());
-  REQUIRE(g.on_event(key(Key::Down)));  // still navigable
+  REQUIRE(g.on_event(key(Key::Down))); // still navigable
   REQUIRE(g.selected() == 1);
 
   g.set_geometry({0, 0, 0, 3});
@@ -679,7 +682,7 @@ TEST_CASE("RadioGroup: options are sanitized at the setter (#154)",
   g.set_selected(1);
   REQUIRE(g.selected_text() == "evilhere");
   g.set_selected(2);
-  REQUIRE(g.selected_text() == "mo re");  // tab -> space, at the seam
+  REQUIRE(g.selected_text() == "mo re"); // tab -> space, at the seam
   g.add_option("la\033[31mst");
   g.set_selected(3);
   REQUIRE(g.selected_text() == "last");
@@ -691,8 +694,8 @@ TEST_CASE("RadioGroup: on_change may call set_options (drill-down)",
   make_group(g);
   int calls = 0;
   g.on_change([&, canary = std::vector<int>(64, 0x5A)](int) {
-    g.set_options({"replaced"});  // mutates storage under us
-    g.on_change(nullptr);         // destroys the closure we are inside
+    g.set_options({"replaced"}); // mutates storage under us
+    g.on_change(nullptr);        // destroys the closure we are inside
     ++calls;
     REQUIRE(canary.back() == 0x5A);
   });
@@ -712,7 +715,7 @@ auto make_select(Select& sel, int w = 14) -> void {
   sel.set_geometry({0, 0, w, 1});
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("Select: the closed box renders the value between the chrome",
           "[form][select]") {
@@ -722,7 +725,7 @@ TEST_CASE("Select: the closed box renders the value between the chrome",
 
   sel.draw(s);
   REQUIRE(row_text(s, 0, 0, 14) == "[ kitty    ▾ ]");
-  REQUIRE(s.text_at(13, 0) == "]");  // the bracket sits on the last column
+  REQUIRE(s.text_at(13, 0) == "]"); // the bracket sits on the last column
   REQUIRE_FALSE(sel.dropdown_open());
   // Nothing below the closed box.
   REQUIRE(s.at(0, 1).blank());
@@ -738,7 +741,7 @@ TEST_CASE("Select: add_option to an empty Select updates the box",
   Select sel;
   sel.set_geometry({0, 0, 14, 1});
   sel.draw(s);
-  REQUIRE(row_text(s, 0, 0, 14) == "[          ▾ ]");  // empty
+  REQUIRE(row_text(s, 0, 0, 14) == "[          ▾ ]"); // empty
 
   sel.add_option("kitty");
   sel.draw(s);
@@ -755,7 +758,8 @@ TEST_CASE("Select: the closed box never writes outside its rect",
     sel.set_options({"ansi-rgb"});
     sel.set_geometry({0, 0, w, 1});
     sel.draw(s);
-    for (int x = std::max(0, w); x < 20; ++x) REQUIRE(s.at(x, 0).blank());
+    for (int x = std::max(0, w); x < 20; ++x)
+      REQUIRE(s.at(x, 0).blank());
   }
 }
 
@@ -792,9 +796,9 @@ TEST_CASE("Select: the open list draws below the rect at dropdown_rect",
   sel.draw(s);
   REQUIRE(row_text(s, 0, 0, 14) == "[ ansi-rgb ▾ ]");
   REQUIRE(row_text(s, 1, 0, 9) == " kitty   ");
-  REQUIRE(row_text(s, 2, 0, 9) == "▸ansi-rgb");  // highlighted: marker (#76)
+  REQUIRE(row_text(s, 2, 0, 9) == "▸ansi-rgb"); // highlighted: marker (#76)
   REQUIRE(row_text(s, 3, 0, 9) == " fallback");
-  REQUIRE(s.at(0, 4).blank());  // nothing past the last option
+  REQUIRE(s.at(0, 4).blank()); // nothing past the last option
   // The highlight starts on the current selection, not at the top -- said
   // twice, in the marker above and in the colour here.
   REQUIRE(sel.highlighted() == 1);
@@ -808,14 +812,14 @@ TEST_CASE("Select: hit_test covers the dropdown only while it is open",
   make_select(sel);
 
   REQUIRE(sel.hit_test(3, 0));
-  REQUIRE_FALSE(sel.hit_test(3, 2));  // closed: the rows below are not ours
+  REQUIRE_FALSE(sel.hit_test(3, 2)); // closed: the rows below are not ours
 
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(s);
   REQUIRE(sel.hit_test(3, 2));
   REQUIRE(sel.hit_test(3, 3));
-  REQUIRE_FALSE(sel.hit_test(3, 4));   // one past the last option
-  REQUIRE_FALSE(sel.hit_test(30, 2));  // right of the dropdown
+  REQUIRE_FALSE(sel.hit_test(3, 4));  // one past the last option
+  REQUIRE_FALSE(sel.hit_test(30, 2)); // right of the dropdown
 }
 
 TEST_CASE("Select: arrows move the highlight without committing",
@@ -828,7 +832,7 @@ TEST_CASE("Select: arrows move the highlight without committing",
   REQUIRE(sel.on_event(key(Key::Enter)));
   REQUIRE(sel.on_event(key(Key::Down)));
   REQUIRE(sel.highlighted() == 1);
-  REQUIRE(sel.selected() == 0);  // not committed
+  REQUIRE(sel.selected() == 0); // not committed
   REQUIRE(sel.on_event(key(Key::End)));
   REQUIRE(sel.highlighted() == 2);
   REQUIRE(sel.on_event(key(Key::Home)));
@@ -847,10 +851,10 @@ TEST_CASE("Select: Enter commits once, closes, and reports index and text",
   std::vector<std::pair<int, std::string>> seen;
   sel.on_change([&](int i, const std::string& t) { seen.emplace_back(i, t); });
 
-  REQUIRE(sel.on_event(key(Key::Enter)));  // open
+  REQUIRE(sel.on_event(key(Key::Enter))); // open
   REQUIRE(sel.on_event(key(Key::Down)));
   REQUIRE(sel.on_event(key(Key::Down)));
-  REQUIRE(sel.on_event(key(Key::Enter)));  // commit
+  REQUIRE(sel.on_event(key(Key::Enter))); // commit
 
   REQUIRE_FALSE(sel.dropdown_open());
   REQUIRE(sel.selected() == 2);
@@ -871,7 +875,7 @@ TEST_CASE("Select: Escape while open closes without committing",
   REQUIRE(sel.on_event(key(Key::Down)));
   REQUIRE(sel.on_event(key(Key::Escape)));
   REQUIRE_FALSE(sel.dropdown_open());
-  REQUIRE(sel.selected() == 0);  // unchanged
+  REQUIRE(sel.selected() == 0); // unchanged
   REQUIRE(calls == 0);
 }
 
@@ -897,9 +901,9 @@ TEST_CASE("Select: Tab while open closes the list AND cycles the ring",
   REQUIRE(sel.dropdown_open());
 
   REQUIRE(ring.handle_key(key(Key::Tab)));
-  REQUIRE_FALSE(sel.dropdown_open());  // closed
-  REQUIRE(ring.current() == &other);   // and moved on, in one press
-  REQUIRE(calls == 0);                 // without committing
+  REQUIRE_FALSE(sel.dropdown_open()); // closed
+  REQUIRE(ring.current() == &other);  // and moved on, in one press
+  REQUIRE(calls == 0);                // without committing
 }
 
 TEST_CASE("Select: losing focus closes the list", "[form][select][focus]") {
@@ -948,12 +952,12 @@ TEST_CASE("Select: clicking the box toggles, clicking a row commits",
 
   REQUIRE(sel.on_event(press(3, 0)));
   REQUIRE(sel.dropdown_open());
-  REQUIRE(sel.on_event(press(3, 0)));  // again → closes
+  REQUIRE(sel.on_event(press(3, 0))); // again → closes
   REQUIRE_FALSE(sel.dropdown_open());
 
   REQUIRE(sel.on_event(press(3, 0)));
   sel.draw(s);
-  REQUIRE(sel.on_event(press(3, 3)));  // third option
+  REQUIRE(sel.on_event(press(3, 3))); // third option
   REQUIRE_FALSE(sel.dropdown_open());
   REQUIRE(sel.selected() == 2);
   REQUIRE(seen == std::vector<int>{2});
@@ -1002,16 +1006,16 @@ TEST_CASE("Select: the dropdown clamps to the screen bottom (#48 item 3)",
   Screen s{20, 7};
   Select sel;
   sel.set_options({"a", "b", "c", "d", "e"});
-  sel.set_geometry({0, 4, 10, 1});  // open room for y=5,6: 2 of 5 rows fit
+  sel.set_geometry({0, 4, 10, 1}); // open room for y=5,6: 2 of 5 rows fit
 
   int picked = -1;
   sel.on_change([&](int i, const std::string&) { picked = i; });
-  REQUIRE(sel.on_event(press(2, 4)));  // open
+  REQUIRE(sel.on_event(press(2, 4))); // open
   sel.draw(s);
   REQUIRE(sel.dropdown_open());
 
-  REQUIRE(sel.hit_test(2, 6));        // the last visible row ("b")
-  REQUIRE_FALSE(sel.hit_test(2, 7));  // past the screen: dead, not committable
+  REQUIRE(sel.hit_test(2, 6));       // the last visible row ("b")
+  REQUIRE_FALSE(sel.hit_test(2, 7)); // past the screen: dead, not committable
 
   // A click past the bottom is declined, so nothing off-screen commits.
   REQUIRE_FALSE(sel.on_event(press(2, 8)));
@@ -1022,7 +1026,7 @@ TEST_CASE("Select: the dropdown clamps to the screen bottom (#48 item 3)",
   // either -- #53's invariant, which scrolling must not weaken: "e" is item 4,
   // the window is [0,2), so nothing reaches it without a scroll first.
   REQUIRE(sel.on_event(key(Key::Enter)));
-  REQUIRE(sel.selected() == 0);  // the highlight: painted, marked, and item 0
+  REQUIRE(sel.selected() == 0); // the highlight: painted, marked, and item 0
   REQUIRE_FALSE(sel.dropdown_open());
   // Still -1: committing the value already selected fires nothing, the
   // no-op-silence rule (#36 item 3). The commit is observed via selected().
@@ -1039,17 +1043,17 @@ TEST_CASE("Select: End scrolls the last option into view and commits IT (#85)",
   Screen s{20, 7};
   Select sel;
   sel.set_options({"a", "b", "c", "d", "e"});
-  sel.set_geometry({0, 4, 10, 1});  // 2 of 5 rows fit, at y=5 and y=6
+  sel.set_geometry({0, 4, 10, 1}); // 2 of 5 rows fit, at y=5 and y=6
 
   int picked = -1;
   sel.on_change([&](int i, const std::string&) { picked = i; });
-  REQUIRE(sel.on_event(press(2, 4)));  // open
+  REQUIRE(sel.on_event(press(2, 4))); // open
   sel.draw(s);
   REQUIRE(row_text(s, 5, 1, 1) == "a");
   REQUIRE(row_text(s, 6, 1, 1) == "b");
 
   REQUIRE(sel.on_event(key(Key::End)));
-  REQUIRE(sel.highlighted() == 4);  // the last OPTION, not the last row
+  REQUIRE(sel.highlighted() == 4); // the last OPTION, not the last row
 
   // The window moved with it, so what Enter is about to commit is on screen.
   sel.draw(s);
@@ -1057,33 +1061,35 @@ TEST_CASE("Select: End scrolls the last option into view and commits IT (#85)",
   REQUIRE(row_text(s, 6, 1, 1) == "e");
 
   REQUIRE(sel.on_event(key(Key::Enter)));
-  REQUIRE(picked == 4);  // "e" -- the option that was painted and marked
+  REQUIRE(picked == 4); // "e" -- the option that was painted and marked
 }
 
-TEST_CASE("Select: the dropdown anchors below a taller rect",
-          "[form][select][mouse][failure]") {  // #36 item 1: anchored at r.y + 1, a h >= 2 control overdraws its own box
+TEST_CASE(
+    "Select: the dropdown anchors below a taller rect",
+    "[form][select][mouse][failure]") { // #36 item 1: anchored at r.y + 1, a h
+                                        // >= 2 control overdraws its own box
   // line and a click on the visually-first option row satisfies
   // rect().contains first -- toggling the dropdown closed instead of
   // committing. Anchored at r.y + r.h the two can never disagree.
   Screen s{20, 8};
   Select sel;
   sel.set_options({"kitty", "ansi-rgb", "fallback"});
-  sel.set_geometry({0, 0, 14, 2});  // box line draws at y + h/2 = 1
+  sel.set_geometry({0, 0, 14, 2}); // box line draws at y + h/2 = 1
 
   int picked = -1;
   sel.on_change([&](int i, const std::string&) { picked = i; });
-  REQUIRE(sel.on_event(press(3, 1)));  // open via the rendered box line
+  REQUIRE(sel.on_event(press(3, 1))); // open via the rendered box line
   REQUIRE(sel.dropdown_open());
 
   sel.draw(s);
-  REQUIRE(row_text(s, 1, 0, 14) == "[ kitty    ▾ ]");   // box intact
+  REQUIRE(row_text(s, 1, 0, 14) == "[ kitty    ▾ ]"); // box intact
   // List starts at y+h, and the highlighted row wears the #76 marker in the
   // pad column the labels were already indented by.
   REQUIRE(row_text(s, 2, 0, 9) == "▸kitty   ");
   REQUIRE(sel.hit_test(3, 2));
-  REQUIRE_FALSE(sel.hit_test(3, 5));  // one past the last option
+  REQUIRE_FALSE(sel.hit_test(3, 5)); // one past the last option
 
-  REQUIRE(sel.on_event(press(3, 3)));  // second option row commits, not toggles
+  REQUIRE(sel.on_event(press(3, 3))); // second option row commits, not toggles
   REQUIRE(picked == 1);
   REQUIRE(sel.selected() == 1);
   REQUIRE_FALSE(sel.dropdown_open());
@@ -1099,7 +1105,7 @@ TEST_CASE("Select: set_selected while open closes the dropdown",
   int calls = 0;
   sel.on_change([&](int, const std::string&) { ++calls; });
 
-  REQUIRE(sel.on_event(key(Key::Enter)));  // open, highlight on selected=0
+  REQUIRE(sel.on_event(key(Key::Enter))); // open, highlight on selected=0
   sel.set_selected(2);
   REQUIRE(sel.selected() == 2);
   REQUIRE_FALSE(sel.dropdown_open());
@@ -1117,9 +1123,9 @@ TEST_CASE("Select: re-committing the current value fires nothing",
   int calls = 0;
   sel.on_change([&](int, const std::string&) { ++calls; });
 
-  REQUIRE(sel.on_event(key(Key::Enter)));  // open, highlight starts on 1
+  REQUIRE(sel.on_event(key(Key::Enter))); // open, highlight starts on 1
   REQUIRE(sel.highlighted() == 1);
-  REQUIRE(sel.on_event(key(Key::Enter)));  // commit the unchanged value
+  REQUIRE(sel.on_event(key(Key::Enter))); // commit the unchanged value
   REQUIRE(sel.selected() == 1);
   REQUIRE_FALSE(sel.dropdown_open());
   REQUIRE(calls == 0);
@@ -1133,7 +1139,7 @@ TEST_CASE("Select: hover over the open list moves the highlight",
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(s);
 
-  REQUIRE(sel.on_event(motion(3, 3)));  // hover over the third option
+  REQUIRE(sel.on_event(motion(3, 3))); // hover over the third option
   REQUIRE(sel.highlighted() == 2);
 }
 
@@ -1184,12 +1190,14 @@ TEST_CASE("Select: an unpainted open list declines wheel events (#96)",
   REQUIRE(sel.on_event(key(Key::Enter)));
   REQUIRE(sel.highlighted() == 0);
 
-  for (int i = 0; i < 5; ++i) REQUIRE_FALSE(sel.on_event(wheel(3, 2)));
+  for (int i = 0; i < 5; ++i)
+    REQUIRE_FALSE(sel.on_event(wheel(3, 2)));
   REQUIRE(sel.highlighted() == 0);
 }
 
-TEST_CASE("Select: the wheel scrolls the window and carries the highlight (#85)",
-          "[form][select][mouse][failure]") {
+TEST_CASE(
+    "Select: the wheel scrolls the window and carries the highlight (#85)",
+    "[form][select][mouse][failure]") {
   // The wheel's actual job. Two things are asserted together on purpose,
   // because either alone is a bug:
   //  - the window moves, or the wheel is the dead gesture #85 was filed about;
@@ -1198,7 +1206,7 @@ TEST_CASE("Select: the wheel scrolls the window and carries the highlight (#85)"
   Screen s{20, 7};
   Select sel;
   sel.set_options({"a", "b", "c", "d", "e"});
-  sel.set_geometry({0, 4, 10, 1});  // 2 of 5 rows fit, at y=5 and y=6
+  sel.set_geometry({0, 4, 10, 1}); // 2 of 5 rows fit, at y=5 and y=6
   int picked = -1;
   sel.on_change([&](int i, const std::string&) { picked = i; });
 
@@ -1220,10 +1228,10 @@ TEST_CASE("Select: the wheel scrolls the window and carries the highlight (#85)"
   REQUIRE(sel.on_event(wheel(3, 6, true)));
   sel.draw(s);
   REQUIRE(row_text(s, 5, 1, 1) == "a");
-  REQUIRE(sel.highlighted() == 1);  // already inside [0,2): left alone
+  REQUIRE(sel.highlighted() == 1); // already inside [0,2): left alone
 
   REQUIRE(sel.on_event(key(Key::Enter)));
-  REQUIRE(picked == 1);  // "b", which was painted and marked when Enter landed
+  REQUIRE(picked == 1); // "b", which was painted and marked when Enter landed
 }
 
 TEST_CASE("Select: draw() does not snap a wheeled window back (#85)",
@@ -1238,7 +1246,7 @@ TEST_CASE("Select: draw() does not snap a wheeled window back (#85)",
   Screen s{20, 8};
   Select sel;
   sel.set_options({"a", "b", "c", "d", "e", "f"});
-  sel.set_geometry({0, 4, 10, 1});  // 3 of 6 rows fit: y=5,6,7
+  sel.set_geometry({0, 4, 10, 1}); // 3 of 6 rows fit: y=5,6,7
 
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(s);
@@ -1247,13 +1255,15 @@ TEST_CASE("Select: draw() does not snap a wheeled window back (#85)",
 
   sel.draw(s);
   const std::string after_first = row_text(s, 5, 1, 1);
-  REQUIRE(after_first == "c");  // window [2,5)
-  for (int i = 0; i < 3; ++i) sel.draw(s);
-  REQUIRE(row_text(s, 5, 1, 1) == after_first);  // and it stayed there
+  REQUIRE(after_first == "c"); // window [2,5)
+  for (int i = 0; i < 3; ++i)
+    sel.draw(s);
+  REQUIRE(row_text(s, 5, 1, 1) == after_first); // and it stayed there
 }
 
 TEST_CASE("Select: a click at a non-zero scroll commits the option DRAWN on "
-          "that row (#85, #10)", "[form][select][mouse][failure]") {
+          "that row (#85, #10)",
+          "[form][select][mouse][failure]") {
   // The sharpest edge in the whole change, and the one the issue calls out: the
   // draw loop and the press path each map a screen row to an option, and if
   // they disagree by the scroll offset every click lands on the wrong option.
@@ -1265,13 +1275,13 @@ TEST_CASE("Select: a click at a non-zero scroll commits the option DRAWN on "
   Screen s{20, 8};
   Select sel;
   sel.set_options({"a", "b", "c", "d", "e", "f"});
-  sel.set_geometry({0, 4, 10, 1});  // 3 of 6 rows fit: y=5,6,7
+  sel.set_geometry({0, 4, 10, 1}); // 3 of 6 rows fit: y=5,6,7
 
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(s);
   REQUIRE(sel.on_event(wheel(3, 6)));
   REQUIRE(sel.on_event(wheel(3, 6)));
-  sel.draw(s);  // window is now [2,5): "c", "d", "e"
+  sel.draw(s); // window is now [2,5): "c", "d", "e"
 
   for (int y = 5; y <= 7; ++y) {
     const std::string drawn = row_text(s, y, 1, 1);
@@ -1286,12 +1296,13 @@ TEST_CASE("Select: a click at a non-zero scroll commits the option DRAWN on "
     REQUIRE(probe.on_event(wheel(3, 6)));
     probe.draw(s);
     REQUIRE(probe.on_event(press(3, y)));
-    REQUIRE(got == drawn);  // clicked row == painted label == committed option
+    REQUIRE(got == drawn); // clicked row == painted label == committed option
   }
 }
 
 TEST_CASE("Select: overflow indicators mark the ends the window is cut at "
-          "(#85)", "[form][select][glyphs][failure]") {
+          "(#85)",
+          "[form][select][glyphs][failure]") {
   // Reachable is only half the fix: without a hint there is nothing on screen
   // saying the other options exist, and a dropdown showing 3 of 6 looks
   // identical to one showing 3 of 3. The hints go in the rightmost column,
@@ -1300,8 +1311,8 @@ TEST_CASE("Select: overflow indicators mark the ends the window is cut at "
   Screen s{20, 8};
   Select sel;
   sel.set_options({"a", "b", "c", "d", "e", "f"});
-  sel.set_geometry({0, 4, 12, 1});  // 3 of 6 rows fit: y=5,6,7
-  const int hint_x = 11;            // dr.x + dr.w - 1
+  sel.set_geometry({0, 4, 12, 1}); // 3 of 6 rows fit: y=5,6,7
+  const int hint_x = 11;           // dr.x + dr.w - 1
 
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(s);
@@ -1309,12 +1320,12 @@ TEST_CASE("Select: overflow indicators mark the ends the window is cut at "
   REQUIRE(s.text_at(hint_x, 5) != "▴");
   REQUIRE(s.text_at(hint_x, 7) == "▾");
 
-  REQUIRE(sel.on_event(wheel(3, 6)));  // window [1,4): cut at BOTH ends
+  REQUIRE(sel.on_event(wheel(3, 6))); // window [1,4): cut at BOTH ends
   sel.draw(s);
   REQUIRE(s.text_at(hint_x, 5) == "▴");
   REQUIRE(s.text_at(hint_x, 7) == "▾");
 
-  REQUIRE(sel.on_event(key(Key::End)));  // window [3,6): bottom of the list
+  REQUIRE(sel.on_event(key(Key::End))); // window [3,6): bottom of the list
   sel.draw(s);
   REQUIRE(s.text_at(hint_x, 5) == "▴");
   REQUIRE(s.text_at(hint_x, 7) != "▾");
@@ -1327,7 +1338,7 @@ TEST_CASE("Select: a list that fits gets no indicators (#85)",
   Screen s{20, 10};
   Select sel;
   sel.set_options({"a", "b", "c"});
-  sel.set_geometry({0, 0, 12, 1});  // 3 of 3 fit
+  sel.set_geometry({0, 0, 12, 1}); // 3 of 3 fit
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(s);
   for (int y = 1; y <= 3; ++y) {
@@ -1366,11 +1377,11 @@ TEST_CASE("Select: an indicator never eats a label column (#85)",
   Screen s{20, 8};
   Select sel;
   sel.set_options({"abcdefghij", "b", "c", "d", "e", "f"});
-  sel.set_geometry({0, 4, 12, 1});  // label_pad 1, avail 10 == the label
+  sel.set_geometry({0, 4, 12, 1}); // label_pad 1, avail 10 == the label
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(s);
-  REQUIRE(row_text(s, 5, 1, 10) == "abcdefghij");  // intact
-  REQUIRE(s.text_at(11, 7) == "▾");                // and the hint still fits
+  REQUIRE(row_text(s, 5, 1, 10) == "abcdefghij"); // intact
+  REQUIRE(s.text_at(11, 7) == "▾");               // and the hint still fits
 }
 
 TEST_CASE("Select: a dropdown one column wide draws no indicator (#85)",
@@ -1406,14 +1417,16 @@ TEST_CASE("Select: a wheel with no window at all changes nothing (#85)",
   Screen s{20, 2};
   Select sel;
   sel.set_options({"a", "b", "c", "d", "e", "f", "g", "h"});
-  sel.set_geometry({0, 1, 12, 1});  // last row: zero rows fit below
+  sel.set_geometry({0, 1, 12, 1}); // last row: zero rows fit below
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(s);
   REQUIRE(sel.dropdown_open());
 
-  REQUIRE_FALSE(sel.dirty());  // draw() above cleared it
-  for (int i = 0; i < 5; ++i) REQUIRE(sel.on_event(wheel(3, 1)));
-  for (int i = 0; i < 5; ++i) REQUIRE(sel.on_event(wheel(3, 1, true)));
+  REQUIRE_FALSE(sel.dirty()); // draw() above cleared it
+  for (int i = 0; i < 5; ++i)
+    REQUIRE(sel.on_event(wheel(3, 1)));
+  for (int i = 0; i < 5; ++i)
+    REQUIRE(sel.on_event(wheel(3, 1, true)));
   REQUIRE(sel.highlighted() == 0);
   // Consumed (it is ours, and must not leak to whatever is behind), but nothing
   // moved -- so the dirty flag must not claim a repaint is needed (#56 item 2).
@@ -1421,7 +1434,8 @@ TEST_CASE("Select: a wheel with no window at all changes nothing (#85)",
 }
 
 TEST_CASE("Select: a box on the LAST screen row reaches nothing, by design "
-          "(#85, #53)", "[form][select][failure]") {
+          "(#85, #53)",
+          "[form][select][failure]") {
   // The one case scrolling cannot rescue, pinned so the limit is deliberate
   // rather than discovered. With zero rows below the anchor there is no window
   // to scroll: dropdown_visible_rows returns 0, nothing paints, and #53 says an
@@ -1432,26 +1446,28 @@ TEST_CASE("Select: a box on the LAST screen row reaches nothing, by design "
   Screen s{20, 2};
   Select sel;
   sel.set_options({"a", "b", "c", "d", "e"});
-  sel.set_geometry({0, 1, 12, 1});  // last row: nothing fits below
+  sel.set_geometry({0, 1, 12, 1}); // last row: nothing fits below
 
   int picked = -1;
   sel.on_change([&](int i, const std::string&) { picked = i; });
-  REQUIRE(sel.on_event(key(Key::Enter)));  // opens
+  REQUIRE(sel.on_event(key(Key::Enter))); // opens
   sel.draw(s);
   REQUIRE(sel.dropdown_open());
 
-  for (int i = 0; i < 8; ++i) REQUIRE(sel.on_event(key(Key::Down)));
-  REQUIRE(sel.highlighted() == 0);         // nowhere to go
-  REQUIRE(sel.on_event(key(Key::Enter)));  // consumed...
-  REQUIRE(picked == -1);                   // ...but commits nothing (#53)
+  for (int i = 0; i < 8; ++i)
+    REQUIRE(sel.on_event(key(Key::Down)));
+  REQUIRE(sel.highlighted() == 0);        // nowhere to go
+  REQUIRE(sel.on_event(key(Key::Enter))); // consumed...
+  REQUIRE(picked == -1);                  // ...but commits nothing (#53)
   REQUIRE(sel.dropdown_open());
 
-  REQUIRE(sel.on_event(key(Key::Escape)));  // the documented way out
+  REQUIRE(sel.on_event(key(Key::Escape))); // the documented way out
   REQUIRE_FALSE(sel.dropdown_open());
 }
 
 TEST_CASE("Select: a relayout between frames cannot desync click from paint "
-          "(#85, #10, #96)", "[form][select][mouse][failure]") {
+          "(#85, #10, #96)",
+          "[form][select][mouse][failure]") {
   // set_geometry() is public, non-virtual, and reachable while the list is
   // open, so an app that relayouts inside an event handler changes the window
   // before the widget gets a chance to redraw. #85 closed the out-of-range
@@ -1467,7 +1483,7 @@ TEST_CASE("Select: a relayout between frames cannot desync click from paint "
   Screen s{12, 12};
   Select sel;
   sel.set_options({"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"});
-  sel.set_geometry({0, 0, 12, 1});  // 11 rows fit: y=1..11
+  sel.set_geometry({0, 0, 12, 1}); // 11 rows fit: y=1..11
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(s);
   REQUIRE(sel.on_event(key(Key::End)));
@@ -1477,17 +1493,17 @@ TEST_CASE("Select: a relayout between frames cannot desync click from paint "
   REQUIRE(row_text(s, 11, 1, 1) == "l");
 
   REQUIRE(sel.dropdown_open());
-  sel.set_geometry({0, 8, 12, 1});  // no draw -- live window would be y=9..11
+  sel.set_geometry({0, 8, 12, 1}); // no draw -- live window would be y=9..11
   REQUIRE(sel.dropdown_open());    // set_geometry must not close (#96)
 
   // New live rows are not yet painted: decline rather than commit unseen
   // geometry. The painted rows at y=9..11 are still claimed and still resolve
   // through the memoized scroll (== 1), so they commit j/k/l, never b/c/d.
-  REQUIRE_FALSE(sel.hit_test(3, 0));  // old box row, no longer ours
-  REQUIRE(sel.hit_test(3, 8));        // current box row remains interactive
-  REQUIRE(sel.hit_test(3, 9));        // old dropdown row is still painted
+  REQUIRE_FALSE(sel.hit_test(3, 0)); // old box row, no longer ours
+  REQUIRE(sel.hit_test(3, 8));       // current box row remains interactive
+  REQUIRE(sel.hit_test(3, 9));       // old dropdown row is still painted
   REQUIRE(sel.on_event(motion(3, 9)));
-  REQUIRE(sel.highlighted() == 9);    // hover sees "j", not live row "b"
+  REQUIRE(sel.highlighted() == 9); // hover sees "j", not live row "b"
   REQUIRE(sel.on_event(press(3, 9)));
   REQUIRE(sel.selected_text() == "j");
 }
@@ -1501,11 +1517,11 @@ TEST_CASE("Select: an unpainted open list declines dropdown presses (#96)",
   sel.set_geometry({0, 0, 12, 1});
   REQUIRE(sel.on_event(key(Key::Enter)));
   REQUIRE(sel.dropdown_open());
-  REQUIRE_FALSE(sel.hit_test(3, 1));           // no paint yet
-  REQUIRE_FALSE(sel.on_event(press(3, 1)));    // decline
+  REQUIRE_FALSE(sel.hit_test(3, 1));        // no paint yet
+  REQUIRE_FALSE(sel.on_event(press(3, 1))); // decline
   REQUIRE(sel.dropdown_open());
-  REQUIRE(sel.selected() == 0);                // untouched
-  REQUIRE(sel.on_event(press(3, 0)));          // box still toggles
+  REQUIRE(sel.selected() == 0);       // untouched
+  REQUIRE(sel.on_event(press(3, 0))); // box still toggles
   REQUIRE_FALSE(sel.dropdown_open());
 }
 
@@ -1518,7 +1534,7 @@ TEST_CASE("Select: content mutation clears the paint snapshot (#96)",
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(s);
   REQUIRE(sel.hit_test(3, 2));
-  sel.add_option("g");  // does not close, but invalidates the paint
+  sel.add_option("g"); // does not close, but invalidates the paint
   REQUIRE(sel.dropdown_open());
   REQUIRE_FALSE(sel.hit_test(3, 2));
   REQUIRE_FALSE(sel.on_event(press(3, 2)));
@@ -1541,11 +1557,11 @@ TEST_CASE("Select: a shrinking screen re-clamps a scrolled window (#85)",
   sel.set_geometry({0, 4, 12, 1});
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(tall);
-  REQUIRE(sel.on_event(key(Key::End)));  // scrolled to the tail
+  REQUIRE(sel.on_event(key(Key::End))); // scrolled to the tail
   sel.draw(tall);
 
-  Screen shortscreen{20, 6};  // only 1 row now fits below the box
-  sel.draw(shortscreen);      // must not read past the options
+  Screen shortscreen{20, 6}; // only 1 row now fits below the box
+  sel.draw(shortscreen);     // must not read past the options
   REQUIRE(row_text(shortscreen, 5, 1, 1) == "h");
   REQUIRE(sel.on_event(key(Key::Enter)));
   REQUIRE(sel.selected() == 7);
@@ -1560,9 +1576,10 @@ TEST_CASE("Select: every option is reachable however short the terminal (#85)",
   Screen s{20, 9};
   Select sel;
   std::vector<std::string> opts;
-  for (int i = 0; i < 40; ++i) opts.push_back("opt" + std::to_string(i));
+  for (int i = 0; i < 40; ++i)
+    opts.push_back("opt" + std::to_string(i));
   sel.set_options(std::move(opts));
-  sel.set_geometry({0, 4, 12, 1});  // 4 of 40 rows fit: y=5..8
+  sel.set_geometry({0, 4, 12, 1}); // 4 of 40 rows fit: y=5..8
 
   int picked = -1;
   sel.on_change([&](int i, const std::string&) { picked = i; });
@@ -1578,7 +1595,7 @@ TEST_CASE("Select: every option is reachable however short the terminal (#85)",
     REQUIRE(sel.highlighted() == i);
   }
   sel.draw(s);
-  REQUIRE(row_text(s, 8, 1, 5) == "opt39");  // scrolled into view, and marked
+  REQUIRE(row_text(s, 8, 1, 5) == "opt39"); // scrolled into view, and marked
   REQUIRE(sel.on_event(key(Key::Enter)));
   REQUIRE(picked == 39);
 }
@@ -1596,8 +1613,8 @@ TEST_CASE("Select: an empty Select renders, is focusable, and will not open",
   REQUIRE(sel.selected_text().empty());
   REQUIRE(sel.focusable());
 
-  REQUIRE(sel.on_event(key(Key::Enter)));  // consumed
-  REQUIRE_FALSE(sel.dropdown_open());      // but nothing to open
+  REQUIRE(sel.on_event(key(Key::Enter))); // consumed
+  REQUIRE_FALSE(sel.dropdown_open());     // but nothing to open
   REQUIRE(sel.on_event(press(3, 0)));
   REQUIRE_FALSE(sel.dropdown_open());
 
@@ -1616,7 +1633,7 @@ TEST_CASE("Select: a zero-size rect draws nothing and does not crash",
   sel.draw(s);
   REQUIRE(s.at(0, 0).blank());
 
-  REQUIRE(sel.on_event(key(Key::Enter)));  // open with no geometry
+  REQUIRE(sel.on_event(key(Key::Enter))); // open with no geometry
   sel.draw(s);
   REQUIRE(s.at(0, 0).blank());
 
@@ -1660,7 +1677,7 @@ TEST_CASE("Select: options are sanitized at the setter (#154)",
 
   sel.set_selected(2);
   sel.draw(s);
-  REQUIRE(row_text(s, 0, 0, 14) == "[ mo re    \xE2\x96\xBE ]");  // tab -> space
+  REQUIRE(row_text(s, 0, 0, 14) == "[ mo re    \xE2\x96\xBE ]"); // tab -> space
   REQUIRE(sel.selected_text() == "mo re");
 
   sel.add_option("la\033[31mst");
@@ -1668,8 +1685,9 @@ TEST_CASE("Select: options are sanitized at the setter (#154)",
   REQUIRE(sel.selected_text() == "last");
 }
 
-TEST_CASE("Select: a click commits the sanitized option painted on that row (#154)",
-          "[form][select][mouse]") {
+TEST_CASE(
+    "Select: a click commits the sanitized option painted on that row (#154)",
+    "[form][select][mouse]") {
   // The #10 shape for the dropdown: the click resolves by row geometry, so it
   // cannot drift -- but the value committed must be the sanitized copy whose
   // glyphs the user pointed at, never the caller's raw bytes.
@@ -1680,7 +1698,7 @@ TEST_CASE("Select: a click commits the sanitized option painted on that row (#15
   std::vector<std::pair<int, std::string>> seen;
   sel.on_change([&](int i, const std::string& t) { seen.emplace_back(i, t); });
 
-  REQUIRE(sel.on_event(key(Key::Enter)));  // open
+  REQUIRE(sel.on_event(key(Key::Enter))); // open
   sel.draw(s);
   // Row 2 (dropdown option 1) shows the sanitized form; the label sits past
   // the one-column marker pad, truncated/padded into the dropdown window.
@@ -1709,7 +1727,7 @@ TEST_CASE("Select: a wide value glyph is never split",
   REQUIRE(s.text_at(3, 0) == kContinuation);
   REQUIRE(s.text_at(4, 0) == "本");
   REQUIRE(s.text_at(5, 0) == kContinuation);
-  REQUIRE(s.text_at(9, 0) == "]");  // chrome still lands on the last column
+  REQUIRE(s.text_at(9, 0) == "]"); // chrome still lands on the last column
 }
 
 TEST_CASE("Select: the dirty flag round-trips through every setter",
@@ -1731,7 +1749,7 @@ TEST_CASE("Select: the dirty flag round-trips through every setter",
 
   sel.draw(s);
   REQUIRE_FALSE(sel.dirty());
-  REQUIRE(sel.on_event(key(Key::Enter)));  // opening dirties
+  REQUIRE(sel.on_event(key(Key::Enter))); // opening dirties
   REQUIRE(sel.dirty());
 
   sel.draw(s);
@@ -1756,10 +1774,10 @@ TEST_CASE("Select: on_change may call set_options and replace its handler",
   std::string seen;
   sel.on_change(
       [&, canary = std::vector<int>(64, 0x5A)](int, const std::string& text) {
-        sel.set_options({"replaced"});  // reallocates under the argument
-        sel.on_change(nullptr);         // destroys the closure we are inside
+        sel.set_options({"replaced"}); // reallocates under the argument
+        sel.on_change(nullptr);        // destroys the closure we are inside
         ++calls;
-        seen = text;                    // read the arg after both mutations
+        seen = text; // read the arg after both mutations
         REQUIRE(canary.back() == 0x5A);
       });
 
@@ -1767,7 +1785,7 @@ TEST_CASE("Select: on_change may call set_options and replace its handler",
   REQUIRE(sel.on_event(key(Key::Down)));
   REQUIRE(sel.on_event(key(Key::Enter)));
   REQUIRE(calls == 1);
-  REQUIRE(seen == "ansi-rgb");  // the option the user picked, not freed memory
+  REQUIRE(seen == "ansi-rgb"); // the option the user picked, not freed memory
   REQUIRE(sel.option_count() == 1);
 }
 
@@ -1785,7 +1803,8 @@ TEST_CASE("Select: on_change may call set_options and replace its handler",
 // not doing its job.
 
 TEST_CASE("Select: the open list marks its highlight with a glyph, not only "
-          "colour (#76)", "[form][select][glyphs]") {
+          "colour (#76)",
+          "[form][select][glyphs]") {
   Screen s{20, 6};
   Select sel;
   make_select(sel);
@@ -1810,13 +1829,13 @@ TEST_CASE("Select: the marker follows the highlight without committing (#76)",
   int calls = 0;
   sel.on_change([&](int, const std::string&) { ++calls; });
 
-  REQUIRE(sel.on_event(key(Key::Enter)));  // open
-  REQUIRE(sel.on_event(key(Key::Down)));   // move the highlight
+  REQUIRE(sel.on_event(key(Key::Enter))); // open
+  REQUIRE(sel.on_event(key(Key::Down)));  // move the highlight
   sel.draw(s);
 
   REQUIRE(s.text_at(0, 1).empty());
   REQUIRE(s.text_at(0, 2) == "▸");
-  REQUIRE(calls == 0);  // arrows still do not commit
+  REQUIRE(calls == 0); // arrows still do not commit
 }
 
 TEST_CASE("Select: a hover moves the marker too (#76)",
@@ -1828,7 +1847,7 @@ TEST_CASE("Select: a hover moves the marker too (#76)",
   make_select(sel);
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(s);
-  REQUIRE(sel.on_event(motion(3, 3)));  // third option row
+  REQUIRE(sel.on_event(motion(3, 3))); // third option row
   sel.draw(s);
 
   REQUIRE(s.text_at(0, 3) == "▸");
@@ -1864,19 +1883,20 @@ TEST_CASE("Select: the highlight survives a driver that drops colour (#76)",
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(s);
 
-  REQUIRE(row_text(s, 1, 0, 6) != row_text(s, 2, 0, 6));  // in CELL TEXT
+  REQUIRE(row_text(s, 1, 0, 6) != row_text(s, 2, 0, 6)); // in CELL TEXT
 
   FallbackDriver d;
   std::string out;
   d.set_output(&out);
   Renderer r(d);
   r.present(s);
-  r.flush();  // first frame: the renderer diffs, so assert on this one
+  r.flush(); // first frame: the renderer diffs, so assert on this one
   REQUIRE(out.find("▸") != std::string::npos);
 }
 
 TEST_CASE("Select: the marker is dropped, never the label, when it will not "
-          "fit (#76)", "[form][select][failure][glyphs]") {
+          "fit (#76)",
+          "[form][select][failure][glyphs]") {
   // Driven against the skeleton directly. Both in-tree callers pass a
   // one-column glyph into a pad of 1 (Select) or 2 (MenuBar), so no widget can
   // reach this branch today -- but the guard is the reason a third dropdown, or
@@ -1898,37 +1918,37 @@ TEST_CASE("Select: the marker is dropped, never the label, when it will not "
     return g;
   };
 
-  {  // A two-column mark in a one-column pad: label intact, no mark.
+  { // A two-column mark in a one-column pad: label intact, no mark.
     Screen s{10, 2};
     termforge::detail::draw_dropdown_rows(s, dr, 2, /*highlight=*/0,
-                                          /*scroll=*/0, /*label_pad=*/1, c, c, c,
-                                          c, marked("»»"), label);
+                                          /*scroll=*/0, /*label_pad=*/1, c, c,
+                                          c, c, marked("»»"), label);
     REQUIRE(row_text(s, 0, 0, 7) == " abcdef");
   }
-  {  // The same mark in a pad that fits it: drawn.
+  { // The same mark in a pad that fits it: drawn.
     Screen s{10, 2};
     termforge::detail::draw_dropdown_rows(s, dr, 2, /*highlight=*/0,
-                                          /*scroll=*/0, /*label_pad=*/2, c, c, c,
-                                          c, marked("»»"), label);
+                                          /*scroll=*/0, /*label_pad=*/2, c, c,
+                                          c, c, marked("»»"), label);
     REQUIRE(row_text(s, 0, 0, 8) == "»»abcdef");
   }
-  {  // Zero-width: write_text would paint nothing, so reserve nothing.
+  { // Zero-width: write_text would paint nothing, so reserve nothing.
     Screen s{10, 2};
     termforge::detail::draw_dropdown_rows(s, dr, 2, /*highlight=*/0,
-                                          /*scroll=*/0, /*label_pad=*/2, c, c, c,
-                                          c, marked("́"), label);
+                                          /*scroll=*/0, /*label_pad=*/2, c, c,
+                                          c, c, marked("́"), label);
     REQUIRE(row_text(s, 0, 0, 8) == "  abcdef");
   }
-  {  // The third condition: a pad wider than the dropdown itself. Neither
-     // in-tree caller can produce it (pads of 1 and 2, against a rect at least
-     // as wide), so it is only reachable from here -- which is the point of
-     // driving the skeleton directly rather than letting it go unasserted.
+  { // The third condition: a pad wider than the dropdown itself. Neither
+    // in-tree caller can produce it (pads of 1 and 2, against a rect at least
+    // as wide), so it is only reachable from here -- which is the point of
+    // driving the skeleton directly rather than letting it go unasserted.
     Screen s{10, 2};
     termforge::detail::draw_dropdown_rows(s, Rect{0, 0, 1, 2}, 2,
                                           /*highlight=*/0, /*scroll=*/0,
                                           /*label_pad=*/2, c, c, c, c,
                                           marked("»»"), label);
-    REQUIRE(s.text_at(0, 0).empty());  // nothing spilled into the one column
+    REQUIRE(s.text_at(0, 0).empty()); // nothing spilled into the one column
   }
 }
 
@@ -1954,6 +1974,6 @@ TEST_CASE("dropdown: the measured marker is the painted marker (#76)",
   Screen s{10, 2};
   termforge::detail::draw_dropdown_rows(s, dr, 2, /*highlight=*/0, /*scroll=*/0,
                                         /*label_pad=*/1, c, c, c, c, g, label);
-  REQUIRE(row_text(s, 0, 0, 7) == ">abcdef");  // marked, and NOT indented
-  REQUIRE(row_text(s, 1, 0, 7) == " abcdef");  // and still distinguishable
+  REQUIRE(row_text(s, 0, 0, 7) == ">abcdef"); // marked, and NOT indented
+  REQUIRE(row_text(s, 1, 0, 7) == " abcdef"); // and still distinguishable
 }

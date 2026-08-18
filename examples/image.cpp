@@ -24,7 +24,10 @@ auto main() -> int {
   Terminal term;
 
   if (auto res = term.enter_raw(); !res) {
-    std::fprintf(stderr, "%s\n", std::format("Failed to enter raw mode: {}", res.error().message).c_str());
+    std::fprintf(
+        stderr, "%s\n",
+        std::format("Failed to enter raw mode: {}", res.error().message)
+            .c_str());
     return 1;
   }
 
@@ -32,20 +35,28 @@ auto main() -> int {
 
   auto caps = term.query_capabilities();
   if (!caps) {
-    std::fprintf(stderr, "%s\n", std::format("Capability probe failed: {}", caps.error().message).c_str());
+    std::fprintf(
+        stderr, "%s\n",
+        std::format("Capability probe failed: {}", caps.error().message)
+            .c_str());
     return 1;
   }
 
   auto driver = term.select_driver(*caps);
   if (auto res = driver->init(); !res) {
-    std::fprintf(stderr, "%s\n", std::format("Driver init failed: {}", res.error().message).c_str());
+    std::fprintf(
+        stderr, "%s\n",
+        std::format("Driver init failed: {}", res.error().message).c_str());
     return 1;
   }
 
   // Load the sample gradient asset.
   auto img_result = ImageLoader::load("assets/gradient.rgba");
   if (!img_result) {
-    std::fprintf(stderr, "%s\n", std::format("Asset load failed: {}", img_result.error().message).c_str());
+    std::fprintf(
+        stderr, "%s\n",
+        std::format("Asset load failed: {}", img_result.error().message)
+            .c_str());
     return 1;
   }
   auto& img = *img_result;
@@ -62,11 +73,10 @@ auto main() -> int {
   driver->draw_text(0, 0, "TermForge Image Demo", cyan, dark, Attr::Bold);
   driver->draw_text(0, 1, std::format("Driver tier: {}", tier), green, dark,
                     Attr::None);
-  driver->draw_text(
-      0, 2,
-      std::format("Asset: assets/gradient.rgba ({}x{})", img.width(),
-                  img.height()),
-      white, dark, Attr::None);
+  driver->draw_text(0, 2,
+                    std::format("Asset: assets/gradient.rgba ({}x{})",
+                                img.width(), img.height()),
+                    white, dark, Attr::None);
 
   // Ask the driver how many cells this image wants at its native resolution,
   // then name that rect as the destination. The answer and the placement are

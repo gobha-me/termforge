@@ -9,8 +9,8 @@
 #include <string>
 #include <utility>
 
-#include "termforge/core/requirements.hpp"
 #include "termforge/core/event_source.hpp"
+#include "termforge/core/requirements.hpp"
 #include "termforge/core/types.hpp"
 
 namespace termforge::detail {
@@ -67,8 +67,8 @@ struct AppRequirementFacts {
   if (requirements_empty(req)) return {};
 
   auto fail = [&](std::string message) -> std::expected<void, ErrorEvent> {
-    return std::unexpected{ErrorEvent{unmet_severity, "requirements",
-                                      std::move(message)}};
+    return std::unexpected{
+        ErrorEvent{unmet_severity, "requirements", std::move(message)}};
   };
 
   if (req.graphics &&
@@ -90,15 +90,17 @@ struct AppRequirementFacts {
     return fail("requires key press events; the effective input route does not "
                 "provide them");
   if (req.key_repeat && !facts.input_caps.key_repeat)
-    return fail("requires complete key repeat events; the effective input route "
-                "does not provide them");
+    return fail(
+        "requires complete key repeat events; the effective input route "
+        "does not provide them");
   if (req.key_release && !facts.input_caps.key_release)
     return fail("requires complete key release events; the effective input "
                 "route does not provide them");
 
   if (req.min_cols > 0 && facts.cols < req.min_cols) {
-    return fail(std::format("requires at least {} columns; current grid is {}x{}",
-                            req.min_cols, facts.cols, facts.rows));
+    return fail(
+        std::format("requires at least {} columns; current grid is {}x{}",
+                    req.min_cols, facts.cols, facts.rows));
   }
   if (req.min_rows > 0 && facts.rows < req.min_rows) {
     return fail(std::format("requires at least {} rows; current grid is {}x{}",
@@ -128,4 +130,4 @@ struct AppRequirementFacts {
   return {};
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

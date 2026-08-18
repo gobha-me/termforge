@@ -8,9 +8,9 @@
 
 #include "termforge/core/text.hpp"
 
+#include "detail/sanitize.hpp"
 #include "detail/utf8.hpp"
 #include "detail/width.hpp"
-#include "detail/sanitize.hpp"
 
 namespace termforge::detail {
 
@@ -22,7 +22,7 @@ auto is_strip_sanitized(std::string_view text) noexcept -> bool {
       ++i;
       continue;
     }
-    if (c < 0xC0) return false;  // C0/DEL, raw C1, stray continuation
+    if (c < 0xC0) return false; // C0/DEL, raw C1, stray continuation
 
     std::size_t len = 0;
     if (!utf8_validate(text.substr(i), len)) return false;
@@ -35,7 +35,7 @@ auto is_strip_sanitized(std::string_view text) noexcept -> bool {
   return true;
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail
 
 namespace termforge::text {
 namespace {
@@ -49,7 +49,7 @@ namespace {
     -> std::size_t {
   while (i < in.size()) {
     const auto b = static_cast<unsigned char>(in[i]);
-    if (b >= 0x40 && b <= 0x7E) return i + 1;  // past the final byte
+    if (b >= 0x40 && b <= 0x7E) return i + 1; // past the final byte
     ++i;
   }
   return i;
@@ -88,12 +88,12 @@ namespace {
 [[nodiscard]] auto skip_c1_body(std::string_view in, std::size_t i,
                                 unsigned char c1) noexcept -> std::size_t {
   switch (c1) {
-    case 0x9B: return skip_csi_body(in, i);  // CSI
-    case 0x9D: return skip_osc_body(in, i);  // OSC
-    case 0x90:                               // DCS
-    case 0x98:                               // SOS
-    case 0x9E:                               // PM
-    case 0x9F: return skip_until_st(in, i);  // APC
+    case 0x9B: return skip_csi_body(in, i); // CSI
+    case 0x9D: return skip_osc_body(in, i); // OSC
+    case 0x90:                              // DCS
+    case 0x98:                              // SOS
+    case 0x9E:                              // PM
+    case 0x9F: return skip_until_st(in, i); // APC
     default: return i;
   }
 }
@@ -136,7 +136,7 @@ auto append_hex(std::string& out, unsigned char b) -> void {
   out += kHex[b & 0x0F];
 }
 
-}  // namespace
+} // namespace
 
 auto sanitize(std::string_view in, SanitizeMode mode) -> std::string {
   std::string out;
@@ -165,7 +165,7 @@ auto sanitize(std::string_view in, SanitizeMode mode) -> std::string {
         continue;
       }
       if (i + 1 >= n) {
-        ++i;  // lone ESC at end of input
+        ++i; // lone ESC at end of input
         continue;
       }
       const auto nx = static_cast<unsigned char>(in[i + 1]);
@@ -174,7 +174,7 @@ auto sanitize(std::string_view in, SanitizeMode mode) -> std::string {
       } else if (nx == ']') {
         i = skip_osc_body(in, i + 2);
       } else if (nx == 'P' || nx == 'X' || nx == '^' || nx == '_') {
-        i = skip_until_st(in, i + 2);  // string sequences run until ST
+        i = skip_until_st(in, i + 2); // string sequences run until ST
       } else if (nx >= 0x20 && nx <= 0x2F) {
         // Intermediates, then consume the one byte that ends the form.
         std::size_t j = i + 1;
@@ -184,7 +184,7 @@ auto sanitize(std::string_view in, SanitizeMode mode) -> std::string {
         if (j < n) ++j;
         i = j;
       } else {
-        i += 2;  // two-byte sequence (ESC + one byte)
+        i += 2; // two-byte sequence (ESC + one byte)
       }
       continue;
     }
@@ -204,7 +204,7 @@ auto sanitize(std::string_view in, SanitizeMode mode) -> std::string {
       ++i;
       continue;
     }
-    if (c == 0x7F) {  // DEL
+    if (c == 0x7F) { // DEL
       if (!strip) out += "^?";
       ++i;
       continue;
@@ -261,7 +261,7 @@ auto sanitize(std::string_view in, SanitizeMode mode) -> std::string {
           }
           continue;
         }
-        out.append(in, i, len);  // well-formed glyph: keep whole sequence
+        out.append(in, i, len); // well-formed glyph: keep whole sequence
         i += len;
         continue;
       }
@@ -314,4 +314,4 @@ auto sanitized_width(std::string_view in, SanitizeMode mode) -> int {
   return detail::display_width(sanitize(in, mode));
 }
 
-}  // namespace termforge::text
+} // namespace termforge::text

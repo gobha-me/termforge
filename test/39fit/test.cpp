@@ -101,7 +101,7 @@ class FitClaimingDriver final : public TerminalDriver {
   }
   [[nodiscard]] auto supports_placement_fit(PlacementFit) const noexcept
       -> bool override {
-    return true;  // a lie, and the base must not take its word for it
+    return true; // a lie, and the base must not take its word for it
   }
   [[nodiscard]] auto preferred_pixel_extent(Rect cells) const noexcept
       -> Extent override {
@@ -158,7 +158,7 @@ auto as_encoded(const Image& img) -> EncodedImage {
                       Extent{img.width(), img.height()}};
 }
 
-}  // namespace
+} // namespace
 
 // ── 1. the placement escape omits c= and r= under Exact ─────────────────────
 
@@ -217,8 +217,8 @@ TEST_CASE("Exact transmits the source pixels whole, at the declared extent") {
   // is the whole basis on which the terminal decides how big to draw it.
   const auto all = apcs(out);
   const auto* opener = std::ranges::find_if(all, [](const Apc& a) {
-    return a.keys.find("a=t") != std::string::npos;
-  }).base();
+                         return a.keys.find("a=t") != std::string::npos;
+                       }).base();
   REQUIRE(opener != all.data() + all.size());
   CHECK(key_value(*opener, "s") == "30");
   CHECK(key_value(*opener, "v") == "30");
@@ -327,8 +327,8 @@ TEST_CASE("Exact refuses an image larger than the rect, emitting nothing") {
     const auto r = d.draw_image(dest, img, PlacementFit::Exact);
     REQUIRE_FALSE(r);
     const std::string msg = r.error().message;
-    CHECK(msg.find("40x40") != std::string::npos);     // what was asked
-    CHECK(msg.find("16x16") != std::string::npos);     // what there was room for
+    CHECK(msg.find("40x40") != std::string::npos); // what was asked
+    CHECK(msg.find("16x16") != std::string::npos); // what there was room for
     CHECK(msg.find("Exact") != std::string::npos);
   }
   SECTION("it fires EVERY frame, not once") {
@@ -351,7 +351,7 @@ TEST_CASE("Exact refuses an image larger than the rect, emitting nothing") {
 
 TEST_CASE("Exact and Stretch coincide when the image is a whole cell rect") {
   SECTION("kitty: same transmit, placement differs only by c=/r=") {
-    const Image img = checker(32, 32, kA, kB);  // 4x2 cells at 8x16
+    const Image img = checker(32, 32, kA, kB); // 4x2 cells at 8x16
     const Rect dest{0, 0, 4, 2};
     std::string s, e;
     REQUIRE(kitty_frame(dest, img, PlacementFit::Stretch, &s));
@@ -608,7 +608,7 @@ TEST_CASE("a driver that claims Exact but does not implement it still warns") {
   TerminalDriver& base = claimer;
   const Image img = solid(2, 2, kA);
 
-  CHECK(base.supports_placement_fit(PlacementFit::Exact));  // it lies
+  CHECK(base.supports_placement_fit(PlacementFit::Exact)); // it lies
   const auto r = base.draw_image(Rect{0, 0, 2, 2}, img, PlacementFit::Exact);
   REQUIRE_FALSE(r);
   CHECK(r.error().severity == Severity::Warning);
@@ -668,14 +668,15 @@ TEST_CASE("Exact maps source to destination 1:1 on the fallback tiers") {
     // Stated as the checker's own parity rather than against a hardcoded ramp
     // table -- re-deriving the expected glyph through luminance_char would put
     // both sides of the assertion on one function and prove nothing.
-    REQUIRE(ge[0][0] != ge[0][1]);  // adjacent source pixels differ at all
-    CHECK(ge[0][2] == ge[0][0]);    // (0,0) and (2,0) are the same parity
-    CHECK(ge[1][0] == ge[0][1]);    // the next row is the opposite parity
+    REQUIRE(ge[0][0] != ge[0][1]); // adjacent source pixels differ at all
+    CHECK(ge[0][2] == ge[0][0]);   // (0,0) and (2,0) are the same parity
+    CHECK(ge[1][0] == ge[0][1]);   // the next row is the opposite parity
     CHECK(ge[1][1] == ge[0][0]);
     CHECK(ge[1][2] == ge[0][1]);
   }
 
-  SECTION("ansi_rgb: a smaller source is placed 1:1, not spread over the rect") {
+  SECTION(
+      "ansi_rgb: a smaller source is placed 1:1, not spread over the rect") {
     // 2x2 source into a 4x2 rect, whose half-block pixel grid is 4x4. Under
     // Exact only the top-left 2x2 is painted and each destination pixel is its
     // own source pixel; under a resample every one of them would come from
@@ -774,7 +775,8 @@ TEST_CASE("image_cell_extent sizes a rect that Exact always accepts") {
   }
 }
 
-TEST_CASE("a declared extent at the int limit does not overflow", "[fit][failure]") {
+TEST_CASE("a declared extent at the int limit does not overflow",
+          "[fit][failure]") {
   // #173: preferred_pixel_extent() multiplied in int, and a caller can hand
   // the guard a rect whose pixel extent is not representable in int -- a Png
   // declared at INT_MAX pixels is legal on the aggregate, and only UB once
@@ -786,11 +788,12 @@ TEST_CASE("a declared extent at the int limit does not overflow", "[fit][failure
 
   constexpr int kMax = std::numeric_limits<int>::max();
 
-  SECTION("kitty clamps the worst dimension, and the huge draw transmits without overflow") {
+  SECTION("kitty clamps the worst dimension, and the huge draw transmits "
+          "without overflow") {
     KittyDriver k;
     std::string ko;
     k.set_output(&ko);
-    constexpr int kHuge = kMax / 16 + 1;  // h * 16 overflows int past this
+    constexpr int kHuge = kMax / 16 + 1; // h * 16 overflows int past this
 
     // 1x{huge} cells: w = 8 (fits), h = huge*16 (overflows -> clamps).
     // BEFORE the fix this was signed overflow: UB, and under wraparound a
@@ -805,11 +808,11 @@ TEST_CASE("a declared extent at the int limit does not overflow", "[fit][failure
     // flush(), not during draw_image. The load-bearing assertion is that
     // the whole path completes without UB -- which only build-asan's UBSan
     // can actuallyfail on -- plus a well-formed upload on the wire.
-    const EncodedImage img = opaque();  // declared 2x2
+    const EncodedImage img = opaque(); // declared 2x2
     REQUIRE(k.draw_image(Rect{0, 0, 1, kHuge}, img, PlacementFit::Exact));
     k.flush();
-    CHECK(ko.find("a=t") != std::string::npos);  // the payload did transmit
-    CHECK(ko.find("a=p") != std::string::npos);  // ... and was placed
+    CHECK(ko.find("a=t") != std::string::npos); // the payload did transmit
+    CHECK(ko.find("a=p") != std::string::npos); // ... and was placed
   }
 
   SECTION("the half-block tier clamps too -- it overflows for SMALLER inputs") {
@@ -819,7 +822,7 @@ TEST_CASE("a declared extent at the int limit does not overflow", "[fit][failure
     AnsiRgbDriver a;
     std::string ao;
     a.set_output(&ao);
-    constexpr int kHuge = kMax / 2 + 1;  // 2 * kHuge overflows int
+    constexpr int kHuge = kMax / 2 + 1; // 2 * kHuge overflows int
 
     const Extent big = a.preferred_pixel_extent(Rect{0, 0, 1, kHuge});
     CHECK(big.w == 1);
@@ -831,7 +834,8 @@ TEST_CASE("a declared extent at the int limit does not overflow", "[fit][failure
     // runs. That is the honest degradation this tier has always promised --
     // so assert the real refusal, then prove the clamped fit with Rgba32.
     const EncodedImage png = opaque();
-    const auto blocked = a.draw_image(Rect{0, 0, 1, kHuge}, png, PlacementFit::Exact);
+    const auto blocked =
+        a.draw_image(Rect{0, 0, 1, kHuge}, png, PlacementFit::Exact);
     REQUIRE_FALSE(blocked);
     CHECK(blocked.error().severity == Severity::Warning);
     CHECK(blocked.error().source == "ansi_rgb");
@@ -843,11 +847,13 @@ TEST_CASE("a declared extent at the int limit does not overflow", "[fit][failure
     // int would have made room a non-positive number and possibly inverted
     // this.
     const EncodedImage fits = as_encoded(solid(2, 2, kA));
-    const auto fit_call = a.draw_image(Rect{0, 0, 1, kHuge}, fits, PlacementFit::Exact);
+    const auto fit_call =
+        a.draw_image(Rect{0, 0, 1, kHuge}, fits, PlacementFit::Exact);
     REQUIRE_FALSE(fit_call);
     CHECK(fit_call.error().severity == Severity::Warning);
-    CHECK(fit_call.error().message.find("PlacementFit::Exact needs 2x2 pixels but "
-                                        "1x1073741824 cells hold only 1x2147483647") !=
+    CHECK(fit_call.error().message.find(
+              "PlacementFit::Exact needs 2x2 pixels but "
+              "1x1073741824 cells hold only 1x2147483647") !=
           std::string::npos);
   }
 
@@ -864,7 +870,8 @@ TEST_CASE("a declared extent at the int limit does not overflow", "[fit][failure
   }
 }
 
-TEST_CASE("the clamped room sizes a rect that always accepts at the documented call site",
+TEST_CASE("the clamped room sizes a rect that always accepts at the documented "
+          "call site",
           "[fit][failure]") {
   // The documented safe call site, at the extreme (#173 is #163's own lesson
   // one layer out: widening one type's domain re-opens every guard it
@@ -885,17 +892,17 @@ TEST_CASE("the clamped room sizes a rect that always accepts at the documented c
   k.set_output(&ko);
 
   const Extent cells = k.image_cell_extent(Extent{kMax, kMax});
-  CHECK(cells.w == 268435456);   // ceil(INT_MAX/8), computed in int64
-  CHECK(cells.h == 134217728);   // ceil(INT_MAX/16)
+  CHECK(cells.w == 268435456); // ceil(INT_MAX/8), computed in int64
+  CHECK(cells.h == 134217728); // ceil(INT_MAX/16)
 
   const Extent room = k.preferred_pixel_extent(Rect{0, 0, cells.w, cells.h});
-  CHECK(room.w == kMax);  // 268435456 * 8 == INT_MAX exactly: un-clamped
-  CHECK(room.h == kMax);  // 134217728 * 16 == INT_MAX + 16: clamped
+  CHECK(room.w == kMax); // 268435456 * 8 == INT_MAX exactly: un-clamped
+  CHECK(room.h == kMax); // 134217728 * 16 == INT_MAX + 16: clamped
 
   // Both fits run through and transmit. The declared 2x2 is genuinely inside
   // even the 1-cell-wide rect's room of 8 wide. Before the clamp the
   // underlying multiplication was the UB the ticket reproduces.
-  const EncodedImage img = opaque();  // declared 2x2
+  const EncodedImage img = opaque(); // declared 2x2
   CHECK(k.draw_image(Rect{0, 0, cells.w, cells.h}, img, PlacementFit::Stretch));
   CHECK(k.draw_image(Rect{0, 0, 1, cells.h}, img, PlacementFit::Exact));
 }
@@ -912,16 +919,16 @@ TEST_CASE("the guardrail holds at a non-nominal cell size too") {
 
   d.set_cell_pixel_size(Extent{4, 3});
   const Extent ext = d.image_cell_extent(img);
-  CHECK(ext.w == 8);   // ceil(30/4)
-  CHECK(ext.h == 10);  // ceil(30/3)
+  CHECK(ext.w == 8);  // ceil(30/4)
+  CHECK(ext.h == 10); // ceil(30/3)
   CHECK(d.draw_image(Rect{0, 0, ext.w, ext.h}, img, PlacementFit::Exact));
 
   // One cell short in either axis is refused, which is what makes the case
   // above an assertion rather than a tautology.
-  CHECK_FALSE(d.draw_image(Rect{0, 0, ext.w - 1, ext.h}, img,
-                           PlacementFit::Exact));
-  CHECK_FALSE(d.draw_image(Rect{0, 0, ext.w, ext.h - 1}, img,
-                           PlacementFit::Exact));
+  CHECK_FALSE(
+      d.draw_image(Rect{0, 0, ext.w - 1, ext.h}, img, PlacementFit::Exact));
+  CHECK_FALSE(
+      d.draw_image(Rect{0, 0, ext.w, ext.h - 1}, img, PlacementFit::Exact));
 }
 
 // ── 12. the base default on the EncodedImage overload (#169) ────────────────
@@ -977,7 +984,7 @@ TEST_CASE("encoded: claiming Exact is not implementing it here either") {
   SECTION("Stretch reaches the driver, so the next section is not vacuous") {
     FitClaimingDriver claimer;
     TerminalDriver& base = claimer;
-    CHECK(base.supports_placement_fit(PlacementFit::Exact));  // it lies
+    CHECK(base.supports_placement_fit(PlacementFit::Exact)); // it lies
     REQUIRE(base.draw_image(dest, img, PlacementFit::Stretch));
     CHECK(claimer.drew_encoded());
   }
@@ -1058,9 +1065,15 @@ TEST_CASE("encoded: Stretch is byte-for-byte the two-argument overload") {
     CHECK_FALSE(a.empty());
   };
 
-  SECTION("kitty") { both(std::type_identity<KittyDriver>{}); }
-  SECTION("ansi_rgb") { both(std::type_identity<AnsiRgbDriver>{}); }
-  SECTION("fallback") { both(std::type_identity<FallbackDriver>{}); }
+  SECTION("kitty") {
+    both(std::type_identity<KittyDriver>{});
+  }
+  SECTION("ansi_rgb") {
+    both(std::type_identity<AnsiRgbDriver>{});
+  }
+  SECTION("fallback") {
+    both(std::type_identity<FallbackDriver>{});
+  }
 }
 
 TEST_CASE("encoded: the resampling tiers refuse an oversize extent too") {
@@ -1094,7 +1107,8 @@ TEST_CASE("encoded: the resampling tiers refuse an oversize extent too") {
   }
 }
 
-TEST_CASE("encoded: Exact maps 1:1 on the resampling tiers, and covers no more") {
+TEST_CASE(
+    "encoded: Exact maps 1:1 on the resampling tiers, and covers no more") {
   // The gap a review mutation found: without this, hardcoding Stretch back
   // into ansi_rgb's and fallback's encoded emit leaves the WHOLE SUITE green.
   // The refusal cases fire inside validate_fit, before draw_rgba is reached,
@@ -1118,11 +1132,12 @@ TEST_CASE("encoded: Exact maps 1:1 on the resampling tiers, and covers no more")
         REQUIRE(i + 1 < v.size());
         REQUIRE(v[i + 1] == '[');
         i += 2;
-        while (i < v.size() && (std::isdigit(static_cast<unsigned char>(v[i])) ||
-                                v[i] == ';')) {
+        while (
+            i < v.size() &&
+            (std::isdigit(static_cast<unsigned char>(v[i])) || v[i] == ';')) {
           ++i;
         }
-        REQUIRE(i < v.size());  // the final byte
+        REQUIRE(i < v.size()); // the final byte
         ++i;
       } else {
         if ((static_cast<unsigned char>(v[i]) & 0xC0U) != 0x80U) ++n;
@@ -1198,7 +1213,8 @@ TEST_CASE("encoded: an empty rect is refused as EMPTY, not as a fit failure") {
   }
 }
 
-TEST_CASE("encoded: Exact is refused under placeholders, on this overload too") {
+TEST_CASE(
+    "encoded: Exact is refused under placeholders, on this overload too") {
   // supports_placement_fit is RUNTIME state on kitty, and the encoded path
   // consults it through the same placement guard as the Image path. Drop that
   // tier check and an Exact encoded draw silently becomes a stretched
@@ -1255,8 +1271,8 @@ TEST_CASE("encoded: changing only the fit re-places, without retransmitting") {
   REQUIRE(places.size() == 1);
   CHECK_FALSE(has_key(places[0], "c"));
   CHECK_FALSE(has_key(places[0], "r"));
-  CHECK(count_of(out, "a=d,d=i") == 1);  // the old placement deleted
-  CHECK(count_of(out, "a=t") == 0);      // and the payload NOT re-sent
+  CHECK(count_of(out, "a=d,d=i") == 1); // the old placement deleted
+  CHECK(count_of(out, "a=t") == 0);     // and the payload NOT re-sent
   CHECK(d.last_frame_bytes().image_transmit == 0);
   CHECK(d.last_frame_bytes().image_edit > 0);
 }

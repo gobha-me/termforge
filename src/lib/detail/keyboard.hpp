@@ -30,9 +30,9 @@ namespace termforge::detail {
 // The flag set a tier asks the terminal for.
 [[nodiscard]] constexpr auto keyboard_flags(KeyboardMode mode) -> int {
   switch (mode) {
-    case KeyboardMode::Legacy:       return 0;
+    case KeyboardMode::Legacy: return 0;
     case KeyboardMode::Disambiguate: return 1 | 2;
-    case KeyboardMode::Enhanced:     return 1 | 2 | 8 | 16;
+    case KeyboardMode::Enhanced: return 1 | 2 | 8 | 16;
   }
   return 0;
 }
@@ -40,11 +40,12 @@ namespace termforge::detail {
 // Push a new entry on the terminal's keyboard stack: CSI > flags u. Legacy
 // pushes nothing at all, which is what keeps the default enter_screen() byte
 // sequence identical to every TermForge before #60.
-[[nodiscard]] constexpr auto keyboard_push_seq(KeyboardMode mode) -> const char* {
+[[nodiscard]] constexpr auto keyboard_push_seq(KeyboardMode mode) -> const
+    char* {
   switch (mode) {
-    case KeyboardMode::Legacy:       return "";
+    case KeyboardMode::Legacy: return "";
     case KeyboardMode::Disambiguate: return "\033[>3u";
-    case KeyboardMode::Enhanced:     return "\033[>27u";
+    case KeyboardMode::Enhanced: return "\033[>27u";
   }
   return "";
 }
@@ -55,11 +56,12 @@ namespace termforge::detail {
 // the terminal's stack without bound and leave leave_screen()'s single pop
 // unbalanced. Switching back to Legacy therefore sets flags 0; it is never a
 // pop, so the stack depth stays exactly 0 or 1 for the life of the process.
-[[nodiscard]] constexpr auto keyboard_set_seq(KeyboardMode mode) -> const char* {
+[[nodiscard]] constexpr auto keyboard_set_seq(KeyboardMode mode) -> const
+    char* {
   switch (mode) {
-    case KeyboardMode::Legacy:       return "\033[=0;1u";
+    case KeyboardMode::Legacy: return "\033[=0;1u";
     case KeyboardMode::Disambiguate: return "\033[=3;1u";
-    case KeyboardMode::Enhanced:     return "\033[=27;1u";
+    case KeyboardMode::Enhanced: return "\033[=27;1u";
   }
   return "\033[=0;1u";
 }
@@ -82,7 +84,8 @@ inline constexpr std::string_view kKeyboardQuery = "\033[?u";
 // press-only input and wondering why hold-to-move never releases. Nullopt
 // when there is nothing to report — the app never asked, or it asked and the
 // terminal answered.
-[[nodiscard]] inline auto keyboard_fallback_event(KeyboardMode want, bool supported)
+[[nodiscard]] inline auto keyboard_fallback_event(KeyboardMode want,
+                                                  bool supported)
     -> std::optional<ErrorEvent> {
   if (want == KeyboardMode::Legacy || supported) return std::nullopt;
   return ErrorEvent{
@@ -91,4 +94,4 @@ inline constexpr std::string_view kKeyboardQuery = "\033[?u";
       "release are unavailable, keys arrive as presses only"};
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

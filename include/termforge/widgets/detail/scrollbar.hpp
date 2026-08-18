@@ -40,7 +40,7 @@
 #include "termforge/core/screen.hpp"
 #include "termforge/widgets/detail/width.hpp"
 #include "termforge/widgets/glyphs.hpp"
-#include "termforge/widgets/widget.hpp"  // Rect
+#include "termforge/widgets/widget.hpp" // Rect
 
 namespace termforge::detail {
 
@@ -105,11 +105,10 @@ namespace termforge::detail {
 // Vertical so every #21 call site stays source-compatible; ScrollOrientation
 // lives next to ScrollGlyphs in glyphs.hpp because the glyph table is what
 // actually branches on it.
-inline auto draw_scrollbar(Screen& screen, Rect track, int total, int offset,
-                           int visible, ScrollGlyphs glyphs, Rgb track_fg,
-                           Rgb thumb_fg, Rgb bg,
-                           ScrollOrientation orient =
-                               ScrollOrientation::Vertical) -> void {
+inline auto draw_scrollbar(
+    Screen& screen, Rect track, int total, int offset, int visible,
+    ScrollGlyphs glyphs, Rgb track_fg, Rgb thumb_fg, Rgb bg,
+    ScrollOrientation orient = ScrollOrientation::Vertical) -> void {
   if (track.w <= 0 || track.h <= 0) return;
   const int track_len =
       orient == ScrollOrientation::Horizontal ? track.w : track.h;
@@ -132,4 +131,4 @@ inline auto draw_scrollbar(Screen& screen, Rect track, int total, int offset,
   }
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

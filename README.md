@@ -144,6 +144,11 @@ cmake -B build-clang -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/clang.cmake \
 Sanitizer builds route through toolchain files (they actually apply the
 flags): `cmake/toolchain/address.cmake`, `cmake/toolchain/thread.cmake`.
 
+C++ formatting is pinned to clang-format 20.x. Run `tools/format.sh --check`
+to check the complete tracked C++ tree or `tools/format.sh --fix` to apply the
+policy. The selected LLVM-derived options and their rationale are documented
+in [docs/code-style.md](docs/code-style.md).
+
 Performance evidence is a separate, Release-only developer target. It emits a
 human table or schema-versioned JSON and never fails on a timing threshold:
 

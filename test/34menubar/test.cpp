@@ -64,7 +64,8 @@ namespace {
 // unanswerable through dropdown_open().
 auto menus_from(const std::vector<std::string>& titles) -> std::vector<Menu> {
   std::vector<Menu> out;
-  for (const auto& title : titles) out.push_back({title, {{"item", {}}}});
+  for (const auto& title : titles)
+    out.push_back({title, {{"item", {}}}});
   return out;
 }
 
@@ -95,7 +96,8 @@ auto bar_with(const std::vector<std::string>& titles, int active, int cols)
   mb.set_focused(true);
   mb.set_geometry({0, 0, cols, 1});
   drawn(mb, cols);
-  for (int i = 0; i < active; ++i) mb.on_event(key(Key::Right));
+  for (int i = 0; i < active; ++i)
+    mb.on_event(key(Key::Right));
   return drawn(mb, cols);
 }
 
@@ -129,7 +131,7 @@ auto opened_by_click(const std::vector<std::string>& titles, int c, int cols)
   return mb.dropdown_open() ? mb.active_menu() : -1;
 }
 
-}  // namespace
+} // namespace
 
 // ── 1. The drift itself ─────────────────────────────────────────────────────
 
@@ -143,12 +145,12 @@ TEST_CASE("MenuBar: a title carrying an ESC sequence measures what it paints",
   const Screen s = bar_with(titles, 1, 20);
 
   const auto [x, w] = active_run(s);
-  REQUIRE(w == 3);  // " X " -- three columns, not the nine the raw view spans
+  REQUIRE(w == 3); // " X " -- three columns, not the nine the raw view spans
   REQUIRE(row_text(s, 0, x, w) == "▸X ");
 
   // And the NEXT title's clicks land where its glyphs are.
-  REQUIRE(opened_by_click(titles, x + w + 1, 20) == 2);  // first column of it
-  REQUIRE(opened_by_click(titles, x + w, 20) == -1);     // the gap between
+  REQUIRE(opened_by_click(titles, x + w + 1, 20) == 2); // first column of it
+  REQUIRE(opened_by_click(titles, x + w, 20) == -1);    // the gap between
 }
 
 TEST_CASE("MenuBar: add_menu sanitizes too, not only set_menus",
@@ -179,7 +181,7 @@ TEST_CASE("MenuBar: a wide-glyph title is measured in columns, not bytes",
   const Screen s = bar_with(titles, 1, 20);
 
   const auto [x, w] = active_run(s);
-  REQUIRE(w == 6);  // 4 columns of glyph + the two pad columns
+  REQUIRE(w == 6); // 4 columns of glyph + the two pad columns
   // One line covering the marker column, both continuation cells and the
   // trailing pad: row_text drops continuations the way the renderer does.
   REQUIRE(row_text(s, 0, x, w) == "▸日本 ");
@@ -195,8 +197,8 @@ TEST_CASE("MenuBar: a combining mark costs no column", "[menubar]") {
   REQUIRE(w == 3);
   // The span width alone cannot notice the title never being PAINTED: it comes
   // from the fill loop, which measures rather than paints. Measured -- with the
-  // title write replaced by an empty string, a width-only assertion stays green.
-  // Read the cells.
+  // title write replaced by an empty string, a width-only assertion stays
+  // green. Read the cells.
   REQUIRE(row_text(s, 0, x, w) == "\u25b8\u0065\u0301 ");
 }
 
@@ -210,7 +212,7 @@ TEST_CASE("MenuBar: item labels are sanitized too, not just titles",
   mb.set_focused(true);
   mb.set_geometry({0, 0, 20, 1});
   drawn(mb, 20, 4);
-  mb.on_event(key(Key::Enter));  // opens; item 0 becomes the selection
+  mb.on_event(key(Key::Enter)); // opens; item 0 becomes the selection
   const Screen s = drawn(mb, 20, 4);
 
   // Row 2 is the UNSELECTED item, so its background is the dropdown's own.
@@ -227,8 +229,9 @@ TEST_CASE("MenuBar: item labels are sanitized too, not just titles",
 
 // ── 2. Spans and clicks agree, column by column ─────────────────────────────
 
-TEST_CASE("MenuBar: every column that opens a menu is a column that menu paints",
-          "[menubar]") {
+TEST_CASE(
+    "MenuBar: every column that opens a menu is a column that menu paints",
+    "[menubar]") {
   // WHAT THIS CASE DOES AND DOES NOT PROVE, because the obvious reading is
   // wrong and a reviewer measured it: the click sweep below is STRUCTURALLY
   // TAUTOLOGICAL. The painted background and the hit span both come from
@@ -251,7 +254,7 @@ TEST_CASE("MenuBar: every column that opens a menu is a column that menu paints"
       {"A", "\033[7m日本\033[0m", "Gam\033[1mma!"},
   };
   for (const auto& titles : fixtures) {
-    for (const int cols : {20, 14}) {  // 14 clips the last title mid-span
+    for (const int cols : {20, 14}) { // 14 clips the last title mid-span
       for (int i = 0; i < 3; ++i) {
         const Screen s = bar_with(titles, i, cols);
         const auto [x, w] = active_run(s);
@@ -286,8 +289,9 @@ TEST_CASE("MenuBar: every column that opens a menu is a column that menu paints"
 
 // ── 3. The second channel ───────────────────────────────────────────────────
 
-TEST_CASE("MenuBar: the active title is stated in the cells, not only in colour",
-          "[menubar][failure]") {
+TEST_CASE(
+    "MenuBar: the active title is stated in the cells, not only in colour",
+    "[menubar][failure]") {
   // The #129 acceptance shape at Screen level: colour is not the only channel,
   // so the row's TEXT must differ depending on which menu is active. Before
   // this, Left/Right moved a cursor no colour-dropping driver could show.
@@ -302,9 +306,9 @@ TEST_CASE("MenuBar: the marker sits in the active title's pad column",
   const Screen s = bar_with(titles, 1, 20);
   const auto [x, w] = active_run(s);
 
-  REQUIRE(s.text_at(x, 0) == "▸");       // the pad column, taken from the paint
-  REQUIRE(s.text_at(x + 1, 0) == "B");   // the title still starts one in
-  REQUIRE(s.text_at(0, 0) != "▸");       // and no INACTIVE title carries one
+  REQUIRE(s.text_at(x, 0) == "▸");     // the pad column, taken from the paint
+  REQUIRE(s.text_at(x + 1, 0) == "B"); // the title still starts one in
+  REQUIRE(s.text_at(0, 0) != "▸");     // and no INACTIVE title carries one
   REQUIRE(s.text_at(x + w + 1, 0) != "▸");
 }
 
@@ -320,7 +324,7 @@ TEST_CASE("MenuBar: BorderStyle::Ascii keeps the bar row 7-bit",
   const Screen s = drawn(mb, 20);
 
   const auto [x, w] = active_run(s);
-  REQUIRE(s.text_at(x, 0) == "*");  // selector; arrow_right stays ">"
+  REQUIRE(s.text_at(x, 0) == "*"); // selector; arrow_right stays ">"
   REQUIRE(all_seven_bit(row_text(s, 0)));
 }
 
@@ -335,8 +339,8 @@ TEST_CASE("MenuBar: unfocused, the marker stays and the focus colours go",
   mb.on_event(key(Key::Right));
 
   const Screen cold = drawn(mb, 20);
-  REQUIRE(active_run(cold).second == 0);  // no focus colours...
-  REQUIRE(cold.text_at(4, 0) == "▸");     // ...but the mark remains
+  REQUIRE(active_run(cold).second == 0); // no focus colours...
+  REQUIRE(cold.text_at(4, 0) == "▸");    // ...but the mark remains
   REQUIRE_FALSE(mb.dirty());
 
   mb.set_focused(true);
@@ -375,14 +379,14 @@ TEST_CASE("MenuBar: the active title survives a driver that drops colour",
   const Screen s = drawn(mb, 12);
   REQUIRE_FALSE(mb.dropdown_open());
 
-  REQUIRE(row_text(s, 0, 0, 3) != row_text(s, 0, 4, 3));  // in CELL TEXT
+  REQUIRE(row_text(s, 0, 0, 3) != row_text(s, 0, 4, 3)); // in CELL TEXT
 
   FallbackDriver d;
   std::string out;
   d.set_output(&out);
   Renderer r(d);
   r.present(s);
-  r.flush();  // first frame: the renderer diffs, so assert on this one
+  r.flush(); // first frame: the renderer diffs, so assert on this one
   REQUIRE(out.find("▸") != std::string::npos);
 }
 
@@ -404,7 +408,8 @@ TEST_CASE("MenuBar: the marker never paints past the bar's right edge",
     mb.set_focused(true);
     mb.set_geometry({0, 0, 8, 1});
     drawn(mb, 12);
-    for (int i = 0; i < active; ++i) mb.on_event(key(Key::Right));
+    for (int i = 0; i < active; ++i)
+      mb.on_event(key(Key::Right));
     const Screen s = drawn(mb, 12);
 
     REQUIRE(mb.active_menu() == active);
@@ -415,8 +420,9 @@ TEST_CASE("MenuBar: the marker never paints past the bar's right edge",
   }
 }
 
-TEST_CASE("MenuBar: a clipped title's dropdown is as wide as the title ASKED for",
-          "[menubar][failure]") {
+TEST_CASE(
+    "MenuBar: a clipped title's dropdown is as wide as the title ASKED for",
+    "[menubar][failure]") {
   // Since #130 the title spans carry two widths -- `w`, clipped to the bar's
   // right edge, and `natural`, what the title wanted -- and dropdown_rect()
   // must read `natural`. It is the floor for the popup's width, and a popup is
@@ -434,10 +440,10 @@ TEST_CASE("MenuBar: a clipped title's dropdown is as wide as the title ASKED for
   MenuBar mb;
   mb.set_menus(menus_from({"A", "Configuration"}));
   mb.set_focused(true);
-  mb.set_geometry({0, 0, 8, 1});  // narrower than the screen, on purpose
+  mb.set_geometry({0, 0, 8, 1}); // narrower than the screen, on purpose
   drawn(mb, 24, 4);
-  mb.on_event(key(Key::Right));  // active = 1, whose span the bar clips
-  mb.on_event(key(Key::Down));   // open it
+  mb.on_event(key(Key::Right)); // active = 1, whose span the bar clips
+  mb.on_event(key(Key::Down));  // open it
   const Screen s = drawn(mb, 24, 4);
   REQUIRE(mb.dropdown_open());
 
@@ -468,9 +474,10 @@ TEST_CASE("MenuBar: the marker follows the bar's rect, not the screen origin",
   Screen s{24, 3};
   mb.draw(s);
 
-  const auto [x, w] = tfsupport::highlighted_run(s, 1, termforge::theme::kFocusBg);
-  REQUIRE(w == 6);            // " Beta " on row 1
-  REQUIRE(x == 2 + 3 + 1);    // rect().x + span 0 + the gap
+  const auto [x, w] =
+      tfsupport::highlighted_run(s, 1, termforge::theme::kFocusBg);
+  REQUIRE(w == 6);         // " Beta " on row 1
+  REQUIRE(x == 2 + 3 + 1); // rect().x + span 0 + the gap
   REQUIRE(s.text_at(x, 1) == "▸");
   REQUIRE(row_text(s, 1, x, w) == "▸Beta ");
   // Nothing on the rows the bar does not own, and nothing left of rect().x.
@@ -502,8 +509,9 @@ TEST_CASE("MenuBar: a bar whose rect starts left of the screen leaks no marker",
   REQUIRE(s.at(0, 0).blank());
 }
 
-TEST_CASE("MenuBar: a bar left of the screen clips its titles, it does not move them",
-          "[menubar][failure]") {
+TEST_CASE(
+    "MenuBar: a bar left of the screen clips its titles, it does not move them",
+    "[menubar][failure]") {
   // The other half of #152, and the half #129 could not fix from inside the
   // widget: a clamped write_text relocated the whole TITLE too, so a bar at
   // x == -2 painted "File" starting at column 0 -- four columns that belong to
@@ -517,7 +525,7 @@ TEST_CASE("MenuBar: a bar left of the screen clips its titles, it does not move 
   const Screen s = drawn(mb, 16);
 
   REQUIRE(mb.active_menu() == 0);
-  REQUIRE(row_text(s, 0, 0, 4) == "ile ");  // was "File" under the clamp
+  REQUIRE(row_text(s, 0, 0, 4) == "ile "); // was "File" under the clamp
   // Read the active span's extent off the screen rather than recomputing it:
   // " File " is 6 columns starting at -2, so 4 of them survive at column 0.
   REQUIRE(tfsupport::highlighted_run(s, 0, termforge::theme::kFocusBg) ==
@@ -546,7 +554,8 @@ TEST_CASE("MenuBar: a zero-width or zero-height rect draws nothing",
 }
 
 TEST_CASE("MenuBar: a relayout between frames cannot desync click from paint "
-          "(#96)", "[menubar][mouse][failure]") {
+          "(#96)",
+          "[menubar][mouse][failure]") {
   // Same hazard as Select (#96): set_geometry while open must not close the
   // dropdown, and presses resolve against the last painted snapshot -- not
   // live dropdown_rect() mixed with an unrevealed scroll. Repro mirrors the
@@ -559,8 +568,7 @@ TEST_CASE("MenuBar: a relayout between frames cannot desync click from paint "
   Menu file{"File", {}};
   for (int i = 0; i < 12; ++i) {
     const char label = static_cast<char>('a' + i);
-    file.items.push_back(
-        {std::string(1, label), [&, i] { fired = i; }});
+    file.items.push_back({std::string(1, label), [&, i] { fired = i; }});
   }
   mb.set_menus({std::move(file)});
 
@@ -572,18 +580,18 @@ TEST_CASE("MenuBar: a relayout between frames cannot desync click from paint "
   REQUIRE(row_text(s, 9, 2, 1) == "j");
 
   REQUIRE(mb.dropdown_open());
-  mb.set_geometry({0, 8, 40, 1});  // no draw
+  mb.set_geometry({0, 8, 40, 1}); // no draw
   REQUIRE(mb.dropdown_open());
 
   REQUIRE(mb.hit_test(2, 9));
   SECTION("hover resolves the painted row") {
     REQUIRE(mb.on_event(motion(2, 9)));
     REQUIRE(mb.on_event(key(Key::Enter)));
-    REQUIRE(fired == 9);  // "j", not "b" (index 1)
+    REQUIRE(fired == 9); // "j", not "b" (index 1)
   }
   SECTION("press resolves the painted row") {
     REQUIRE(mb.on_event(press(2, 9)));
-    REQUIRE(fired == 9);  // "j", not "b" (index 1)
+    REQUIRE(fired == 9); // "j", not "b" (index 1)
   }
 }
 
@@ -592,8 +600,8 @@ TEST_CASE("MenuBar: an unpainted open list declines dropdown presses (#96)",
   MenuBar mb;
   mb.set_geometry({0, 0, 40, 1});
   int fired = -1;
-  mb.set_menus({{"File", {{"a", [&] { fired = 0; }},
-                          {"b", [&] { fired = 1; }}}}});
+  mb.set_menus(
+      {{"File", {{"a", [&] { fired = 0; }}, {"b", [&] { fired = 1; }}}}});
   REQUIRE(mb.on_event(key(Key::Enter)));
   REQUIRE(mb.dropdown_open());
   REQUIRE_FALSE(mb.hit_test(2, 1));

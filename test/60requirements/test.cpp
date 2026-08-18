@@ -105,8 +105,7 @@ class FloorApp : public App {
 struct Plate : Widget {
   Rect region{0, 0, 2, 1};
   Image cache = Image{
-      2, 1,
-      std::vector<Pixel>{Pixel{255, 0, 0, 255}, Pixel{0, 255, 0, 255}}};
+      2, 1, std::vector<Pixel>{Pixel{255, 0, 0, 255}, Pixel{0, 255, 0, 255}}};
 
   auto draw(Screen& screen) -> void override {
     for (int y = region.y; y < region.y + region.h; ++y)
@@ -122,15 +121,13 @@ struct Plate : Widget {
     ++pixel_calls;
     return &cache;
   }
-  auto pixel_region_submitted(Rect) noexcept -> void override {
-    ++submissions;
-  }
+  auto pixel_region_submitted(Rect) noexcept -> void override { ++submissions; }
 
   int pixel_calls{0};
   int submissions{0};
 };
 
-}  // namespace
+} // namespace
 
 // ── pure evaluate ───────────────────────────────────────────────────────────
 
@@ -197,7 +194,8 @@ TEST_CASE("evaluate_requirements: key actions use the effective input route",
   AppRequirements press{.key_press = true};
 
   REQUIRE(evaluate_requirements(press, AppRequirementFacts{}).has_value());
-  REQUIRE_FALSE(evaluate_requirements(repeat, AppRequirementFacts{}).has_value());
+  REQUIRE_FALSE(
+      evaluate_requirements(repeat, AppRequirementFacts{}).has_value());
   REQUIRE_FALSE(
       evaluate_requirements(release, AppRequirementFacts{}).has_value());
 
@@ -263,7 +261,7 @@ TEST_CASE("App::setup: unmet requirements refuse before alt-screen",
 
   FloorApp app;
   REQUIRE(app.inject(TerminalIo{sp.app(), sp.app()}));
-  REQUIRE(app.push_caps(Capabilities{}));  // silent socket, no graphics
+  REQUIRE(app.push_caps(Capabilities{})); // silent socket, no graphics
   app.require(AppRequirements{.graphics = true});
   REQUIRE(app.set_size({80, 24}).has_value());
 
@@ -277,7 +275,7 @@ TEST_CASE("App::setup: unmet requirements refuse before alt-screen",
   const std::string wrote = sp.drain_peer();
   REQUIRE(wrote.find("\033[?1049h") == std::string::npos);
 
-  app.test_teardown();  // unwind raw mode explicitly
+  app.test_teardown(); // unwind raw mode explicitly
 }
 
 TEST_CASE("App::setup: reported sixel cannot satisfy an unimplemented route",
@@ -452,7 +450,7 @@ TEST_CASE("App: one production cadence gates and restores enhanced submission",
   REQUIRE(app.meters[1].image_transmit == 0);
   REQUIRE(app.meters[2].image_transmit == 0);
   REQUIRE(app.meters[3].image_transmit > 0);
-  REQUIRE(app.meters[1].cells > 0);  // authored Baseline was still painted
+  REQUIRE(app.meters[1].cells > 0); // authored Baseline was still painted
   REQUIRE(app.plate.pixel_calls == 2);
   REQUIRE(app.plate.submissions == 2);
   REQUIRE(app.direct_pixel_calls == 2);

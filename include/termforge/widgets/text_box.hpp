@@ -33,7 +33,8 @@ struct TextEntryHandle {
   [[nodiscard]] constexpr explicit operator bool() const noexcept {
     return generation != 0;
   }
-  constexpr auto operator==(const TextEntryHandle&) const noexcept -> bool = default;
+  constexpr auto operator==(const TextEntryHandle&) const noexcept
+      -> bool = default;
 };
 
 // Optional logical-entry and source-byte limits. nullopt means unlimited; zero
@@ -44,7 +45,8 @@ struct TextBoxRetention {
   std::optional<std::size_t> max_entries{};
   std::optional<std::size_t> max_bytes{};
 
-  constexpr auto operator==(const TextBoxRetention&) const noexcept -> bool = default;
+  constexpr auto operator==(const TextBoxRetention&) const noexcept
+      -> bool = default;
 };
 
 class TextBox final : public Widget {
@@ -190,8 +192,8 @@ class TextBox final : public Widget {
   [[nodiscard]] auto resolve(TextEntryHandle handle) noexcept -> Entry*;
   [[nodiscard]] auto resolve_live(TextEntryHandle handle) noexcept -> Entry*;
   [[nodiscard]] static auto payload_bytes(const Entry& entry) -> std::size_t;
-  static auto append_clean_span(Entry& entry, std::string text,
-                                TextStyle style, bool preserve_empty) -> bool;
+  static auto append_clean_span(Entry& entry, std::string text, TextStyle style,
+                                bool preserve_empty) -> bool;
   auto ingest_chunks(Entry& entry, StyledText chunks) -> bool;
   auto append_chunks(Entry& entry, StyledText chunks) -> bool;
   auto replace_chunks(Entry& entry, StyledText chunks) -> bool;
@@ -209,13 +211,13 @@ class TextBox final : public Widget {
   auto refresh_anchor_from_scroll() -> void;
 
   std::vector<Slot> m_slots;
-  std::deque<std::size_t> m_order;  // chronological slot indices
+  std::deque<std::size_t> m_order; // chronological slot indices
   std::vector<std::size_t> m_free;
   std::optional<TextEntryHandle> m_live;
   std::optional<ViewAnchor> m_anchor;
 
-  int m_scroll{0};                  // 0 = pinned to bottom; >0 = lines scrolled up
-  bool m_follow{true};              // auto-scroll to bottom on new content
+  int m_scroll{0};     // 0 = pinned to bottom; >0 = lines scrolled up
+  bool m_follow{true}; // auto-scroll to bottom on new content
   TextBoxRetention m_retention;
   std::size_t m_retained_bytes{0};
   std::uint64_t m_wrap_build_count{0};
@@ -227,4 +229,4 @@ class TextBox final : public Widget {
   Rgb m_thumb_fg{theme::kFocusBg};
 };
 
-}  // namespace termforge
+} // namespace termforge

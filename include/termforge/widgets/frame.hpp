@@ -28,8 +28,8 @@
 #include <string>
 
 #include "termforge/widgets/glyphs.hpp"
-#include "termforge/widgets/widget.hpp"
 #include "termforge/widgets/theme.hpp"
+#include "termforge/widgets/widget.hpp"
 
 namespace termforge {
 
@@ -86,4 +86,4 @@ class Frame final : public Widget {
   Rgb m_bg{theme::kBg};
 };
 
-}  // namespace termforge
+} // namespace termforge

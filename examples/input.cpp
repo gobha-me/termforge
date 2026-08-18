@@ -33,17 +33,22 @@ class InputApp final : public App {
     const int W = screen.cols();
     int y = 1;
 
-    screen.write_text(2, y++, "TermForge Input Demo", Rgb{0xFF, 0xFF, 0xFF}, {});
+    screen.write_text(2, y++, "TermForge Input Demo", Rgb{0xFF, 0xFF, 0xFF},
+                      {});
     y++;
 
     screen.write_text(2, y++, "Keyboard:", Rgb{0xC0, 0xC0, 0xC0}, {});
-    screen.write_text(4, y++, "Last key: " + m_last_key, Rgb{0x00, 0xFF, 0x80}, {});
-    screen.write_text(4, y++, "Modifiers: " + m_modifiers, Rgb{0x00, 0xFF, 0x80}, {});
+    screen.write_text(4, y++, "Last key: " + m_last_key, Rgb{0x00, 0xFF, 0x80},
+                      {});
+    screen.write_text(4, y++, "Modifiers: " + m_modifiers,
+                      Rgb{0x00, 0xFF, 0x80}, {});
     screen.write_text(4, y++, "Action: " + m_action, Rgb{0x00, 0xFF, 0x80}, {});
     y++;
 
-    screen.write_text(2, y++, "Keyboard protocol (#60):", Rgb{0xC0, 0xC0, 0xC0}, {});
-    screen.write_text(4, y++, "Tier: " + std::string{mode_name(keyboard_mode())},
+    screen.write_text(2, y++, "Keyboard protocol (#60):", Rgb{0xC0, 0xC0, 0xC0},
+                      {});
+    screen.write_text(4, y++,
+                      "Tier: " + std::string{mode_name(keyboard_mode())},
                       Rgb{0x00, 0xFF, 0x80}, {});
     screen.write_text(4, y++,
                       std::string{"Terminal supports it: "} +
@@ -52,12 +57,15 @@ class InputApp final : public App {
     y++;
 
     screen.write_text(2, y++, "Mouse:", Rgb{0xC0, 0xC0, 0xC0}, {});
-    screen.write_text(4, y++, "Position: " + m_mouse_pos, Rgb{0x00, 0xFF, 0x80}, {});
-    screen.write_text(4, y++, "Button: " + m_mouse_btn, Rgb{0x00, 0xFF, 0x80}, {});
+    screen.write_text(4, y++, "Position: " + m_mouse_pos, Rgb{0x00, 0xFF, 0x80},
+                      {});
+    screen.write_text(4, y++, "Button: " + m_mouse_btn, Rgb{0x00, 0xFF, 0x80},
+                      {});
     y++;
 
     screen.write_text(2, y++, "Window:", Rgb{0xC0, 0xC0, 0xC0}, {});
-    screen.write_text(4, y, std::format("Size: {}x{}", W, screen.rows()), Rgb{0x00, 0xFF, 0x80}, {});
+    screen.write_text(4, y, std::format("Size: {}x{}", W, screen.rows()),
+                      Rgb{0x00, 0xFF, 0x80}, {});
     y += 2;
 
     screen.write_text(0, screen.rows() - 1,
@@ -77,21 +85,25 @@ class InputApp final : public App {
     m_action = action_name(k.action);
     m_last_key = key_name(k.key);
     if (k.key == Key::Char) {
-      if (k.ch < 0x80) m_last_key += std::format(" ('{}')", static_cast<char>(k.ch));
-      else m_last_key += std::format(" (U+{:04X})", static_cast<unsigned>(k.ch));
+      if (k.ch < 0x80)
+        m_last_key += std::format(" ('{}')", static_cast<char>(k.ch));
+      else
+        m_last_key += std::format(" (U+{:04X})", static_cast<unsigned>(k.ch));
     }
-    m_modifiers = std::format("{}{}{}",
-      k.ctrl ? "Ctrl " : "",
-      k.alt ? "Alt " : "",
-      k.shift ? "Shift" : "");
+    m_modifiers = std::format("{}{}{}", k.ctrl ? "Ctrl " : "",
+                              k.alt ? "Alt " : "", k.shift ? "Shift" : "");
     if (m_modifiers.empty()) m_modifiers = "none";
   }
 
   auto handle(const MouseEvent& m) -> void {
     m_mouse_pos = std::format("({}, {})", m.x, m.y);
     switch (m.action()) {
-      case MouseAction::Press: m_mouse_btn = std::format("press {}", m.button); break;
-      case MouseAction::Drag: m_mouse_btn = std::format("drag {}", m.button); break;
+      case MouseAction::Press:
+        m_mouse_btn = std::format("press {}", m.button);
+        break;
+      case MouseAction::Drag:
+        m_mouse_btn = std::format("drag {}", m.button);
+        break;
       case MouseAction::Release:
         m_mouse_btn = std::format("release {}", m.button);
         break;

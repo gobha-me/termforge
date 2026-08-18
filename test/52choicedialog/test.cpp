@@ -6,8 +6,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include <optional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -31,7 +31,7 @@ auto painted_text(const Screen& screen) -> std::string {
   return out;
 }
 
-}  // namespace
+} // namespace
 
 static_assert(!std::is_copy_constructible_v<ChoiceDialog>);
 static_assert(!std::is_move_constructible_v<ChoiceDialog>);
@@ -98,9 +98,9 @@ TEST_CASE("ChoiceDialog: multiple mode tabs between independent duplicate rows",
   dialog.on_result(
       [&](std::optional<ChoiceResult> value) { result = std::move(value); });
 
-  REQUIRE(dialog.on_event(ch(U' ')));      // index 0
+  REQUIRE(dialog.on_event(ch(U' '))); // index 0
   REQUIRE(dialog.on_event(key(Key::Tab)));
-  REQUIRE(dialog.on_event(ch(U' ')));      // index 1, despite duplicate label
+  REQUIRE(dialog.on_event(ch(U' '))); // index 1, despite duplicate label
   REQUIRE(dialog.on_event(key(Key::Enter)));
   REQUIRE(result.has_value());
   REQUIRE(result->selected_indices == std::vector<std::size_t>{0, 1});
@@ -119,22 +119,20 @@ TEST_CASE("ChoiceDialog: minimum and maximum reject visibly without closing",
   dialog.on_result([&](std::optional<ChoiceResult>) { ++calls; });
   Screen screen{50, 16};
   dialog.draw(screen);
-  REQUIRE(dialog.on_event(ch(U' ')));       // one: below minimum
+  REQUIRE(dialog.on_event(ch(U' '))); // one: below minimum
   REQUIRE(dialog.on_event(key(Key::Enter)));
   REQUIRE(calls == 0);
   dialog.draw(screen);
-  REQUIRE(painted_text(screen).find("Select at least 2") !=
-          std::string::npos);
+  REQUIRE(painted_text(screen).find("Select at least 2") != std::string::npos);
 
   REQUIRE(dialog.on_event(key(Key::Tab)));
-  REQUIRE(dialog.on_event(ch(U' ')));       // two: valid
+  REQUIRE(dialog.on_event(ch(U' '))); // two: valid
   REQUIRE(dialog.on_event(key(Key::Tab)));
-  REQUIRE(dialog.on_event(ch(U' ')));       // three: above maximum
+  REQUIRE(dialog.on_event(ch(U' '))); // three: above maximum
   REQUIRE(dialog.on_event(key(Key::Enter)));
   REQUIRE(calls == 0);
   dialog.draw(screen);
-  REQUIRE(painted_text(screen).find("Select at most 2") !=
-          std::string::npos);
+  REQUIRE(painted_text(screen).find("Select at most 2") != std::string::npos);
 }
 
 TEST_CASE("ChoiceDialog: selecting Other reveals focus and requires text",
@@ -149,9 +147,9 @@ TEST_CASE("ChoiceDialog: selecting Other reveals focus and requires text",
 
   Screen screen{50, 16};
   dialog.draw(screen);
-  REQUIRE(dialog.on_event(key(Key::Down)));  // select Other, focus its input
+  REQUIRE(dialog.on_event(key(Key::Down))); // select Other, focus its input
   REQUIRE(dialog.other_selected());
-  REQUIRE(dialog.on_event(key(Key::Enter)));  // empty Other is invalid
+  REQUIRE(dialog.on_event(key(Key::Enter))); // empty Other is invalid
   REQUIRE_FALSE(result.has_value());
 
   dialog.draw(screen);
@@ -187,8 +185,9 @@ TEST_CASE("ChoiceDialog: multiple Other coexists with ordinary selections",
   REQUIRE(result->other == "custom");
 }
 
-TEST_CASE("ChoiceDialog: reconfiguration drops stale indices and keeps valid ones",
-          "[choice-dialog][failure]") {
+TEST_CASE(
+    "ChoiceDialog: reconfiguration drops stale indices and keeps valid ones",
+    "[choice-dialog][failure]") {
   ChoiceDialog dialog{"Choose", "", ChoiceMode::Multiple};
   dialog.set_choices({{"a", ""}, {"b", ""}, {"c", ""}});
   dialog.set_selected_indices({0, 2});
@@ -224,7 +223,7 @@ TEST_CASE("ChoiceDialog: on_close may destroy the dialog",
 
   REQUIRE(raw->on_event(key(Key::Enter)));
   REQUIRE(dialog == nullptr);
-  REQUIRE(results == 1);  // callback was snapshotted before destruction
+  REQUIRE(results == 1); // callback was snapshotted before destruction
 }
 
 TEST_CASE("ChoiceDialog: reopen preserves values but reports once per showing",
@@ -243,9 +242,9 @@ TEST_CASE("ChoiceDialog: reopen preserves values but reports once per showing",
   REQUIRE(dialog.on_event(key(Key::Enter)));
   REQUIRE(calls == 1);
   REQUIRE(dialog.on_event(key(Key::Escape)));
-  REQUIRE(calls == 1);  // same showing remains latched
+  REQUIRE(calls == 1); // same showing remains latched
 
-  dialog.draw(screen);  // new showing
+  dialog.draw(screen); // new showing
   REQUIRE(dialog.selected_indices() == std::vector<std::size_t>{1});
   REQUIRE(dialog.other_selected());
   REQUIRE(dialog.other_text() == "kept");
@@ -256,8 +255,9 @@ TEST_CASE("ChoiceDialog: reopen preserves values but reports once per showing",
 TEST_CASE("ChoiceDialog: labels and descriptions sanitize before measurement",
           "[choice-dialog][failure]") {
   ChoiceDialog dialog{"Choose", ""};
-  dialog.set_choices({{"evil\033[2Jlabel\xC0\x9B", "desc\twith\033[31mcontrols"},
-                      {"日本語", "wide"}});
+  dialog.set_choices(
+      {{"evil\033[2Jlabel\xC0\x9B", "desc\twith\033[31mcontrols"},
+       {"日本語", "wide"}});
   REQUIRE(dialog.choices()[0].label == "evillabel");
   REQUIRE(dialog.choices()[0].description == "desc withcontrols");
 
@@ -292,7 +292,8 @@ TEST_CASE("ChoiceDialog: overflow follows Tab focus and never paints outside",
 
   Screen screen{32, 10};
   dialog.draw(screen);
-  for (int i = 0; i < 12; ++i) REQUIRE(dialog.on_event(key(Key::Tab)));
+  for (int i = 0; i < 12; ++i)
+    REQUIRE(dialog.on_event(key(Key::Tab)));
   dialog.draw(screen);
   REQUIRE(painted_text(screen).find("choice-12") != std::string::npos);
 

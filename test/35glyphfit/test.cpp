@@ -25,8 +25,8 @@
 #include "termforge/widgets/glyphs.hpp"
 
 using termforge::BorderStyle;
-using termforge::MarkGlyphs;
 using termforge::mark_glyphs;
+using termforge::MarkGlyphs;
 using termforge::Screen;
 using termforge::detail::display_width;
 using termforge::detail::fitted_glyph;
@@ -35,16 +35,16 @@ namespace {
 
 // Byte literals for the code points under test, spelled the way test/17width
 // spells them: escapes, not source-file UTF-8, so the bytes are unambiguous.
-constexpr std::string_view kShi = "\xE4\xB8\x96";    // 世  U+4E16  two columns
-constexpr std::string_view kFullA = "\xEF\xBC\xA1";  // Ａ  U+FF21  two columns
-constexpr std::string_view kAcute = "\xCC\x81";      // ◌́  U+0301  combining
-constexpr std::string_view kZwsp = "\xE2\x80\x8B";   //     U+200B  zero-width
+constexpr std::string_view kShi = "\xE4\xB8\x96";   // 世  U+4E16  two columns
+constexpr std::string_view kFullA = "\xEF\xBC\xA1"; // Ａ  U+FF21  two columns
+constexpr std::string_view kAcute = "\xCC\x81";     // ◌́  U+0301  combining
+constexpr std::string_view kZwsp = "\xE2\x80\x8B";  //     U+200B  zero-width
 
 const auto kStyles = {BorderStyle::Single, BorderStyle::Double,
                       BorderStyle::Rounded, BorderStyle::Heavy,
                       BorderStyle::Ascii};
 
-}  // namespace
+} // namespace
 
 TEST_CASE("fitted_glyph: every in-tree mark survives its own gutter unchanged",
           "[glyphs]") {
@@ -80,9 +80,9 @@ TEST_CASE("fitted_glyph: an over-wide glyph is dropped whole, never truncated",
   // compete, the label wins whole.
   REQUIRE(fitted_glyph(kShi, 1).empty());
   REQUIRE(fitted_glyph(kFullA, 1).empty());
-  REQUIRE(fitted_glyph(kShi, 2) == kShi);   // exactly filling the budget fits
+  REQUIRE(fitted_glyph(kShi, 2) == kShi); // exactly filling the budget fits
   REQUIRE(fitted_glyph(kShi, 3) == kShi);
-  REQUIRE(fitted_glyph("ab", 1).empty());   // NOT "a"
+  REQUIRE(fitted_glyph("ab", 1).empty()); // NOT "a"
 }
 
 TEST_CASE("fitted_glyph: zero width never fits, at any budget -- but one "
@@ -116,7 +116,7 @@ TEST_CASE("fitted_glyph: the string returned is the string measured",
   // "\033[7m>\033[0m" is the input an app is likeliest to try: seven raw
   // columns, one painted (#76).
   REQUIRE(fitted_glyph("\033[7m>\033[0m", 1) == ">");
-  REQUIRE(fitted_glyph("\033[2J", 1).empty());  // nothing left after the strip
+  REQUIRE(fitted_glyph("\033[2J", 1).empty()); // nothing left after the strip
 
   // Tab is not dropped, it is SUBSTITUTED -- sanitize turns it into a space --
   // so "a\tb" is three columns, not two, and the returned string carries the
@@ -135,12 +135,13 @@ TEST_CASE("fitted_glyph: a non-positive budget fits nothing",
   REQUIRE(fitted_glyph("", 5).empty());
 }
 
-TEST_CASE("fitted_glyph: malformed UTF-8 is dropped, never measured or returned",
-          "[glyphs][failure]") {
+TEST_CASE(
+    "fitted_glyph: malformed UTF-8 is dropped, never measured or returned",
+    "[glyphs][failure]") {
   // Screen::write_text's decode loop assumes "sanitize() emits only
   // well-formed UTF-8" (screen.cpp). This helper hands its result straight to
   // write_text, so it owes that same guarantee.
-  REQUIRE(fitted_glyph("\xC0\x9B", 1).empty());  // overlong ESC: nothing left
+  REQUIRE(fitted_glyph("\xC0\x9B", 1).empty()); // overlong ESC: nothing left
   REQUIRE(fitted_glyph(std::string{">"} + "\x80", 1) == ">");
   REQUIRE(fitted_glyph(std::string{"a"} + "\x80", 1) == "a");
 }
@@ -158,10 +159,14 @@ TEST_CASE("fitted_glyph: it is exactly the predicate the seven call sites used "
   // against fitted_glyph, or it would be an identity -- both sides deriving
   // from the function under test is how a test measures nothing (#129).
   const auto glyphs = {
-      std::string_view{">"},   std::string_view{"\xE2\x96\xB8"},  // ▸
-      kShi,                    kFullA,
-      kAcute,                  kZwsp,
-      std::string_view{""},    std::string_view{"ab"},
+      std::string_view{">"},
+      std::string_view{"\xE2\x96\xB8"}, // ▸
+      kShi,
+      kFullA,
+      kAcute,
+      kZwsp,
+      std::string_view{""},
+      std::string_view{"ab"},
       std::string_view{"\033[7m>\033[0m"},
       std::string_view{"\xC0\x9B"},
   };

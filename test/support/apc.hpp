@@ -24,8 +24,8 @@
 namespace tfsupport {
 
 struct Apc {
-  std::string keys;     // everything before the ';', e.g. "a=t,t=d,f=100,..."
-  std::string payload;  // everything after it (empty for a keys-only command)
+  std::string keys;    // everything before the ';', e.g. "a=t,t=d,f=100,..."
+  std::string payload; // everything after it (empty for a keys-only command)
   bool has_payload{false};
 };
 
@@ -38,7 +38,7 @@ inline auto apcs(std::string_view out) -> std::vector<Apc> {
        (at = out.find("\033_G", at)) != std::string_view::npos;) {
     const std::size_t body = at + 3;
     const std::size_t end = out.find("\033\\", body);
-    REQUIRE(end != std::string_view::npos);  // an unterminated APC is a bug
+    REQUIRE(end != std::string_view::npos); // an unterminated APC is a bug
     const std::string_view seq = out.substr(body, end - body);
     const std::size_t semi = seq.find(';');
     Apc a;
@@ -89,8 +89,8 @@ inline auto key_value(const Apc& a, std::string_view key) -> std::string {
     if (at != 0 && a.keys[at - 1] != ',') continue;
     const std::size_t from = at + needle.size();
     const std::size_t comma = a.keys.find(',', from);
-    return a.keys.substr(from, comma == std::string::npos ? comma
-                                                          : comma - from);
+    return a.keys.substr(from,
+                         comma == std::string::npos ? comma : comma - from);
   }
   return {};
 }
@@ -123,7 +123,7 @@ inline auto b64_decode(std::string_view s) -> std::vector<std::byte> {
     if (c >= '0' && c <= '9') return c - '0' + 52;
     if (c == '+') return 62;
     if (c == '/') return 63;
-    return -1;  // '=' padding, or junk
+    return -1; // '=' padding, or junk
   };
   std::vector<std::byte> out;
   std::uint32_t acc = 0;
@@ -193,8 +193,8 @@ inline auto count_of(std::string_view hay, std::string_view needle) -> int {
 // d=I frees the image data and its placements; d=i retires ONE placement and
 // leaves the data resident. Telling those apart is the whole of #109's lifetime
 // split, so they get separate counters rather than one with a flag.
-inline auto cmds_of(std::string_view out, std::string_view a, std::string_view d,
-                    std::uint32_t id) -> int {
+inline auto cmds_of(std::string_view out, std::string_view a,
+                    std::string_view d, std::uint32_t id) -> int {
   int n = 0;
   for (const Apc& c : apcs(out)) {
     if (key_value(c, "a") != a) continue;
@@ -212,7 +212,8 @@ inline auto frame_updates_of(std::string_view out, std::uint32_t id) -> int {
 inline auto data_deletes_of(std::string_view out, std::uint32_t id) -> int {
   return cmds_of(out, "d", "I", id);
 }
-inline auto placement_deletes_of(std::string_view out, std::uint32_t id) -> int {
+inline auto placement_deletes_of(std::string_view out, std::uint32_t id)
+    -> int {
   return cmds_of(out, "d", "i", id);
 }
 inline auto placements_of(std::string_view out, std::uint32_t id) -> int {
@@ -268,4 +269,4 @@ inline auto ids_named(std::string_view out) -> std::set<std::uint32_t> {
   return ids;
 }
 
-}  // namespace tfsupport
+} // namespace tfsupport

@@ -42,14 +42,12 @@ using termforge::TerminalReply;
 namespace {
 
 auto art(std::uint8_t seed, int w = 2, int h = 2) -> Image {
-  return tfsupport::solid(
-      w, h,
-      Pixel{seed, static_cast<std::uint8_t>(seed + 1),
-            static_cast<std::uint8_t>(seed + 2), 255});
+  return tfsupport::solid(w, h,
+                          Pixel{seed, static_cast<std::uint8_t>(seed + 1),
+                                static_cast<std::uint8_t>(seed + 2), 255});
 }
 
-auto bytes(std::uint8_t seed, std::size_t count = 9)
-    -> std::vector<std::byte> {
+auto bytes(std::uint8_t seed, std::size_t count = 9) -> std::vector<std::byte> {
   std::vector<std::byte> result(count);
   for (std::size_t i = 0; i < count; ++i)
     result[i] = static_cast<std::byte>(seed + i);
@@ -64,13 +62,14 @@ auto animation_frames(const std::array<Image, 4>& images)
 
 class FailingSink final : public ByteSink {
  public:
-  auto write(std::span<const char>) -> std::expected<void, ErrorEvent> override {
+  auto write(std::span<const char>)
+      -> std::expected<void, ErrorEvent> override {
     return std::unexpected{
         ErrorEvent{Severity::Error, "sink", "animation frame refused"}};
   }
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("animation: one root and ordered new frames carry exact gaps",
           "[animation][kitty][wire]") {
@@ -83,14 +82,13 @@ TEST_CASE("animation: one root and ordered new frames carry exact gaps",
   const auto frames = animation_frames(images);
   const auto handle = d.register_animation(frames);
   REQUIRE(handle);
-  CHECK(d.residency() == ImageResidency{});  // queued is not accepted
+  CHECK(d.residency() == ImageResidency{}); // queued is not accepted
   d.flush();
 
   const auto commands = tfsupport::apcs(out);
-  REQUIRE(commands.size() == 5);  // root, root gap, then three frames
+  REQUIRE(commands.size() == 5); // root, root gap, then three frames
   CHECK(tfsupport::key_value(commands[0], "a") == "t");
-  CHECK(tfsupport::key_value(commands[0], "i") ==
-        std::to_string(handle->id));
+  CHECK(tfsupport::key_value(commands[0], "i") == std::to_string(handle->id));
   CHECK(tfsupport::key_value(commands[1], "a") == "a");
   CHECK(tfsupport::key_value(commands[1], "r") == "1");
   CHECK(tfsupport::key_value(commands[1], "z") == "20");
@@ -99,8 +97,7 @@ TEST_CASE("animation: one root and ordered new frames carry exact gaps",
   for (std::size_t i = 0; i < expected_gaps.size(); ++i) {
     const auto& command = commands[i + 2];
     CHECK(tfsupport::key_value(command, "a") == "f");
-    CHECK(tfsupport::key_value(command, "i") ==
-          std::to_string(handle->id));
+    CHECK(tfsupport::key_value(command, "i") == std::to_string(handle->id));
     CHECK(tfsupport::key_value(command, "z") == expected_gaps[i]);
     CHECK(tfsupport::key_value(command, "X") == "1");
     CHECK_FALSE(tfsupport::has_key(command, "r"));
@@ -115,7 +112,7 @@ TEST_CASE("animation: one root and ordered new frames carry exact gaps",
 
   CHECK(d.residency() == ImageResidency{0, 1, expected.size()});
   CHECK(d.last_frame_bytes().image_transmit > 0);
-  CHECK(d.last_frame_bytes().image_edit > 0);  // positive root-gap control
+  CHECK(d.last_frame_bytes().image_edit > 0); // positive root-gap control
 }
 
 TEST_CASE("animation: chunk continuations stay new-frame data without r",
@@ -126,7 +123,7 @@ TEST_CASE("animation: chunk continuations stay new-frame data without r",
   d.set_output(&out);
 
   const Image root = art(1, 50, 25);
-  const Image next = art(2, 50, 25);  // 5000 bytes: multiple base64 chunks
+  const Image next = art(2, 50, 25); // 5000 bytes: multiple base64 chunks
   const std::array frames{AnimationFrame{root, 10ms},
                           AnimationFrame{next, 10ms}};
   REQUIRE(d.register_animation(frames));
@@ -186,17 +183,16 @@ TEST_CASE("animation: complete preflight refuses without wire or state",
   SECTION("gap exceeds protocol integer") {
     const Image image = art(1);
     const std::array frames{AnimationFrame{
-        image,
-        std::chrono::milliseconds{
-            static_cast<std::int64_t>(std::numeric_limits<std::int32_t>::max()) +
-            1}}};
+        image, std::chrono::milliseconds{
+                   static_cast<std::int64_t>(
+                       std::numeric_limits<std::int32_t>::max()) +
+                   1}}};
     CHECK_FALSE(d.register_animation(frames));
   }
   SECTION("extent mismatch") {
     const Image a = art(1);
     const Image b = art(2, 3, 2);
-    const std::array frames{AnimationFrame{a, 10ms},
-                            AnimationFrame{b, 10ms}};
+    const std::array frames{AnimationFrame{a, 10ms}, AnimationFrame{b, 10ms}};
     CHECK_FALSE(d.register_animation(frames));
   }
   SECTION("format mismatch") {
@@ -249,10 +245,10 @@ TEST_CASE("animation: zlib bytes are verbatim and every frame is acknowledged",
   const auto a = bytes(10);
   const auto b = bytes(30);
   const std::array frames{
-      AnimationFrame{
-          EncodedImage{ImageFormat::Rgba32Zlib, a, Extent{8, 8}}, 10ms},
-      AnimationFrame{
-          EncodedImage{ImageFormat::Rgba32Zlib, b, Extent{8, 8}}, 0ms}};
+      AnimationFrame{EncodedImage{ImageFormat::Rgba32Zlib, a, Extent{8, 8}},
+                     10ms},
+      AnimationFrame{EncodedImage{ImageFormat::Rgba32Zlib, b, Extent{8, 8}},
+                     0ms}};
 
   const auto handle = d.register_animation(frames);
   REQUIRE(handle);
@@ -327,7 +323,7 @@ TEST_CASE("animation: refused sink commits neither registration nor residency",
   d.set_output(&recovered);
   const auto retry = d.register_animation(frames);
   REQUIRE(retry);
-  CHECK(retry->id == first->id);  // refused state returned the shared id
+  CHECK(retry->id == first->id); // refused state returned the shared id
 }
 
 TEST_CASE("animation: invalidation forgets registrations without wire",
@@ -367,7 +363,8 @@ TEST_CASE("animation: all timed-out PNG replies quarantine one id",
   const auto timed_out = d.register_animation(frames);
   REQUIRE(timed_out);
   d.flush();
-  for (int i = 1; i < 120; ++i) d.flush();
+  for (int i = 1; i < 120; ++i)
+    d.flush();
   const auto errors = d.take_driver_events();
   REQUIRE(errors.size() == 1);
   CHECK(errors.front().message.find("timed out") != std::string::npos);
@@ -400,7 +397,7 @@ TEST_CASE("animation: registrations and pins share the resident-id budget",
   const auto pin = d.pin_image(image);
   REQUIRE(animation);
   REQUIRE(pin);
-  CHECK(animation->id == KittyDriver::kFirstPinnedImageId +
-                             KittyDriver::kMaxPinnedImages - 1);
+  CHECK(animation->id ==
+        KittyDriver::kFirstPinnedImageId + KittyDriver::kMaxPinnedImages - 1);
   CHECK(pin->id + 1 == animation->id);
 }

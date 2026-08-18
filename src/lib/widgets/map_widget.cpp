@@ -105,7 +105,7 @@ auto MapWidget::add_layer(std::string name) -> int {
 
 auto MapWidget::set_tile(int layer, int x, int y, int id) -> void {
   if (layer < 0 || layer >= static_cast<int>(m_layers.size())) return;
-  if (x < 0 || y < 0 || x >= m_map_w || y >= m_map_h) return;  // clipped no-op
+  if (x < 0 || y < 0 || x >= m_map_w || y >= m_map_h) return; // clipped no-op
   m_layers[static_cast<std::size_t>(layer)]
       .cells[static_cast<std::size_t>(y) * static_cast<std::size_t>(m_map_w) +
              static_cast<std::size_t>(x)] = id;
@@ -169,7 +169,7 @@ auto MapWidget::tile_at(int cell_x, int cell_y) const
   if (cx < 0 || cy < 0 || cx >= r.w || cy >= r.h) return std::nullopt;
 
   const auto [vtw, vth] = viewport_tiles();
-  const int tx = cx / m_tile_w;  // m_tile_w/h >= 1 (enforced by the setter)
+  const int tx = cx / m_tile_w; // m_tile_w/h >= 1 (enforced by the setter)
   const int ty = cy / m_tile_h;
   // The floored viewport is the draw contract: a cell in a trailing partial
   // tile is background fill, not a tile, so the pick is nullopt too.
@@ -223,10 +223,9 @@ auto MapWidget::draw(Screen& screen) -> void {
       int id = kEmptyId;
       for (auto it = m_layers.rbegin(); it != m_layers.rend(); ++it) {
         if (!it->visible) continue;
-        const int candidate =
-            it->cells[static_cast<std::size_t>(ty) *
-                          static_cast<std::size_t>(m_map_w) +
-                      static_cast<std::size_t>(tx)];
+        const int candidate = it->cells[static_cast<std::size_t>(ty) *
+                                            static_cast<std::size_t>(m_map_w) +
+                                        static_cast<std::size_t>(tx)];
         if (candidate != kEmptyId) {
           id = candidate;
           break;
@@ -281,10 +280,9 @@ auto MapWidget::complete_sprite_window() const -> bool {
     for (int tx = cam_x; tx < tx1; ++tx) {
       for (const auto& layer : m_layers) {
         if (!layer.visible) continue;
-        const int id =
-            layer.cells[static_cast<std::size_t>(ty) *
-                            static_cast<std::size_t>(m_map_w) +
-                        static_cast<std::size_t>(tx)];
+        const int id = layer.cells[static_cast<std::size_t>(ty) *
+                                       static_cast<std::size_t>(m_map_w) +
+                                   static_cast<std::size_t>(tx)];
         if (id == kEmptyId) continue;
         const TileDef& def = m_tileset.get(id);
         if (!valid_sprite(def)) return false;
@@ -308,8 +306,7 @@ auto MapWidget::pixel_regions() -> std::vector<Rect> {
   return {region};
 }
 
-auto MapWidget::draw_pixels(Rect region, Extent /*preferred*/)
-    -> const Image* {
+auto MapWidget::draw_pixels(Rect region, Extent /*preferred*/) -> const Image* {
   if (region != sprite_region() || !complete_sprite_window()) return nullptr;
 
   const auto [vtw, vth] = viewport_tiles();
@@ -342,10 +339,9 @@ auto MapWidget::draw_pixels(Rect region, Extent /*preferred*/)
       const int dy = (ty - cam_y) * sprite.h;
       for (const auto& layer : m_layers) {
         if (!layer.visible) continue;
-        const int id =
-            layer.cells[static_cast<std::size_t>(ty) *
-                            static_cast<std::size_t>(m_map_w) +
-                        static_cast<std::size_t>(tx)];
+        const int id = layer.cells[static_cast<std::size_t>(ty) *
+                                       static_cast<std::size_t>(m_map_w) +
+                                   static_cast<std::size_t>(tx)];
         if (id == kEmptyId) continue;
         const TileDef& def = m_tileset.get(id);
         // complete_sprite_window() established this before allocation.
@@ -372,4 +368,4 @@ auto MapWidget::pixel_region_submitted(Rect /*region*/) noexcept -> void {
   ++m_submission_count;
 }
 
-}  // namespace termforge
+} // namespace termforge

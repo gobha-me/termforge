@@ -59,4 +59,4 @@ namespace termforge::detail {
   return static_cast<int>(s);
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

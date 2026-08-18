@@ -85,7 +85,8 @@ class DashboardApp final : public App {
   auto on_tick(std::chrono::duration<double> dt) -> void override {
     m_t += dt.count();
 
-    const auto sine = static_cast<float>(std::sin(m_t * 1.5) * 0.5 + 0.5);  // 0..1
+    const auto sine =
+        static_cast<float>(std::sin(m_t * 1.5) * 0.5 + 0.5); // 0..1
     m_wave.push(sine);
 
     const int cpu = 20 + static_cast<int>(sine * 60.0f);
@@ -106,7 +107,7 @@ class DashboardApp final : public App {
 
     // Layout: table on left, log on right, waveform across the bottom.
     const int wave_h = 6;
-    const int content_h = H - 3 - wave_h;  // title + footer + waveform
+    const int content_h = H - 3 - wave_h; // title + footer + waveform
     const int table_w = W / 2;
     const int log_w = W - table_w;
 
@@ -128,12 +129,11 @@ class DashboardApp final : public App {
                       Rgb{0x10, 0x10, 0x20});
     m_wave.set_geometry({0, 2 + content_h, W, wave_h - 1});
     m_wave.draw(screen);
-    render_pixel_regions(m_wave);  // kitty: native pixel chart
+    render_pixel_regions(m_wave); // kitty: native pixel chart
 
     // Footer.
-    const std::string footer =
-        std::format(" Tab: switch focus ({}) | ESC: quit ",
-                    m_focus == 0 ? "table" : "log");
+    const std::string footer = std::format(
+        " Tab: switch focus ({}) | ESC: quit ", m_focus == 0 ? "table" : "log");
     screen.write_text(0, H - 1, footer, Rgb{0x80, 0x80, 0x80},
                       Rgb{0x10, 0x10, 0x20});
 
@@ -149,7 +149,7 @@ class DashboardApp final : public App {
   WaveformWidget m_wave;
   int m_focus{0};
   int m_frame{0};
-  double m_t{0.0};  // seconds of simulated time
+  double m_t{0.0}; // seconds of simulated time
 };
 
 auto main() -> int {

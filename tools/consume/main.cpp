@@ -51,7 +51,7 @@ class ScriptedApp final : public termforge::App {
   std::chrono::steady_clock::time_point m_now{};
 };
 
-}  // namespace
+} // namespace
 
 auto main() -> int {
   termforge::SyntheticClock clock;
@@ -72,9 +72,9 @@ auto main() -> int {
   scripted.start_recording(recorded);
   scripted.stop_recording();
   std::istringstream invalid_trace;
-  (void)scripted.play(invalid_trace);  // compile/link the installed API
+  (void)scripted.play(invalid_trace); // compile/link the installed API
 
-  termforge::Screen screen(20, 3);  // core/screen.cpp
+  termforge::Screen screen(20, 3); // core/screen.cpp
 
   const termforge::TextStyle style{
       termforge::Rgb{0x11, 0x22, 0x33}, {}, termforge::Attr::Underline};
@@ -84,11 +84,11 @@ auto main() -> int {
   termforge::TextBox text_box;
   text_box.set_geometry(termforge::Rect{0, 2, 20, 1});
   text_box.append(styled);
-  text_box.draw(screen);  // widgets/text_box.cpp
+  text_box.draw(screen); // widgets/text_box.cpp
 
   termforge::Label label{"consumed"};
   label.set_geometry(termforge::Rect{0, 0, 20, 1});
-  label.draw(screen);  // widgets/label.cpp
+  label.draw(screen); // widgets/label.cpp
 
   if (screen.at(0, 0).blank() ||
       screen.at(0, 1).attrs != termforge::Attr::Underline ||

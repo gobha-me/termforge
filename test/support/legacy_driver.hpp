@@ -55,4 +55,4 @@ class LegacyDriver final : public termforge::TerminalDriver {
   bool m_drew_image{false};
 };
 
-}  // namespace tfsupport
+} // namespace tfsupport

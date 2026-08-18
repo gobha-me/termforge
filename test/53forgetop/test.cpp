@@ -11,8 +11,8 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
-#include <memory>
 #include <limits>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -43,7 +43,7 @@ struct TempProc {
     std::array<char, 32> pattern{};
     const std::string base = "/tmp/termforge-proc-XXXXXX";
     std::ranges::copy(base, pattern.begin());
-    const char *made = ::mkdtemp(pattern.data());
+    const char* made = ::mkdtemp(pattern.data());
     REQUIRE(made != nullptr);
     root = made;
   }
@@ -71,8 +71,8 @@ struct TempProc {
 
 auto process_stat(int pid, std::string_view name, int utime, int stime,
                   int rss_pages, char state = 'S') -> std::string {
-  return std::to_string(pid) + " (" + std::string{name} +
-         ") " + state + " 1 1 1 0 0 0 0 0 0 0 " + std::to_string(utime) + " " +
+  return std::to_string(pid) + " (" + std::string{name} + ") " + state +
+         " 1 1 1 0 0 0 0 0 0 0 " + std::to_string(utime) + " " +
          std::to_string(stime) + " 0 0 20 0 1 0 10 4096 " +
          std::to_string(rss_pages) + "\n";
 }
@@ -81,13 +81,12 @@ auto process_row(int pid, std::string name, float cpu, std::uint64_t rss,
                  std::string user = "user", char state = 'S',
                  float memory = 1.0F, double time = 1.0,
                  std::string command = {}) -> ProcessRow {
-  if (command.empty())
-    command = name;
-  return {pid, std::move(name), cpu, rss, std::move(user), state, memory, time,
-          std::move(command)};
+  if (command.empty()) command = name;
+  return {pid,  std::move(name),   cpu, rss, std::move(user), state, memory,
+          time, std::move(command)};
 }
 
-auto screen_row(const Screen &screen, int y) -> std::string {
+auto screen_row(const Screen& screen, int y) -> std::string {
   std::string text;
   for (int x = 0; x < screen.cols(); ++x)
     text += screen.text_at(x, y);
@@ -95,7 +94,7 @@ auto screen_row(const Screen &screen, int y) -> std::string {
 }
 
 class CountingReader final : public SystemReader {
-public:
+ public:
   auto sample() -> std::expected<SystemSnapshot, ErrorEvent> override {
     ++calls;
     SystemSnapshot snapshot;
@@ -122,7 +121,7 @@ auto count(std::string_view text, std::string_view needle) -> int {
 
 auto action_count(std::string_view wire, std::string_view action) -> int {
   int result = 0;
-  for (const auto &apc : tfsupport::apcs(wire))
+  for (const auto& apc : tfsupport::apcs(wire))
     // Data-operation openers name i=. Since #259 every animation-frame
     // continuation repeats a=f, so counting action keys alone makes one update
     // look like one update per 4,096 encoded bytes.
@@ -135,7 +134,7 @@ auto action_count(std::string_view wire, std::string_view action) -> int {
 auto transmit_extents(std::string_view wire)
     -> std::vector<std::pair<std::string, std::string>> {
   std::vector<std::pair<std::string, std::string>> result;
-  for (const auto &apc : tfsupport::apcs(wire))
+  for (const auto& apc : tfsupport::apcs(wire))
     if (tfsupport::key_value(apc, "a") == "t")
       result.emplace_back(tfsupport::key_value(apc, "s"),
                           tfsupport::key_value(apc, "v"));
@@ -146,9 +145,9 @@ auto cpu_samples(int sample_count) -> std::vector<CpuSample> {
   std::vector<CpuSample> samples;
   samples.reserve(static_cast<std::size_t>(sample_count));
   for (int i = 0; i < sample_count; ++i)
-    samples.push_back({std::format("cpu{}", i),
-                       static_cast<float>(i + 1) /
-                           static_cast<float>(sample_count + 1)});
+    samples.push_back(
+        {std::format("cpu{}", i),
+         static_cast<float>(i + 1) / static_cast<float>(sample_count + 1)});
   return samples;
 }
 
@@ -158,7 +157,7 @@ auto contains(Rect rect, int x, int y) noexcept -> bool {
 }
 
 class SegmentSink final : public ByteSink {
-public:
+ public:
   auto write(std::span<const char> bytes)
       -> std::expected<void, ErrorEvent> override {
     attempts.emplace_back(bytes.begin(), bytes.end());
@@ -177,7 +176,7 @@ public:
 };
 
 class CpuPanelApp final : public App {
-public:
+ public:
   CpuPanelApp() {
     samples.reserve(20);
     for (int i = 0; i < 20; ++i) {
@@ -187,18 +186,17 @@ public:
     panel.set_samples(samples);
   }
 
-  auto on_render(Screen &screen) -> void override {
+  auto on_render(Screen& screen) -> void override {
     driver().set_output(&sink);
     for (const int update : update_frames)
       if (update == frame) {
-        for (auto &sample : samples)
-          sample.usage = sample.usage > 0.75F ? sample.usage - 0.4F
-                                             : sample.usage + 0.2F;
+        for (auto& sample : samples)
+          sample.usage =
+              sample.usage > 0.75F ? sample.usage - 0.4F : sample.usage + 0.2F;
         panel.set_samples(samples);
       }
-    for (const auto &[at, size] : resize_frames)
-      if (at == frame)
-        resize_results.push_back(set_size(size).has_value());
+    for (const auto& [at, size] : resize_frames)
+      if (at == frame) resize_results.push_back(set_size(size).has_value());
 
     screen.clear();
     panel.set_geometry({0, 0, screen.cols(), screen.rows()});
@@ -229,7 +227,7 @@ public:
   std::vector<bool> resize_results;
   std::vector<FrameBytes> observed_frames;
 
-protected:
+ protected:
   [[nodiscard]] auto now_steady() const
       -> std::chrono::steady_clock::time_point override {
     return now;
@@ -239,9 +237,9 @@ protected:
     now += std::chrono::milliseconds(timeout_ms);
     return false;
   }
-  auto read_available(char *, int) -> int override { return 0; }
+  auto read_available(char*, int) -> int override { return 0; }
 
-private:
+ private:
   int frame{0};
   std::chrono::steady_clock::time_point now{};
 };
@@ -256,7 +254,7 @@ TEST_CASE("forge-top CLI selects fake data and one forced tier",
   std::array<char, 7> a1{'-', '-', 'f', 'a', 'k', 'e', '\0'};
   std::array<char, 15> a2{'-', '-', 'd', 'r', 'i', 'v', 'e', 'r',
                           '=', 'k', 'i', 't', 't', 'y', '\0'};
-  char *argv[]{a0.data(), a1.data(), a2.data()};
+  char* argv[]{a0.data(), a1.data(), a2.data()};
   const auto parsed = parse_options(3, argv);
   REQUIRE(parsed.has_value());
   REQUIRE(parsed->fake);
@@ -264,12 +262,12 @@ TEST_CASE("forge-top CLI selects fake data and one forced tier",
 
   std::array<char, 13> bad{'-', '-', 'd', 'r', 'i', 'v', 'e',
                            'r', '=', 's', 'v', 'g', '\0'};
-  char *bad_argv[]{a0.data(), bad.data()};
+  char* bad_argv[]{a0.data(), bad.data()};
   REQUIRE_FALSE(parse_options(2, bad_argv).has_value());
 
   std::array<char, 14> ansi{'-', '-', 'd', 'r', 'i', 'v', 'e',
                             'r', '=', 'a', 'n', 's', 'i', '\0'};
-  char *conflicting[]{a0.data(), a2.data(), ansi.data()};
+  char* conflicting[]{a0.data(), a2.data(), ansi.data()};
   REQUIRE_FALSE(parse_options(3, conflicting).has_value());
 }
 
@@ -315,7 +313,7 @@ TEST_CASE("forge-top /proc reader computes deltas and tolerates a vanished PID",
   REQUIRE(first.has_value());
   REQUIRE(first->cpus.size() == 2);
   REQUIRE(first->processes.size() == 2);
-  REQUIRE(std::ranges::all_of(first->processes, [](const ProcessRow &row) {
+  REQUIRE(std::ranges::all_of(first->processes, [](const ProcessRow& row) {
     return row.cpu_percent == 0.0F;
   }));
   REQUIRE(first->memory.total_bytes == 1000 * 1024);
@@ -362,9 +360,11 @@ TEST_CASE("forge-top /proc reader pins top fields and ancillary failures",
   proc.write("uptime", "90061.50 0.0\n");
   proc.write("loadavg", "3.00 2.00 1.00 1/4 404\n");
 
-  proc.write("101/stat", process_stat(101, "name (with) parens", 12, 3, 7, 'R'));
-  proc.write("101/status",
-             "Name:\tname\nUid:\t4294967294\t4294967294\t4294967294\t4294967294\n");
+  proc.write("101/stat",
+             process_stat(101, "name (with) parens", 12, 3, 7, 'R'));
+  proc.write(
+      "101/status",
+      "Name:\tname\nUid:\t4294967294\t4294967294\t4294967294\t4294967294\n");
   const std::string controlled{"tool\0--bad\0\x1b[31mred\0", 21};
   proc.write_binary("101/cmdline", controlled);
   proc.write("202/stat", process_stat(202, "empty", 2, 1, 3, 'Z'));
@@ -384,12 +384,12 @@ TEST_CASE("forge-top /proc reader pins top fields and ancillary failures",
   REQUIRE(result->tasks.stopped == 1);
   REQUIRE(result->tasks.zombie == 1);
 
-  const auto find_pid = [&](int pid) -> const ProcessRow & {
+  const auto find_pid = [&](int pid) -> const ProcessRow& {
     const auto it = std::ranges::find(result->processes, pid, &ProcessRow::pid);
     REQUIRE(it != result->processes.end());
     return *it;
   };
-  const auto &rich = find_pid(101);
+  const auto& rich = find_pid(101);
   REQUIRE(rich.name == "name (with) parens");
   REQUIRE(rich.state == 'R');
   REQUIRE(rich.user == "4294967294");
@@ -435,8 +435,7 @@ TEST_CASE("forge-top summary presents load tasks and one unit per memory line",
             "RAM 5.0 used / 8.0 total · 3.0 available GiB") !=
         std::string::npos);
   CHECK(screen_row(screen, 6).find(
-            "Swap 1.0 used / 2.0 total · 1.0 free GiB") !=
-        std::string::npos);
+            "Swap 1.0 used / 2.0 total · 1.0 free GiB") != std::string::npos);
 }
 
 TEST_CASE("forge-top process view filters, sorts and preserves PID selection",
@@ -469,7 +468,7 @@ TEST_CASE("forge-top process view filters, sorts and preserves PID selection",
 
   bool activated = false;
   panel.on_activate(
-      [&](const ProcessRow &process) { activated = process.pid == 30; });
+      [&](const ProcessRow& process) { activated = process.pid == 30; });
   panel.table().set_selected(0);
   REQUIRE(panel.activate_selected());
   REQUIRE(activated);
@@ -484,9 +483,9 @@ TEST_CASE("forge-top process view filters, sorts and preserves PID selection",
 
 TEST_CASE("forge-top process columns elide by priority and sanitize COMMAND",
           "[forge-top][failure]") {
-  const auto row = process_row(42, "worker", 75.0F, 64 * 1024 * 1024,
-                               "alice", 'R', 12.5F, 3723.45,
-                               "worker --token \x1b[31munsafe");
+  const auto row =
+      process_row(42, "worker", 75.0F, 64 * 1024 * 1024, "alice", 'R', 12.5F,
+                  3723.45, "worker --token \x1b[31munsafe");
 
   ProcessPanel wide;
   wide.set_geometry({0, 0, 120, 8});
@@ -542,8 +541,7 @@ TEST_CASE("forge-top sort selection is deterministic and R alone reverses",
 TEST_CASE("forge-top CPU mode changes invalidate the replacement regions",
           "[forge-top][persistent]") {
   CpuPanel panel;
-  const std::array samples{CpuSample{"cpu0", 0.25F},
-                           CpuSample{"cpu1", 0.75F}};
+  const std::array samples{CpuSample{"cpu0", 0.25F}, CpuSample{"cpu1", 0.75F}};
   panel.set_samples(samples);
   panel.set_aggregate_sample({"cpu", 0.5F});
   panel.set_geometry({0, 0, 60, 10});
@@ -587,8 +585,10 @@ TEST_CASE("forge-top CPU grid reserves dividers in odd partial layouts",
   // Inner 30x9 content becomes two columns and three rows. One-cell gutters
   // are excluded from every waveform destination; odd remainders belong to
   // the leading tracks, so the exact row-major geometry is deterministic.
-  const std::vector<Rect> expected{{1, 2, 15, 2}, {17, 2, 14, 2},
-                                   {1, 6, 15, 1}, {17, 6, 14, 1},
+  const std::vector<Rect> expected{{1, 2, 15, 2},
+                                   {17, 2, 14, 2},
+                                   {1, 6, 15, 1},
+                                   {17, 6, 14, 1},
                                    {1, 9, 15, 1}};
   const auto regions = panel.pixel_regions();
   REQUIRE(regions == expected);
@@ -683,7 +683,7 @@ TEST_CASE("forge-top global keys defer to filter and open menu",
 
   ForgeTopApp menu_app{make_fake_reader()};
   menu_app.test_pump({"\t\r"}); // focus menu and open its dropdown
-  menu_app.test_pump({"q"});     // close menu, do not quit
+  menu_app.test_pump({"q"});    // close menu, do not quit
   menu_app.test_pump({"N"});
   REQUIRE(menu_app.process_panel_for_test().sort_key() == ProcessSort::Pid);
 }
@@ -718,7 +718,7 @@ TEST_CASE("forge-top top keys compose sections without losing selection",
 TEST_CASE("forge-top sampling delay validates and controls sample cadence",
           "[forge-top][input][failure]") {
   auto reader = std::make_unique<CountingReader>();
-  auto *counting = reader.get();
+  auto* counting = reader.get();
   ForgeTopApp app{std::move(reader)};
   REQUIRE(counting->calls == 1); // constructor's initial sample
 
@@ -739,18 +739,20 @@ TEST_CASE("forge-top sampling delay validates and controls sample cadence",
   REQUIRE(app.sample_delay_for_test() == std::chrono::duration<double>{0.25});
 
   auto zero_reader = std::make_unique<CountingReader>();
-  auto *zero_counting = zero_reader.get();
+  auto* zero_counting = zero_reader.get();
   ForgeTopApp zero_app{std::move(zero_reader)};
   zero_app.test_pump({"d"});
-  zero_app.test_pump({"\x7f" "0\r"});
+  zero_app.test_pump({"\x7f"
+                      "0\r"});
   REQUIRE(zero_app.sample_delay_for_test() ==
           std::chrono::duration<double>{0.0});
   zero_app.on_tick(std::chrono::duration<double>::zero());
   REQUIRE(zero_counting->calls == 2); // zero means once per rendered frame
 }
 
-TEST_CASE("forge-top popups close before q quits and global releases do nothing",
-          "[forge-top][input][failure]") {
+TEST_CASE(
+    "forge-top popups close before q quits and global releases do nothing",
+    "[forge-top][input][failure]") {
   ForgeTopApp help{make_fake_reader()};
   std::string wire;
   help.run_headless(1, 100, 28, &wire, DriverChoice::Fallback);
@@ -788,10 +790,10 @@ TEST_CASE("forge-top popups close before q quits and global releases do nothing"
   ForgeTopApp actions{make_fake_reader()};
   std::string actions_wire;
   actions.run_headless(1, 80, 20, &actions_wire, DriverChoice::Fallback);
-  actions.on_event(KeyEvent{Key::Char, U'q', false, false, false,
-                            KeyAction::Repeat});
-  actions.on_event(KeyEvent{Key::Char, U'q', false, false, false,
-                            KeyAction::Release});
+  actions.on_event(
+      KeyEvent{Key::Char, U'q', false, false, false, KeyAction::Repeat});
+  actions.on_event(
+      KeyEvent{Key::Char, U'q', false, false, false, KeyAction::Release});
   REQUIRE(actions.running());
   actions.on_event(KeyEvent{Key::Char, U'q'});
   REQUIRE_FALSE(actions.running());

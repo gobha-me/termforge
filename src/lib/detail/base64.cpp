@@ -10,7 +10,7 @@ namespace termforge::detail {
 namespace {
 constexpr char kAlphabet[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-}  // namespace
+} // namespace
 
 auto base64_encode(std::span<const std::byte> data) -> std::string {
   if (data.empty()) return {};
@@ -25,8 +25,7 @@ auto base64_encode(std::span<const std::byte> data) -> std::string {
 
   const std::size_t body_bytes = triples * 3;
   const std::size_t body_chars = triples * 4;
-  base64_blocks(data.first(body_bytes),
-                std::span<char>{out}.first(body_chars));
+  base64_blocks(data.first(body_bytes), std::span<char>{out}.first(body_chars));
 
   const std::size_t src = body_bytes;
   const std::size_t dst = body_chars;
@@ -49,4 +48,4 @@ auto base64_encode(std::span<const std::byte> data) -> std::string {
   return out;
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

@@ -110,10 +110,10 @@ inline auto highlighted_run(const Screen& s, int y, Rgb bg)
   for (int i = 0; i < s.cols(); ++i) {
     if (s.at(i, y).bg == bg) {
       if (x < 0) x = i;
-      if (x + w == i) ++w;  // still contiguous with the run that started at x
+      if (x + w == i) ++w; // still contiguous with the run that started at x
     }
   }
   return x < 0 ? std::pair{0, 0} : std::pair{x, w};
 }
 
-}  // namespace tfsupport
+} // namespace tfsupport

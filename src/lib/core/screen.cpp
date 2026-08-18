@@ -5,8 +5,8 @@
 #include <limits>
 #include <stdexcept>
 
-#include "detail/utf8.hpp"
 #include "detail/sanitize.hpp"
+#include "detail/utf8.hpp"
 #include "detail/width.hpp"
 #include "termforge/core/text.hpp"
 
@@ -23,21 +23,21 @@ std::atomic<std::uint64_t> g_next_spill_token{1};
 auto next_spill_token() -> std::uint64_t {
   std::uint64_t token = g_next_spill_token.load(std::memory_order_relaxed);
   while (token != std::numeric_limits<std::uint64_t>::max()) {
-    if (g_next_spill_token.compare_exchange_weak(
-            token, token + 1, std::memory_order_relaxed,
-            std::memory_order_relaxed))
+    if (g_next_spill_token.compare_exchange_weak(token, token + 1,
+                                                 std::memory_order_relaxed,
+                                                 std::memory_order_relaxed))
       return token;
   }
   throw std::overflow_error{"termforge: cell spill token space exhausted"};
 }
 
-}  // namespace
+} // namespace
 
 Screen::Screen(int cols, int rows)
-    : m_cols(cols < 0 ? 0 : cols),
-      m_rows(rows < 0 ? 0 : rows),
+    : m_cols(cols < 0 ? 0 : cols), m_rows(rows < 0 ? 0 : rows),
       m_cells(static_cast<std::size_t>(m_cols) *
-              static_cast<std::size_t>(m_rows)) {}
+              static_cast<std::size_t>(m_rows)) {
+}
 
 auto Screen::resize(int cols, int rows) -> void {
   cols = cols < 0 ? 0 : cols;
@@ -88,9 +88,9 @@ auto Screen::cell_text(const Cell& cell) const noexcept -> std::string_view {
 
 auto Screen::text_at(int x, int y) const noexcept -> std::string_view {
   if (x < 0 || y < 0 || x >= m_cols || y >= m_rows) return {};
-  return cell_text(m_cells[static_cast<std::size_t>(y) *
-                           static_cast<std::size_t>(m_cols) +
-                       static_cast<std::size_t>(x)]);
+  return cell_text(
+      m_cells[static_cast<std::size_t>(y) * static_cast<std::size_t>(m_cols) +
+              static_cast<std::size_t>(x)]);
 }
 
 auto Screen::reset_text(Cell& cell) noexcept -> void {
@@ -140,7 +140,8 @@ auto Screen::clear_cell(int x, int y) -> void {
 }
 
 auto Screen::reclaim_unused_spills() -> void {
-  for (auto& spill : m_spills) spill.second.referenced = false;
+  for (auto& spill : m_spills)
+    spill.second.referenced = false;
   for (const Cell& cell : m_cells) {
     if (cell.m_text_size != Cell::kSpilledText) continue;
     const auto it = m_spills.find(cell.m_text_token);
@@ -168,8 +169,8 @@ auto Screen::clear(Rgb fg, Rgb bg, Attr attrs) -> void {
   std::fill(m_cells.begin(), m_cells.end(), fill);
 }
 
-auto Screen::fill_rect(int x, int y, int w, int h, Rgb fg, Rgb bg,
-                       Attr attrs) -> void {
+auto Screen::fill_rect(int x, int y, int w, int h, Rgb fg, Rgb bg, Attr attrs)
+    -> void {
   // The same clip Image::fill does (image.cpp), in the same arithmetic. The
   // longhand this replaces computed x + w in int, so a rect starting near
   // INT_MAX wrapped and std::min picked the wrapped value: a rect that
@@ -186,8 +187,8 @@ auto Screen::fill_rect(int x, int y, int w, int h, Rgb fg, Rgb bg,
     const std::size_t first =
         static_cast<std::size_t>(yy) * static_cast<std::size_t>(m_cols) +
         static_cast<std::size_t>(r.x);
-    const auto row = std::span<Cell>{m_cells}.subspan(
-        first, static_cast<std::size_t>(r.w));
+    const auto row =
+        std::span<Cell>{m_cells}.subspan(first, static_cast<std::size_t>(r.w));
     std::fill(row.begin(), row.end(), fill);
   }
 }
@@ -209,7 +210,7 @@ auto Screen::write_text_impl(int x, int y, std::string_view text, Rgb fg,
     clean = sanitize(text);
     sv = clean;
   }
-  int cx = x;  // MAY BE NEGATIVE: see the left-edge paragraph below
+  int cx = x; // MAY BE NEGATIVE: see the left-edge paragraph below
   int written = 0;
   // Place one grapheme per cell, advancing the column cursor by the glyph's
   // *display width* (not its byte count). A width-2 glyph (CJK/emoji) occupies
@@ -227,13 +228,13 @@ auto Screen::write_text_impl(int x, int y, std::string_view text, Rgb fg,
   //
   // Returns the number of ON-SCREEN cells painted, so it is never more than
   // cols(); an off-screen glyph counts nothing.
-  int base_cx = -1;  // column of the most recent base glyph, for combining marks
+  int base_cx = -1; // column of the most recent base glyph, for combining marks
   std::size_t i = 0;
   while (i < sv.size()) {
     char32_t cp = 0;
     std::size_t len = 0;
     if (!detail::utf8_decode(sv.substr(i), cp, len)) {
-      ++i;  // sanitize() emits only well-formed UTF-8; skip a stray byte
+      ++i; // sanitize() emits only well-formed UTF-8; skip a stray byte
       continue;
     }
     const int w = detail::char_width(cp);
@@ -284,13 +285,13 @@ auto Screen::write_text_impl(int x, int y, std::string_view text, Rgb fg,
       //
       // base_cx is deliberately NOT set: the base is gone, so a combining mark
       // following it has nothing to fold onto.
-      Cell& cell = at(0, y);  // m_cols >= 1, established by the guard above
+      Cell& cell = at(0, y); // m_cols >= 1, established by the guard above
       set_text(cell, " ");
       cell.fg = fg;
       cell.bg = bg;
       cell.attrs = attrs;
       ++written;
-      cx += w;  // -> 1
+      cx += w; // -> 1
       i = cluster_end;
       continue;
     }
@@ -341,7 +342,8 @@ auto Screen::write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
   return write_text_impl(x, y, text, fg, bg, attrs).written;
 }
 
-auto Screen::write_styled(int x, int y, std::span<const TextSpan> spans) -> int {
+auto Screen::write_styled(int x, int y, std::span<const TextSpan> spans)
+    -> int {
   // The public write_text return deliberately reports only visible cells, so
   // it cannot locate the next span after a left-clipped prefix. Carry the
   // primitive's actual cursor instead: both clipping edges and wide-glyph
@@ -350,9 +352,8 @@ auto Screen::write_styled(int x, int y, std::span<const TextSpan> spans) -> int 
   int cx = x;
   for (const TextSpan& span : spans) {
     if (span.text.empty()) continue;
-    const WriteResult result =
-        write_text_impl(cx, y, span.text, span.style.fg, span.style.bg,
-                        span.style.attrs);
+    const WriteResult result = write_text_impl(cx, y, span.text, span.style.fg,
+                                               span.style.bg, span.style.attrs);
     cx = result.next_x;
     total += result.written;
   }
@@ -365,4 +366,4 @@ auto Screen::sanitize(std::string_view in) -> std::string {
   return text::sanitize(in, text::SanitizeMode::Strip);
 }
 
-}  // namespace termforge
+} // namespace termforge

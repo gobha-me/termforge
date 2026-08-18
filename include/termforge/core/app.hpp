@@ -53,8 +53,8 @@
 #include <variant>
 #include <vector>
 
-#include "termforge/core/input.hpp"
 #include "termforge/core/event_source.hpp"
+#include "termforge/core/input.hpp"
 #include "termforge/core/renderer.hpp"
 #include "termforge/core/requirements.hpp"
 #include "termforge/core/screen.hpp"
@@ -91,11 +91,11 @@ namespace detail {
 // Named here, the diagnostic says Button* is not Widget*. Hold widgets as
 // std::vector<Widget*> — the pointers convert on insert.
 template <class R>
-concept WidgetRange = std::ranges::contiguous_range<R> &&
-                      std::ranges::sized_range<R> &&
-                      std::same_as<std::ranges::range_value_t<R>, Widget*>;
+concept WidgetRange =
+    std::ranges::contiguous_range<R> && std::ranges::sized_range<R> &&
+    std::same_as<std::ranges::range_value_t<R>, Widget*>;
 
-}  // namespace detail
+} // namespace detail
 
 // What an overlay does to the frame beneath it before it draws.
 //   None — draw straight over the existing frame (a dropdown, a toast).
@@ -153,10 +153,10 @@ struct OverlayOptions {
 // A caller-controlled monotonic clock for deterministic App runs (#119).
 // It starts at steady_clock's epoch and advances only when the caller or an
 // App frame wait advances it. Non-positive and non-finite advances are no-ops,
-// and a finite advance beyond steady_clock's range saturates at time_point::max:
-// a clock handed to App must never move backwards or invoke undefined numeric
-// conversion, because frame deadlines and fixed timestep accumulation both
-// depend on that invariant.
+// and a finite advance beyond steady_clock's range saturates at
+// time_point::max: a clock handed to App must never move backwards or invoke
+// undefined numeric conversion, because frame deadlines and fixed timestep
+// accumulation both depend on that invariant.
 //
 // The clock is deliberately not synchronized. App and every operation except
 // post(Event) are single-threaded; drive this from the same thread as the run.
@@ -171,8 +171,8 @@ class SyntheticClock {
       m_now = std::chrono::steady_clock::time_point::max();
       return;
     }
-    m_now +=
-        std::chrono::duration_cast<std::chrono::steady_clock::duration>(elapsed);
+    m_now += std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        elapsed);
   }
 
   [[nodiscard]] auto now() const noexcept
@@ -740,7 +740,8 @@ class App {
     collect_terminal_replies(false);
     m_input.flush();
     dispatch_terminal_replies();
-    for (auto& ev : m_input.poll()) dispatch_event(ev);
+    for (auto& ev : m_input.poll())
+      dispatch_event(ev);
   }
   auto test_take_resize() -> bool {
     const bool was = m_resize_pending.exchange(false);
@@ -770,7 +771,8 @@ class App {
   // After this call, running() reflects whether quit() was called during any
   // of the frames \u2014 a test that dispatches a quitting key can assert
   // !running() afterwards rather than counting render calls.
-  auto test_run_frames(int frames, int cols, int rows, std::string* sink) -> void;
+  auto test_run_frames(int frames, int cols, int rows, std::string* sink)
+      -> void;
 
   // The same, over a driver the caller chose (#189). The overload above is this
   // one with a FallbackDriver, so there is one loop and one wiring path.
@@ -812,7 +814,9 @@ class App {
   // so a probe reads it to witness that teardown() ran — real production
   // state rather than a test-only counter, and the one piece of that state
   // whose undo writes nothing to a terminal.
-  [[nodiscard]] auto test_winch_hooked() const -> bool { return m_winch_hooked; }
+  [[nodiscard]] auto test_winch_hooked() const -> bool {
+    return m_winch_hooked;
+  }
 
   // The terminal size in cells, plus the pixel size of the whole text area
   // when the terminal reports one (TIOCGWINSZ ws_xpixel/ws_ypixel). Zero means
@@ -948,7 +952,8 @@ class App {
   // Public because set_size's documentation hands the untrusted-peer policy to
   // the caller, and a caller told to pre-validate needs to be able to name the
   // library's ceiling rather than re-derive it and go silently out of step.
-  static constexpr int kMaxPushedDim{std::numeric_limits<unsigned short>::max()};
+  static constexpr int kMaxPushedDim{
+      std::numeric_limits<unsigned short>::max()};
 
   // Give the session back to the ioctl. Arms the resize path for the same
   // reason set_size does and by the same unconditional rule: dropping a 120x40
@@ -962,9 +967,10 @@ class App {
   auto clear_size() noexcept -> void;
 
   // Whether the size in force came from a push or from the fd. NOT derivable
-  // from current_size(): a push of 80x24 over an 80x24 window reads identically,
-  // and "is this number the peer's or the kernel's" is what a session manager
-  // asks when a late window-change has to be reconciled against a pty.
+  // from current_size(): a push of 80x24 over an 80x24 window reads
+  // identically, and "is this number the peer's or the kernel's" is what a
+  // session manager asks when a late window-change has to be reconciled against
+  // a pty.
   [[nodiscard]] auto has_pushed_size() const noexcept -> bool;
 
   // The size the next resize will use: the pushed size if one is set, else
@@ -1070,8 +1076,8 @@ class App {
   auto route_mouse(const MouseEvent& ev, const R& widgets) -> bool {
     return route_mouse_span(ev, std::span<Widget* const>{widgets});
   }
-  auto route_mouse(const MouseEvent& ev,
-                   std::initializer_list<Widget*> widgets) -> bool;
+  auto route_mouse(const MouseEvent& ev, std::initializer_list<Widget*> widgets)
+      -> bool;
 
   // Forward a tick to each widget, in the order given. The subclass calls this
   // from its on_tick override; see the on_tick doc above for why the App does
@@ -1144,8 +1150,8 @@ class App {
   // protected: a subclass reaches them through the two forwarders above, and
   // keeping the span out of the callable surface is what stops the
   // (iterator, sentinel) hazard detail::WidgetRange exists to prevent.
-  auto route_mouse_span(const MouseEvent& ev,
-                        std::span<Widget* const> widgets) -> bool;
+  auto route_mouse_span(const MouseEvent& ev, std::span<Widget* const> widgets)
+      -> bool;
   auto tick_widgets_span(std::chrono::duration<double> dt,
                          std::span<Widget* const> widgets) -> void;
 
@@ -1441,7 +1447,7 @@ class App {
   // Coalesced loop-thread invalidation. Cleared at the render decision point,
   // so a request made from on_render() belongs to the following frame.
   bool m_render_requested{true};
-  int m_frame_ms{33};  // ~30fps: the loop's default frame budget
+  int m_frame_ms{33}; // ~30fps: the loop's default frame budget
   // How long an incomplete escape sequence gets to finish arriving before a
   // lone ESC is committed as a genuine Escape keypress. A frame holding one
   // extends to at least this long — the only sanctioned budget overrun, and
@@ -1461,8 +1467,8 @@ class App {
   // never charged for setup()'s capability probe, which can block anywhere
   // from microseconds to a DA1 timeout.
   std::optional<std::chrono::steady_clock::time_point> m_last_tick;
-  std::chrono::duration<double> m_tick_accum{};  // fixed-timestep remainder
-  std::chrono::duration<double> m_tick_dt{};     // 0 = variable; else 1/hz
+  std::chrono::duration<double> m_tick_accum{}; // fixed-timestep remainder
+  std::chrono::duration<double> m_tick_dt{};    // 0 = variable; else 1/hz
   int m_tick_hz{0};
   // See set_max_tick_dt: above any real frame budget, below any stall a user
   // would fail to notice.
@@ -1479,4 +1485,4 @@ class App {
   auto update_requirements(Size size) -> void;
 };
 
-}  // namespace termforge
+} // namespace termforge

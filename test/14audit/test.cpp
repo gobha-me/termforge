@@ -30,7 +30,7 @@ class RecordingApp : public App {
   auto on_render(Screen&) -> void override {}
 };
 
-}  // namespace
+} // namespace
 
 // ---- #3: split mouse-drag sequence must not fabricate Escape ----
 
@@ -45,11 +45,12 @@ TEST_CASE("App: mouse-drag report split on an ESC boundary emits no Escape",
   // A nearly-full 256-byte frame of SGR drag reports whose final byte is
   // the ESC of the next report.
   std::string frame;
-  while (frame.size() + 14 <= 256) frame += "\x1B[<32;40;12M";
-  frame += "\x1B";  // drag reports, then a dangling ESC byte at the tail
+  while (frame.size() + 14 <= 256)
+    frame += "\x1B[<32;40;12M";
+  frame += "\x1B"; // drag reports, then a dangling ESC byte at the tail
   REQUIRE(frame.size() == 253);
 
-  const std::string rest = "[<33;41;12M";  // remainder: next read returns it
+  const std::string rest = "[<33;41;12M"; // remainder: next read returns it
   app.test_pump({frame, rest});
 
   for (const auto& ev : app.seen) {
@@ -65,7 +66,7 @@ TEST_CASE("App: mouse-drag report split on an ESC boundary emits no Escape",
 TEST_CASE("App: a genuine ESC keypress still reaches the handler",
           "[app][input]") {
   RecordingApp app;
-  app.test_pump({"\x1B"});  // drained after one byte: this was a keypress
+  app.test_pump({"\x1B"}); // drained after one byte: this was a keypress
   REQUIRE(app.seen.size() == 1);
   const auto* k = std::get_if<KeyEvent>(&app.seen.front());
   REQUIRE(k != nullptr);
@@ -82,7 +83,7 @@ TEST_CASE("Input: held ESC folds back into a split sequence on next feed",
   REQUIRE(ev.size() == 1);
   const auto* k = std::get_if<KeyEvent>(&ev.front());
   REQUIRE(k != nullptr);
-  REQUIRE(k->key == Key::Up);  // not Escape, not garbage chars
+  REQUIRE(k->key == Key::Up); // not Escape, not garbage chars
 }
 
 TEST_CASE("Input: held ESC folds into a split mouse report on next feed",
@@ -127,8 +128,8 @@ TEST_CASE("MenuBar: keyboard Enter action may rebuild the menus",
   bar.set_menus({file});
 
   Event enter = KeyEvent{Key::Enter};
-  REQUIRE(bar.on_event(enter));  // opens the dropdown
-  REQUIRE(bar.on_event(enter));  // activates the selected item
+  REQUIRE(bar.on_event(enter)); // opens the dropdown
+  REQUIRE(bar.on_event(enter)); // activates the selected item
   REQUIRE(fired);
 }
 
@@ -140,7 +141,7 @@ TEST_CASE("ListWidget: on_select may call set_items (drill-down)",
   std::string last;
   list.on_select([&](int, const std::string& item) {
     ++calls;
-    last = item;  // read the arg *after* mutating storage below
+    last = item; // read the arg *after* mutating storage below
     list.set_items({"next"});
   });
   list.set_items({"alpha", "beta"});
@@ -148,7 +149,7 @@ TEST_CASE("ListWidget: on_select may call set_items (drill-down)",
   Event enter = KeyEvent{Key::Enter};
   REQUIRE(list.on_event(enter));
   REQUIRE(calls == 1);
-  REQUIRE(last == "alpha");  // the row the user picked, not freed memory
+  REQUIRE(last == "alpha"); // the row the user picked, not freed memory
 }
 
 TEST_CASE("TableWidget: on_select may clear and repopulate rows",
@@ -162,7 +163,7 @@ TEST_CASE("TableWidget: on_select may clear and repopulate rows",
     ++calls;
     table.clear_rows();
     table.add_row({"z", "z"});
-    first_cell = row[0];  // read the arg after invalidating storage
+    first_cell = row[0]; // read the arg after invalidating storage
   });
   table.add_row({"a", "b"});
 
@@ -200,7 +201,7 @@ using Canary = std::vector<int>;
 constexpr int kCanaryLen = 64;
 constexpr int kCanaryVal = 0x5A;
 
-}  // namespace
+} // namespace
 
 TEST_CASE("Button: on_activate may replace its own handler",
           "[widgets][button][uaf]") {
@@ -209,15 +210,15 @@ TEST_CASE("Button: on_activate may replace its own handler",
   int first = 0;
   int second = 0;
   b.on_activate([&, canary = Canary(kCanaryLen, kCanaryVal)] {
-    b.on_activate([&] { ++second; });  // destroys the closure we are inside
+    b.on_activate([&] { ++second; }); // destroys the closure we are inside
     ++first;
-    REQUIRE(canary.back() == kCanaryVal);  // read-after-free without the copy
+    REQUIRE(canary.back() == kCanaryVal); // read-after-free without the copy
   });
 
   Event enter = KeyEvent{Key::Enter};
   REQUIRE(b.on_event(enter));
   REQUIRE(first == 1);
-  REQUIRE(second == 0);  // the replacement must not run on this press
+  REQUIRE(second == 0); // the replacement must not run on this press
 
   REQUIRE(b.on_event(enter));
   REQUIRE(first == 1);
@@ -230,7 +231,7 @@ TEST_CASE("Button: on_activate may clear its own handler",
   b.set_geometry({0, 0, 10, 1});
   int calls = 0;
   b.on_activate([&, canary = Canary(kCanaryLen, kCanaryVal)] {
-    b.on_activate(nullptr);  // one-shot: disarm from inside the shot
+    b.on_activate(nullptr); // one-shot: disarm from inside the shot
     ++calls;
     REQUIRE(canary.back() == kCanaryVal);
   });
@@ -242,7 +243,7 @@ TEST_CASE("Button: on_activate may clear its own handler",
   click.pressed = true;
   REQUIRE(b.on_event(Event{click}));
   REQUIRE(calls == 1);
-  REQUIRE(b.on_event(Event{click}));  // still consumed, now inert
+  REQUIRE(b.on_event(Event{click})); // still consumed, now inert
   REQUIRE(calls == 1);
 }
 
@@ -256,21 +257,21 @@ TEST_CASE("TextInput: on_change may call set_text mid-callback",
   in.set_focused(true);
   int calls = 0;
   std::string seen;
-  in.on_change([&, canary = Canary(kCanaryLen, kCanaryVal)](
-                   const std::string& text) {
-    in.set_text("clobbered");        // reallocates m_text under the argument
-    in.on_change(nullptr);           // destroys the closure we are inside
-    ++calls;
-    seen = text;                     // read the arg after both mutations
-    REQUIRE(canary.back() == kCanaryVal);
-  });
+  in.on_change(
+      [&, canary = Canary(kCanaryLen, kCanaryVal)](const std::string& text) {
+        in.set_text("clobbered"); // reallocates m_text under the argument
+        in.on_change(nullptr);    // destroys the closure we are inside
+        ++calls;
+        seen = text; // read the arg after both mutations
+        REQUIRE(canary.back() == kCanaryVal);
+      });
 
   KeyEvent k;
   k.key = Key::Char;
   k.ch = U'a';
   REQUIRE(in.on_event(Event{k}));
   REQUIRE(calls == 1);
-  REQUIRE(seen == "a");  // what the user typed, not the clobbered value
+  REQUIRE(seen == "a"); // what the user typed, not the clobbered value
   REQUIRE(in.text() == "clobbered");
 }
 
@@ -299,7 +300,8 @@ TEST_CASE("TextInput: on_click may replace its own handler",
   REQUIRE(second == 1);
 }
 
-// ---- #11: dirty()/clear-every-frame contract — widgets own their whole rect ----
+// ---- #11: dirty()/clear-every-frame contract — widgets own their whole rect
+// ----
 //
 // Each widget must fully repaint (and blank) its rect() every frame, so it is
 // correct with no app-level screen.clear() between frames. These render onto a
@@ -309,14 +311,15 @@ TEST_CASE("TextInput: on_click may replace its own handler",
 namespace {
 
 // Paint a rect with a marker glyph to simulate leftover content from a prior
-// frame, so a widget that fails to blank its rect would leave the marker behind.
+// frame, so a widget that fails to blank its rect would leave the marker
+// behind.
 auto seed(Screen& s, Rect r, const char* mark) -> void {
   for (int y = r.y; y < r.y + r.h; ++y)
     for (int x = r.x; x < r.x + r.w; ++x)
       s.write_text(x, y, mark, Rgb{}, Rgb{});
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("TextBox: clear() leaves no stale text on the next draw",
           "[widgets][textbox][regression][dirty]") {
@@ -326,7 +329,7 @@ TEST_CASE("TextBox: clear() leaves no stale text on the next draw",
   tb.append("line one");
   tb.append("line two");
   tb.draw(s);
-  REQUIRE(s.text_at(0, 0) == "l");  // "line one" is on screen (top-aligned)
+  REQUIRE(s.text_at(0, 0) == "l"); // "line one" is on screen (top-aligned)
 
   // Clear the content and redraw WITHOUT s.clear() in between.
   tb.clear();
@@ -334,7 +337,7 @@ TEST_CASE("TextBox: clear() leaves no stale text on the next draw",
 
   for (int y = 0; y < s.rows(); ++y)
     for (int x = 0; x < s.cols(); ++x)
-      REQUIRE(s.at(x, y).blank());  // no leftover characters anywhere
+      REQUIRE(s.at(x, y).blank()); // no leftover characters anywhere
 }
 
 TEST_CASE("TableWidget: shrinking rows leaves no stale rows or column gaps",
@@ -343,7 +346,8 @@ TEST_CASE("TableWidget: shrinking rows leaves no stale rows or column gaps",
   TableWidget t;
   t.set_geometry({0, 0, 30, 6});
   t.set_columns({Column{.header = "A"}, Column{.header = "B"}});
-  for (int i = 0; i < 5; ++i) t.add_row({"xxxx", "yyyy"});
+  for (int i = 0; i < 5; ++i)
+    t.add_row({"xxxx", "yyyy"});
   t.draw(s);
 
   // Collapse to one row and redraw without clearing the screen.
@@ -372,9 +376,9 @@ TEST_CASE("WaveformWidget: blanks columns with no sample and an empty series",
   w.push(0.9f);
   w.push(0.1f);
   w.draw(s);
-  for (int x = 3; x < 20; ++x)          // columns beyond the 3 samples
+  for (int x = 3; x < 20; ++x) // columns beyond the 3 samples
     for (int y = 0; y < 4; ++y)
-      REQUIRE(s.text_at(x, y) != "#");  // marker gone → blanked
+      REQUIRE(s.text_at(x, y) != "#"); // marker gone → blanked
 
   // An empty series must still blank the whole rect (old code early-returned
   // before painting, leaving stale content).
@@ -393,13 +397,13 @@ TEST_CASE("TextInput: a tall rect blanks rows other than the input row",
           "[widgets][textinput][regression][dirty]") {
   Screen s{20, 3};
   TextInput ti;
-  const Rect r{0, 0, 20, 3};  // h = 3; input renders on the middle row (1)
+  const Rect r{0, 0, 20, 3}; // h = 3; input renders on the middle row (1)
   ti.set_geometry(r);
   seed(s, r, "#");
   ti.draw(s);
   for (int x = 0; x < 20; ++x) {
-    REQUIRE(s.text_at(x, 0) != "#");  // row above the input row blanked
-    REQUIRE(s.text_at(x, 2) != "#");  // row below the input row blanked
+    REQUIRE(s.text_at(x, 0) != "#"); // row above the input row blanked
+    REQUIRE(s.text_at(x, 2) != "#"); // row below the input row blanked
   }
 }
 
@@ -415,18 +419,18 @@ TEST_CASE("ProgressBar: time makes it dirty, drawing settles it",
   pb.set_geometry({0, 0, 20, 1});
 
   pb.set_indeterminate(true);
-  REQUIRE(pb.dirty());        // the mode switch is itself a content change
+  REQUIRE(pb.dirty()); // the mode switch is itself a content change
   pb.draw(s);
-  REQUIRE_FALSE(pb.dirty());  // painted, and no time has passed since
+  REQUIRE_FALSE(pb.dirty()); // painted, and no time has passed since
   pb.draw(s);
-  REQUIRE_FALSE(pb.dirty());  // ...and it STAYS settled — this is the flip
+  REQUIRE_FALSE(pb.dirty()); // ...and it STAYS settled — this is the flip
 
   pb.on_tick(std::chrono::milliseconds{100});
-  REQUIRE(pb.dirty());        // time moved the pulse
+  REQUIRE(pb.dirty()); // time moved the pulse
   pb.draw(s);
   REQUIRE_FALSE(pb.dirty());
 
-  pb.on_tick({});             // a tick carrying no time is not a change
+  pb.on_tick({}); // a tick carrying no time is not a change
   REQUIRE_FALSE(pb.dirty());
 
   // Nor is sub-cell motion: the bar is painted in whole cells, so a tick that
@@ -444,22 +448,22 @@ TEST_CASE("ProgressBar: time makes it dirty, drawing settles it",
   pb.on_tick(std::chrono::seconds{1});
   REQUIRE_FALSE(pb.dirty());
 
-  pb.set_value(0.5f);         // switches to determinate
+  pb.set_value(0.5f); // switches to determinate
   pb.draw(s);
-  REQUIRE_FALSE(pb.dirty());  // settled once painted
+  REQUIRE_FALSE(pb.dirty()); // settled once painted
   pb.on_tick(std::chrono::milliseconds{100});
-  REQUIRE_FALSE(pb.dirty());  // a determinate bar does not animate
+  REQUIRE_FALSE(pb.dirty()); // a determinate bar does not animate
 }
 
 TEST_CASE("MenuBar: an overflowing title is clipped to the bar's right edge",
           "[widgets][menubar][regression][clip]") {
   Screen s{12, 3};
   MenuBar bar;
-  bar.set_geometry({0, 0, 8, 1});  // bar occupies cols 0..7
+  bar.set_geometry({0, 0, 8, 1}); // bar occupies cols 0..7
   bar.set_menus({Menu{"VeryLongTitle", {{"x", nullptr}}}});
   bar.draw(s);
 
-  REQUIRE(s.text_at(1, 0) == "V");  // title still renders inside the bar
+  REQUIRE(s.text_at(1, 0) == "V"); // title still renders inside the bar
   // Nothing may be painted past the bar's right edge (cols 8..11), where it
   // would be visible but dead to clicks (gated by rect().contains).
   for (int x = 8; x < 12; ++x)

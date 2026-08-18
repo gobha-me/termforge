@@ -13,4 +13,4 @@ namespace termforge::detail {
 
 [[nodiscard]] auto is_strip_sanitized(std::string_view text) noexcept -> bool;
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

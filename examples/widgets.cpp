@@ -50,12 +50,12 @@
 #include "termforge/widgets/focus_ring.hpp"
 #include "termforge/widgets/frame.hpp"
 #include "termforge/widgets/label.hpp"
-#include "termforge/widgets/theme.hpp"
 #include "termforge/widgets/list_widget.hpp"
 #include "termforge/widgets/menu_bar.hpp"
 #include "termforge/widgets/progress_bar.hpp"
 #include "termforge/widgets/tab_bar.hpp"
 #include "termforge/widgets/text_input.hpp"
+#include "termforge/widgets/theme.hpp"
 #include "termforge/widgets/waveform_widget.hpp"
 
 using namespace termforge;
@@ -147,8 +147,8 @@ class WidgetsDemo final : public App {
       if (m->pressed && m_menu.dropdown_open() && !m_menu.hit_test(m->x, m->y))
         m_menu.close_dropdown();
       if (m->pressed) m_ring.focus_at(m->x, m->y);
-      route_mouse(*m, {&m_input, &m_btn_ok, &m_btn_cancel, &m_tabs, &m_list,
-                       &m_menu});
+      route_mouse(
+          *m, {&m_input, &m_btn_ok, &m_btn_cancel, &m_tabs, &m_list, &m_menu});
       return;
     }
 
@@ -283,7 +283,7 @@ class WidgetsDemo final : public App {
   // budget — and it stands still if the app stops forwarding ticks.
   auto toggle_progress_mode() -> void {
     if (m_progress.indeterminate()) {
-      m_progress.set_value(0.0f);  // set_value returns it to determinate
+      m_progress.set_value(0.0f); // set_value returns it to determinate
       set_status("Progress: determinate (percentage)");
     } else {
       m_progress.set_indeterminate();

@@ -101,7 +101,8 @@ class PtyCapture {
   // Queue bytes for the program to read: the terminal's side of the
   // conversation, e.g. a probe reply.
   auto feed_master(std::string_view bytes) -> void {
-    [[maybe_unused]] const ssize_t n = ::write(m_master, bytes.data(), bytes.size());
+    [[maybe_unused]] const ssize_t n =
+        ::write(m_master, bytes.data(), bytes.size());
   }
 
   // Drain everything the master has buffered.
@@ -112,7 +113,7 @@ class PtyCapture {
       const ssize_t n = ::read(m_master, buf, sizeof(buf));
       if (n > 0) {
         got.append(buf, static_cast<std::size_t>(n));
-        attempt = 0;  // still draining
+        attempt = 0; // still draining
       } else {
         ::usleep(1000);
       }
@@ -128,7 +129,7 @@ class PtyCapture {
   bool m_armed{false};
 };
 
-}  // namespace
+} // namespace
 
 // ── the tier → bytes mapping (pure) ────────────────────────────────────────
 
@@ -136,7 +137,7 @@ TEST_CASE("keyboard_flags: the tiers ask for exactly the documented flags",
           "[keyboard]") {
   namespace d = termforge::detail;
   REQUIRE(d::keyboard_flags(KeyboardMode::Legacy) == 0);
-  REQUIRE(d::keyboard_flags(KeyboardMode::Disambiguate) == 3);   // 1|2
+  REQUIRE(d::keyboard_flags(KeyboardMode::Disambiguate) == 3); // 1|2
   // 1|2|8|16. Flag 8 (all keys as escape codes) is what gives letters a
   // release; flag 16 (associated text) is not optional next to it, because 8
   // reports the unshifted key and 'A' would otherwise need a layout guess.
@@ -148,15 +149,19 @@ TEST_CASE("keyboard_flags: the tiers ask for exactly the documented flags",
 TEST_CASE("keyboard_fallback_event: only an unmet request is an event",
           "[keyboard]") {
   namespace d = termforge::detail;
-  REQUIRE_FALSE(d::keyboard_fallback_event(KeyboardMode::Legacy, false).has_value());
-  REQUIRE_FALSE(d::keyboard_fallback_event(KeyboardMode::Legacy, true).has_value());
-  REQUIRE_FALSE(d::keyboard_fallback_event(KeyboardMode::Enhanced, true).has_value());
+  REQUIRE_FALSE(
+      d::keyboard_fallback_event(KeyboardMode::Legacy, false).has_value());
+  REQUIRE_FALSE(
+      d::keyboard_fallback_event(KeyboardMode::Legacy, true).has_value());
+  REQUIRE_FALSE(
+      d::keyboard_fallback_event(KeyboardMode::Enhanced, true).has_value());
   const auto e = d::keyboard_fallback_event(KeyboardMode::Enhanced, false);
   REQUIRE(e.has_value());
-  REQUIRE(e->severity == Severity::Info);  // a degradation, not a failure
+  REQUIRE(e->severity == Severity::Info); // a degradation, not a failure
   REQUIRE(e->source == "keyboard");
   REQUIRE_FALSE(e->message.empty());
-  REQUIRE(d::keyboard_fallback_event(KeyboardMode::Disambiguate, false).has_value());
+  REQUIRE(d::keyboard_fallback_event(KeyboardMode::Disambiguate, false)
+              .has_value());
 }
 
 // ── push / pop / live switch ───────────────────────────────────────────────
@@ -178,11 +183,10 @@ TEST_CASE("Terminal: the default tier changes no bytes at all", "[keyboard]") {
     t.leave_screen();
   }
   pty.disarm();
-  REQUIRE(pty.take() ==
-          "\033[?1049h\033[?25l\033[2J\033[H"
-          "\033[?1006h\033[?1002h"
-          "\033[?2004h"
-          + std::string{termforge::detail::kLeaveSequence});
+  REQUIRE(pty.take() == "\033[?1049h\033[?25l\033[2J\033[H"
+                        "\033[?1006h\033[?1002h"
+                        "\033[?2004h" +
+                            std::string{termforge::detail::kLeaveSequence});
 }
 
 TEST_CASE("Terminal: enter_screen pushes the configured tier's flags",
@@ -215,7 +219,7 @@ TEST_CASE("Terminal: enter_screen pushes the configured tier's flags",
     pty.disarm();
     const std::string got = pty.take();
     REQUIRE(got.find("\033[?2004h\033[>27u") != std::string::npos);
-    REQUIRE(got.find("\033[<u") != std::string::npos);  // and popped on leave
+    REQUIRE(got.find("\033[<u") != std::string::npos); // and popped on leave
   }
 }
 
@@ -229,7 +233,7 @@ TEST_CASE("Terminal: a tier set before enter_screen emits nothing yet",
     t.set_keyboard_mode(KeyboardMode::Enhanced);
   }
   pty.disarm();
-  REQUIRE(pty.take().empty());  // recorded, not emitted
+  REQUIRE(pty.take().empty()); // recorded, not emitted
 }
 
 TEST_CASE("Terminal: a live tier switch overwrites, never pushes again",
@@ -244,30 +248,30 @@ TEST_CASE("Terminal: a live tier switch overwrites, never pushes again",
   Terminal t;
   t.enter_screen();
   pty.disarm();
-  static_cast<void>(pty.take());  // discard the enter bytes
+  static_cast<void>(pty.take()); // discard the enter bytes
 
   pty.arm();
   t.set_keyboard_mode(KeyboardMode::Enhanced);
   pty.disarm();
   const std::string first = pty.take();
-  REQUIRE(first == "\033[>27u");  // no entry yet: this one pushes
+  REQUIRE(first == "\033[>27u"); // no entry yet: this one pushes
 
   pty.arm();
   t.set_keyboard_mode(KeyboardMode::Disambiguate);
   pty.disarm();
   const std::string second = pty.take();
-  REQUIRE(second == "\033[=3;1u");  // overwrite, NOT a second push
+  REQUIRE(second == "\033[=3;1u"); // overwrite, NOT a second push
   REQUIRE(second.find("\033[>") == std::string::npos);
 
   pty.arm();
   t.set_keyboard_mode(KeyboardMode::Legacy);
   pty.disarm();
   const std::string back = pty.take();
-  REQUIRE(back == "\033[=0;1u");  // disable by flags, never by popping
+  REQUIRE(back == "\033[=0;1u"); // disable by flags, never by popping
   REQUIRE(back.find("\033[<u") == std::string::npos);
 
   pty.arm();
-  t.set_keyboard_mode(KeyboardMode::Legacy);  // already there
+  t.set_keyboard_mode(KeyboardMode::Legacy); // already there
   t.leave_screen();
   pty.disarm();
   const std::string leave = pty.take();
@@ -337,12 +341,12 @@ class RecordingOverlay final : public termforge::Widget {
   auto draw(Screen&) -> void override {}
   auto on_event(const Event& ev) -> bool override {
     seen.push_back(ev);
-    return true;  // captures everything it is offered
+    return true; // captures everything it is offered
   }
   std::vector<Event> seen;
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("App: set_keyboard_mode forwards to the terminal", "[keyboard]") {
   KeyboardProbe app;
@@ -364,7 +368,7 @@ TEST_CASE("App: an unmet keyboard request reaches on_event as Info",
   REQUIRE(app.pre_raw());
   pty.feed_master("\033[?62;22c");
   const bool up = app.test_setup().has_value();
-  app.test_pump({});  // drain the queued event through dispatch_event
+  app.test_pump({}); // drain the queued event through dispatch_event
   app.test_teardown();
   pty.disarm();
   REQUIRE(up);
@@ -397,7 +401,7 @@ TEST_CASE("App: a Legacy app is never told anything about the keyboard",
   PtyCapture pty;
   REQUIRE(pty.ok());
   pty.arm();
-  KeyboardProbe app;  // never asked for the protocol
+  KeyboardProbe app; // never asked for the protocol
   REQUIRE(app.pre_raw());
   pty.feed_master("\033[?62;22c");
   const bool up = app.test_setup().has_value();
@@ -417,12 +421,12 @@ TEST_CASE("App: a Release is never captured by an overlay",
   RecordingOverlay overlay;
   app.push_overlay(overlay);
 
-  app.test_pump({"\033[97;1:3u"});  // 'a' release
+  app.test_pump({"\033[97;1:3u"}); // 'a' release
   REQUIRE(overlay.seen.empty());
   REQUIRE(app.keys.size() == 1);
   REQUIRE(app.keys.front().action == KeyAction::Release);
 
-  app.test_pump({"\033[97;1:1u"});  // 'a' press
+  app.test_pump({"\033[97;1:1u"}); // 'a' press
   REQUIRE(overlay.seen.size() == 1);
 }
 
@@ -441,14 +445,15 @@ TEST_CASE("Enhanced typing reaches a TextInput exactly once per keystroke",
 
   termforge::Input in;
   auto type = [&](std::string_view bytes) {
-    for (auto& ev : in.decode(bytes)) ring.handle_key(ev);
+    for (auto& ev : in.decode(bytes))
+      ring.handle_key(ev);
   };
 
-  type("\033[104;1:1u");       // 'h' press
-  type("\033[105;1:1u");       // 'i' press
+  type("\033[104;1:1u"); // 'h' press
+  type("\033[105;1:1u"); // 'i' press
   REQUIRE(field.text() == "hi");
 
-  type("\033[105;1:3u");       // 'i' release — must insert nothing
+  type("\033[105;1:3u"); // 'i' release — must insert nothing
   REQUIRE(field.text() == "hi");
 
   // Shift+1 on a US layout: flag 8 reports the *unshifted* key (49 = '1')
@@ -457,11 +462,11 @@ TEST_CASE("Enhanced typing reaches a TextInput exactly once per keystroke",
   type("\033[49;2;33u");
   REQUIRE(field.text() == "hi!");
 
-  type("\033[105;1:2u");       // 'i' repeat — hold-to-type still types
+  type("\033[105;1:2u"); // 'i' repeat — hold-to-type still types
   REQUIRE(field.text() == "hi!i");
 
-  type("\033[127;1:1u");       // Backspace as CSI-u
+  type("\033[127;1:1u"); // Backspace as CSI-u
   REQUIRE(field.text() == "hi!");
-  type("\033[127;1:3u");       // its release deletes nothing further
+  type("\033[127;1:3u"); // its release deletes nothing further
   REQUIRE(field.text() == "hi!");
 }

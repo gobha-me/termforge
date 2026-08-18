@@ -8,7 +8,7 @@ namespace termforge::forge_top {
 namespace {
 
 class FakeReader final : public SystemReader {
-public:
+ public:
   explicit FakeReader(int core_count) : m_core_count(std::max(1, core_count)) {}
 
   auto sample() -> std::expected<SystemSnapshot, ErrorEvent> override {
@@ -21,8 +21,8 @@ public:
            static_cast<float>(0.12 + 0.78 * (std::sin(phase) * 0.5 + 0.5))});
     }
     snapshot.aggregate_cpu = {
-        "cpu", static_cast<float>(0.18 + 0.62 *
-                                  (std::sin(m_step * 0.19) * 0.5 + 0.5))};
+        "cpu", static_cast<float>(
+                   0.18 + 0.62 * (std::sin(m_step * 0.19) * 0.5 + 0.5))};
     snapshot.uptime_seconds = 3.0 * 24.0 * 60.0 * 60.0 + m_step;
     snapshot.load_average = {1.25 + m_step * 0.01, 1.10, 0.95};
 
@@ -61,7 +61,7 @@ public:
     return snapshot;
   }
 
-private:
+ private:
   int m_core_count;
   int m_step{0};
 };

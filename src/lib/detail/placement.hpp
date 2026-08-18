@@ -52,7 +52,7 @@ struct PlacementGeometry {
     -> std::string_view {
   switch (fit) {
     case PlacementFit::Stretch: return "Stretch";
-    case PlacementFit::Exact:   return "Exact";
+    case PlacementFit::Exact: return "Exact";
   }
   return "?";
 }
@@ -132,9 +132,11 @@ struct PlacementGeometry {
 // source rectangle to the image automatically, but accepting that would turn a
 // caller mistake into a silent partial draw. TermForge instead requires the
 // complete crop to exist, matching edit_pinned's all-or-nothing bounds rule.
-[[nodiscard]] inline auto validate_placement(
-    ImagePlacementOptions options, Rect cells, Extent root,
-    const TerminalDriver& driver, std::string_view source, std::string_view fn)
+[[nodiscard]] inline auto validate_placement(ImagePlacementOptions options,
+                                             Rect cells, Extent root,
+                                             const TerminalDriver& driver,
+                                             std::string_view source,
+                                             std::string_view fn)
     -> std::expected<PlacementGeometry, ErrorEvent> {
   // Keep the query and emit paths structural mirrors. In particular, Kitty's
   // virtual-placement record accepts crop/offset keys but its Unicode
@@ -159,8 +161,8 @@ struct PlacementGeometry {
                     fn, offset.x, offset.y, cell.w, cell.h)}};
   }
 
-  const PixelRect crop = options.source.value_or(
-      PixelRect{0, 0, root.w, root.h});
+  const PixelRect crop =
+      options.source.value_or(PixelRect{0, 0, root.w, root.h});
   const auto right = static_cast<std::int64_t>(crop.x) + crop.w;
   const auto bottom = static_cast<std::int64_t>(crop.y) + crop.h;
   if (crop.x < 0 || crop.y < 0 || crop.empty() || right > root.w ||
@@ -185,12 +187,12 @@ struct PlacementGeometry {
 
   const Extent exact_pixels{static_cast<int>(exact_w),
                             static_cast<int>(exact_h)};
-  if (auto ok = validate_fit(options.fit, cells, exact_pixels, driver, source,
-                             fn);
+  if (auto ok =
+          validate_fit(options.fit, cells, exact_pixels, driver, source, fn);
       !ok) {
     return std::unexpected{ok.error()};
   }
   return PlacementGeometry{crop, exact_pixels};
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

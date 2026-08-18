@@ -21,19 +21,19 @@ TEST_CASE("tty_restore: leave sequence undoes exactly what enter_screen set",
           "[signals]") {
   const std::string_view seq = detail::kLeaveSequence;
   // Every mode enter_screen enables has its disable here…
-  REQUIRE(seq.find("\033[?1049l") != std::string_view::npos);  // main screen
-  REQUIRE(seq.find("\033[?25h") != std::string_view::npos);    // show cursor
-  REQUIRE(seq.find("\033[?1000l") != std::string_view::npos);  // click tracking
-  REQUIRE(seq.find("\033[?1002l") != std::string_view::npos);  // drag tracking
-  REQUIRE(seq.find("\033[?1003l") != std::string_view::npos);  // any-event (#75)
-  REQUIRE(seq.find("\033[?1006l") != std::string_view::npos);  // SGR mouse
-  REQUIRE(seq.find("\033[?2004l") != std::string_view::npos);  // paste
-  REQUIRE(seq.find("\033[<u") != std::string_view::npos);      // keyboard (#60)
+  REQUIRE(seq.find("\033[?1049l") != std::string_view::npos); // main screen
+  REQUIRE(seq.find("\033[?25h") != std::string_view::npos);   // show cursor
+  REQUIRE(seq.find("\033[?1000l") != std::string_view::npos); // click tracking
+  REQUIRE(seq.find("\033[?1002l") != std::string_view::npos); // drag tracking
+  REQUIRE(seq.find("\033[?1003l") != std::string_view::npos); // any-event (#75)
+  REQUIRE(seq.find("\033[?1006l") != std::string_view::npos); // SGR mouse
+  REQUIRE(seq.find("\033[?2004l") != std::string_view::npos); // paste
+  REQUIRE(seq.find("\033[<u") != std::string_view::npos);     // keyboard (#60)
   // …and it must not accidentally *enable* anything (no high-set toggles).
   REQUIRE(seq.find("\033[?1049h") == std::string_view::npos);
   REQUIRE(seq.find("\033[?2004h") == std::string_view::npos);
-  REQUIRE(seq.find("\033[>") == std::string_view::npos);  // no keyboard push
-  REQUIRE(seq.find("\033[=") == std::string_view::npos);  // no flags overwrite
+  REQUIRE(seq.find("\033[>") == std::string_view::npos); // no keyboard push
+  REQUIRE(seq.find("\033[=") == std::string_view::npos); // no flags overwrite
 }
 
 TEST_CASE("tty_restore: restore_terminal emits the leave sequence to out_fd",
@@ -44,7 +44,7 @@ TEST_CASE("tty_restore: restore_terminal emits the leave sequence to out_fd",
   auto& rs = detail::restore_state();
   rs.out_fd = fds[1];
   rs.in_screen = 1;
-  rs.armed = 0;  // no tty here — don't tcsetattr
+  rs.armed = 0; // no tty here — don't tcsetattr
   detail::restore_terminal();
 
   // Reset the global so nothing leaks into other test cases.
@@ -69,7 +69,7 @@ TEST_CASE("tty_restore: restore_terminal writes nothing when not in a screen",
 
   auto& rs = detail::restore_state();
   rs.out_fd = fds[1];
-  rs.in_screen = 0;  // not in a screen -> no escape output
+  rs.in_screen = 0; // not in a screen -> no escape output
   rs.armed = 0;
   detail::restore_terminal();
 
@@ -86,8 +86,10 @@ TEST_CASE("tty_restore: restore_terminal writes nothing when not in a screen",
   REQUIRE(got.empty());
 }
 
-TEST_CASE("tty_restore: a fatal signal restores then re-raises with the default "
-          "disposition", "[signals]") {
+TEST_CASE(
+    "tty_restore: a fatal signal restores then re-raises with the default "
+    "disposition",
+    "[signals]") {
   int fds[2];
   REQUIRE(::pipe(fds) == 0);
 
@@ -105,7 +107,7 @@ TEST_CASE("tty_restore: a fatal signal restores then re-raises with the default 
     rs.armed = 0;
     if (!detail::install_fatal_handlers()) _exit(2);
     ::raise(SIGTERM);
-    _exit(0);  // unreachable if re-raise works
+    _exit(0); // unreachable if re-raise works
   }
 
   // Parent: collect the restore bytes and the child's exit disposition.
@@ -119,7 +121,7 @@ TEST_CASE("tty_restore: a fatal signal restores then re-raises with the default 
 
   int status = 0;
   REQUIRE(::waitpid(pid, &status, 0) == pid);
-  REQUIRE(WIFSIGNALED(status));               // died by signal, not _exit()
-  REQUIRE(WTERMSIG(status) == SIGTERM);       // …the one we raised, re-raised
-  REQUIRE(got == std::string{detail::kLeaveSequence});  // terminal was restored
+  REQUIRE(WIFSIGNALED(status));         // died by signal, not _exit()
+  REQUIRE(WTERMSIG(status) == SIGTERM); // …the one we raised, re-raised
+  REQUIRE(got == std::string{detail::kLeaveSequence}); // terminal was restored
 }

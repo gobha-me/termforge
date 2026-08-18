@@ -143,8 +143,7 @@ class Widget {
   // #83 unlocked, an 80x24 region is ~983 KB, and copying it 60 times a
   // second to hand the App something it immediately moves is ~59 MB/s of
   // memcpy for a buffer that did not change.
-  virtual auto draw_pixels(Rect /*region*/, Extent /*pixels*/)
-      -> const Image* {
+  virtual auto draw_pixels(Rect /*region*/, Extent /*pixels*/) -> const Image* {
     return nullptr;
   }
 
@@ -272,4 +271,4 @@ class Widget {
   bool m_focused{false};
 };
 
-}  // namespace termforge
+} // namespace termforge

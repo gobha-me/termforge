@@ -84,10 +84,10 @@ auto queue_reply(const std::shared_ptr<SourceState>& state, SourceReply reply)
   REQUIRE(::write(state->pipe[1], &wake, 1) == 1);
 }
 
-auto queue_events(const std::shared_ptr<SourceState>& state,
-                  std::vector<Event> events,
-                  std::optional<InputCapabilities> capabilities_after =
-                      std::nullopt) -> void {
+auto queue_events(
+    const std::shared_ptr<SourceState>& state, std::vector<Event> events,
+    std::optional<InputCapabilities> capabilities_after = std::nullopt)
+    -> void {
   queue_reply(state, SourceReply{std::move(events), capabilities_after});
 }
 
@@ -113,7 +113,8 @@ class PipeSource final : public EventSource {
   auto poll() -> std::expected<std::vector<Event>, ErrorEvent> override {
     ++m_state->polls;
     char byte{};
-    while (::read(m_state->pipe[0], &byte, 1) < 0 && errno == EINTR) {}
+    while (::read(m_state->pipe[0], &byte, 1) < 0 && errno == EINTR) {
+    }
 
     std::lock_guard lock{m_state->mutex};
     if (m_state->replies.empty()) return std::vector<Event>{};
@@ -128,8 +129,8 @@ class PipeSource final : public EventSource {
   std::shared_ptr<SourceState> m_state;
 };
 
-auto key(Key key_value, KeyAction action = KeyAction::Press,
-         char32_t ch = 0) -> Event {
+auto key(Key key_value, KeyAction action = KeyAction::Press, char32_t ch = 0)
+    -> Event {
   return KeyEvent{key_value, ch, false, false, false, action};
 }
 
@@ -186,8 +187,7 @@ class TerminalAndSourceProbe final : public SourceProbe {
       return count;
     }
     if (terminal_bytes.empty() || max <= 0) return 0;
-    const int count =
-        std::min(max, static_cast<int>(terminal_bytes.size()));
+    const int count = std::min(max, static_cast<int>(terminal_bytes.size()));
     std::copy_n(terminal_bytes.data(), count, out);
     terminal_bytes.erase(0, static_cast<std::size_t>(count));
     return count;
@@ -223,8 +223,8 @@ class ReplyDriver final : public TerminalDriver {
   }
   auto consume_reply(const TerminalReply& reply) -> void override {
     *m_order += 'R';
-    push_driver_event(ErrorEvent{Severity::Warning, "reply-driver",
-                                 reply.status});
+    push_driver_event(
+        ErrorEvent{Severity::Warning, "reply-driver", reply.status});
   }
 
  private:
@@ -289,7 +289,8 @@ class LiveSourceProbe final : public SourceProbe {
 auto key_events(const std::vector<Event>& events) -> std::vector<KeyEvent> {
   std::vector<KeyEvent> keys;
   for (const auto& event : events)
-    if (const auto* value = std::get_if<KeyEvent>(&event)) keys.push_back(*value);
+    if (const auto* value = std::get_if<KeyEvent>(&event))
+      keys.push_back(*value);
   return keys;
 }
 
@@ -301,15 +302,16 @@ auto errors(const std::vector<Event>& events) -> std::vector<ErrorEvent> {
   return result;
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("source batches preserve modifier and key transition order",
           "[event-source][order]") {
   auto state = make_source_state();
-  queue_events(state, {key(Key::LeftShift), key(Key::Char, KeyAction::Press, U'w'),
-                       key(Key::Char, KeyAction::Repeat, U'w'),
-                       key(Key::Char, KeyAction::Release, U'w'),
-                       key(Key::LeftShift, KeyAction::Release)});
+  queue_events(state,
+               {key(Key::LeftShift), key(Key::Char, KeyAction::Press, U'w'),
+                key(Key::Char, KeyAction::Repeat, U'w'),
+                key(Key::Char, KeyAction::Release, U'w'),
+                key(Key::LeftShift, KeyAction::Release)});
 
   SourceProbe app;
   app.set_frame_ms(0);
@@ -358,8 +360,8 @@ TEST_CASE("an invalid replacement is a total refusal",
 
 TEST_CASE("replacement drains terminal input while composition orders it first",
           "[event-source][mode][order]") {
-  for (const auto mode : {EventSourceMode::ReplaceTerminal,
-                          EventSourceMode::ComposeTerminal}) {
+  for (const auto mode :
+       {EventSourceMode::ReplaceTerminal, EventSourceMode::ComposeTerminal}) {
     auto state = make_source_state();
     queue_events(state, {key(Key::Char, KeyAction::Press, U's')});
     TerminalAndSourceProbe app;
@@ -447,8 +449,8 @@ TEST_CASE("replacement preserves driver warnings queued by the prior flush",
 TEST_CASE("a malformed source batch is rejected atomically",
           "[event-source][failure]") {
   auto state = make_source_state();
-  queue_events(state, {key(Key::Char, KeyAction::Press, U'a'),
-                       ResizeEvent{80, 24}});
+  queue_events(state,
+               {key(Key::Char, KeyAction::Press, U'a'), ResizeEvent{80, 24}});
   SourceProbe app;
   app.set_frame_ms(0);
   REQUIRE(app.set_event_source(std::make_unique<PipeSource>(state),
@@ -468,9 +470,7 @@ TEST_CASE("a malformed source batch is rejected atomically",
 TEST_CASE("contradictory source mouse motion is rejected atomically",
           "[event-source][mouse][failure]") {
   for (const MouseEvent malformed : {
-           MouseEvent{.button = -1,
-                      .scroll_up = true,
-                      .motion = true},
+           MouseEvent{.button = -1, .scroll_up = true, .motion = true},
            MouseEvent{.button = 0, .pressed = true, .motion = true},
        }) {
     auto state = make_source_state();
@@ -505,8 +505,7 @@ TEST_CASE("an image invalidation cannot masquerade as source input (#113)",
 
   const auto failures = errors(app.events);
   REQUIRE(failures.size() == 1);
-  CHECK(failures[0].message.find("ImageInvalidatedEvent") !=
-        std::string::npos);
+  CHECK(failures[0].message.find("ImageInvalidatedEvent") != std::string::npos);
   CHECK_FALSE(app.event_source_active());
 }
 
@@ -515,8 +514,8 @@ TEST_CASE("source failure releases held keys before its Warning",
   auto state = make_source_state();
   queue_events(state, {key(Key::Char, KeyAction::Press, U'x')});
   queue_reply(state, SourceReply{std::unexpected{ErrorEvent{
-                                      Severity::Error, "evdev", "device gone"}},
-                                  std::nullopt});
+                                     Severity::Error, "evdev", "device gone"}},
+                                 std::nullopt});
   SourceProbe app;
   app.set_frame_ms(0);
   REQUIRE(app.set_event_source(std::make_unique<PipeSource>(state),
@@ -586,14 +585,14 @@ TEST_CASE("a replacement source satisfies keyboard requirements without kitty",
   auto state = make_source_state();
   LiveSourceProbe app;
   REQUIRE(app.configure(socket.app_fd()));
-  app.require(AppRequirements{.key_press = true,
-                              .key_repeat = true,
-                              .key_release = true});
+  app.require(AppRequirements{
+      .key_press = true, .key_repeat = true, .key_release = true});
   REQUIRE(app.set_event_source(std::make_unique<PipeSource>(state),
                                EventSourceMode::ReplaceTerminal));
 
   REQUIRE(app.test_setup());
-  REQUIRE(app.input_capabilities() == InputCapabilities{true, true, true, true});
+  REQUIRE(app.input_capabilities() ==
+          InputCapabilities{true, true, true, true});
   app.test_teardown();
   REQUIRE(state->starts == 1);
   REQUIRE(state->stops == 1);
@@ -650,14 +649,14 @@ TEST_CASE("source readiness wakes an idle demand loop",
   REQUIRE(state->stops == 1);
 }
 
-TEST_CASE("trace schema 5 replays source events, replies, and their input floor",
-          "[event-source][trace]") {
+TEST_CASE(
+    "trace schema 5 replays source events, replies, and their input floor",
+    "[event-source][trace]") {
   SocketPair recording_socket;
   REQUIRE(recording_socket.ok());
   auto state = make_source_state();
-  queue_events(state,
-               {MouseEvent{.x = 4, .y = 3, .button = 0, .motion = true},
-                key(Key::Char, KeyAction::Press, U'q')});
+  queue_events(state, {MouseEvent{.x = 4, .y = 3, .button = 0, .motion = true},
+                       key(Key::Char, KeyAction::Press, U'q')});
 
   LiveSourceProbe recording;
   REQUIRE(recording.configure(recording_socket.app_fd()));
@@ -665,14 +664,14 @@ TEST_CASE("trace schema 5 replays source events, replies, and their input floor"
   REQUIRE(recording.set_event_source(std::make_unique<PipeSource>(state),
                                      EventSourceMode::ReplaceTerminal));
   constexpr std::string_view terminal{"x\033_Gi=7;OK\033\\"};
-  REQUIRE(::write(recording_socket.peer_fd(), terminal.data(), terminal.size()) ==
-          static_cast<ssize_t>(terminal.size()));
+  REQUIRE(::write(recording_socket.peer_fd(), terminal.data(),
+                  terminal.size()) == static_cast<ssize_t>(terminal.size()));
   std::stringstream trace;
   recording.start_recording(trace);
   REQUIRE(recording.run() == 0);
   REQUIRE(key_events(recording.events).size() == 1);
-  const auto recorded_mouse_it = std::ranges::find_if(
-      recording.events, [](const Event& event) {
+  const auto recorded_mouse_it =
+      std::ranges::find_if(recording.events, [](const Event& event) {
         return std::holds_alternative<MouseEvent>(event);
       });
   REQUIRE(recorded_mouse_it != recording.events.end());
@@ -698,8 +697,7 @@ TEST_CASE("trace schema 5 replays source events, replies, and their input floor"
   REQUIRE(playback.configure(playback_socket.app_fd()));
   playback.require(AppRequirements{.key_release = true});
   auto ignored_live_state = make_source_state();
-  queue_events(ignored_live_state,
-               {key(Key::Char, KeyAction::Press, U'x')});
+  queue_events(ignored_live_state, {key(Key::Char, KeyAction::Press, U'x')});
   REQUIRE(playback.set_event_source(
       std::make_unique<PipeSource>(ignored_live_state),
       EventSourceMode::ReplaceTerminal));
@@ -708,8 +706,8 @@ TEST_CASE("trace schema 5 replays source events, replies, and their input floor"
   const auto replayed = key_events(playback.events);
   REQUIRE(replayed.size() == 1);
   REQUIRE(replayed[0].ch == U'q');
-  const auto replayed_mouse_it = std::ranges::find_if(
-      playback.events, [](const Event& event) {
+  const auto replayed_mouse_it =
+      std::ranges::find_if(playback.events, [](const Event& event) {
         return std::holds_alternative<MouseEvent>(event);
       });
   REQUIRE(replayed_mouse_it != playback.events.end());

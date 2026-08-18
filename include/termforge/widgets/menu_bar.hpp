@@ -68,8 +68,8 @@
 #include "termforge/widgets/detail/dropdown.hpp"
 #include "termforge/widgets/detail/strip.hpp"
 #include "termforge/widgets/glyphs.hpp"
-#include "termforge/widgets/widget.hpp"
 #include "termforge/widgets/theme.hpp"
+#include "termforge/widgets/widget.hpp"
 
 namespace termforge {
 
@@ -168,12 +168,12 @@ class MenuBar final : public Widget {
   // needs a count on paths that run before that guard.
   [[nodiscard]] auto item_count() const noexcept -> int {
     if (m_active < 0 || m_active >= static_cast<int>(m_menus.size())) return 0;
-    return static_cast<int>(m_menus[static_cast<std::size_t>(m_active)]
-                                .items.size());
+    return static_cast<int>(
+        m_menus[static_cast<std::size_t>(m_active)].items.size());
   }
 
   std::vector<Menu> m_menus;
-  int m_active{0};       // which menu is highlighted/open
+  int m_active{0}; // which menu is highlighted/open
   // Selected item in the open dropdown; doubles as the open flag (>= 0 iff
   // open, see dropdown_open()) -- the Select m_highlight pattern (#42/4).
   // An ITEM index, not a visual row: before #85 it was clamped to the window.
@@ -187,7 +187,7 @@ class MenuBar final : public Widget {
   // frames cannot commit against pixels the user never saw. Cleared on close
   // and on content mutation; invalid until the first open draw.
   detail::DropdownPaintSnapshot m_paint;
-  int m_screen_rows{0};  // memoized from draw(); 0 = no frame yet (unclamped)
+  int m_screen_rows{0}; // memoized from draw(); 0 = no frame yet (unclamped)
 
   // #76: the affordance that survives a driver which drops colour.
   BorderStyle m_style{BorderStyle::Single};
@@ -202,4 +202,4 @@ class MenuBar final : public Widget {
   Rgb m_selected_bg{theme::kFocusBg};
 };
 
-}  // namespace termforge
+} // namespace termforge

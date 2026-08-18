@@ -13,8 +13,8 @@
 // harness that passed standalone and failed under `ctest -s`.
 //
 // Two shapes recur. A socketpair is the stream with no termios at all (anvil's
-// ssh channel); an openpty slave is an injected fd that IS a terminal, and it is
-// the positive control for every "we correctly did nothing" assertion here.
+// ssh channel); an openpty slave is an injected fd that IS a terminal, and it
+// is the positive control for every "we correctly did nothing" assertion here.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -91,7 +91,8 @@ class SocketPair {
     return out;
   }
   auto feed_app(std::string_view bytes) -> void {
-    [[maybe_unused]] const ssize_t n = ::write(m_fd[1], bytes.data(), bytes.size());
+    [[maybe_unused]] const ssize_t n =
+        ::write(m_fd[1], bytes.data(), bytes.size());
   }
   auto close_peer() -> void {
     if (m_fd[1] >= 0) ::close(m_fd[1]);
@@ -124,7 +125,8 @@ class PtyPair {
   [[nodiscard]] auto ok() const -> bool { return m_ok; }
   [[nodiscard]] auto slave() const -> int { return m_slave; }
   auto feed_master(std::string_view bytes) -> void {
-    [[maybe_unused]] const ssize_t n = ::write(m_master, bytes.data(), bytes.size());
+    [[maybe_unused]] const ssize_t n =
+        ::write(m_master, bytes.data(), bytes.size());
   }
 
  private:
@@ -137,22 +139,26 @@ class PtyPair {
 // to run: it exists so a case can ask "did somebody replace this?" without
 // having to name the library's own handler.
 volatile std::sig_atomic_t g_sentinel_hits = 0;
-void sentinel_handler(int) { g_sentinel_hits = 1; }
-void newer_handler(int) { g_sentinel_hits = 2; }
+void sentinel_handler(int) {
+  g_sentinel_hits = 1;
+}
+void newer_handler(int) {
+  g_sentinel_hits = 2;
+}
 
 // Read a signal's complete current disposition without disturbing it. The
 // mask and flags matter for #193 just as much as the handler pointer does.
 auto action_of(int sig) -> struct sigaction {
-  struct sigaction current {};
+  struct sigaction current{};
   if (::sigaction(sig, nullptr, &current) != 0) current.sa_handler = SIG_ERR;
   return current;
 }
 
 // SIGTERM rather than SIGSEGV, deliberately. The requirement being pinned is
 // anvil#15's ("one session's crash must not take the server down"), whose sharp
-// edge is the SIGSEGV entry — but every one of kFatalSignals is installed by the
-// same loop, so SIGTERM witnesses the same claim, and holding a no-op SIGSEGV
-// handler across a test is a way to turn a segfault into a hang.
+// edge is the SIGSEGV entry — but every one of kFatalSignals is installed by
+// the same loop, so SIGTERM witnesses the same claim, and holding a no-op
+// SIGSEGV handler across a test is a way to turn a segfault into a hang.
 constexpr int kWitnessSignal = SIGTERM;
 
 class SignalWitness {
@@ -181,12 +187,12 @@ class SignalWitness {
   }
 
  private:
-  struct sigaction m_prev {};
-  struct sigaction m_ours {};
+  struct sigaction m_prev{};
+  struct sigaction m_ours{};
   bool m_ok{false};
 };
 
-}  // namespace
+} // namespace
 
 // ── set_io: what it accepts, what it refuses, and how totally ───────────────
 
@@ -321,7 +327,7 @@ TEST_CASE("enter_raw: a stream with no termios is made non-blocking",
   // arranges non-blocking reads on a tty -- is a silent no-op here, because it
   // is tcgetattr all the way down.
   int fd[2]{-1, -1};
-  REQUIRE(::socketpair(AF_UNIX, SOCK_STREAM, 0, fd) == 0);  // both BLOCKING
+  REQUIRE(::socketpair(AF_UNIX, SOCK_STREAM, 0, fd) == 0); // both BLOCKING
   Terminal t;
   REQUIRE(t.set_io(TerminalIo{fd[0], fd[0]}).has_value());
   REQUIRE(t.enter_raw().has_value());
@@ -336,7 +342,7 @@ TEST_CASE("enter_raw: a stream with no termios is made non-blocking",
 TEST_CASE("leave_raw: a stream handed over non-blocking stays non-blocking",
           "[fds][regression]") {
   // Restore, not normalize. The caller's flags are the caller's.
-  SocketPair sp;  // already O_NONBLOCK
+  SocketPair sp; // already O_NONBLOCK
   REQUIRE(sp.ok());
   REQUIRE((::fcntl(sp.app(), F_GETFL) & O_NONBLOCK) != 0);
   Terminal t;
@@ -391,7 +397,7 @@ TEST_CASE("emit: a full output buffer stalls the escape, never truncates it",
   // escape sequence is worse than none: the terminal is left parsing.
   int fd[2]{-1, -1};
   REQUIRE(::socketpair(AF_UNIX, SOCK_STREAM, 0, fd) == 0);
-  const int small = 2048;  // a buffer we can actually fill
+  const int small = 2048; // a buffer we can actually fill
   ::setsockopt(fd[0], SOL_SOCKET, SO_SNDBUF, &small, sizeof(small));
   ::setsockopt(fd[1], SOL_SOCKET, SO_RCVBUF, &small, sizeof(small));
   // The reader side polls a stop flag between reads, so it must never park in
@@ -410,7 +416,7 @@ TEST_CASE("emit: a full output buffer stalls the escape, never truncates it",
     const ssize_t n = ::write(fd[0], filler.data(), filler.size());
     if (n <= 0) break;
     stuffed += static_cast<std::size_t>(n);
-    if (stuffed > 1U << 20) break;  // refuses to fill: nothing to test, bail
+    if (stuffed > 1U << 20) break; // refuses to fill: nothing to test, bail
   }
 
   // A peer that drains a moment later, which is the whole scenario: the write
@@ -484,7 +490,7 @@ TEST_CASE("enter_raw over an injected pty arms exactly as it always did",
     REQUIRE(t.enter_raw().has_value());
     REQUIRE(rs.armed == 1);
     REQUIRE(rs.tty_fd == pty.slave());
-    REQUIRE_FALSE(SignalWitness::still_ours());  // handlers went in
+    REQUIRE_FALSE(SignalWitness::still_ours()); // handlers went in
   }
   REQUIRE(rs.armed == 0);
   // And the complete prior action came back. Asserted separately from rs.armed
@@ -505,9 +511,8 @@ TEST_CASE("fatal handlers: nested leases restore only after the final release",
   bool restored = false;
   if (first && second) {
     termforge::detail::uninstall_fatal_handlers();
-    stayed_installed =
-        action_of(kWitnessSignal).sa_handler ==
-        termforge::detail::on_fatal_signal;
+    stayed_installed = action_of(kWitnessSignal).sa_handler ==
+                       termforge::detail::on_fatal_signal;
     termforge::detail::uninstall_fatal_handlers();
     restored = witness.intact();
   } else {
@@ -554,7 +559,7 @@ TEST_CASE("fatal handlers: teardown does not overwrite a newer signal owner",
     REQUIRE(t.enter_raw().has_value());
     REQUIRE_FALSE(SignalWitness::still_ours());
 
-    struct sigaction newer {};
+    struct sigaction newer{};
     newer.sa_handler = newer_handler;
     ::sigemptyset(&newer.sa_mask);
     newer.sa_flags = SA_RESTART;
@@ -605,7 +610,7 @@ TEST_CASE("a screen with no raw mode still lets go of the restore state",
   {
     Terminal t;
     REQUIRE(t.set_io(TerminalIo{pty.slave(), pty.slave()}).has_value());
-    t.enter_screen();  // no enter_raw
+    t.enter_screen(); // no enter_raw
     REQUIRE(rs.in_screen == 1);
   }
   REQUIRE(rs.in_screen == 0);
@@ -636,7 +641,9 @@ namespace {
 
 class SessionApp final : public App {
  public:
-  auto inject(TerminalIo io) -> bool { return terminal().set_io(io).has_value(); }
+  auto inject(TerminalIo io) -> bool {
+    return terminal().set_io(io).has_value();
+  }
   // Raw mode ahead of setup(), for the pty cases: enter_raw uses TCSAFLUSH,
   // which discards anything already queued, so a synthetic probe reply written
   // before it would vanish. setup()'s own enter_raw() then no-ops.
@@ -669,7 +676,7 @@ class SessionApp final : public App {
   int m_rows{0};
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("App: a session over a socketpair runs frames and receives input",
           "[fds][app][regression]") {
@@ -692,7 +699,7 @@ TEST_CASE("App: a session over a socketpair runs frames and receives input",
 
   REQUIRE(app.keys.size() == 1);
   REQUIRE(app.keys.front().ch == 'q');
-  REQUIRE_FALSE(sink.empty());  // frames really were rendered
+  REQUIRE_FALSE(sink.empty()); // frames really were rendered
 }
 
 TEST_CASE("App: headless frames never read a cooked blocking terminal",

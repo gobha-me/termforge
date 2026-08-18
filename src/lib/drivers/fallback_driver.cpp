@@ -19,18 +19,21 @@ namespace {
 // Map a pixel to a coarse ASCII luminance ramp (darkest -> brightest).
 auto luminance_char(const Pixel& p) -> char {
   const int lum = (static_cast<int>(p.r) * 299 + static_cast<int>(p.g) * 587 +
-                   static_cast<int>(p.b) * 114) / 1000;  // 0..255
+                   static_cast<int>(p.b) * 114) /
+                  1000; // 0..255
   static constexpr char ramp[] = " .:-=+*#%@";
   return ramp[lum * 9 / 255];
 }
-}  // namespace
+} // namespace
 
 FallbackDriver::FallbackDriver() = default;
 
-auto FallbackDriver::init() -> std::expected<void, ErrorEvent> { return {}; }
+auto FallbackDriver::init() -> std::expected<void, ErrorEvent> {
+  return {};
+}
 
 auto FallbackDriver::capabilities() const noexcept -> Capabilities {
-  Capabilities c;  // all false: the floor
+  Capabilities c; // all false: the floor
   return c;
 }
 
@@ -54,7 +57,7 @@ void FallbackDriver::draw_text(int x, int y, std::string_view text, Rgb /*fg*/,
   m_buf += text;
   detail::advance_cursor(m_cursor_known, m_cursor_x,
                          detail::display_width(text));
-  if (rev || bold) m_buf += "\033[0m";  // don't leak the attribute past the run
+  if (rev || bold) m_buf += "\033[0m"; // don't leak the attribute past the run
 }
 
 auto FallbackDriver::preferred_pixel_extent(Rect cells) const noexcept
@@ -62,7 +65,7 @@ auto FallbackDriver::preferred_pixel_extent(Rect cells) const noexcept
   if (cells.empty()) return Extent{};
   // w/h here are already ints in cells' units (1 pixel == 1 cell), so there
   // is no int64 multiplication to widen (#173 affects the *scaled* tiers).
-  return Extent{cells.w, cells.h};  // one ramp glyph per cell
+  return Extent{cells.w, cells.h}; // one ramp glyph per cell
 }
 
 auto FallbackDriver::supports_placement_fit(PlacementFit f) const noexcept
@@ -72,8 +75,7 @@ auto FallbackDriver::supports_placement_fit(PlacementFit f) const noexcept
   // gone either way, but the STRUCTURE the caller authored survives.
   switch (f) {
     case PlacementFit::Stretch:
-    case PlacementFit::Exact:
-      return true;
+    case PlacementFit::Exact: return true;
   }
   return false;
 }
@@ -87,8 +89,8 @@ auto FallbackDriver::draw_image(Rect cells, const Image& image,
                                 PlacementFit fit)
     -> std::expected<void, ErrorEvent> {
   if (image.empty()) {
-    return std::unexpected{ErrorEvent{Severity::Warning, "fallback",
-                                      "draw_image: empty image"}};
+    return std::unexpected{
+        ErrorEvent{Severity::Warning, "fallback", "draw_image: empty image"}};
   }
   if (cells.empty()) {
     return std::unexpected{ErrorEvent{Severity::Warning, "fallback",
@@ -127,9 +129,8 @@ auto FallbackDriver::draw_image(Rect cells, const EncodedImage& image,
       !ok) {
     return ok;
   }
-  if (auto ok =
-          detail::validate_fit(fit, cells, image.pixels, *this, "fallback",
-                               "draw_image");
+  if (auto ok = detail::validate_fit(fit, cells, image.pixels, *this,
+                                     "fallback", "draw_image");
       !ok) {
     return ok;
   }
@@ -147,9 +148,9 @@ auto FallbackDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
         static_cast<std::size_t>(px.w) * static_cast<std::size_t>(px.h);
     for (std::size_t i = 0; i < n; ++i) {
       if (std::to_integer<std::uint8_t>(rgba[i * 4U + 3U]) != 255) {
-        return std::unexpected{ErrorEvent{
-            Severity::Warning, "fallback",
-            "draw_image: fallback refuses translucent RGBA"}};
+        return std::unexpected{
+            ErrorEvent{Severity::Warning, "fallback",
+                       "draw_image: fallback refuses translucent RGBA"}};
       }
     }
   }
@@ -176,8 +177,8 @@ auto FallbackDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
                           m_cursor_x, m_cursor_y);
     const int sy = map(row, px.h, cells.h);
     if (identity) {
-      const auto pixel = static_cast<std::size_t>(sy) *
-                         static_cast<std::size_t>(px.w);
+      const auto pixel =
+          static_cast<std::size_t>(sy) * static_cast<std::size_t>(px.w);
       detail::luminance_chars(
           rgba.subspan(pixel * 4, static_cast<std::size_t>(cover_w) * 4),
           glyphs);
@@ -205,4 +206,4 @@ void FallbackDriver::flush() {
   m_cursor_known = false;
 }
 
-}  // namespace termforge
+} // namespace termforge

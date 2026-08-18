@@ -81,7 +81,8 @@ auto TerminalDriver::shutdown() -> void {
   clear_output();
 }
 
-// \u2500\u2500 DEC private mode 2026 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// \u2500\u2500 DEC private mode 2026
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 // Synchronized-output begin/end. CONSTANTS, not magic: each is 8 bytes, so
 // flush() can reserve without a strlen and the wrap cannot
 // introduce a third emit. Emitting them INSIDE the one write rather than as
@@ -99,8 +100,7 @@ constexpr std::string_view kSyncEnd = "\033[?2026l";
 // emulator-version check.
 constexpr std::size_t kSyncPendingBudget = 1024U * 1024U;
 static_assert(kSyncEnd.size() < kSyncPendingBudget);
-constexpr std::size_t kMaxSyncFrameBytes =
-    kSyncPendingBudget - kSyncEnd.size();
+constexpr std::size_t kMaxSyncFrameBytes = kSyncPendingBudget - kSyncEnd.size();
 
 auto TerminalDriver::emit_frame(std::string_view bytes) -> bool {
   // #148: the synchronized-output wrap. ONE write either way -- a driver
@@ -124,17 +124,17 @@ auto TerminalDriver::emit_frame(std::string_view bytes) -> bool {
   // user-owned sink code so an exception cannot leave shutdown() timing the
   // wrong write during run_loop's unwind.
   const bool measure_write = std::exchange(m_measure_next_write, false);
-  const auto write_started =
-      measure_write ? std::chrono::steady_clock::now()
-                    : std::chrono::steady_clock::time_point{};
+  const auto write_started = measure_write
+                                 ? std::chrono::steady_clock::now()
+                                 : std::chrono::steady_clock::time_point{};
   bool accepted = true;
   if (m_sink != nullptr) {
-    if (auto r = m_sink->write(std::span<const char>{frame.data(),
-                                                     frame.size()});
+    if (auto r =
+            m_sink->write(std::span<const char>{frame.data(), frame.size()});
         !r) {
       accepted = false;
       if (!m_output_error.has_value())
-        m_output_error = std::move(r.error());  // first failure wins
+        m_output_error = std::move(r.error()); // first failure wins
     }
   } else {
     std::fwrite(frame.data(), 1, frame.size(), stdout);
@@ -151,10 +151,10 @@ auto TerminalDriver::emit_frame(std::string_view bytes) -> bool {
     // stream reports the tier change without flooding the event bus. A refused
     // write cannot consume the report because no route was honoured.
     m_warned_sync_limit = true;
-    push_driver_event(ErrorEvent{
-        Severity::Info, "driver",
-        "synchronized output skipped: frame exceeds the 1-MiB "
-        "pending-transaction safety limit"});
+    push_driver_event(
+        ErrorEvent{Severity::Info, "driver",
+                   "synchronized output skipped: frame exceeds the 1-MiB "
+                   "pending-transaction safety limit"});
   }
   // Deliberately outside the branch -- see the header. It closes the frame and
   // resets the pending image tallies whether or not the sink accepted it. The
@@ -165,4 +165,4 @@ auto TerminalDriver::emit_frame(std::string_view bytes) -> bool {
   return accepted;
 }
 
-}  // namespace termforge
+} // namespace termforge

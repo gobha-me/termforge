@@ -28,9 +28,8 @@ namespace {
 auto frame(Rgb rgb) -> Image {
   constexpr int kSide = 24;
   return Image{kSide, kSide,
-               std::vector<Pixel>(
-                   kSide * kSide,
-                   Pixel{rgb.r, rgb.g, rgb.b, std::uint8_t{255}})};
+               std::vector<Pixel>(kSide * kSide, Pixel{rgb.r, rgb.g, rgb.b,
+                                                       std::uint8_t{255}})};
 }
 
 auto state_name(AnimationRunState state) -> std::string_view {
@@ -44,7 +43,7 @@ auto state_name(AnimationRunState state) -> std::string_view {
   return "unknown";
 }
 
-}  // namespace
+} // namespace
 
 class AnimationControlDemo final : public App {
  public:
@@ -90,10 +89,10 @@ class AnimationControlDemo final : public App {
     else if (key->ch == 'f' || key->ch == 'F')
       command(stop_animation(m_animation, AnimationStopMode::Finish));
     else if (key->ch >= '0' && key->ch <= '3')
-      command(seek_animation(m_animation,
-                             static_cast<std::size_t>(key->ch - '0')));
+      command(
+          seek_animation(m_animation, static_cast<std::size_t>(key->ch - '0')));
     else
-      App::on_event(event);  // ESC / Ctrl+C quit
+      App::on_event(event); // ESC / Ctrl+C quit
   }
 
   auto on_tick(std::chrono::duration<double>) -> void override {
@@ -110,12 +109,11 @@ class AnimationControlDemo final : public App {
 
   auto on_render(Screen& screen) -> void override {
     screen.clear({}, kBg);
-    screen.write_text(2, 1, "Terminal-driven animation control", {235, 240, 250},
-                      {12, 16, 24}, Attr::Bold);
+    screen.write_text(2, 1, "Terminal-driven animation control",
+                      {235, 240, 250}, {12, 16, 24}, Attr::Bold);
     screen.write_text(2, 3, "P once/restart   L loop   I once/ignore", kFg,
                       kBg);
-    screen.write_text(2, 4, "S hold           F finish  0..3 seek", kFg,
-                      kBg);
+    screen.write_text(2, 4, "S hold           F finish  0..3 seek", kFg, kBg);
     screen.write_text(2, 5, "ESC quits", kFg, kBg);
 
     std::string state = "unavailable";
@@ -126,8 +124,8 @@ class AnimationControlDemo final : public App {
     screen.write_text(2, 7, std::format("state: {}", state), kFg, kBg);
     if (!m_message.empty()) screen.write_text(2, 9, m_message, kWarn, kBg);
 
-    constexpr std::array<Rgb, 4> colors{{{235, 80, 80}, {245, 190, 70},
-                                         {80, 210, 130}, {90, 145, 245}}};
+    constexpr std::array<Rgb, 4> colors{
+        {{235, 80, 80}, {245, 190, 70}, {80, 210, 130}, {90, 145, 245}}};
     for (int i = 0; i < 4; ++i) {
       screen.write_text(2 + i * 5, 11, std::format(" {} ", i), {8, 10, 14},
                         colors[static_cast<std::size_t>(i)], Attr::Bold);

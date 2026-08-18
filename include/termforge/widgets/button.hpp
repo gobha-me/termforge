@@ -21,8 +21,8 @@
 #include <functional>
 #include <string>
 
-#include "termforge/widgets/widget.hpp"
 #include "termforge/widgets/theme.hpp"
+#include "termforge/widgets/widget.hpp"
 
 namespace termforge {
 
@@ -86,4 +86,4 @@ class Button final : public Widget {
   std::function<void()> m_on_activate;
 };
 
-}  // namespace termforge
+} // namespace termforge

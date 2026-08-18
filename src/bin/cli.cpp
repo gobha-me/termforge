@@ -6,7 +6,7 @@
 
 namespace termforge::forge_top {
 
-auto usage() -> const char * {
+auto usage() -> const char* {
   return "Usage: forge-top [--fake] [--driver=kitty|ansi|fallback]\n"
          "\n"
          "A live /proc system monitor and all-tier TermForge demo.\n"
@@ -15,7 +15,7 @@ auto usage() -> const char * {
          "  -h, --help   show this help\n";
 }
 
-auto parse_options(int argc, char **argv)
+auto parse_options(int argc, char** argv)
     -> std::expected<Options, std::string> {
   Options options;
   bool driver_seen = false;
@@ -51,7 +51,7 @@ auto parse_options(int argc, char **argv)
   return options;
 }
 
-auto run_cli(int argc, char **argv) -> int {
+auto run_cli(int argc, char** argv) -> int {
   const auto options = parse_options(argc, argv);
   if (!options) {
     std::fprintf(stderr, "forge-top: %s\n%s", options.error().c_str(), usage());
@@ -69,7 +69,7 @@ auto run_cli(int argc, char **argv) -> int {
       return 1;
     }
     return app.run();
-  } catch (const std::exception &error) {
+  } catch (const std::exception& error) {
     std::fprintf(stderr, "forge-top: %s\n", error.what());
     return 1;
   }

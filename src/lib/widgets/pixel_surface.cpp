@@ -35,10 +35,11 @@ auto composite_over(Pixel src, Rgb bg) -> Pixel {
   return detail::source_over_opaque_dst(src, Pixel{bg.r, bg.g, bg.b, 255});
 }
 
-}  // namespace
+} // namespace
 
 PixelSurface::PixelSurface(Extent extent, Pixel fill)
-    : m_image(make_image(extent, fill)) {}
+    : m_image(make_image(extent, fill)) {
+}
 
 auto PixelSurface::reset(Extent extent, Pixel fill) -> void {
   m_image = make_image(extent, fill);
@@ -108,4 +109,4 @@ auto PixelSurface::pixel_fit(Rect /*region*/) const noexcept -> PlacementFit {
   return m_fit;
 }
 
-}  // namespace termforge
+} // namespace termforge

@@ -45,7 +45,7 @@ using tfsupport::wheel;
 
 namespace {
 
-const std::vector<std::string> kTitles{"A", "Beta", "Gamma!"};  // spans 3, 6, 8
+const std::vector<std::string> kTitles{"A", "Beta", "Gamma!"}; // spans 3, 6, 8
 
 // The columns painted with the active tab's background: the DRAWN extent, read
 // back off the screen rather than recomputed from the widths. Every hit-span
@@ -80,7 +80,7 @@ auto click_from(int from, int c, int cols = 20) -> int {
   return t.active();
 }
 
-}  // namespace
+} // namespace
 
 // ── #22's named cases ───────────────────────────────────────────────────────
 
@@ -93,7 +93,7 @@ TEST_CASE("TabBar: every column that selects a tab is a column that tab paints",
   const auto resolve = [](int c) {
     if (const int a = click_from(0, c); a != 0) return a;
     if (const int b = click_from(2, c); b != 2) return b;
-    return -1;  // no tab claimed it: a gap or the background
+    return -1; // no tab claimed it: a gap or the background
   };
 
   for (int i = 0; i < 3; ++i) {
@@ -122,7 +122,7 @@ TEST_CASE("TabBar: a zero-width rect draws nothing and does not crash",
     t.set_geometry(r);
     t.draw(s);
     REQUIRE(row_text(s, 0) == std::string(20, ' '));
-    REQUIRE_FALSE(t.dirty());  // the early-out clears too
+    REQUIRE_FALSE(t.dirty()); // the early-out clears too
   }
 
   // And with no set_geometry at all -- rect() is {0,0,0,0} until the first
@@ -158,8 +158,8 @@ TEST_CASE("TabBar: a zero-width rect draws nothing and does not crash",
   k.on_event(key(Key::End));
   k.set_geometry({0, 0, 12, 1});
   drawn(k, 12);
-  REQUIRE(k.active() == 2);          // the key DID move the selection...
-  REQUIRE(k.first_visible() == 2);   // ...and the first layout reveals it
+  REQUIRE(k.active() == 2);        // the key DID move the selection...
+  REQUIRE(k.first_visible() == 2); // ...and the first layout reveals it
 }
 
 TEST_CASE("TabBar: one tab fills the strip and shows no indicator",
@@ -171,7 +171,8 @@ TEST_CASE("TabBar: one tab fills the strip and shows no indicator",
   const Screen s = drawn(t, 20);
   REQUIRE(t.active() == 0);
   REQUIRE(t.first_visible() == 0);
-  // "*Only " -- marker in the pad column, then the title, then the trailing pad.
+  // "*Only " -- marker in the pad column, then the title, then the trailing
+  // pad.
   REQUIRE(row_text(s, 0, 0, 6) == "*Only ");
   // Nothing past the tab: no spurious overflow indicator from an off-by-one in
   // the two-pass rule.
@@ -197,7 +198,7 @@ TEST_CASE("TabBar: an empty title still gets a two-column clickable span",
   t.on_event(press(1, 0));
   REQUIRE(t.active() == 0);
   t.set_active(1);
-  t.on_event(press(2, 0));  // the gap
+  t.on_event(press(2, 0)); // the gap
   REQUIRE(t.active() == 1);
 }
 
@@ -218,14 +219,14 @@ TEST_CASE("TabBar: a title carrying an ESC sequence measures what it paints",
   t.set_active(1);
   const Screen s = drawn(t, 20);
   const auto [x, w] = highlighted_run(s, 0);
-  REQUIRE(x == 4);  // tab 0 is [0,3), gap at 3
-  REQUIRE(w == 3);  // " X " -- three columns, not the nine the raw view spans
+  REQUIRE(x == 4); // tab 0 is [0,3), gap at 3
+  REQUIRE(w == 3); // " X " -- three columns, not the nine the raw view spans
 
   // And the NEXT tab's clicks land where its glyphs are.
   t.on_event(press(8, 0));
   REQUIRE(t.active() == 2);
   t.set_active(1);
-  t.on_event(press(7, 0));  // the gap between them
+  t.on_event(press(7, 0)); // the gap between them
   REQUIRE(t.active() == 1);
 }
 
@@ -263,14 +264,14 @@ TEST_CASE("TabBar: a wide-glyph title is measured in columns, not bytes",
   const auto [x, w] = highlighted_run(s, 0);
   REQUIRE(x == 4);
   REQUIRE(w == 6);
-  REQUIRE(row_text(s, 0, 4, 6) == "▸日本 ");  // marker, 4 columns of title, pad
+  REQUIRE(row_text(s, 0, 4, 6) == "▸日本 "); // marker, 4 columns of title, pad
 
-  t.on_event(press(11, 0));  // tab 2 starts at 11 only if tab 1 spans 6
+  t.on_event(press(11, 0)); // tab 2 starts at 11 only if tab 1 spans 6
   REQUIRE(t.active() == 2);
 }
 
 TEST_CASE("TabBar: a combining mark costs no column", "[tabbar]") {
-  TabBar t{{"A", "é", "Gamma!"}};  // e + COMBINING ACUTE -> one column
+  TabBar t{{"A", "é", "Gamma!"}}; // e + COMBINING ACUTE -> one column
   t.set_geometry({0, 0, 20, 1});
   t.set_focused(true);
   drawn(t, 20);
@@ -290,12 +291,12 @@ TEST_CASE("TabBar: the drawn indicator columns are the columns that scroll",
   TabBar t{kTitles};
   t.set_style(BorderStyle::Ascii);
   t.set_geometry({0, 0, 12, 1});
-  t.set_focused(true);  // spans 3+1+6+1+8 = 19 > 12
+  t.set_focused(true); // spans 3+1+6+1+8 = 19 > 12
   drawn(t, 12);
 
   const Screen wide = drawn(t, 12);
-  REQUIRE(wide.text_at(11, 0) == ">");  // more to the right
-  REQUIRE(wide.text_at(0, 0) != "<");   // nothing to the left yet
+  REQUIRE(wide.text_at(11, 0) == ">"); // more to the right
+  REQUIRE(wide.text_at(0, 0) != "<");  // nothing to the left yet
 
   t.on_event(press(11, 0));
   REQUIRE(t.first_visible() == 1);
@@ -340,18 +341,18 @@ TEST_CASE("TabBar: arrow keys reveal the tab they move to, both ways",
 
   t.on_event(key(Key::Right));
   REQUIRE(t.active() == 1);
-  REQUIRE(t.first_visible() == 0);  // tab 1 already fits
+  REQUIRE(t.first_visible() == 0); // tab 1 already fits
 
   t.on_event(key(Key::Right));
   REQUIRE(t.active() == 2);
   Screen s{12, 1};
   t.draw(s);
-  REQUIRE(highlighted_run(s, 0).second == 8);  // revealed whole
+  REQUIRE(highlighted_run(s, 0).second == 8); // revealed whole
 
   t.on_event(key(Key::Left));
   REQUIRE(t.active() == 1);
   t.draw(s);
-  REQUIRE(highlighted_run(s, 0).second == 6);  // and revealed again coming back
+  REQUIRE(highlighted_run(s, 0).second == 6); // and revealed again coming back
 }
 
 TEST_CASE("TabBar: the wheel scrolls the view and may carry the active tab off",
@@ -365,14 +366,13 @@ TEST_CASE("TabBar: the wheel scrolls the view and may carry the active tab off",
   REQUIRE(t.active() == 0);
 
   t.on_event(wheel(5, 0, /*up=*/false));
-  REQUIRE(t.active() == 0);          // unchanged
-  REQUIRE(t.first_visible() == 1);   // ...and scrolled past
+  REQUIRE(t.active() == 0);        // unchanged
+  REQUIRE(t.first_visible() == 1); // ...and scrolled past
   const Screen s = drawn(t, 12);
-  REQUIRE(highlighted_run(s, 0).second == 0);  // nothing highlighted: it is gone
+  REQUIRE(highlighted_run(s, 0).second == 0); // nothing highlighted: it is gone
 }
 
-TEST_CASE("TabBar: the wheel moves one tab per notch, not three",
-          "[tabbar]") {
+TEST_CASE("TabBar: the wheel moves one tab per notch, not three", "[tabbar]") {
   // detail::kWheelStep is 3, which over a handful of tabs is a whole page --
   // the argument detail/dropdown.hpp already made for kDropdownWheelStep. Three
   // would clamp straight to the last offset here, so this distinguishes them.
@@ -414,16 +414,16 @@ TEST_CASE("TabBar: a tab wider than the strip is truncated but still reachable",
   // input that moves the window WITHOUT moving the selection (#35 Q1/Q2).
   t.on_event(wheel(2, 0, /*up=*/false));
   REQUIRE(t.first_visible() == 1);
-  REQUIRE(t.active() == 0);  // still tab 0, now scrolled off
+  REQUIRE(t.active() == 0); // still tab 0, now scrolled off
   const Screen s2 = drawn(t, 4);
   REQUIRE(s2.text_at(0, 0) == "<");
 
-  t.on_event(press(2, 0));   // a column tab 1 paints, while tab 0 is active
-  REQUIRE(t.active() == 1);  // a clipped tab is selectable where it paints
+  t.on_event(press(2, 0));  // a column tab 1 paints, while tab 0 is active
+  REQUIRE(t.active() == 1); // a clipped tab is selectable where it paints
 
   t.on_event(key(Key::Home));
   REQUIRE(t.active() == 0);
-  REQUIRE(t.first_visible() == 0);  // and the window came back with it
+  REQUIRE(t.first_visible() == 0); // and the window came back with it
 }
 
 TEST_CASE("TabBar: a narrow strip never paints two indicators in one column",
@@ -485,10 +485,10 @@ TEST_CASE("TabBar: a narrow strip still paints the tab it is scrolled to",
     t.set_focused(true);
     drawn(t, w);
 
-    const Screen at_start = drawn(t, w);  // active == first visible == tab 0
+    const Screen at_start = drawn(t, w); // active == first visible == tab 0
     REQUIRE(highlighted_run(at_start, 0).second > 0);
 
-    t.on_event(key(Key::End));  // active == last, and the offset follows it
+    t.on_event(key(Key::End)); // active == last, and the offset follows it
     const Screen at_end = drawn(t, w);
     REQUIRE(highlighted_run(at_end, 0).second > 0);
   }
@@ -531,7 +531,7 @@ TEST_CASE("TabBar: set_tabs rewinds the strip, it does not merely re-clamp it",
   REQUIRE(t.active() == 0);
   REQUIRE(t.first_visible() == 0);
   const Screen s = drawn(t, 12);
-  REQUIRE(highlighted_run(s, 0) == std::pair{0, 5});  // "▸One "
+  REQUIRE(highlighted_run(s, 0) == std::pair{0, 5}); // "▸One "
 }
 
 TEST_CASE("TabBar: a geometry shrink with no redraw leaves no dead column",
@@ -547,16 +547,16 @@ TEST_CASE("TabBar: a geometry shrink with no redraw leaves no dead column",
   t.on_event(key(Key::End));
 
   t.set_geometry({0, 0, 12, 1});
-  t.set_focused(true);  // narrower, and NOT drawn
+  t.set_focused(true); // narrower, and NOT drawn
   t.set_active(0);
-  t.on_event(press(5, 0));        // a column inside some tab of the new strip
+  t.on_event(press(5, 0)); // a column inside some tab of the new strip
   const int chosen = t.active();
   Screen s{12, 1};
   t.draw(s);
   const auto [x, w] = highlighted_run(s, 0);
-  REQUIRE(chosen != 0);           // the click landed on a tab
+  REQUIRE(chosen != 0); // the click landed on a tab
   REQUIRE(x <= 5);
-  REQUIRE(5 < x + w);             // ...the one now painted under that column
+  REQUIRE(5 < x + w); // ...the one now painted under that column
 }
 
 TEST_CASE("TabBar: widening the rect releases a stale offset",
@@ -573,7 +573,7 @@ TEST_CASE("TabBar: widening the rect releases a stale offset",
   REQUIRE(t.first_visible() > 0);
 
   t.set_geometry({0, 0, 20, 1});
-  t.set_focused(true);  // now everything fits
+  t.set_focused(true); // now everything fits
   REQUIRE(t.first_visible() == 0);
   const Screen s = drawn(t, 20);
   REQUIRE(row_text(s, 0, 0, 19) == " A   Beta  ▸Gamma! ");
@@ -588,8 +588,8 @@ TEST_CASE("TabBar: an empty bar declines every key and is not focusable",
   t.set_focused(true);
   REQUIRE_FALSE(t.focusable());
   REQUIRE(t.active() == -1);
-  for (const auto k : {Key::Left, Key::Right, Key::Home, Key::End, Key::Tab,
-                       Key::Enter})
+  for (const auto k :
+       {Key::Left, Key::Right, Key::Home, Key::End, Key::Tab, Key::Enter})
     REQUIRE_FALSE(t.on_event(key(k)));
   Screen s{20, 1};
   t.draw(s);
@@ -617,14 +617,14 @@ TEST_CASE("TabBar: a clamped arrow is consumed and fires nothing",
   int fired = 0;
   t.on_change([&](int) { ++fired; });
 
-  REQUIRE(t.on_event(key(Key::Left)));  // already at 0
+  REQUIRE(t.on_event(key(Key::Left))); // already at 0
   REQUIRE(t.active() == 0);
   REQUIRE(fired == 0);
 
   t.on_event(key(Key::End));
   REQUIRE(t.active() == 2);
   REQUIRE(fired == 1);
-  REQUIRE(t.on_event(key(Key::Right)));  // already at the last
+  REQUIRE(t.on_event(key(Key::Right))); // already at the last
   REQUIRE(t.active() == 2);
   REQUIRE(fired == 1);
 }
@@ -636,7 +636,7 @@ TEST_CASE("TabBar: set_active is silent", "[tabbar][failure]") {
   int fired = 0;
   t.on_change([&](int) { ++fired; });
   t.set_active(2);
-  t.set_active(99);  // clamped to the last -- still no change, still silent
+  t.set_active(99); // clamped to the last -- still no change, still silent
   t.set_active(-4);
   REQUIRE(t.active() == 0);
   REQUIRE(fired == 0);
@@ -655,7 +655,7 @@ TEST_CASE("TabBar: on_change may replace the tabs from inside the callback",
     fired = index;
     t.set_tabs({"X"});
   });
-  t.on_event(press(5, 0));  // tab 1
+  t.on_event(press(5, 0)); // tab 1
   REQUIRE(fired == 1);
   REQUIRE(t.count() == 1);
   REQUIRE(t.active() == 0);
@@ -672,10 +672,10 @@ TEST_CASE("TabBar: add_tab activates the first tab and clear empties the bar",
   REQUIRE_FALSE(t.focusable());
 
   t.add_tab("A");
-  REQUIRE(t.active() == 0);  // promoted from -1 by the first tab
+  REQUIRE(t.active() == 0); // promoted from -1 by the first tab
   REQUIRE(t.focusable());
   t.add_tab("Beta");
-  REQUIRE(t.active() == 0);  // and a later append does not move it
+  REQUIRE(t.active() == 0); // and a later append does not move it
   REQUIRE(t.count() == 2);
 
   t.set_geometry({0, 0, 20, 1});
@@ -713,13 +713,13 @@ TEST_CASE("TabBar: on_change may reassign the slot from inside itself",
   // asan. Padded past the buffer the slot owns a heap block, and freeing it
   // mid-call is a read of freed memory that asan reports.
   t.on_change([&t, &fired, pad = std::array<char, 256>{}](int) {
-    t.on_change([&fired](int) { fired += 10; });  // frees the running slot
-    fired += 1 + pad[0];                          // ...then reads its captures
+    t.on_change([&fired](int) { fired += 10; }); // frees the running slot
+    fired += 1 + pad[0];                         // ...then reads its captures
   });
 
-  t.on_event(press(5, 0));  // tab 1
+  t.on_event(press(5, 0)); // tab 1
   REQUIRE(fired == 1);
-  t.on_event(press(12, 0));  // tab 2 -- the replacement slot runs
+  t.on_event(press(12, 0)); // tab 2 -- the replacement slot runs
   REQUIRE(fired == 11);
 }
 
@@ -735,9 +735,9 @@ TEST_CASE("TabBar: non-left buttons decline and the background is inert",
 
   REQUIRE_FALSE(t.on_event(press(5, 0, /*button=*/2)));
   REQUIRE_FALSE(t.on_event(press(5, 0, /*button=*/1)));
-  REQUIRE(t.on_event(press(3, 0)));   // the gap: consumed, inert
-  REQUIRE(t.on_event(press(5, 1)));   // a row below the strip: same
-  REQUIRE_FALSE(t.on_event(press(25, 0)));  // outside the rect entirely
+  REQUIRE(t.on_event(press(3, 0)));        // the gap: consumed, inert
+  REQUIRE(t.on_event(press(5, 1)));        // a row below the strip: same
+  REQUIRE_FALSE(t.on_event(press(25, 0))); // outside the rect entirely
   REQUIRE(t.active() == 0);
   REQUIRE(fired == 0);
 }
@@ -772,16 +772,16 @@ TEST_CASE("TabBar: unfocused, the marker stays and the focus colours go",
 
   t.set_focused(false);
   const Screen cold = drawn(t, 20);
-  REQUIRE(highlighted_run(cold, 0).second == 0);  // no focus colours...
-  REQUIRE(cold.text_at(4, 0) == "▸");             // ...but the mark remains
+  REQUIRE(highlighted_run(cold, 0).second == 0); // no focus colours...
+  REQUIRE(cold.text_at(4, 0) == "▸");            // ...but the mark remains
 
   t.set_focused(true);
   const Screen hot = drawn(t, 20);
   REQUIRE(highlighted_run(hot, 0) == std::pair{4, 6});
   REQUIRE(hot.text_at(4, 0) == "▸");
   // Which is to say the two states differ on screen at all.
-  REQUIRE(row_text(cold, 0) == row_text(hot, 0));  // same cells...
-  REQUIRE(cold.at(4, 0).bg != hot.at(4, 0).bg);    // ...different colours
+  REQUIRE(row_text(cold, 0) == row_text(hot, 0)); // same cells...
+  REQUIRE(cold.at(4, 0).bg != hot.at(4, 0).bg);   // ...different colours
 }
 
 TEST_CASE("TabBar: a resize re-reveals the active tab; a scroll does not",
@@ -797,9 +797,9 @@ TEST_CASE("TabBar: a resize re-reveals the active tab; a scroll does not",
   t.on_event(key(Key::End));
   REQUIRE(t.active() == 2);
 
-  t.set_geometry({0, 0, 10, 1});  // a window drag, not a scroll
+  t.set_geometry({0, 0, 10, 1}); // a window drag, not a scroll
   const Screen s = drawn(t, 10);
-  REQUIRE(highlighted_run(s, 0).second > 0);  // the active tab is still stated
+  REQUIRE(highlighted_run(s, 0).second > 0); // the active tab is still stated
 
   // ...and the wheel keeps its documented licence to scroll it away.
   TabBar w{kTitles};
@@ -810,7 +810,7 @@ TEST_CASE("TabBar: a resize re-reveals the active tab; a scroll does not",
   const Screen after = drawn(w, 12);
   REQUIRE(w.active() == 0);
   REQUIRE(highlighted_run(after, 0).second == 0);
-  drawn(w, 12);  // and a redraw at the SAME geometry must not undo it
+  drawn(w, 12); // and a redraw at the SAME geometry must not undo it
   REQUIRE(w.first_visible() == 1);
 }
 
@@ -821,7 +821,7 @@ TEST_CASE("TabBar: BorderStyle::Ascii keeps the whole strip 7-bit",
   t.set_geometry({0, 0, 12, 1});
   t.set_focused(true);
   drawn(t, 12);
-  t.on_event(wheel(5, 0, /*up=*/false));  // both indicators up
+  t.on_event(wheel(5, 0, /*up=*/false)); // both indicators up
   const Screen s = drawn(t, 12);
   REQUIRE(s.text_at(0, 0) == "<");
   REQUIRE(s.text_at(11, 0) == ">");
@@ -838,21 +838,21 @@ TEST_CASE("TabBar: dirty is edge-triggered", "[tabbar]") {
   t.draw(s);
   REQUIRE_FALSE(t.dirty());
 
-  t.on_change([](int) {});  // installing a callback repaints nothing
+  t.on_change([](int) {}); // installing a callback repaints nothing
   REQUIRE_FALSE(t.dirty());
 
-  t.set_active(0);  // no change
+  t.set_active(0); // no change
   REQUIRE_FALSE(t.dirty());
 
-  t.on_event(key(Key::Left));  // clamped: consumed, but nothing moved
+  t.on_event(key(Key::Left)); // clamped: consumed, but nothing moved
   REQUIRE_FALSE(t.dirty());
 
-  t.on_event(wheel(5, 0, /*up=*/false));  // everything fits: nowhere to scroll
+  t.on_event(wheel(5, 0, /*up=*/false)); // everything fits: nowhere to scroll
   REQUIRE_FALSE(t.dirty());
 
   t.draw(s);
   t.draw(s);
-  REQUIRE_FALSE(t.dirty());  // nothing self-animates here
+  REQUIRE_FALSE(t.dirty()); // nothing self-animates here
 
   t.set_active(1);
   REQUIRE(t.dirty());
@@ -879,7 +879,7 @@ TEST_CASE("TabBar: a bar whose rect starts left of the screen leaks no marker",
   TabBar t{{"", "Beta"}};
   t.set_geometry({-2, 0, 12, 1});
   t.set_focused(true);
-  drawn(t, 16);  // settle the scroll offset before the frame under test
+  drawn(t, 16); // settle the scroll offset before the frame under test
   const Screen s = drawn(t, 16);
 
   REQUIRE(t.active() == 0);
@@ -887,8 +887,9 @@ TEST_CASE("TabBar: a bar whose rect starts left of the screen leaks no marker",
   REQUIRE(s.at(0, 0).blank());
 }
 
-TEST_CASE("TabBar: a bar left of the screen clips its title, it does not move it",
-          "[tabbar][failure]") {
+TEST_CASE(
+    "TabBar: a bar left of the screen clips its title, it does not move it",
+    "[tabbar][failure]") {
   // The title half, which no widget-side guard could have fixed: a clamped
   // write_text painted "File" from column 0, four columns belonging to no
   // span. Clipping drops the marker at -2 and the 'F' at -1 and leaves "ile"
@@ -900,7 +901,7 @@ TEST_CASE("TabBar: a bar left of the screen clips its title, it does not move it
   const Screen s = drawn(t, 16);
 
   REQUIRE(t.active() == 0);
-  REQUIRE(row_text(s, 0, 0, 4) == "ile ");  // was "File" under the clamp
+  REQUIRE(row_text(s, 0, 0, 4) == "ile "); // was "File" under the clamp
   // Extent read off the screen, never recomputed: " File " is 6 columns from
   // -2, so 4 survive at column 0.
   REQUIRE(highlighted_run(s, 0) == std::pair{0, 4});
@@ -921,8 +922,9 @@ TEST_CASE("TabBar: height one keeps indicator columns, not a track (#131)",
   REQUIRE(s.rows() == 1);
 }
 
-TEST_CASE("TabBar: height two paints a horizontal track and no indicators (#131)",
-          "[tabbar]") {
+TEST_CASE(
+    "TabBar: height two paints a horizontal track and no indicators (#131)",
+    "[tabbar]") {
   TabBar t{kTitles};
   t.set_style(BorderStyle::Ascii);
   t.set_geometry({0, 0, 12, 2});

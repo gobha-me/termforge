@@ -42,14 +42,14 @@ auto frames(const std::array<Image, 4>& images)
 auto controls(std::string_view wire) -> std::vector<tfsupport::Apc> {
   std::vector<tfsupport::Apc> result;
   for (const auto& command : tfsupport::apcs(wire))
-    if (tfsupport::key_value(command, "a") == "a")
-      result.push_back(command);
+    if (tfsupport::key_value(command, "a") == "a") result.push_back(command);
   return result;
 }
 
 class FailingSink final : public ByteSink {
  public:
-  auto write(std::span<const char>) -> std::expected<void, ErrorEvent> override {
+  auto write(std::span<const char>)
+      -> std::expected<void, ErrorEvent> override {
     return std::unexpected{
         ErrorEvent{Severity::Error, "sink", "animation control refused"}};
   }
@@ -97,7 +97,7 @@ class AppClockProbe final : public App {
   int m_render{0};
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("animation control: once, ignore, and restart-loop are exact",
           "[animation][control][kitty][wire]") {
@@ -240,13 +240,13 @@ TEST_CASE("animation control: failures emit no partial state",
   wire.clear();
 
   CHECK_FALSE(driver.seek_animation(*animation, 4, now));
-  CHECK_FALSE(driver.play_animation(
-      *animation, static_cast<AnimationPlayMode>(99),
-      AnimationReplay::Restart, now));
+  CHECK_FALSE(driver.play_animation(*animation,
+                                    static_cast<AnimationPlayMode>(99),
+                                    AnimationReplay::Restart, now));
   CHECK_FALSE(driver.play_animation(*animation, AnimationPlayMode::Once,
                                     static_cast<AnimationReplay>(99), now));
-  CHECK_FALSE(driver.stop_animation(
-      *animation, static_cast<AnimationStopMode>(99)));
+  CHECK_FALSE(
+      driver.stop_animation(*animation, static_cast<AnimationStopMode>(99)));
   CHECK(wire.empty());
   CHECK(driver.animation_status(*animation, now)->state ==
         AnimationRunState::Stopped);
@@ -303,8 +303,8 @@ TEST_CASE("animation control: legacy driver defaults remain honest",
   const AnimationHandle animation{1, 1, 1};
   const auto now = std::chrono::steady_clock::time_point{};
 
-  const auto play = driver.play_animation(
-      animation, AnimationPlayMode::Once, AnimationReplay::Restart, now);
+  const auto play = driver.play_animation(animation, AnimationPlayMode::Once,
+                                          AnimationReplay::Restart, now);
   const auto seek = driver.seek_animation(animation, 0, now);
   const auto stop = driver.stop_animation(animation, AnimationStopMode::Hold);
   const auto status = driver.animation_status(animation, now);
@@ -335,6 +335,6 @@ TEST_CASE("animation control: App forwards its synthetic timeline",
   REQUIRE(app.deadline_from_play);
   CHECK(*app.deadline_from_play == 55ms);
   const auto commands = controls(wire);
-  REQUIRE(commands.size() >= 2);  // root-gap registration plus play
+  REQUIRE(commands.size() >= 2); // root-gap registration plus play
   CHECK(tfsupport::key_value(commands.back(), "s") == "2");
 }

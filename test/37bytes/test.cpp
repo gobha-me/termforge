@@ -24,12 +24,12 @@
 #include "termforge/drivers/kitty_driver.hpp"
 
 using termforge::AnsiRgbDriver;
+using termforge::Attr;
 using termforge::FallbackDriver;
 using termforge::FrameBytes;
 using termforge::KittyDriver;
 using termforge::Rect;
 using termforge::Rgb;
-using termforge::Attr;
 using tfsupport::checker;
 using tfsupport::solid;
 
@@ -51,7 +51,7 @@ auto flush_and_measure(Driver& d, std::string& out) -> std::size_t {
   return out.size() - before;
 }
 
-}  // namespace
+} // namespace
 
 // ── The sum invariant, on every tier ────────────────────────────────────────
 //
@@ -139,8 +139,8 @@ TEST_CASE("meter: re-emitting an unchanged image costs approximately zero",
   REQUIRE(d.draw_image(Rect{0, 0, 4, 2}, art));
   const std::size_t first = flush_and_measure(d, out);
   const FrameBytes f1 = d.last_frame_bytes();
-  CHECK(f1.image_transmit > 0);      // the upload happened
-  CHECK(f1.image_transmit < first);  // and it was not the whole frame
+  CHECK(f1.image_transmit > 0);     // the upload happened
+  CHECK(f1.image_transmit < first); // and it was not the whole frame
 
   // Same pixels, same destination: no retransmit, no re-placement.
   REQUIRE(d.draw_image(Rect{0, 0, 4, 2}, art));
@@ -191,7 +191,7 @@ TEST_CASE("meter: a pre-encoded plate costs a fraction of the same plate raw",
   // and would pin this suite to the compression ratio of one baked asset.
   constexpr int kW = 240;
   constexpr int kH = 160;
-  constexpr std::size_t kEncodedBytes = 9800;  // a 4-colour plate's order
+  constexpr std::size_t kEncodedBytes = 9800; // a 4-colour plate's order
 
   const Rect dest{0, 0, 30, 10};
 
@@ -377,7 +377,8 @@ TEST_CASE("meter: a placement-mode switch bills its teardown to image_edit",
 }
 
 TEST_CASE("meter: a fit change bills its re-placement to image_edit, not "
-          "image_transmit", "[bytes]") {
+          "image_transmit",
+          "[bytes]") {
   // #137. Changing only the PlacementFit re-places without re-uploading, so
   // every byte of that frame is edit traffic. This is the assertion that pins
   // the CHOICE and not merely the behaviour: folding the fit into
@@ -393,13 +394,13 @@ TEST_CASE("meter: a fit change bills its re-placement to image_edit, not "
                        termforge::PlacementFit::Stretch));
   const std::size_t first = flush_and_measure(d, out);
   REQUIRE(first > 0);
-  REQUIRE(d.last_frame_bytes().image_transmit > 0);  // the upload happened once
+  REQUIRE(d.last_frame_bytes().image_transmit > 0); // the upload happened once
 
   REQUIRE(d.draw_image(Rect{0, 0, 4, 2}, solid(16, 16, kP1),
                        termforge::PlacementFit::Exact));
   const std::size_t written = flush_and_measure(d, out);
   const FrameBytes f = d.last_frame_bytes();
-  REQUIRE(written > 0);  // something was emitted -- the #137 cache bug
+  REQUIRE(written > 0); // something was emitted -- the #137 cache bug
   CHECK(f.image_transmit == 0);
   CHECK(f.image_edit == written);
   CHECK(f.cells == 0);
@@ -475,15 +476,19 @@ class MeterProbe : public termforge::App {
   // accumulating — the meter would look broken and would not be. A downstream
   // consumer writing its first bandwidth test will meet this exact edge.
   auto run(int frames) -> void { test_run_frames(frames, 20, 5, &m_sink); }
-  [[nodiscard]] auto meter() -> FrameBytes { return driver().last_frame_bytes(); }
-  [[nodiscard]] auto cumulative() -> FrameBytes { return driver().total_bytes(); }
+  [[nodiscard]] auto meter() -> FrameBytes {
+    return driver().last_frame_bytes();
+  }
+  [[nodiscard]] auto cumulative() -> FrameBytes {
+    return driver().total_bytes();
+  }
   [[nodiscard]] auto emitted() const -> std::size_t { return m_sink.size(); }
 
  private:
   std::string m_sink;
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("meter: an App subclass can read its own frame cost", "[bytes]") {
   SECTION("one frame") {

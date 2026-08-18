@@ -56,7 +56,8 @@ class ChatApp final : public App {
     m_textbox.draw(screen);
 
     // Header
-    screen.write_text(0, 0, "TermForge Chat Demo", Rgb{0xFF, 0xFF, 0xFF}, Rgb{0x20, 0x20, 0x40});
+    screen.write_text(0, 0, "TermForge Chat Demo", Rgb{0xFF, 0xFF, 0xFF},
+                      Rgb{0x20, 0x20, 0x40});
 
     // Footer with instructions
     const std::string footer = "Arrows: scroll | Ctrl+L: clear | ESC: quit";

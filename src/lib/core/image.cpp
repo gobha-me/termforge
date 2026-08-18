@@ -31,8 +31,8 @@ namespace {
 // two-buffer ops. (sub and fill need only a single intersect against the
 // image's own bounds and call Rect::intersect directly.)
 struct Placement {
-  int sx{0}, sy{0};  // origin in src
-  int dx{0}, dy{0};  // origin in dst
+  int sx{0}, sy{0}; // origin in src
+  int dx{0}, dy{0}; // origin in dst
   int w{0}, h{0};
 };
 
@@ -69,8 +69,10 @@ struct Placement {
   //    value below is bounded by the destination's dimensions, so all of it
   //    fits back into int.
   return Placement{static_cast<int>(s.x + (x0 - px)),
-                   static_cast<int>(s.y + (y0 - py)), static_cast<int>(x0),
-                   static_cast<int>(y0), static_cast<int>(x1 - x0),
+                   static_cast<int>(s.y + (y0 - py)),
+                   static_cast<int>(x0),
+                   static_cast<int>(y0),
+                   static_cast<int>(x1 - x0),
                    static_cast<int>(y1 - y0)};
 }
 
@@ -82,19 +84,18 @@ enum class Op { Blit, Blend };
 // per-row std::memcpy is undefined on overlapping ranges, and blend's ascending
 // loop would read destination pixels it had already written, smearing the row.
 //
-// Resolved by reading through a clipped copy of the source region rather than by
-// choosing a safe traversal order. Direction-picking is the faster answer, but
-// it has to get row order and column order right independently and is silently
-// wrong when it does not; this is one branch, obviously correct, and it only
-// allocates on a path that produced garbage before. The copy is of the CLIPPED
-// region, so the paste origin must then shift by whatever the clip trimmed off
-// the left/top — the same correction clip_placement makes.
+// Resolved by reading through a clipped copy of the source region rather than
+// by choosing a safe traversal order. Direction-picking is the faster answer,
+// but it has to get row order and column order right independently and is
+// silently wrong when it does not; this is one branch, obviously correct, and
+// it only allocates on a path that produced garbage before. The copy is of the
+// CLIPPED region, so the paste origin must then shift by whatever the clip
+// trimmed off the left/top — the same correction clip_placement makes.
 auto self_op(Image& img, Rect src_rect, int dx, int dy, Op op) -> void {
   const Image copy = img.sub(src_rect);
   if (copy.empty()) return;
 
-  const Rect s =
-      src_rect.intersect(Rect{0, 0, img.width(), img.height()});
+  const Rect s = src_rect.intersect(Rect{0, 0, img.width(), img.height()});
   using i64 = std::int64_t;
   const i64 sx = i64{dx} + (i64{s.x} - src_rect.x);
   const i64 sy = i64{dy} + (i64{s.y} - src_rect.y);
@@ -113,7 +114,7 @@ auto self_op(Image& img, Rect src_rect, int dx, int dy, Op op) -> void {
   }
 }
 
-}  // namespace
+} // namespace
 
 auto Image::sub(Rect r) const -> Image {
   const Rect v = r.intersect(Rect{0, 0, m_width, m_height});
@@ -122,9 +123,9 @@ auto Image::sub(Rect r) const -> Image {
   std::vector<Pixel> out;
   out.reserve(static_cast<std::size_t>(v.w) * static_cast<std::size_t>(v.h));
   for (int y = 0; y < v.h; ++y) {
-    const auto row = static_cast<std::size_t>(v.y + y) *
-                     static_cast<std::size_t>(m_width) +
-                     static_cast<std::size_t>(v.x);
+    const auto row =
+        static_cast<std::size_t>(v.y + y) * static_cast<std::size_t>(m_width) +
+        static_cast<std::size_t>(v.x);
     out.insert(out.end(), m_pixels.begin() + static_cast<std::ptrdiff_t>(row),
                m_pixels.begin() + static_cast<std::ptrdiff_t>(row) + v.w);
   }
@@ -145,11 +146,11 @@ auto Image::blit(const Image& src, Rect src_rect, int dx, int dy) -> void {
 
   for (int y = 0; y < p.h; ++y) {
     const auto srow = static_cast<std::size_t>(p.sy + y) *
-                      static_cast<std::size_t>(src.width()) +
+                          static_cast<std::size_t>(src.width()) +
                       static_cast<std::size_t>(p.sx);
-    const auto drow = static_cast<std::size_t>(p.dy + y) *
-                      static_cast<std::size_t>(m_width) +
-                      static_cast<std::size_t>(p.dx);
+    const auto drow =
+        static_cast<std::size_t>(p.dy + y) * static_cast<std::size_t>(m_width) +
+        static_cast<std::size_t>(p.dx);
     detail::copy_pixels(src.pixels().subspan(srow, width),
                         pixels().subspan(drow, width));
   }
@@ -169,11 +170,11 @@ auto Image::blend(const Image& src, Rect src_rect, int dx, int dy) -> void {
 
   for (int y = 0; y < p.h; ++y) {
     const auto srow = static_cast<std::size_t>(p.sy + y) *
-                      static_cast<std::size_t>(src.width()) +
+                          static_cast<std::size_t>(src.width()) +
                       static_cast<std::size_t>(p.sx);
-    const auto drow = static_cast<std::size_t>(p.dy + y) *
-                      static_cast<std::size_t>(m_width) +
-                      static_cast<std::size_t>(p.dx);
+    const auto drow =
+        static_cast<std::size_t>(p.dy + y) * static_cast<std::size_t>(m_width) +
+        static_cast<std::size_t>(p.dx);
     detail::blend_pixels(src.pixels().subspan(srow, width),
                          pixels().subspan(drow, width));
   }
@@ -185,11 +186,11 @@ auto Image::fill(Rect r, Pixel p) -> void {
   const auto width = static_cast<std::size_t>(v.w);
 
   for (int y = 0; y < v.h; ++y) {
-    const auto row = static_cast<std::size_t>(v.y + y) *
-                     static_cast<std::size_t>(m_width) +
-                     static_cast<std::size_t>(v.x);
+    const auto row =
+        static_cast<std::size_t>(v.y + y) * static_cast<std::size_t>(m_width) +
+        static_cast<std::size_t>(v.x);
     detail::fill_pixels(pixels().subspan(row, width), p);
   }
 }
 
-}  // namespace termforge
+} // namespace termforge

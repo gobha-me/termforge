@@ -50,7 +50,8 @@
 //     sel.close_dropdown();
 //   // 2. the open dropdown must win the hit against a later-added widget,
 //   //    since focus_at and route_mouse both iterate last-added-first
-//   if (sel.dropdown_open() && sel.hit_test(m->x, m->y)) { sel.on_event(ev); return; }
+//   if (sel.dropdown_open() && sel.hit_test(m->x, m->y)) { sel.on_event(ev);
+//   return; }
 //
 // See examples/forms.cpp for the raw-app form.
 //
@@ -79,8 +80,8 @@
 #include "termforge/widgets/detail/dropdown.hpp"
 #include "termforge/widgets/detail/options_list.hpp"
 #include "termforge/widgets/glyphs.hpp"
-#include "termforge/widgets/widget.hpp"
 #include "termforge/widgets/theme.hpp"
+#include "termforge/widgets/widget.hpp"
 
 namespace termforge {
 
@@ -109,7 +110,7 @@ class Select final : public Widget {
 
   auto set_style(BorderStyle style) -> void {
     m_style = style;
-    invalidate_line();  // glyphs change: invalidate the composed box line
+    invalidate_line(); // glyphs change: invalidate the composed box line
     mark_dirty();
   }
   [[nodiscard]] auto style() const noexcept -> BorderStyle { return m_style; }
@@ -197,7 +198,7 @@ class Select final : public Widget {
   std::string m_line;
   int m_line_inner{-1};
   auto invalidate_line() -> void { m_line_inner = -1; }
-  int m_screen_rows{0};  // memoized from draw(); 0 = no frame yet (unclamped)
+  int m_screen_rows{0}; // memoized from draw(); 0 = no frame yet (unclamped)
   BorderStyle m_style{BorderStyle::Single};
 
   Rgb m_fg{theme::kFg};
@@ -212,4 +213,4 @@ class Select final : public Widget {
   std::function<void(int, const std::string&)> m_on_change;
 };
 
-}  // namespace termforge
+} // namespace termforge

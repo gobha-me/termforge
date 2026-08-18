@@ -188,8 +188,8 @@ class CountingSink final : public ByteSink {
       hash ^= static_cast<unsigned char>(bytes[bytes.size() / 2]) << 16;
       hash ^= static_cast<unsigned char>(bytes.back()) << 24;
     }
-    m_checksum ^= hash + 0x9E3779B97F4A7C15ULL + (m_checksum << 6) +
-                  (m_checksum >> 2);
+    m_checksum ^=
+        hash + 0x9E3779B97F4A7C15ULL + (m_checksum << 6) + (m_checksum >> 2);
     return {};
   }
 
@@ -206,7 +206,8 @@ class CountingSink final : public ByteSink {
   const auto [end, error] =
       std::from_chars(value.data(), value.data() + value.size(), out);
   if (error != std::errc{} || end != value.data() + value.size() || out <= 0) {
-    throw std::runtime_error{std::format("{} must be a positive integer", name)};
+    throw std::runtime_error{
+        std::format("{} must be a positive integer", name)};
   }
   return out;
 }
@@ -222,17 +223,26 @@ class CountingSink final : public ByteSink {
     };
     if (arg == "--suite") {
       const auto v = value(arg);
-      if (v == "kernels") out.suite = Suite::Kernels;
-      else if (v == "w2") out.suite = Suite::W2;
-      else if (v == "w3") out.suite = Suite::W3;
-      else if (v == "w4") out.suite = Suite::W4;
-      else if (v == "all") out.suite = Suite::All;
-      else throw std::runtime_error{"--suite must be kernels, w2, w3, w4, or all"};
+      if (v == "kernels")
+        out.suite = Suite::Kernels;
+      else if (v == "w2")
+        out.suite = Suite::W2;
+      else if (v == "w3")
+        out.suite = Suite::W3;
+      else if (v == "w4")
+        out.suite = Suite::W4;
+      else if (v == "all")
+        out.suite = Suite::All;
+      else
+        throw std::runtime_error{"--suite must be kernels, w2, w3, w4, or all"};
     } else if (arg == "--format") {
       const auto v = value(arg);
-      if (v == "table") out.format = Format::Table;
-      else if (v == "json") out.format = Format::Json;
-      else throw std::runtime_error{"--format must be table or json"};
+      if (v == "table")
+        out.format = Format::Table;
+      else if (v == "json")
+        out.format = Format::Json;
+      else
+        throw std::runtime_error{"--format must be table or json"};
     } else if (arg == "--output") {
       out.output = std::filesystem::path{value(arg)};
     } else if (arg == "--samples") {
@@ -245,15 +255,18 @@ class CountingSink final : public ByteSink {
       out.warmup = 1;
     } else if (arg == "--kernel-tier") {
       const auto v = value(arg);
-      if (v == "auto") out.kernel_tier = KernelChoice::Auto;
-      else if (v == "scalar") out.kernel_tier = KernelChoice::Scalar;
-      else if (v == "avx2") out.kernel_tier = KernelChoice::Avx2;
-      else throw std::runtime_error{"--kernel-tier must be auto, scalar, or avx2"};
+      if (v == "auto")
+        out.kernel_tier = KernelChoice::Auto;
+      else if (v == "scalar")
+        out.kernel_tier = KernelChoice::Scalar;
+      else if (v == "avx2")
+        out.kernel_tier = KernelChoice::Avx2;
+      else
+        throw std::runtime_error{"--kernel-tier must be auto, scalar, or avx2"};
     } else if (arg == "--help") {
-      std::cout
-          << "Usage: termforge_bench [--suite kernels|w2|w3|w4|all] "
-             "[--format table|json] [--output PATH] [--samples N] "
-             "[--warmup N] [--kernel-tier auto|scalar|avx2] [--smoke]\n";
+      std::cout << "Usage: termforge_bench [--suite kernels|w2|w3|w4|all] "
+                   "[--format table|json] [--output PATH] [--samples N] "
+                   "[--warmup N] [--kernel-tier auto|scalar|avx2] [--smoke]\n";
       std::exit(0);
     } else {
       throw std::runtime_error{std::format("unknown argument: {}", arg)};
@@ -264,16 +277,16 @@ class CountingSink final : public ByteSink {
 
 [[nodiscard]] auto percentile(std::vector<double> values, double p) -> double {
   std::sort(values.begin(), values.end());
-  const auto index = std::min(
-      values.size() - 1,
-      static_cast<std::size_t>(std::ceil(values.size() * p)) - 1);
+  const auto index =
+      std::min(values.size() - 1,
+               static_cast<std::size_t>(std::ceil(values.size() * p)) - 1);
   return values[index];
 }
 
 template <typename Operation>
 [[nodiscard]] auto measure(const Options& options, Result result,
-                           int minimum_iterations,
-                           Operation&& operation) -> Result {
+                           int minimum_iterations, Operation&& operation)
+    -> Result {
   int iterations = minimum_iterations;
   if (!options.smoke) {
     while (iterations < 4096) {
@@ -298,8 +311,8 @@ template <typename Operation>
     const auto started = Clock::now();
     for (int i = 0; i < iterations; ++i) {
       const std::uint64_t value = operation();
-      checksum ^= value + 0x9E3779B97F4A7C15ULL + (checksum << 6) +
-                  (checksum >> 2);
+      checksum ^=
+          value + 0x9E3779B97F4A7C15ULL + (checksum << 6) + (checksum >> 2);
     }
     const auto stopped = Clock::now();
     samples.push_back(
@@ -312,9 +325,8 @@ template <typename Operation>
   result.median_ms = percentile(samples, 0.5);
   result.p95_ms = percentile(samples, 0.95);
   if (result.input_bytes != 0 && result.median_ms > 0.0) {
-    result.throughput_mib_s =
-        static_cast<double>(result.input_bytes) / (1024.0 * 1024.0) /
-        (result.median_ms / 1000.0);
+    result.throughput_mib_s = static_cast<double>(result.input_bytes) /
+                              (1024.0 * 1024.0) / (result.median_ms / 1000.0);
   }
   return result;
 }
@@ -334,7 +346,8 @@ template <typename Operation>
 [[nodiscard]] auto opaque_pixels(int width, int height, int seed = 0)
     -> std::vector<Pixel> {
   auto out = pixels(width, height, seed);
-  for (auto& pixel : out) pixel.a = 255;
+  for (auto& pixel : out)
+    pixel.a = 255;
   return out;
 }
 
@@ -469,8 +482,8 @@ struct W3Case {
   renderer.flush();
 
   Result result{.suite = "w3",
-                .name = std::format("{}x{}-{}-{}", cols, rows,
-                                    fixture.content, dirty_percent),
+                .name = std::format("{}x{}-{}-{}", cols, rows, fixture.content,
+                                    dirty_percent),
                 .content = std::string{fixture.content},
                 .cols = cols,
                 .rows = rows,
@@ -494,13 +507,12 @@ struct W3Case {
 }
 
 [[nodiscard]] auto run_w3(const Options& options) -> std::vector<Result> {
-  static constexpr std::array sizes = {
-      std::pair{80, 24}, std::pair{120, 40}, std::pair{200, 50},
-      std::pair{300, 80}, std::pair{400, 120}};
+  static constexpr std::array sizes = {std::pair{80, 24}, std::pair{120, 40},
+                                       std::pair{200, 50}, std::pair{300, 80},
+                                       std::pair{400, 120}};
   static constexpr std::array dirty = {0, 10, 50, 100};
   static constexpr std::array fixtures = {
-      W3Case{"ascii", "A", "B", 1},
-      W3Case{"cjk", "界", "語", 2},
+      W3Case{"ascii", "A", "B", 1}, W3Case{"cjk", "界", "語", 2},
       W3Case{"combining", "e\xCC\x81", "o\xCC\x82", 1}};
   std::vector<Result> out;
   const std::size_t size_count = options.smoke ? 2 : sizes.size();
@@ -548,9 +560,7 @@ enum class W2Path { Replace, Edit };
 class W2App final : public App {
  public:
   W2App(W2Path path, Extent canvas, Extent dirty)
-      : m_path{path},
-        m_canvas{canvas},
-        m_dirty{dirty},
+      : m_path{path}, m_canvas{canvas}, m_dirty{dirty},
         m_root{canvas.w, canvas.h, opaque_pixels(canvas.w, canvas.h, 11)},
         m_block{dirty.w, dirty.h, opaque_pixels(dirty.w, dirty.h, 12)} {
     set_frame_ms(0);
@@ -646,11 +656,11 @@ class W2App final : public App {
     }
     if (!m_changed) return;
 
-    auto submitted = m_path == W2Path::Replace
-                         ? selected.replace_pinned(*m_pinned, m_root)
-                         : selected.edit_pinned(*m_pinned, m_destination,
-                                                m_block,
-                                                ImageComposition::Overwrite);
+    auto submitted =
+        m_path == W2Path::Replace
+            ? selected.replace_pinned(*m_pinned, m_root)
+            : selected.edit_pinned(*m_pinned, m_destination, m_block,
+                                   ImageComposition::Overwrite);
     if (!submitted) m_errors.push_back(std::move(submitted.error()));
   }
 
@@ -716,8 +726,8 @@ class W2App final : public App {
         "W2 did not observe every input and rendered frame"};
   }
 
-  const std::size_t begin = static_cast<std::size_t>(setup_frames +
-                                                     options.warmup);
+  const std::size_t begin =
+      static_cast<std::size_t>(setup_frames + options.warmup);
   const ImageResidency residency_before = residencies[begin - 1];
   const ImageResidency residency_after = residencies.back();
   std::vector<FrameBytes> frame_bytes;
@@ -755,18 +765,17 @@ class W2App final : public App {
   const std::uint64_t block_bytes = static_cast<std::uint64_t>(dirty.w) *
                                     static_cast<std::uint64_t>(dirty.h) *
                                     sizeof(Pixel);
-  const std::uint64_t expected_delta = path == W2Path::Edit
-                                           ? block_bytes *
-                                                 static_cast<std::uint64_t>(
-                                                     options.samples)
-                                           : 0;
+  const std::uint64_t expected_delta =
+      path == W2Path::Edit
+          ? block_bytes * static_cast<std::uint64_t>(options.samples)
+          : 0;
   if (payload_delta != expected_delta) {
     throw std::runtime_error{
         std::format("W2 {} residency delta {} != accepted payload {}",
                     w2_path_name(path), payload_delta, expected_delta)};
   }
-  const int measured_motion_events = motion_counts.back() -
-                                     motion_counts[begin - 1];
+  const int measured_motion_events =
+      motion_counts.back() - motion_counts[begin - 1];
   if (measured_motion_events != options.samples)
     throw std::runtime_error{"W2 did not deliver one motion per sampled frame"};
 
@@ -774,8 +783,8 @@ class W2App final : public App {
     return observation.tick + observation.application_render +
            observation.framework_submission + observation.sink_write;
   };
-  const double frame_mib = static_cast<double>(bytes.total()) /
-                           (1024.0 * 1024.0);
+  const double frame_mib =
+      static_cast<double>(bytes.total()) / (1024.0 * 1024.0);
   return {
       .path = std::string{w2_path_name(path)},
       .canvas_w = canvas.w,
@@ -794,9 +803,9 @@ class W2App final : public App {
       .framework_submission = phase_stats(
           observations, begin,
           [](const auto& frame) { return frame.framework_submission; }),
-      .sink_write = phase_stats(
-          observations, begin,
-          [](const auto& frame) { return frame.sink_write; }),
+      .sink_write =
+          phase_stats(observations, begin,
+                      [](const auto& frame) { return frame.sink_write; }),
       .frame_work = phase_stats(observations, begin, total),
       .bytes = bytes,
       .residency_before = residency_before,
@@ -913,9 +922,9 @@ class W4Regions final : public Widget {
     if (!index || pixels.empty()) return nullptr;
     auto& image = m_images[*index];
     if (image.width() != pixels.w || image.height() != pixels.h) {
-      image = Image{pixels.w, pixels.h,
-                    opaque_pixels(pixels.w, pixels.h,
-                                  static_cast<int>(*index) + 1)};
+      image = Image{
+          pixels.w, pixels.h,
+          opaque_pixels(pixels.w, pixels.h, static_cast<int>(*index) + 1)};
     }
     return &image;
   }
@@ -971,8 +980,7 @@ class W4App final : public App {
       -> const std::vector<FrameObservation>& {
     return m_observations;
   }
-  [[nodiscard]] auto residencies() const
-      -> const std::vector<ImageResidency>& {
+  [[nodiscard]] auto residencies() const -> const std::vector<ImageResidency>& {
     return m_residencies;
   }
   [[nodiscard]] auto checksums() const -> const std::vector<std::uint64_t>& {
@@ -1037,8 +1045,8 @@ class W4App final : public App {
           mode == PixelRegionMode::Immediate ? "immediate" : "persistent",
           cells.w, cells.h, region_count, index - begin,
           residency.region_images, residency.pinned_images,
-          residency.source_payload_bytes,
-          residencies[index].region_images, residencies[index].pinned_images,
+          residency.source_payload_bytes, residencies[index].region_images,
+          residencies[index].pinned_images,
           residencies[index].source_payload_bytes)};
     }
     frame_bytes.push_back(observations[index].bytes);
@@ -1069,9 +1077,9 @@ class W4App final : public App {
       .framework_submission = phase_stats(
           observations, begin,
           [](const auto& frame) { return frame.framework_submission; }),
-      .sink_write = phase_stats(
-          observations, begin,
-          [](const auto& frame) { return frame.sink_write; }),
+      .sink_write =
+          phase_stats(observations, begin,
+                      [](const auto& frame) { return frame.sink_write; }),
       .frame_work = phase_stats(observations, begin, total),
       .bytes = bytes,
       .residency = residency,
@@ -1110,12 +1118,12 @@ class W4App final : public App {
   std::vector<W4Wall> walls;
   for (const auto mode : modes) {
     for (const auto cells : sizes) {
-      W4Wall wall{.mode = std::string{mode},
-                  .cell_w = cells.w,
-                  .cell_h = cells.h,
-                  .first_retransmit_count = std::nullopt,
-                  .budgets = {
-                      W4BudgetWall{.budget_ms = 16.6,
+      W4Wall wall{
+          .mode = std::string{mode},
+          .cell_w = cells.w,
+          .cell_h = cells.h,
+          .first_retransmit_count = std::nullopt,
+          .budgets = {W4BudgetWall{.budget_ms = 16.6,
                                    .largest_passing_count = std::nullopt,
                                    .first_failing_count = std::nullopt},
                       W4BudgetWall{.budget_ms = 33.3,
@@ -1185,15 +1193,17 @@ class W4App final : public App {
       case '\r': out += "\\r"; break;
       case '\t': out += "\\t"; break;
       default:
-        if (c < 0x20) out += std::format("\\u{:04x}", c);
-        else out += static_cast<char>(c);
+        if (c < 0x20)
+          out += std::format("\\u{:04x}", c);
+        else
+          out += static_cast<char>(c);
     }
   }
   return out;
 }
 
 [[nodiscard]] auto host_name() -> std::string {
-  struct utsname name {};
+  struct utsname name{};
   if (::uname(&name) != 0) return "unknown";
   return std::format("{} {} {}", name.sysname, name.release, name.machine);
 }
@@ -1227,8 +1237,8 @@ class W4App final : public App {
 [[nodiscard]] auto json_report(const Options& options,
                                const std::vector<Result>& results,
                                const std::vector<Wall>& walls,
-                               const std::vector<W2Result> &w2_results,
-                               const std::vector<W2Wall> &w2_walls,
+                               const std::vector<W2Result>& w2_results,
+                               const std::vector<W2Wall>& w2_walls,
                                const std::vector<W4Result>& w4_results,
                                const std::vector<W4Wall>& w4_walls)
     -> std::string {
@@ -1243,8 +1253,7 @@ class W4App final : public App {
       json_escape(TERMFORGE_BENCH_VERSION), json_escape(__VERSION__),
       json_escape(host_name()), suite_name(options.suite),
       requested_tier_name(options.kernel_tier), resolved_tier_name(),
-      options.samples, options.warmup,
-      options.smoke ? "true" : "false");
+      options.samples, options.warmup, options.smoke ? "true" : "false");
   for (std::size_t i = 0; i < results.size(); ++i) {
     const auto& r = results[i];
     out += std::format(
@@ -1272,15 +1281,15 @@ class W4App final : public App {
                         : "null",
         i + 1 == walls.size() ? "" : ",");
   }
-  const auto phase = [](const PhaseStats &value) {
+  const auto phase = [](const PhaseStats& value) {
     return std::format("{{\"median\":{:.6f},\"p95\":{:.6f}}}", value.median_ms,
                        value.p95_ms);
   };
-  const auto residency = [](const ImageResidency &value) {
-    return std::format(
-        "{{\"region_images\":{},\"pinned_images\":{},"
-        "\"source_payload_bytes\":{}}}",
-        value.region_images, value.pinned_images, value.source_payload_bytes);
+  const auto residency = [](const ImageResidency& value) {
+    return std::format("{{\"region_images\":{},\"pinned_images\":{},"
+                       "\"source_payload_bytes\":{}}}",
+                       value.region_images, value.pinned_images,
+                       value.source_payload_bytes);
   };
   const auto optional_extent = [](std::optional<Extent> value) {
     return value ? std::format("{{\"w\":{},\"h\":{}}}", value->w, value->h)
@@ -1289,7 +1298,7 @@ class W4App final : public App {
 
   out += "  ],\n  \"w2_results\": [\n";
   for (std::size_t i = 0; i < w2_results.size(); ++i) {
-    const auto &r = w2_results[i];
+    const auto& r = w2_results[i];
     out += std::format(
         "    {{\"path\":\"{}\","
         "\"canvas_pixels\":{{\"w\":{},\"h\":{}}},"
@@ -1315,16 +1324,16 @@ class W4App final : public App {
   }
   out += "  ],\n  \"w2_walls\": [\n";
   for (std::size_t i = 0; i < w2_walls.size(); ++i) {
-    const auto &wall = w2_walls[i];
-    out += std::format(
-        "    {{\"path\":\"{}\","
-        "\"dirty_pixels\":{{\"w\":{},\"h\":{}}},"
-        "\"budget_ms\":{:.1f},\"stroke_hz\":{},"
-        "\"largest_passing\":{},\"first_failing\":{}}}{}\n",
-        json_escape(wall.path), wall.dirty_w, wall.dirty_h, wall.budget_ms,
-        wall.stroke_hz, optional_extent(wall.largest_passing),
-        optional_extent(wall.first_failing),
-        i + 1 == w2_walls.size() ? "" : ",");
+    const auto& wall = w2_walls[i];
+    out += std::format("    {{\"path\":\"{}\","
+                       "\"dirty_pixels\":{{\"w\":{},\"h\":{}}},"
+                       "\"budget_ms\":{:.1f},\"stroke_hz\":{},"
+                       "\"largest_passing\":{},\"first_failing\":{}}}{}\n",
+                       json_escape(wall.path), wall.dirty_w, wall.dirty_h,
+                       wall.budget_ms, wall.stroke_hz,
+                       optional_extent(wall.largest_passing),
+                       optional_extent(wall.first_failing),
+                       i + 1 == w2_walls.size() ? "" : ",");
   }
 
   out += "  ],\n  \"w4_results\": [\n";
@@ -1343,11 +1352,11 @@ class W4App final : public App {
         "\"source_payload_bytes\":{}}},\"checksum\":\"{:016x}\"}}{}\n",
         json_escape(r.mode), r.region_count, r.cell_w, r.cell_h, r.samples,
         phase(r.tick), phase(r.application_render),
-        phase(r.framework_submission), phase(r.sink_write),
-        phase(r.frame_work), r.bytes.cells, r.bytes.image_transmit,
-        r.bytes.image_edit, r.bytes.total(), r.residency.region_images,
-        r.residency.pinned_images, r.residency.source_payload_bytes,
-        r.checksum, i + 1 == w4_results.size() ? "" : ",");
+        phase(r.framework_submission), phase(r.sink_write), phase(r.frame_work),
+        r.bytes.cells, r.bytes.image_transmit, r.bytes.image_edit,
+        r.bytes.total(), r.residency.region_images, r.residency.pinned_images,
+        r.residency.source_payload_bytes, r.checksum,
+        i + 1 == w4_results.size() ? "" : ",");
   }
   out += "  ],\n  \"w4_walls\": [\n";
   for (std::size_t i = 0; i < w4_walls.size(); ++i) {
@@ -1355,19 +1364,18 @@ class W4App final : public App {
     const auto optional_int = [](std::optional<int> value) {
       return value ? std::to_string(*value) : std::string{"null"};
     };
-    out += std::format(
-        "    {{\"mode\":\"{}\",\"region_cells\":{{\"w\":{},"
-        "\"h\":{}}},\"first_retransmit_count\":{},\"budgets\":[",
-        json_escape(wall.mode), wall.cell_w, wall.cell_h,
-        optional_int(wall.first_retransmit_count));
+    out += std::format("    {{\"mode\":\"{}\",\"region_cells\":{{\"w\":{},"
+                       "\"h\":{}}},\"first_retransmit_count\":{},\"budgets\":[",
+                       json_escape(wall.mode), wall.cell_w, wall.cell_h,
+                       optional_int(wall.first_retransmit_count));
     for (std::size_t b = 0; b < wall.budgets.size(); ++b) {
       const auto& budget = wall.budgets[b];
-      out += std::format(
-          "{{\"budget_ms\":{:.1f},\"largest_passing_count\":{},"
-          "\"first_failing_count\":{}}}{}",
-          budget.budget_ms, optional_int(budget.largest_passing_count),
-          optional_int(budget.first_failing_count),
-          b + 1 == wall.budgets.size() ? "" : ",");
+      out += std::format("{{\"budget_ms\":{:.1f},\"largest_passing_count\":{},"
+                         "\"first_failing_count\":{}}}{}",
+                         budget.budget_ms,
+                         optional_int(budget.largest_passing_count),
+                         optional_int(budget.first_failing_count),
+                         b + 1 == wall.budgets.size() ? "" : ",");
     }
     out += std::format("]}}{}\n", i + 1 == w4_walls.size() ? "" : ",");
   }
@@ -1378,30 +1386,30 @@ class W4App final : public App {
 [[nodiscard]] auto table_report(const Options& options,
                                 const std::vector<Result>& results,
                                 const std::vector<Wall>& walls,
-                                const std::vector<W2Result> &w2_results,
-                                const std::vector<W2Wall> &w2_walls,
+                                const std::vector<W2Result>& w2_results,
+                                const std::vector<W2Wall>& w2_walls,
                                 const std::vector<W4Result>& w4_results,
                                 const std::vector<W4Wall>& w4_walls)
     -> std::string {
-  std::string out = std::format("TermForge {} performance evidence\n{}\n{}\n\n",
-                                TERMFORGE_BENCH_VERSION, __VERSION__, host_name());
+  std::string out =
+      std::format("TermForge {} performance evidence\n{}\n{}\n\n",
+                  TERMFORGE_BENCH_VERSION, __VERSION__, host_name());
   out += std::format("kernel tier: {} -> {}\n\n",
                      requested_tier_name(options.kernel_tier),
                      resolved_tier_name());
   out += std::format("{:<9} {:<30} {:>10} {:>10} {:>11}\n", "suite", "case",
                      "median ms", "p95 ms", "MiB/s");
   for (const auto& r : results) {
-    out += std::format("{:<9} {:<30} {:>10.4f} {:>10.4f} {:>11.2f}\n",
-                       r.suite, r.name, r.median_ms, r.p95_ms,
-                       r.throughput_mib_s);
+    out += std::format("{:<9} {:<30} {:>10.4f} {:>10.4f} {:>11.2f}\n", r.suite,
+                       r.name, r.median_ms, r.p95_ms, r.throughput_mib_s);
   }
   if (!walls.empty()) {
     out += "\nW3 walls\n";
     for (const auto& w : walls) {
-      out += std::format("  {:<10} dirty {:>3}% @ {:>4.1f} ms: pass {}, fail {}\n",
-                         w.content, w.dirty_percent, w.budget_ms,
-                         w.largest_passing,
-                         w.first_failing.value_or("not reached"));
+      out += std::format(
+          "  {:<10} dirty {:>3}% @ {:>4.1f} ms: pass {}, fail {}\n", w.content,
+          w.dirty_percent, w.budget_ms, w.largest_passing,
+          w.first_failing.value_or("not reached"));
     }
   }
   if (!w2_results.empty()) {
@@ -1410,7 +1418,7 @@ class W4App final : public App {
         "{:<9} {:>11} {:>9} {:>10} {:>9} {:>9} {:>11} {:>10} {:>10}\n", "path",
         "canvas", "dirty", "input ms", "app ms", "fw ms", "wire bytes",
         "MiB/s@30", "MiB/s@60");
-    for (const auto &r : w2_results) {
+    for (const auto& r : w2_results) {
       out += std::format(
           "{:<9} {:>4}x{:<6} {:>3}x{:<5} {:>10.4f} {:>9.4f} {:>9.4f} "
           "{:>11} {:>10.3f} {:>10.3f}\n",
@@ -1426,7 +1434,7 @@ class W4App final : public App {
       return value ? std::format("{}x{}", value->w, value->h)
                    : std::string{"none"};
     };
-    for (const auto &wall : w2_walls) {
+    for (const auto& wall : w2_walls) {
       out += std::format(
           "  {:<7} dirty {:>3}x{:<3} @ {:>2} Hz/{:>4.1f} ms: pass {}, "
           "fail {}\n",
@@ -1439,8 +1447,8 @@ class W4App final : public App {
     out += "\nW4 many-region steady state\n";
     out += std::format(
         "{:<11} {:>7} {:>7} {:>9} {:>9} {:>9} {:>9} {:>10} {:>12} {:>10}\n",
-        "mode", "regions", "cells", "app ms", "fw ms", "sink ms",
-        "frame ms", "median tx", "resident", "payload");
+        "mode", "regions", "cells", "app ms", "fw ms", "sink ms", "frame ms",
+        "median tx", "resident", "payload");
     for (const auto& r : w4_results) {
       out += std::format(
           "{:<11} {:>7} {:>3}x{:<3} {:>9.4f} {:>9.4f} {:>9.4f} {:>9.4f} "
@@ -1455,8 +1463,8 @@ class W4App final : public App {
   if (!w4_walls.empty()) {
     out += "\nW4 walls\n";
     for (const auto& wall : w4_walls) {
-      out += std::format("  {:<10} {:>2}x{:<2}: retransmit {}",
-                         wall.mode, wall.cell_w, wall.cell_h,
+      out += std::format("  {:<10} {:>2}x{:<2}: retransmit {}", wall.mode,
+                         wall.cell_w, wall.cell_h,
                          wall.first_retransmit_count
                              ? std::to_string(*wall.first_retransmit_count)
                              : "not reached");
@@ -1475,7 +1483,7 @@ class W4App final : public App {
   return out;
 }
 
-}  // namespace
+} // namespace
 
 int main(int argc, char** argv) {
   try {
@@ -1508,13 +1516,12 @@ int main(int argc, char** argv) {
     const auto walls = derive_walls(results);
     const auto w2_walls = derive_w2_walls(w2_results);
     const auto w4_walls = derive_w4_walls(w4_results);
-    const std::string report = options.format == Format::Json
-                                   ? json_report(options, results, walls,
-                                                 w2_results, w2_walls,
-                                                 w4_results, w4_walls)
-                                   : table_report(options, results, walls,
-                                                  w2_results, w2_walls,
-                                                  w4_results, w4_walls);
+    const std::string report =
+        options.format == Format::Json
+            ? json_report(options, results, walls, w2_results, w2_walls,
+                          w4_results, w4_walls)
+            : table_report(options, results, walls, w2_results, w2_walls,
+                           w4_results, w4_walls);
     if (options.output) {
       std::ofstream file{*options.output};
       if (!file) throw std::runtime_error{"cannot open output file"};

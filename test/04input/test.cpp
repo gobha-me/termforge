@@ -1,6 +1,6 @@
+#include "termforge/core/input.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <variant>
-#include "termforge/core/input.hpp"
 
 using termforge::Event;
 using termforge::Input;
@@ -20,7 +20,7 @@ auto first_key(std::deque<Event>& ev) -> KeyEvent {
   REQUIRE(k != nullptr);
   return *k;
 }
-}
+} // namespace
 
 TEST_CASE("Input: plain ASCII chars decode", "[input]") {
   Input in;
@@ -31,7 +31,7 @@ TEST_CASE("Input: plain ASCII chars decode", "[input]") {
 
 TEST_CASE("Input: multibyte UTF-8 decodes to a code point", "[input]") {
   Input in;
-  auto ev = in.decode("\xC3\xA9");  // é (U+00E9)
+  auto ev = in.decode("\xC3\xA9"); // é (U+00E9)
   REQUIRE(ev.size() == 1);
   REQUIRE(first_key(ev).ch == 0xE9);
 }
@@ -39,7 +39,7 @@ TEST_CASE("Input: multibyte UTF-8 decodes to a code point", "[input]") {
 TEST_CASE("Input: four-byte UTF-8 preserves high-bit continuation bytes",
           "[input][failure]") {
   Input in;
-  auto ev = in.decode("\xF4\x8F\xBF\xBF");  // U+10FFFF
+  auto ev = in.decode("\xF4\x8F\xBF\xBF"); // U+10FFFF
   REQUIRE(ev.size() == 1);
   REQUIRE(first_key(ev).ch == 0x10FFFF);
 }
@@ -70,17 +70,18 @@ TEST_CASE("Input: special keys (Enter, Backspace, Tab, Delete)", "[input]") {
 
 TEST_CASE("Input: Ctrl+letter sets the ctrl modifier", "[input]") {
   Input in;
-  auto ev = in.decode("\x03");  // Ctrl+C
+  auto ev = in.decode("\x03"); // Ctrl+C
   auto k = first_key(ev);
   REQUIRE(k.ctrl);
   REQUIRE(k.ch == 'c');
 }
 
-TEST_CASE("Input: malformed/truncated escape doesn't wedge the parser", "[input][failure]") {
+TEST_CASE("Input: malformed/truncated escape doesn't wedge the parser",
+          "[input][failure]") {
   Input in;
   // A lone ESC[ with no final byte must not crash or loop; it needs more data.
   auto ev = in.decode("\033[");
-  REQUIRE(ev.empty());  // incomplete -> nothing yet
+  REQUIRE(ev.empty()); // incomplete -> nothing yet
   // A bare ESC followed by an unknown sequence returns gracefully.
   auto ev2 = in.decode("\033");
   // should not crash; may yield nothing or an unknown
@@ -186,8 +187,8 @@ TEST_CASE("Input: a split terminator on a discarded APC is never Escape",
   CHECK(std::get<KeyEvent>(events.front()).ch == U'k');
 }
 
-
-TEST_CASE("Input: a lone ESC decodes as Escape (quit key)", "[input][failure]") {
+TEST_CASE("Input: a lone ESC decodes as Escape (quit key)",
+          "[input][failure]") {
   // Regression: ESC alone previously waited forever for a second byte that
   // never comes, so ESC-to-quit never fired. A trailing lone ESC must decode.
   Input in;
@@ -196,7 +197,8 @@ TEST_CASE("Input: a lone ESC decodes as Escape (quit key)", "[input][failure]") 
   REQUIRE(first_key(ev).key == Key::Escape);
 }
 
-TEST_CASE("Input: escape sequences still decode (not mistaken for lone ESC)", "[input]") {
+TEST_CASE("Input: escape sequences still decode (not mistaken for lone ESC)",
+          "[input]") {
   Input in;
   auto up = in.decode("\x1B[A");
   REQUIRE(first_key(up).key == Key::Up);
@@ -208,7 +210,7 @@ TEST_CASE("Input: escape sequences still decode (not mistaken for lone ESC)", "[
   Input in2;
   in2.feed("\x1B");
   in2.flush();
-  auto ev2 = in2.poll();  // lone ESC flushed as Escape
+  auto ev2 = in2.poll(); // lone ESC flushed as Escape
   REQUIRE(!ev2.empty());
 }
 
@@ -233,7 +235,7 @@ TEST_CASE("Input: SGR mouse press decodes", "[input][mouse]") {
   REQUIRE_FALSE(m->motion);
   REQUIRE(m->action() == MouseAction::Press);
   REQUIRE(m->button == 0);
-  REQUIRE(m->x == 9);   // 1-based → 0-based
+  REQUIRE(m->x == 9); // 1-based → 0-based
   REQUIRE(m->y == 4);
 }
 
@@ -292,10 +294,9 @@ TEST_CASE("Input: SGR mouse scroll down decodes", "[input][mouse]") {
 
 TEST_CASE("Input: press drag and release remain distinct", "[input][mouse]") {
   Input in;
-  const auto events = in.decode(
-      "\033[<0;5;3M"   // left press
-      "\033[<32;6;3M"  // left drag
-      "\033[<0;6;3m"); // left release
+  const auto events = in.decode("\033[<0;5;3M"   // left press
+                                "\033[<32;6;3M"  // left drag
+                                "\033[<0;6;3m"); // left release
   REQUIRE(events.size() == 3);
   CHECK(std::get<MouseEvent>(events[0]).action() == MouseAction::Press);
   CHECK(std::get<MouseEvent>(events[1]).action() == MouseAction::Drag);
@@ -335,7 +336,7 @@ TEST_CASE("Input: oversized CSI parameters do not overflow", "[input][mouse]") {
   REQUIRE(!ev.empty());
   auto* m = std::get_if<MouseEvent>(&ev.front());
   REQUIRE(m != nullptr);
-  REQUIRE(m->x >= 0);  // clamped garbage, but no UB and non-negative
+  REQUIRE(m->x >= 0); // clamped garbage, but no UB and non-negative
 }
 
 TEST_CASE("Input: invalid UTF-8 resynchronizes instead of swallowing keys",
@@ -343,16 +344,17 @@ TEST_CASE("Input: invalid UTF-8 resynchronizes instead of swallowing keys",
   // A stray lead byte whose "length" would consume a following real keypress
   // must not eat it. 0xC3 expects one continuation; 'A' is not one.
   Input in;
-  auto ev = in.decode("\xC3" "A");
+  auto ev = in.decode("\xC3"
+                      "A");
   REQUIRE(ev.size() == 2);
   const auto* bad = std::get_if<KeyEvent>(&ev[0]);
   REQUIRE(bad != nullptr);
   REQUIRE(bad->key == Key::Char);
-  REQUIRE(bad->ch == 0xFFFD);  // replacement char for the bad lead
+  REQUIRE(bad->ch == 0xFFFD); // replacement char for the bad lead
   const auto* a = std::get_if<KeyEvent>(&ev[1]);
   REQUIRE(a != nullptr);
   REQUIRE(a->key == Key::Char);
-  REQUIRE(a->ch == U'A');  // the following keypress survives
+  REQUIRE(a->ch == U'A'); // the following keypress survives
 }
 
 TEST_CASE("Input: a bad lead doesn't eat a following ESC sequence",
@@ -381,7 +383,7 @@ TEST_CASE("Input: invalid lead bytes are rejected, not passed as chars",
     REQUIRE(ev.size() == 1);
     const auto* k = std::get_if<KeyEvent>(&ev.front());
     REQUIRE(k != nullptr);
-    REQUIRE(k->ch == 0xFFFD);  // never a raw invalid byte
+    REQUIRE(k->ch == 0xFFFD); // never a raw invalid byte
   }
 }
 
@@ -389,15 +391,14 @@ TEST_CASE("Input: incomplete multibyte at end of stream waits then flushes",
           "[input][failure]") {
   // A genuine split glyph across two reads completes normally.
   Input in;
-  in.feed("\xC3");           // é lead, continuation not yet arrived
-  in.feed("\xA9");           // completes U+00E9
+  in.feed("\xC3"); // é lead, continuation not yet arrived
+  in.feed("\xA9"); // completes U+00E9
   auto ev = in.poll();
   REQUIRE(ev.size() == 1);
   REQUIRE(std::get_if<KeyEvent>(&ev.front())->ch == 0xE9);
 }
 
-TEST_CASE("Input: valid multibyte still decodes after hardening",
-          "[input]") {
+TEST_CASE("Input: valid multibyte still decodes after hardening", "[input]") {
   Input in;
   auto ev = in.decode("h\xC3\xA9llo \xE4\xB8\xAD \xF0\x9F\x8E\x89");
   std::u32string got;
@@ -414,7 +415,7 @@ TEST_CASE("Input: SS3 Home decodes as Home, not a spurious 'H'",
   // literal Char 'H', so pressing Home typed "H" into a field.
   Input in;
   auto ev = in.decode("\033OH");
-  REQUIRE(ev.size() == 1);  // exactly one event — no leaked 'H'
+  REQUIRE(ev.size() == 1); // exactly one event — no leaked 'H'
   REQUIRE(first_key(ev).key == Key::Home);
 }
 
@@ -448,11 +449,14 @@ TEST_CASE("Input: SS3 F1–F4 decode", "[input][ss3]") {
 
 TEST_CASE("Input: CSI-tilde F1–F12 decode", "[input][fkeys]") {
   Input in;
-  const struct { const char* seq; Key key; } cases[] = {
-    {"\033[11~", Key::F1},  {"\033[12~", Key::F2},  {"\033[13~", Key::F3},
-    {"\033[14~", Key::F4},  {"\033[15~", Key::F5},  {"\033[17~", Key::F6},
-    {"\033[18~", Key::F7},  {"\033[19~", Key::F8},  {"\033[20~", Key::F9},
-    {"\033[21~", Key::F10}, {"\033[23~", Key::F11}, {"\033[24~", Key::F12},
+  const struct {
+    const char* seq;
+    Key key;
+  } cases[] = {
+      {"\033[11~", Key::F1},  {"\033[12~", Key::F2},  {"\033[13~", Key::F3},
+      {"\033[14~", Key::F4},  {"\033[15~", Key::F5},  {"\033[17~", Key::F6},
+      {"\033[18~", Key::F7},  {"\033[19~", Key::F8},  {"\033[20~", Key::F9},
+      {"\033[21~", Key::F10}, {"\033[23~", Key::F11}, {"\033[24~", Key::F12},
   };
   for (const auto& c : cases) {
     auto ev = in.decode(c.seq);
@@ -587,9 +591,9 @@ TEST_CASE("Input: an ESC inside a paste is content, not an Escape key",
 TEST_CASE("Input: a paste terminator split across feeds still yields one event",
           "[input][paste]") {
   Input in;
-  in.feed("\033[200~hi\033[2");  // terminator begins…
-  REQUIRE(in.poll().empty());     // …but isn't complete yet — no event
-  in.feed("01~");                 // completes ESC[201~
+  in.feed("\033[200~hi\033[2"); // terminator begins…
+  REQUIRE(in.poll().empty());   // …but isn't complete yet — no event
+  in.feed("01~");               // completes ESC[201~
   auto ev = in.poll();
   REQUIRE(ev.size() == 1);
   auto* p = std::get_if<PasteEvent>(&ev.front());
@@ -597,7 +601,8 @@ TEST_CASE("Input: a paste terminator split across feeds still yields one event",
   REQUIRE(p->text == "hi");
 }
 
-TEST_CASE("Input: an empty paste yields an empty PasteEvent", "[input][paste]") {
+TEST_CASE("Input: an empty paste yields an empty PasteEvent",
+          "[input][paste]") {
   Input in;
   auto ev = in.decode("\033[200~\033[201~");
   REQUIRE(ev.size() == 1);
@@ -610,9 +615,8 @@ TEST_CASE("Input: a stray paste-end with no open paste is swallowed",
           "[input][paste]") {
   Input in;
   auto ev = in.decode("\033[201~");
-  REQUIRE(ev.empty());  // no spurious key, no crash
+  REQUIRE(ev.empty()); // no spurious key, no crash
 }
-
 
 // ── kitty keyboard protocol (CSI-u) — issue #60 ────────────────────────────
 //
@@ -624,16 +628,21 @@ TEST_CASE("Input: a stray paste-end with no open paste is swallowed",
 
 TEST_CASE("Input: CSI-u named keys decode", "[input][keyboard]") {
   Input in;
-  const struct { const char* seq; Key key; } cases[] = {
-    {"\033[9u", Key::Tab},   {"\033[13u", Key::Enter},
-    {"\033[27u", Key::Escape}, {"\033[127u", Key::Backspace},
+  const struct {
+    const char* seq;
+    Key key;
+  } cases[] = {
+      {"\033[9u", Key::Tab},
+      {"\033[13u", Key::Enter},
+      {"\033[27u", Key::Escape},
+      {"\033[127u", Key::Backspace},
   };
   for (const auto& c : cases) {
     auto ev = in.decode(c.seq);
     REQUIRE(ev.size() == 1);
     auto k = first_key(ev);
     REQUIRE(k.key == c.key);
-    REQUIRE(k.ch == 0);  // named keys carry no character
+    REQUIRE(k.ch == 0); // named keys carry no character
     REQUIRE(k.action == KeyAction::Press);
   }
 }
@@ -745,7 +754,8 @@ TEST_CASE("Input: associated text wins over the unshifted key code",
   REQUIRE(k.shift);
 }
 
-TEST_CASE("Input: an empty modifier field is no modifiers", "[input][keyboard]") {
+TEST_CASE("Input: an empty modifier field is no modifiers",
+          "[input][keyboard]") {
   Input in;
   auto ev = in.decode("\033[97;;97u");
   REQUIRE(ev.size() == 1);
@@ -776,11 +786,16 @@ TEST_CASE("Input: legacy-encoded keys carry the event type too",
   // sub-parameter of the modifiers. Before #60 the scan stopped at the ':'
   // and each of these decoded as *three* events.
   Input in;
-  const struct { const char* seq; Key key; KeyAction action; bool ctrl; } cases[] = {
-    {"\033[1;1:3A", Key::Up,     KeyAction::Release, false},
-    {"\033[1;5:2C", Key::Right,  KeyAction::Repeat,  true},
-    {"\033[3;1:3~", Key::Delete, KeyAction::Release, false},
-    {"\033[15;5:3~", Key::F5,    KeyAction::Release, true},
+  const struct {
+    const char* seq;
+    Key key;
+    KeyAction action;
+    bool ctrl;
+  } cases[] = {
+      {"\033[1;1:3A", Key::Up, KeyAction::Release, false},
+      {"\033[1;5:2C", Key::Right, KeyAction::Repeat, true},
+      {"\033[3;1:3~", Key::Delete, KeyAction::Release, false},
+      {"\033[15;5:3~", Key::F5, KeyAction::Release, true},
   };
   for (const auto& c : cases) {
     auto ev = in.decode(c.seq);
@@ -814,9 +829,9 @@ TEST_CASE("Input: bare Shift/Ctrl/Alt emit KeyEvents; locks stay silent",
   REQUIRE(first_key(rctrl).key == Key::RightCtrl);
   auto ralt = in.decode("\033[57449u");
   REQUIRE(first_key(ralt).key == Key::RightAlt);
-  REQUIRE(in.decode("\033[57444u").empty());      // LeftSuper — still Dropped
-  REQUIRE(in.decode("\033[57358u").empty());      // CapsLock
-  REQUIRE(in.decode("\033[57428u").empty());      // MediaPlay
+  REQUIRE(in.decode("\033[57444u").empty()); // LeftSuper — still Dropped
+  REQUIRE(in.decode("\033[57358u").empty()); // CapsLock
+  REQUIRE(in.decode("\033[57428u").empty()); // MediaPlay
 }
 
 TEST_CASE("Input: Shift-up arrives before W-up in a boost chord (#209)",
@@ -825,11 +840,11 @@ TEST_CASE("Input: Shift-up arrives before W-up in a boost chord (#209)",
   // must expose the Shift-up transition before W-up so sprint can clear while
   // W remains held. Sequences are kitty Enhanced CSI-u (no Legacy synthesis).
   Input in;
-  auto seq = in.decode(
-      "\033[57441;2u"      // LeftShift press (mod bit includes shift)
-      "\033[119;2u"        // w press with shift
-      "\033[57441;1:3u"    // LeftShift release
-      "\033[119;1:3u");    // w release
+  auto seq =
+      in.decode("\033[57441;2u"   // LeftShift press (mod bit includes shift)
+                "\033[119;2u"     // w press with shift
+                "\033[57441;1:3u" // LeftShift release
+                "\033[119;1:3u"); // w release
   REQUIRE(seq.size() == 4);
   REQUIRE(std::get<KeyEvent>(seq[0]).key == Key::LeftShift);
   REQUIRE(std::get<KeyEvent>(seq[0]).action == KeyAction::Press);
@@ -844,14 +859,14 @@ TEST_CASE("Input: Shift-up arrives before W-up in a boost chord (#209)",
   REQUIRE(std::get<KeyEvent>(seq[3]).action == KeyAction::Release);
 }
 
-TEST_CASE("Input: tapping Shift while W is held yields one modifier interval (#209)",
-          "[input][keyboard][modifier]") {
+TEST_CASE(
+    "Input: tapping Shift while W is held yields one modifier interval (#209)",
+    "[input][keyboard][modifier]") {
   Input in;
-  auto seq = in.decode(
-      "\033[119u"          // w press
-      "\033[57441;2u"      // LeftShift press
-      "\033[57441;1:3u"    // LeftShift release
-      "\033[119;1:3u");    // w release
+  auto seq = in.decode("\033[119u"       // w press
+                       "\033[57441;2u"   // LeftShift press
+                       "\033[57441;1:3u" // LeftShift release
+                       "\033[119;1:3u"); // w release
   REQUIRE(seq.size() == 4);
   int shift_downs = 0, shift_ups = 0;
   for (const auto& e : seq) {
@@ -901,7 +916,7 @@ TEST_CASE("Input: a CSI-u report split across feeds decodes once",
   // A 256-byte read can split anywhere, including inside a sub-parameter.
   Input in;
   in.feed("\033[97;2");
-  REQUIRE(in.poll().empty());  // no final byte yet
+  REQUIRE(in.poll().empty()); // no final byte yet
   in.feed(":3u");
   auto ev = in.poll();
   REQUIRE(ev.size() == 1);
@@ -911,13 +926,14 @@ TEST_CASE("Input: a CSI-u report split across feeds decodes once",
   REQUIRE(k.action == KeyAction::Release);
 }
 
-TEST_CASE("Input: a hostile CSI-u parameter run is bounded and yields one event",
-          "[input][keyboard][security]") {
+TEST_CASE(
+    "Input: a hostile CSI-u parameter run is bounded and yields one event",
+    "[input][keyboard][security]") {
   Input in;
   auto ev = in.decode("\033[1:2:3:4:5;6;7;8;9u");
-  REQUIRE(ev.size() <= 1);  // key code 1 is a control code: dropped
+  REQUIRE(ev.size() <= 1); // key code 1 is a control code: dropped
   auto big = in.decode("\033[99999999999999999999;2u");
-  REQUIRE(big.size() <= 1);  // clamped garbage, no UB
+  REQUIRE(big.size() <= 1); // clamped garbage, no UB
 }
 
 TEST_CASE("Input: an unencodable associated text falls back to the key code",
@@ -927,14 +943,14 @@ TEST_CASE("Input: an unencodable associated text falls back to the key code",
   // parameter straight off the wire, so a surrogate or an out-of-range value
   // must not reach an app that will try to encode it.
   Input in;
-  auto surrogate = in.decode("\033[97;1;55296u");  // U+D800, a lone surrogate
+  auto surrogate = in.decode("\033[97;1;55296u"); // U+D800, a lone surrogate
   REQUIRE(surrogate.size() == 1);
-  REQUIRE(first_key(surrogate).ch == U'a');  // the vetted key code instead
-  auto too_big = in.decode("\033[97;1;1114112u");  // one past U+10FFFF
+  REQUIRE(first_key(surrogate).ch == U'a');       // the vetted key code instead
+  auto too_big = in.decode("\033[97;1;1114112u"); // one past U+10FFFF
   REQUIRE(too_big.size() == 1);
   REQUIRE(first_key(too_big).ch == U'a');
   // A legitimate astral code point still survives the parameter cap.
-  auto emoji = in.decode("\033[97;1;128512u");  // U+1F600
+  auto emoji = in.decode("\033[97;1;128512u"); // U+1F600
   REQUIRE(first_key(emoji).ch == U'\U0001F600');
 }
 
@@ -966,15 +982,19 @@ TEST_CASE("Input: captured kitty CSI-u sequences decode as observed",
   REQUIRE(first_key(ctrl_m).ch == U'm');
   REQUIRE(first_key(ctrl_m).ctrl);
   // Named keys, press and release.
-  const struct { const char* seq; Key key; KeyAction action; } named[] = {
-    {"\033[9u", Key::Tab, KeyAction::Press},
-    {"\033[9;1:3u", Key::Tab, KeyAction::Release},
-    {"\033[13u", Key::Enter, KeyAction::Press},
-    {"\033[13;1:3u", Key::Enter, KeyAction::Release},
-    {"\033[27u", Key::Escape, KeyAction::Press},
-    {"\033[27;1:3u", Key::Escape, KeyAction::Release},
-    {"\033[127u", Key::Backspace, KeyAction::Press},
-    {"\033[127;1:3u", Key::Backspace, KeyAction::Release},
+  const struct {
+    const char* seq;
+    Key key;
+    KeyAction action;
+  } named[] = {
+      {"\033[9u", Key::Tab, KeyAction::Press},
+      {"\033[9;1:3u", Key::Tab, KeyAction::Release},
+      {"\033[13u", Key::Enter, KeyAction::Press},
+      {"\033[13;1:3u", Key::Enter, KeyAction::Release},
+      {"\033[27u", Key::Escape, KeyAction::Press},
+      {"\033[27;1:3u", Key::Escape, KeyAction::Release},
+      {"\033[127u", Key::Backspace, KeyAction::Press},
+      {"\033[127;1:3u", Key::Backspace, KeyAction::Release},
   };
   for (const auto& c : named) {
     auto ev = in.decode(c.seq);
@@ -991,19 +1011,23 @@ TEST_CASE("Input: captured legacy-encoded keys keep their encodings",
   // arrows, Home, Delete, Insert and the F-keys in their legacy forms, and
   // attaches the event type as a sub-parameter of the modifiers.
   Input in;
-  const struct { const char* seq; Key key; KeyAction action; } cases[] = {
-    {"\033[A", Key::Up, KeyAction::Press},
-    {"\033[1;1:3A", Key::Up, KeyAction::Release},
-    {"\033[H", Key::Home, KeyAction::Press},
-    {"\033[1;1:3H", Key::Home, KeyAction::Release},
-    {"\033[3~", Key::Delete, KeyAction::Press},
-    {"\033[3;1:3~", Key::Delete, KeyAction::Release},
-    {"\033[2~", Key::Unknown, KeyAction::Press},      // Insert: unnameable
-    {"\033[2;1:3~", Key::Unknown, KeyAction::Release},
-    {"\033[P", Key::F1, KeyAction::Press},
-    {"\033[1;1:3P", Key::F1, KeyAction::Release},
-    {"\033[15~", Key::F5, KeyAction::Press},
-    {"\033[15;1:3~", Key::F5, KeyAction::Release},
+  const struct {
+    const char* seq;
+    Key key;
+    KeyAction action;
+  } cases[] = {
+      {"\033[A", Key::Up, KeyAction::Press},
+      {"\033[1;1:3A", Key::Up, KeyAction::Release},
+      {"\033[H", Key::Home, KeyAction::Press},
+      {"\033[1;1:3H", Key::Home, KeyAction::Release},
+      {"\033[3~", Key::Delete, KeyAction::Press},
+      {"\033[3;1:3~", Key::Delete, KeyAction::Release},
+      {"\033[2~", Key::Unknown, KeyAction::Press}, // Insert: unnameable
+      {"\033[2;1:3~", Key::Unknown, KeyAction::Release},
+      {"\033[P", Key::F1, KeyAction::Press},
+      {"\033[1;1:3P", Key::F1, KeyAction::Release},
+      {"\033[15~", Key::F5, KeyAction::Press},
+      {"\033[15;1:3~", Key::F5, KeyAction::Release},
   };
   for (const auto& c : cases) {
     auto ev = in.decode(c.seq);
@@ -1066,10 +1090,10 @@ TEST_CASE("Input: captured Shift/Ctrl emit KeyEvents; locks stay silent",
   auto ctrl_rel = in.decode("\033[57442;1:3u");
   REQUIRE(first_key(ctrl_rel).key == Key::LeftCtrl);
   REQUIRE(first_key(ctrl_rel).action == KeyAction::Release);
-  for (const char* seq : {"\033[57360u",       // NUM_LOCK press
-                          "\033[57360;129:3u", // NUM_LOCK release
-                          "\033[57358;129u",   // CAPS_LOCK press
-                          "\033[57358;193:3u"}) {  // CAPS_LOCK release
+  for (const char* seq : {"\033[57360u",          // NUM_LOCK press
+                          "\033[57360;129:3u",    // NUM_LOCK release
+                          "\033[57358;129u",      // CAPS_LOCK press
+                          "\033[57358;193:3u"}) { // CAPS_LOCK release
     REQUIRE(in.decode(seq).empty());
   }
 }

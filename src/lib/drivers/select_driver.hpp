@@ -23,4 +23,4 @@ namespace termforge {
                                      BuiltinDriver choice)
     -> std::unique_ptr<TerminalDriver>;
 
-}  // namespace termforge
+} // namespace termforge

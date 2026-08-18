@@ -15,4 +15,4 @@ namespace termforge::detail {
 // Empty input returns empty string.
 auto base64_encode(std::span<const std::byte> data) -> std::string;
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

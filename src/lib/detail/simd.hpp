@@ -39,4 +39,4 @@ auto base64_blocks(std::span<const std::byte> input,
 auto luminance_chars(std::span<const std::byte> rgba,
                      std::span<char> output) noexcept -> void;
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

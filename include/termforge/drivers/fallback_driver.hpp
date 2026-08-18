@@ -73,4 +73,4 @@ class FallbackDriver final : public TerminalDriver {
   int m_cursor_y{0};
 };
 
-}  // namespace termforge
+} // namespace termforge

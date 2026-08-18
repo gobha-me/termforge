@@ -18,7 +18,7 @@ auto Select::set_options(std::vector<std::string> options) -> void {
   // Replacing the list closes the dropdown (#36): an open list must not
   // survive with a stale m_highlight over options that no longer exist.
   m_list.set_all(std::move(options));
-  close_dropdown();  // was the on_reset hook; plain call is equivalent (#56/6)
+  close_dropdown(); // was the on_reset hook; plain call is equivalent (#56/6)
   invalidate_line();
   mark_dirty();
 }
@@ -42,7 +42,7 @@ auto Select::add_option(std::string option) -> void {
 
 auto Select::clear() -> void {
   m_list.clear();
-  close_dropdown();  // see set_options (#56 item 6)
+  close_dropdown(); // see set_options (#56 item 6)
   invalidate_line();
   mark_dirty();
 }
@@ -71,8 +71,8 @@ auto Select::dropdown_rect() const -> Rect {
   // are unreachable and must not be keyboard-committable (#48 item 3). Since
   // #85 that clamp sizes the visible WINDOW -- the options past it scroll into
   // view via m_scroll rather than being lost.
-  const int h = detail::dropdown_visible_rows(m_list.count(), r.y + r.h,
-                                              m_screen_rows);
+  const int h =
+      detail::dropdown_visible_rows(m_list.count(), r.y + r.h, m_screen_rows);
   return {r.x, r.y + r.h, r.w, h};
 }
 
@@ -103,7 +103,7 @@ auto Select::close_dropdown() -> void {
   // (set_options, clear, set_selected, commit, focus loss), so the next open
   // never inherits a stale offset.
   m_scroll = 0;
-  m_paint.clear();  // no painted list to hit (#96)
+  m_paint.clear(); // no painted list to hit (#96)
   mark_dirty();
 }
 
@@ -124,7 +124,7 @@ auto Select::commit(int index) -> void {
   const bool changed = (index != m_list.selected());
   m_list.select(index);
   close_dropdown();
-  if (changed) invalidate_line();  // the box shows the newly committed value
+  if (changed) invalidate_line(); // the box shows the newly committed value
   mark_dirty();
   // No-change commits stay silent -- the no-op-silence rule RadioGroup::select
   // and Checkbox::set_checked already follow (#36 item 3). Re-committing the
@@ -134,7 +134,7 @@ auto Select::commit(int index) -> void {
 
 auto Select::draw(Screen& screen) -> void {
   const Rect r = rect();
-  m_screen_rows = screen.rows();  // dropdown_rect() clamps to this (#48/3)
+  m_screen_rows = screen.rows(); // dropdown_rect() clamps to this (#48/3)
   if (r.w <= 0 || r.h <= 0) {
     // Nothing to paint, including no open list -- drop any prior hit snapshot
     // so clicks cannot land on rows that are no longer on screen (#96).
@@ -206,8 +206,8 @@ auto Select::draw(Screen& screen) -> void {
   // untouched, and the only way to reach it with the highlight outside is a
   // resize -- which is precisely the case that needs the reveal. TableWidget
   // cannot do this because its wheel leaves the selection behind.
-  m_scroll = detail::dropdown_reveal(m_scroll, m_highlight, m_list.count(),
-                                     ddr.h);
+  m_scroll =
+      detail::dropdown_reveal(m_scroll, m_highlight, m_list.count(), ddr.h);
   detail::draw_dropdown_rows(
       screen, ddr, m_list.count(), /*highlight=*/m_highlight,
       /*scroll=*/m_scroll, /*label_pad=*/1, m_dropdown_fg, m_dropdown_bg,
@@ -235,12 +235,11 @@ auto Select::handle_mouse(const MouseEvent& m) -> bool {
   // set_geometry that has not been drawn must not resize the scroll window.
   // m_scroll is updated for the NEXT draw; m_paint.scroll stays until then so
   // a press before the redraw still resolves the pixels on screen.
-  const auto wheeled = detail::dropdown_wheel(m, dropdown_open(), *this,
-                                              m_scroll, m_highlight,
-                                              m_list.count(), dr.h);
+  const auto wheeled = detail::dropdown_wheel(
+      m, dropdown_open(), *this, m_scroll, m_highlight, m_list.count(), dr.h);
   if (wheeled == detail::WheelResult::Scrolled) mark_dirty();
   if (wheeled != detail::WheelResult::Declined) return true;
-  if (m.scroll_up || m.scroll_down) return false;  // wheel outside: decline
+  if (m.scroll_up || m.scroll_down) return false; // wheel outside: decline
 
   // Hover over the open list moves the highlight (MenuBar's behavior).
   if (!m.pressed) {
@@ -311,9 +310,15 @@ auto Select::on_event(const Event& ev) -> bool {
   const int visible = dropdown_rect().h;
   if (visible <= 0) {
     // No row fits below the box at all: only dismissal keys still work.
-    if (k->key == Key::Tab) { close_dropdown(); return false; }
-    if (k->key == Key::Escape) { close_dropdown(); return true; }
-    return true;  // still mini-modal: nothing else may leak through
+    if (k->key == Key::Tab) {
+      close_dropdown();
+      return false;
+    }
+    if (k->key == Key::Escape) {
+      close_dropdown();
+      return true;
+    }
+    return true; // still mini-modal: nothing else may leak through
   }
   if (k->key == Key::Tab) {
     // Close and DECLINE, so FocusRing::handle_key cycles on the same press.
@@ -322,7 +327,7 @@ auto Select::on_event(const Event& ev) -> bool {
     return false;
   }
   if (k->key == Key::Escape) {
-    close_dropdown();  // no commit
+    close_dropdown(); // no commit
     return true;
   }
   if (k->key == Key::Enter) {
@@ -333,8 +338,8 @@ auto Select::on_event(const Event& ev) -> bool {
   // is dragged after them by reveal() below (#85).
   const int last = std::max(0, m_list.count() - 1);
   const auto reveal = [this, visible] {
-    m_scroll = detail::dropdown_reveal(m_scroll, m_highlight, m_list.count(),
-                                       visible);
+    m_scroll =
+        detail::dropdown_reveal(m_scroll, m_highlight, m_list.count(), visible);
     mark_dirty();
   };
   if (k->key == Key::Up) {
@@ -363,4 +368,4 @@ auto Select::on_event(const Event& ev) -> bool {
   return true;
 }
 
-}  // namespace termforge
+} // namespace termforge

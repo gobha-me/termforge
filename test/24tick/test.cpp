@@ -31,16 +31,16 @@ namespace {
 // landed suite to add an unrelated feature.
 class TickProbe : public App {
  public:
-  std::vector<std::string> pending;         // bytes the fake fd hands out
+  std::vector<std::string> pending; // bytes the fake fd hands out
   std::chrono::milliseconds render_cost{0ms};
 
   // Observations.
-  std::vector<Seconds> dts;        // every dt delivered, in order
+  std::vector<Seconds> dts; // every dt delivered, in order
   std::vector<int> ticks_per_frame;
-  std::string order;               // 'T' per tick, 'R' per render
+  std::string order; // 'T' per tick, 'R' per render
   std::vector<Event> seen;
-  std::size_t seen_at_tick{0};     // events dispatched by the time the tick ran
-  int quit_after_ticks{0};         // >0: call quit() from the Nth tick
+  std::size_t seen_at_tick{0}; // events dispatched by the time the tick ran
+  int quit_after_ticks{0};     // >0: call quit() from the Nth tick
 
   auto on_event(const Event& ev) -> void override { seen.push_back(ev); }
 
@@ -49,7 +49,8 @@ class TickProbe : public App {
     if (!ticks_per_frame.empty()) ++ticks_per_frame.back();
     order.push_back('T');
     seen_at_tick = seen.size();
-    if (quit_after_ticks > 0 && static_cast<int>(dts.size()) >= quit_after_ticks)
+    if (quit_after_ticks > 0 &&
+        static_cast<int>(dts.size()) >= quit_after_ticks)
       quit();
   }
 
@@ -63,12 +64,14 @@ class TickProbe : public App {
     test_run_frames(1, 20, 5, &m_sink);
   }
   auto run_frames(int n) -> void {
-    for (int i = 0; i < n; ++i) step();
+    for (int i = 0; i < n; ++i)
+      step();
   }
 
   // A stall: the process was frozen BETWEEN frames (SIGSTOP, a debugger
   // breakpoint, a suspended laptop). Nothing in the loop ran; the clock simply
-  // moved. Distinct from render_cost, where the loop was working the whole time.
+  // moved. Distinct from render_cost, where the loop was working the whole
+  // time.
   auto stall(std::chrono::milliseconds d) -> void { m_now += d; }
 
   [[nodiscard]] auto now() const -> std::chrono::steady_clock::time_point {
@@ -88,7 +91,8 @@ class TickProbe : public App {
 
   auto wait_readable(int timeout_ms) -> bool override {
     if (!pending.empty()) return true;
-    m_now += std::chrono::milliseconds(timeout_ms);  // nothing came; budget spent
+    m_now +=
+        std::chrono::milliseconds(timeout_ms); // nothing came; budget spent
     return false;
   }
 
@@ -97,9 +101,10 @@ class TickProbe : public App {
     const std::string chunk = pending.front();
     pending.erase(pending.begin());
     const int n = static_cast<int>(chunk.size() < static_cast<std::size_t>(max)
-                                      ? chunk.size()
-                                      : static_cast<std::size_t>(max));
-    for (int i = 0; i < n; ++i) out[i] = chunk[i];
+                                       ? chunk.size()
+                                       : static_cast<std::size_t>(max));
+    for (int i = 0; i < n; ++i)
+      out[i] = chunk[i];
     return n;
   }
 
@@ -116,7 +121,8 @@ class LegacyProbe : public App {
   int renders{0};
   auto on_render(Screen&) -> void override { ++renders; }
   auto run_frames(int n) -> void {
-    for (int i = 0; i < n; ++i) test_run_frames(1, 20, 5, &m_sink);
+    for (int i = 0; i < n; ++i)
+      test_run_frames(1, 20, 5, &m_sink);
   }
 
  protected:
@@ -138,7 +144,7 @@ struct StubWidget : Widget {
   auto draw(Screen&) -> void override {}
 };
 
-}  // namespace
+} // namespace
 
 // ── cadence ─────────────────────────────────────────────────────────────────
 
@@ -148,7 +154,8 @@ TEST_CASE("on_tick runs exactly once per frame", "[tick]") {
   app.run_frames(10);
 
   REQUIRE(app.dts.size() == 10);
-  for (auto n : app.ticks_per_frame) REQUIRE(n == 1);
+  for (auto n : app.ticks_per_frame)
+    REQUIRE(n == 1);
 }
 
 TEST_CASE("the tick precedes the render, every frame", "[tick]") {
@@ -160,7 +167,8 @@ TEST_CASE("the tick precedes the render, every frame", "[tick]") {
   REQUIRE(app.order == "TRTRTRTRTR");
 }
 
-TEST_CASE("the first frame reports a zero delta, not a fabricated one", "[tick]") {
+TEST_CASE("the first frame reports a zero delta, not a fabricated one",
+          "[tick]") {
   TickProbe app;
   app.set_frame_ms(16);
   app.run_frames(1);
@@ -214,10 +222,11 @@ TEST_CASE("the tick acts on this frame's input", "[tick]") {
 
   REQUIRE(app.seen.size() == 1);
   REQUIRE(std::get<KeyEvent>(app.seen[0]).ch == 'a');
-  REQUIRE(app.seen_at_tick == 1);  // the event was already delivered
+  REQUIRE(app.seen_at_tick == 1); // the event was already delivered
 }
 
-TEST_CASE("a resize reaches the app before the tick that must respect it", "[tick]") {
+TEST_CASE("a resize reaches the app before the tick that must respect it",
+          "[tick]") {
   // A tick may bound motion by the screen size; it must never advance against
   // bounds the resize has already invalidated.
   TickProbe app;
@@ -251,7 +260,7 @@ TEST_CASE("a stall is clamped, not delivered whole", "[tick][clamp]") {
   TickProbe app;
   app.set_frame_ms(16);
   app.run_frames(1);
-  app.stall(5s);  // SIGSTOP / breakpoint / laptop lid
+  app.stall(5s); // SIGSTOP / breakpoint / laptop lid
   app.run_frames(1);
 
   REQUIRE(app.max_tick_dt() == Seconds{250ms});
@@ -293,7 +302,7 @@ TEST_CASE("a backwards clock cannot reach the app", "[tick][clamp]") {
   TickProbe app;
   app.set_frame_ms(16);
   app.run_frames(1);
-  app.stall(-1s);  // further back than the frame that follows moves forward
+  app.stall(-1s); // further back than the frame that follows moves forward
   app.run_frames(1);
   REQUIRE(app.dts.back() == Seconds::zero());
 }
@@ -305,7 +314,8 @@ TEST_CASE("the default is a variable timestep", "[tick][fixed]") {
   REQUIRE(app.tick_hz() == 0);
   app.set_frame_ms(16);
   app.run_frames(3);
-  for (auto n : app.ticks_per_frame) REQUIRE(n == 1);
+  for (auto n : app.ticks_per_frame)
+    REQUIRE(n == 1);
 }
 
 TEST_CASE("N ticks for a frame N times the tick period", "[tick][fixed]") {
@@ -313,30 +323,33 @@ TEST_CASE("N ticks for a frame N times the tick period", "[tick][fixed]") {
   // tick count is an exact claim rather than a tolerance — 1/60 lands either
   // side of the accumulator boundary and would flake between 4 and 5.
   TickProbe app;
-  app.set_max_tick_dt(1s);  // above the 500ms frame, so nothing is clamped
-  app.set_tick_hz(8);       // period 0.125s
+  app.set_max_tick_dt(1s); // above the 500ms frame, so nothing is clamped
+  app.set_tick_hz(8);      // period 0.125s
   app.set_frame_ms(500);
   app.run_frames(4);
 
-  REQUIRE(app.ticks_per_frame[0] == 0);  // first frame's delta is zero
+  REQUIRE(app.ticks_per_frame[0] == 0); // first frame's delta is zero
   for (std::size_t i = 1; i < app.ticks_per_frame.size(); ++i)
     REQUIRE(app.ticks_per_frame[i] == 4);
-  for (auto dt : app.dts) REQUIRE(dt == Seconds{125ms});
+  for (auto dt : app.dts)
+    REQUIRE(dt == Seconds{125ms});
 }
 
 TEST_CASE("a fixed-timestep dt never varies", "[tick][fixed]") {
   TickProbe app;
-  app.set_tick_hz(16);  // period 0.0625s, binary-exact
+  app.set_tick_hz(16); // period 0.0625s, binary-exact
   app.set_frame_ms(100);
   app.run_frames(6);
   REQUIRE(!app.dts.empty());
-  for (auto dt : app.dts) REQUIRE(dt == Seconds{62500us});
+  for (auto dt : app.dts)
+    REQUIRE(dt == Seconds{62500us});
 }
 
-TEST_CASE("a fast frame delivers no ticks and carries the remainder", "[tick][fixed]") {
+TEST_CASE("a fast frame delivers no ticks and carries the remainder",
+          "[tick][fixed]") {
   TickProbe app;
   app.set_tick_hz(8);   // 125ms period
-  app.set_frame_ms(50);  // shorter than the period
+  app.set_frame_ms(50); // shorter than the period
   app.run_frames(10);
 
   bool some_frame_was_silent = false;
@@ -346,7 +359,8 @@ TEST_CASE("a fast frame delivers no ticks and carries the remainder", "[tick][fi
 
   // Nothing is lost: simulated time tracks the wall clock to within one period.
   REQUIRE(app.total_dt().count() <= app.elapsed().count());
-  REQUIRE(app.total_dt().count() > (app.elapsed() - Seconds{125ms} * 2).count());
+  REQUIRE(app.total_dt().count() >
+          (app.elapsed() - Seconds{125ms} * 2).count());
 }
 
 TEST_CASE("a non-exact tick rate still tracks wall-clock", "[tick][fixed]") {
@@ -373,21 +387,21 @@ TEST_CASE("the clamp bounds fixed-mode catch-up", "[tick][fixed][clamp]") {
   app.stall(5s);
   app.run_frames(1);
 
-  REQUIRE(app.ticks_per_frame.back() == 2);  // 250ms clamp / 125ms period
+  REQUIRE(app.ticks_per_frame.back() == 2); // 250ms clamp / 125ms period
 }
 
 TEST_CASE("changing the tick rate clears the accumulator", "[tick][fixed]") {
   // A remainder denominated in the old period would dump a burst of ticks on
   // the next frame under the new one.
   TickProbe app;
-  app.set_tick_hz(8);    // 125ms
+  app.set_tick_hz(8); // 125ms
   app.set_frame_ms(100);
-  app.run_frames(2);     // banks 100ms of remainder, no tick yet
+  app.run_frames(2); // banks 100ms of remainder, no tick yet
   REQUIRE(app.dts.empty());
 
-  app.set_tick_hz(16);   // 62.5ms — the stale 100ms would have fired one tick
+  app.set_tick_hz(16); // 62.5ms — the stale 100ms would have fired one tick
   app.run_frames(1);
-  REQUIRE(app.dts.size() == 1);  // from this frame's 100ms only, not the carry
+  REQUIRE(app.dts.size() == 1); // from this frame's 100ms only, not the carry
 }
 
 TEST_CASE("set_tick_hz(0) restores the variable timestep", "[tick][fixed]") {
@@ -399,7 +413,8 @@ TEST_CASE("set_tick_hz(0) restores the variable timestep", "[tick][fixed]") {
   REQUIRE(app.tick_hz() == 0);
 
   app.run_frames(3);
-  for (auto n : app.ticks_per_frame) REQUIRE(n == 1);
+  for (auto n : app.ticks_per_frame)
+    REQUIRE(n == 1);
   REQUIRE(app.dts.back() == Seconds{16ms});
 }
 
@@ -415,7 +430,7 @@ TEST_CASE("quit() from inside a tick stops the catch-up", "[tick][fixed]") {
   TickProbe app;
   app.set_max_tick_dt(1s);
   app.set_tick_hz(8);
-  app.set_frame_ms(500);   // 4 ticks per frame
+  app.set_frame_ms(500); // 4 ticks per frame
   app.quit_after_ticks = 1;
   app.run_frames(2);
 
@@ -424,7 +439,8 @@ TEST_CASE("quit() from inside a tick stops the catch-up", "[tick][fixed]") {
 
 // ── source compatibility ────────────────────────────────────────────────────
 
-TEST_CASE("an App that never heard of on_tick still builds and runs", "[tick]") {
+TEST_CASE("an App that never heard of on_tick still builds and runs",
+          "[tick]") {
   LegacyProbe app;
   app.set_frame_ms(16);
   app.run_frames(3);

@@ -83,4 +83,4 @@ enum class SanitizeMode {
                                    SanitizeMode mode = SanitizeMode::Strip)
     -> int;
 
-}  // namespace termforge::text
+} // namespace termforge::text

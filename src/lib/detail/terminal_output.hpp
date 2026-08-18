@@ -55,4 +55,4 @@ inline auto append_sgr_rgb(std::string& out, int channel, Rgb color) -> void {
   out += 'm';
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

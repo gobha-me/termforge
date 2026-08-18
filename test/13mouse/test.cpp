@@ -9,13 +9,13 @@
 #include <variant>
 #include <vector>
 
+#include "support/events.hpp"
 #include "termforge/core/app.hpp"
 #include "termforge/core/input.hpp"
 #include "termforge/widgets/button.hpp"
 #include "termforge/widgets/menu_bar.hpp"
 #include "termforge/widgets/table_widget.hpp"
 #include "termforge/widgets/text_input.hpp"
-#include "support/events.hpp"
 
 using termforge::App;
 using namespace tfsupport;
@@ -32,26 +32,24 @@ using termforge::Widget;
 
 namespace {
 
-
 // Layout reminder (layout_menus): title width = strlen + 2, 1-col gap.
 // "File" at x=0 w=6, "Edit" at x=7 w=6.
 auto make_menu(bool& fired) -> MenuBar {
   MenuBar mb;
   mb.set_geometry({0, 0, 40, 1});
-  mb.add_menu({"File",
-               {{"New", [&fired] { fired = true; }}, {"Open", {}}}});
+  mb.add_menu({"File", {{"New", [&fired] { fired = true; }}, {"Open", {}}}});
   mb.add_menu({"Edit", {{"Cut", {}}, {"Copy", {}}, {"Paste", {}}}});
   return mb;
 }
 
-}  // namespace
+} // namespace
 
 // ── MenuBar mouse ───────────────────────────────────────────────────────────
 
 TEST_CASE("MenuBar: click on title opens its dropdown", "[mouse][menu]") {
   bool fired = false;
   auto mb = make_menu(fired);
-  Event ev = press(1, 0);  // inside "File" span [0,6)
+  Event ev = press(1, 0); // inside "File" span [0,6)
   REQUIRE(mb.on_event(ev));
   REQUIRE(mb.dropdown_open());
   REQUIRE(mb.active_menu() == 0);
@@ -72,7 +70,7 @@ TEST_CASE("MenuBar: click on another title switches menus", "[mouse][menu]") {
   auto mb = make_menu(fired);
   Event file = press(1, 0);
   mb.on_event(file);
-  Event edit = press(8, 0);  // inside "Edit" span [7,13)
+  Event edit = press(8, 0); // inside "Edit" span [7,13)
   REQUIRE(mb.on_event(edit));
   REQUIRE(mb.dropdown_open());
   REQUIRE(mb.active_menu() == 1);
@@ -85,8 +83,8 @@ TEST_CASE("MenuBar: click on dropdown item fires action once and closes",
   Screen s{40, 5};
   Event open = press(1, 0);
   mb.on_event(open);
-  mb.draw(s);  // establish the visible dropdown hit target (#96)
-  Event item = press(2, 1);  // "New" — first dropdown row
+  mb.draw(s);               // establish the visible dropdown hit target (#96)
+  Event item = press(2, 1); // "New" — first dropdown row
   REQUIRE(mb.on_event(item));
   REQUIRE(fired);
   REQUIRE_FALSE(mb.dropdown_open());
@@ -97,13 +95,13 @@ TEST_CASE("MenuBar: click on second dropdown row selects second item",
   MenuBar mb;
   mb.set_geometry({0, 0, 40, 1});
   int which = -1;
-  mb.add_menu({"File", {{"New", [&] { which = 0; }},
-                        {"Open", [&] { which = 1; }}}});
+  mb.add_menu(
+      {"File", {{"New", [&] { which = 0; }}, {"Open", [&] { which = 1; }}}});
   Screen s{40, 5};
   Event open = press(1, 0);
   mb.on_event(open);
   mb.draw(s);
-  Event item = press(2, 2);  // row 2 = "Open"
+  Event item = press(2, 2); // row 2 = "Open"
   mb.on_event(item);
   REQUIRE(which == 1);
 }
@@ -114,7 +112,7 @@ TEST_CASE("MenuBar: click on bar background closes dropdown", "[mouse][menu]") {
   Event open = press(1, 0);
   mb.on_event(open);
   Event bg = press(30, 0);  // bar row, right of all titles
-  REQUIRE(mb.on_event(bg));  // consumed (it's our bar)
+  REQUIRE(mb.on_event(bg)); // consumed (it's our bar)
   REQUIRE_FALSE(mb.dropdown_open());
 }
 
@@ -138,21 +136,21 @@ TEST_CASE("MenuBar: hit_test covers open dropdown only while open",
   mb.draw(s);
   REQUIRE(mb.hit_test(2, 1));
   REQUIRE(mb.hit_test(7, 2));
-  REQUIRE_FALSE(mb.hit_test(8, 1));   // past dropdown width
-  REQUIRE_FALSE(mb.hit_test(2, 3));   // below last item
+  REQUIRE_FALSE(mb.hit_test(8, 1)); // past dropdown width
+  REQUIRE_FALSE(mb.hit_test(2, 3)); // below last item
 }
 
 TEST_CASE("MenuBar: hover moves dropdown selection", "[mouse][menu]") {
   MenuBar mb;
   mb.set_geometry({0, 0, 40, 1});
   int which = -1;
-  mb.add_menu({"File", {{"New", [&] { which = 0; }},
-                        {"Open", [&] { which = 1; }}}});
+  mb.add_menu(
+      {"File", {{"New", [&] { which = 0; }}, {"Open", [&] { which = 1; }}}});
   Screen s{40, 5};
   Event open = press(1, 0);
   mb.on_event(open);
   mb.draw(s);
-  Event hover = motion(2, 2);  // over "Open"
+  Event hover = motion(2, 2); // over "Open"
   REQUIRE(mb.on_event(hover));
   // Enter now activates the hovered item.
   mb.on_event(key(Key::Enter));
@@ -168,8 +166,8 @@ TEST_CASE("MenuBar: wheel over an open dropdown does not drag the selection",
   MenuBar mb;
   mb.set_geometry({0, 0, 40, 1});
   int which = -1;
-  mb.add_menu({"File", {{"New", [&] { which = 0; }},
-                        {"Open", [&] { which = 1; }}}});
+  mb.add_menu(
+      {"File", {{"New", [&] { which = 0; }}, {"Open", [&] { which = 1; }}}});
   Screen s{40, 5};
   Event open = press(1, 0);
   mb.on_event(open);
@@ -178,15 +176,16 @@ TEST_CASE("MenuBar: wheel over an open dropdown does not drag the selection",
 
   // The painted window holds the whole 2-item menu, so there is nowhere to
   // scroll: the wheel is absorbed without moving the selection (#85/#96).
-  Event tick = wheel(2, 2);  // over "Open": would highlight row 1 ungated
-  REQUIRE(mb.on_event(tick));  // consumed while open
+  Event tick = wheel(2, 2);   // over "Open": would highlight row 1 ungated
+  REQUIRE(mb.on_event(tick)); // consumed while open
 
   mb.on_event(key(Key::Enter));
-  REQUIRE(which == 0);  // selection stayed on "New"
+  REQUIRE(which == 0); // selection stayed on "New"
 }
 
 TEST_CASE("MenuBar: a scrolling wheel carries the selection, it does not pick "
-          "the pointer's row (#85, #38)", "[mouse][menu][failure]") {
+          "the pointer's row (#85, #38)",
+          "[mouse][menu][failure]") {
   // #38's guarantee restated for a wheel that now does something. The bug was
   // the wheel falling into the hover branch and setting m_selected from the row
   // under the POINTER; moving the selection because the WINDOW moved under it
@@ -205,8 +204,8 @@ TEST_CASE("MenuBar: a scrolling wheel carries the selection, it does not pick "
     m.items.push_back({"item" + std::to_string(i), [&, i] { which = i; }});
   mb.add_menu(std::move(m));
 
-  mb.on_event(press(1, 0));  // open
-  mb.draw(s);                // 4 rows fit (y=1..4) of 10
+  mb.on_event(press(1, 0)); // open
+  mb.draw(s);               // 4 rows fit (y=1..4) of 10
   REQUIRE(mb.dropdown_open());
 
   // One tick down: window [1,5), selection carried 0 -> 1. The pointer sits on
@@ -214,7 +213,7 @@ TEST_CASE("MenuBar: a scrolling wheel carries the selection, it does not pick "
   REQUIRE(mb.on_event(wheel(2, 4)));
   mb.draw(s);
   mb.on_event(key(Key::Enter));
-  REQUIRE(which == 1);  // carried, not picked
+  REQUIRE(which == 1); // carried, not picked
 }
 
 TEST_CASE("MenuBar: a two-row bar anchors its dropdown BELOW itself (#85)",
@@ -230,12 +229,12 @@ TEST_CASE("MenuBar: a two-row bar anchors its dropdown BELOW itself (#85)",
   // test in the tree uses h == 1, where the two spellings are identical, so
   // without this case the fix would ship entirely unproven.
   MenuBar mb;
-  mb.set_geometry({0, 0, 40, 2});  // TWO rows
+  mb.set_geometry({0, 0, 40, 2}); // TWO rows
   int which = -1;
-  mb.add_menu({"File", {{"New", [&] { which = 0; }},
-                        {"Open", [&] { which = 1; }}}});
+  mb.add_menu(
+      {"File", {{"New", [&] { which = 0; }}, {"Open", [&] { which = 1; }}}});
   Screen s{40, 5};
-  mb.on_event(press(1, 0));  // open
+  mb.on_event(press(1, 0)); // open
   mb.draw(s);
   REQUIRE(mb.dropdown_open());
 
@@ -243,10 +242,10 @@ TEST_CASE("MenuBar: a two-row bar anchors its dropdown BELOW itself (#85)",
   // reachable. Under the old anchor the first row sat at y=1, inside rect().
   REQUIRE(mb.hit_test(2, 2));
   REQUIRE(mb.hit_test(2, 3));
-  REQUIRE_FALSE(mb.hit_test(2, 4));   // and no further
+  REQUIRE_FALSE(mb.hit_test(2, 4)); // and no further
 
-  REQUIRE(mb.on_event(press(2, 2)));  // first dropdown row
-  REQUIRE(which == 0);                // fired, NOT swallowed as a bar click
+  REQUIRE(mb.on_event(press(2, 2))); // first dropdown row
+  REQUIRE(which == 0);               // fired, NOT swallowed as a bar click
   REQUIRE_FALSE(mb.dropdown_open());
 }
 
@@ -258,13 +257,13 @@ TEST_CASE("MenuBar: a non-left press on the CLOSED bar is declined (#48)",
   // an app-level right-click handler could never fire over the bar row.
   bool fired = false;
   auto mb = make_menu(fired);
-  REQUIRE_FALSE(mb.on_event(press(1, 0, 2)));  // right
+  REQUIRE_FALSE(mb.on_event(press(1, 0, 2))); // right
   REQUIRE_FALSE(mb.dropdown_open());
 
   // While open, the same press is still consumed (leak containment).
   mb.on_event(press(1, 0));
   REQUIRE(mb.dropdown_open());
-  REQUIRE(mb.on_event(press(1, 0, 2)));  // right, inside the open area
+  REQUIRE(mb.on_event(press(1, 0, 2))); // right, inside the open area
 }
 
 TEST_CASE("MenuBar: click on title with no items does not open",
@@ -300,7 +299,8 @@ TEST_CASE("TextInput: click past end clamps to text size", "[mouse][input]") {
   REQUIRE(ti.cursor_pos() == 3);
 }
 
-TEST_CASE("TextInput: a shrinking set_text leaves no stale scroll for a queued click (#46)",
+TEST_CASE("TextInput: a shrinking set_text leaves no stale scroll for a queued "
+          "click (#46)",
           "[mouse][input][failure]") {
   // Focused 10-col field scrolled to the tail of 20 chars; a callback in the
   // same event batch calls set_text("abc"), then a queued click dispatches
@@ -312,9 +312,9 @@ TEST_CASE("TextInput: a shrinking set_text leaves no stale scroll for a queued c
   ti.set_geometry({0, 0, 10, 1});
   ti.set_focused(true);
   ti.set_text("0123456789abcdefghij");
-  ti.draw(s);  // scrolls the window to the tail
+  ti.draw(s); // scrolls the window to the tail
 
-  ti.set_text("abc");  // shrink with no draw in between
+  ti.set_text("abc"); // shrink with no draw in between
   Event ev = press(2, 0);
   REQUIRE_NOTHROW(ti.on_event(ev));
   REQUIRE(ti.cursor_pos() <= 3);
@@ -327,15 +327,16 @@ TEST_CASE("TextInput: click maps display column to code-point boundary",
   ti.set_geometry({0, 0, 10, 1});
   // "héllo": each glyph is one display column — h@0 é@1 l@2 l@3 o@4 — but é is
   // two bytes, so column and byte offset diverge. The cursor must land on the
-  // grapheme boundary under the clicked column, not at the byte with that index.
+  // grapheme boundary under the clicked column, not at the byte with that
+  // index.
   ti.set_text("h\xC3\xA9llo");
   SECTION("click on é (column 1) → é's byte offset") {
     ti.on_event(press(1, 0));
-    REQUIRE(ti.cursor_pos() == 1);  // byte offset of é
+    REQUIRE(ti.cursor_pos() == 1); // byte offset of é
   }
   SECTION("click on the first l (column 2) → past é") {
     ti.on_event(press(2, 0));
-    REQUIRE(ti.cursor_pos() == 3);  // h(1 byte) + é(2 bytes)
+    REQUIRE(ti.cursor_pos() == 3); // h(1 byte) + é(2 bytes)
   }
 }
 
@@ -363,13 +364,14 @@ namespace {
 
 auto make_table() -> TableWidget {
   TableWidget t;
-  t.set_geometry({0, 0, 20, 4});  // header + 3 visible rows
+  t.set_geometry({0, 0, 20, 4}); // header + 3 visible rows
   t.set_columns({Column{.header = "Name"}});
-  for (int i = 0; i < 6; ++i) t.add_row({"row" + std::to_string(i)});
+  for (int i = 0; i < 6; ++i)
+    t.add_row({"row" + std::to_string(i)});
   return t;
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("TableWidget: click selects the row under the cursor",
           "[mouse][table]") {
@@ -380,7 +382,7 @@ TEST_CASE("TableWidget: click selects the row under the cursor",
     sel = idx;
     cells = row;
   });
-  Event ev = press(2, 2);  // second data row
+  Event ev = press(2, 2); // second data row
   REQUIRE(t.on_event(ev));
   REQUIRE(t.selected() == 1);
   REQUIRE(sel == 1);
@@ -390,7 +392,7 @@ TEST_CASE("TableWidget: click selects the row under the cursor",
 TEST_CASE("TableWidget: click respects scroll offset", "[mouse][table]") {
   auto t = make_table();
   t.scroll(2);
-  Event ev = press(2, 1);  // first visible row
+  Event ev = press(2, 1); // first visible row
   t.on_event(ev);
   REQUIRE(t.selected() == 2);
 }
@@ -406,10 +408,10 @@ TEST_CASE("TableWidget: header click is consumed but selects nothing",
 TEST_CASE("TableWidget: click below last row is consumed, no selection",
           "[mouse][table]") {
   TableWidget t;
-  t.set_geometry({0, 0, 20, 4});  // header + 3 visible rows
+  t.set_geometry({0, 0, 20, 4}); // header + 3 visible rows
   t.set_columns({Column{.header = "Name"}});
   t.add_row({"only"});
-  Event ev = press(2, 3);  // visible row slot with no data behind it
+  Event ev = press(2, 3); // visible row slot with no data behind it
   REQUIRE(t.on_event(ev));
   REQUIRE(t.selected() == -1);
 }
@@ -430,8 +432,8 @@ namespace {
 class RouteProbe final : public App {
  public:
   auto on_render(Screen&) -> void override {}
-  auto route(const MouseEvent& ev,
-             std::initializer_list<Widget*> widgets) -> bool {
+  auto route(const MouseEvent& ev, std::initializer_list<Widget*> widgets)
+      -> bool {
     return route_mouse(ev, widgets);
   }
   // A second wrapper, not a widened first one: widening route() would leave
@@ -445,7 +447,7 @@ class RouteProbe final : public App {
   }
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("route_mouse: open dropdown wins over the widget underneath",
           "[mouse][route]") {
@@ -462,12 +464,12 @@ TEST_CASE("route_mouse: open dropdown wins over the widget underneath",
   bool button_fired = false;
   Button under;
   under.set_label("[ OK ]");
-  under.set_geometry({0, 1, 10, 1});  // sits exactly under dropdown row 1
+  under.set_geometry({0, 1, 10, 1}); // sits exactly under dropdown row 1
   under.on_activate([&] { button_fired = true; });
 
   RouteProbe app;
   const MouseEvent click{.x = 2, .y = 1, .button = 0, .pressed = true};
-  REQUIRE(app.route(click, {&under, &mb}));  // mb last = topmost
+  REQUIRE(app.route(click, {&under, &mb})); // mb last = topmost
   REQUIRE(item_fired);
   REQUIRE_FALSE(button_fired);
 }
@@ -475,7 +477,7 @@ TEST_CASE("route_mouse: open dropdown wins over the widget underneath",
 TEST_CASE("route_mouse: closed menu does not shadow the widget underneath",
           "[mouse][route]") {
   bool item_fired = false;
-  auto mb = make_menu(item_fired);  // closed
+  auto mb = make_menu(item_fired); // closed
 
   bool button_fired = false;
   Button under;
@@ -510,7 +512,7 @@ static_assert(!termforge::detail::WidgetRange<std::vector<Button*>>);
 // The hazard itself: a range of Widget** is not a widget list.
 static_assert(!termforge::detail::WidgetRange<std::vector<Widget**>>);
 
-}  // namespace
+} // namespace
 
 TEST_CASE("route_mouse: the container form routes from a vector (#123)",
           "[mouse][route]") {
@@ -531,7 +533,7 @@ TEST_CASE("route_mouse: the container form routes from a vector (#123)",
   under.on_activate([&] { button_fired = true; });
 
   RouteProbe app;
-  const std::vector<Widget*> widgets{&under, &mb};  // mb last = topmost
+  const std::vector<Widget*> widgets{&under, &mb}; // mb last = topmost
   const MouseEvent click{.x = 2, .y = 1, .button = 0, .pressed = true};
   REQUIRE(app.route_range(click, widgets));
   REQUIRE(item_fired);
@@ -584,7 +586,8 @@ TEST_CASE("route_mouse skips a null through the container form (#123)",
 }
 
 TEST_CASE("route_mouse: a list of nothing but nulls is a miss, not a crash "
-          "(#123)", "[mouse][route][failure]") {
+          "(#123)",
+          "[mouse][route][failure]") {
   RouteProbe app;
   const MouseEvent click{.x = 2, .y = 1, .button = 0, .pressed = true};
   REQUIRE_FALSE(app.route(click, {nullptr, nullptr}));
@@ -592,10 +595,12 @@ TEST_CASE("route_mouse: a list of nothing but nulls is a miss, not a crash "
   REQUIRE_FALSE(app.route_range(click, nulls));
 }
 
-// ── decoder round-trip (#55) ──────────────────────────────────────────────────
+// ── decoder round-trip (#55)
+// ──────────────────────────────────────────────────
 
-TEST_CASE("Decoder round-trip: the event builders emit what the decoder emits (#55)",
-          "[mouse][input][failure]") {
+TEST_CASE(
+    "Decoder round-trip: the event builders emit what the decoder emits (#55)",
+    "[mouse][input][failure]") {
   // motion() used to emit button = 0 while a hand-rolled hover elsewhere used
   // -1 -- and the real decoder emits 3 (btn = 32|3, input.cpp:226-230). All
   // three were functionally inert (hover gates on scroll flags + !pressed),
@@ -614,7 +619,8 @@ TEST_CASE("Decoder round-trip: the event builders emit what the decoder emits (#
   const auto& bm = std::get<MouseEvent>(built);
   REQUIRE(bm.x == dm->x);
   REQUIRE(bm.y == dm->y);
-  REQUIRE(bm.button == dm->button);    // 3 == 3, not the old 0 or the hand-rolled -1
+  REQUIRE(bm.button ==
+          dm->button); // 3 == 3, not the old 0 or the hand-rolled -1
   REQUIRE(bm.pressed == dm->pressed);
   REQUIRE(bm.motion == dm->motion);
   REQUIRE(bm.action() == termforge::MouseAction::Move);
@@ -658,7 +664,7 @@ TEST_CASE("Decoder round-trip: the event builders emit what the decoder emits (#
   const auto& bw = std::get<MouseEvent>(built_wheel);
   REQUIRE(bw.x == dm->x);
   REQUIRE(bw.y == dm->y);
-  REQUIRE(bw.button == dm->button);  // -1 == -1
+  REQUIRE(bw.button == dm->button); // -1 == -1
   REQUIRE(bw.motion == dm->motion);
   REQUIRE(bw.action() == termforge::MouseAction::Wheel);
   REQUIRE(bw.scroll_down == dm->scroll_down);

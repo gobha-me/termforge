@@ -21,7 +21,8 @@ namespace {
 }
 
 auto sanitize_spans(StyledText& line) -> void {
-  for (TextSpan& span : line) span.text = Screen::sanitize(span.text);
+  for (TextSpan& span : line)
+    span.text = Screen::sanitize(span.text);
 }
 
 [[nodiscard]] auto plain_text(std::string text) -> StyledText {
@@ -72,7 +73,7 @@ auto sanitize_spans(StyledText& line) -> void {
   return true;
 }
 
-}  // namespace
+} // namespace
 
 auto TextBox::append(std::string line) -> void {
   // Single-span compatibility wrapper over the styled document path (#25).
@@ -143,7 +144,8 @@ auto TextBox::append_to_entry(TextEntryHandle handle, StyledText chunk)
   if (!entry) return false;
   if (chunk.empty()) return true;
   bool any_bytes = false;
-  for (const TextSpan& span : chunk) any_bytes |= !span.text.empty();
+  for (const TextSpan& span : chunk)
+    any_bytes |= !span.text.empty();
   if (!any_bytes) return true;
 
   (void)append_chunks(*entry, std::move(chunk));
@@ -191,8 +193,7 @@ auto TextBox::set_retention(TextBoxRetention retention) -> void {
 auto TextBox::retention_over_budget() const noexcept -> bool {
   return (m_retention.max_entries &&
           m_order.size() > *m_retention.max_entries) ||
-         (m_retention.max_bytes &&
-          m_retained_bytes > *m_retention.max_bytes);
+         (m_retention.max_bytes && m_retained_bytes > *m_retention.max_bytes);
 }
 
 auto TextBox::clear() -> void {
@@ -213,7 +214,9 @@ auto TextBox::clear() -> void {
   mark_dirty();
 }
 
-auto TextBox::at_bottom() const noexcept -> bool { return m_scroll == 0; }
+auto TextBox::at_bottom() const noexcept -> bool {
+  return m_scroll == 0;
+}
 
 auto TextBox::scroll(int delta) -> void {
   // TextBox's m_scroll is INVERTED relative to the library convention
@@ -226,8 +229,9 @@ auto TextBox::scroll(int delta) -> void {
   //
   // #217's per-entry caches make the wrapped count available here too, so the
   // anchor can be captured before a producer mutates the tail.
-  m_scroll = std::max(0, m_scroll + (delta < 0 ? -delta : 0));  // up increases m_scroll
-  if (delta > 0) m_scroll = std::max(0, m_scroll - delta);       // down decreases
+  m_scroll =
+      std::max(0, m_scroll + (delta < 0 ? -delta : 0)); // up increases m_scroll
+  if (delta > 0) m_scroll = std::max(0, m_scroll - delta); // down decreases
   m_follow = (m_scroll == 0);
   refresh_anchor_from_scroll();
   mark_dirty();
@@ -242,14 +246,26 @@ auto TextBox::scroll_to_bottom() -> void {
 
 auto TextBox::on_event(const Event& ev) -> bool {
   if (const auto* k = std::get_if<KeyEvent>(&ev)) {
-    if (k->key == Key::PageUp) { scroll(-(rect().h > 1 ? rect().h - 1 : 1)); return true; }
-    if (k->key == Key::PageDown) { scroll(rect().h > 1 ? rect().h - 1 : 1); return true; }
+    if (k->key == Key::PageUp) {
+      scroll(-(rect().h > 1 ? rect().h - 1 : 1));
+      return true;
+    }
+    if (k->key == Key::PageDown) {
+      scroll(rect().h > 1 ? rect().h - 1 : 1);
+      return true;
+    }
   }
   if (const auto* m = std::get_if<MouseEvent>(&ev)) {
     // #35 Q1: wheel scrolls the VIEW (TextBox has no selection to move). The
     // step is the shared kWheelStep; scroll() owns the sign inversion.
-    if (m->scroll_up) { scroll(-detail::kWheelStep); return true; }
-    if (m->scroll_down) { scroll(detail::kWheelStep); return true; }
+    if (m->scroll_up) {
+      scroll(-detail::kWheelStep);
+      return true;
+    }
+    if (m->scroll_down) {
+      scroll(detail::kWheelStep);
+      return true;
+    }
     // #21: a press on the scrollbar's column page-jumps the view. TextBox
     // can't know the wrapped total without drawing, so it can't locate the
     // thumb here -- the jump is directional instead: upper half of the strip
@@ -288,7 +304,10 @@ auto TextBox::content_w() const noexcept -> int {
 
 auto TextBox::draw(Screen& screen) -> void {
   const Rect r = rect();
-  if (r.w <= 0 || r.h <= 0) { clear_dirty(); return; }
+  if (r.w <= 0 || r.h <= 0) {
+    clear_dirty();
+    return;
+  }
 
   const Rgb fg = theme::kFg;
   // Own the whole rect: blank it every frame so clear()/scroll/shrink can't
@@ -312,10 +331,9 @@ auto TextBox::draw(Screen& screen) -> void {
   // UP from the bottom (inverted, see scroll()), but the bounds are symmetric:
   // the valid range is [0, max(0, total - h)] in either convention, so the
   // shared clamp applies directly.
-  const std::size_t max_top =
-      total_size > static_cast<std::size_t>(r.h)
-          ? total_size - static_cast<std::size_t>(r.h)
-          : 0;
+  const std::size_t max_top = total_size > static_cast<std::size_t>(r.h)
+                                  ? total_size - static_cast<std::size_t>(r.h)
+                                  : 0;
   if (!m_follow) {
     if (const auto top = anchored_top(cw, max_top)) {
       const std::size_t visible_end =
@@ -329,10 +347,9 @@ auto TextBox::draw(Screen& screen) -> void {
   m_scroll = detail::clamp_offset(m_scroll, total, r.h);
   m_follow = (m_scroll == 0);
   const std::size_t bottom = total_size - static_cast<std::size_t>(m_scroll);
-  const std::size_t top =
-      bottom > static_cast<std::size_t>(r.h)
-          ? bottom - static_cast<std::size_t>(r.h)
-          : 0;
+  const std::size_t top = bottom > static_cast<std::size_t>(r.h)
+                              ? bottom - static_cast<std::size_t>(r.h)
+                              : 0;
 
   std::size_t flat = 0;
   int paint_row = 0;
@@ -418,12 +435,13 @@ auto TextBox::resolve_live(TextEntryHandle handle) noexcept -> Entry* {
 
 auto TextBox::payload_bytes(const Entry& entry) -> std::size_t {
   std::size_t bytes = entry.pending_utf8.size();
-  for (const TextSpan& span : entry.text) bytes += span.text.size();
+  for (const TextSpan& span : entry.text)
+    bytes += span.text.size();
   return bytes;
 }
 
-auto TextBox::append_clean_span(Entry& entry, std::string text,
-                                TextStyle style, bool preserve_empty) -> bool {
+auto TextBox::append_clean_span(Entry& entry, std::string text, TextStyle style,
+                                bool preserve_empty) -> bool {
   if (text.empty() && !preserve_empty) return false;
   if (!text.empty() && !entry.text.empty() &&
       entry.text.back().style == style && !entry.text.back().text.empty()) {
@@ -447,25 +465,26 @@ auto TextBox::ingest_chunks(Entry& entry, StyledText chunks) -> bool {
       entry.pending_utf8.append(remaining.substr(0, take));
       remaining.remove_prefix(take);
       if (entry.pending_utf8.size() == expected) {
-        visible_changed |= append_clean_span(
-            entry, Screen::sanitize(entry.pending_utf8), entry.pending_style,
-            false);
+        visible_changed |=
+            append_clean_span(entry, Screen::sanitize(entry.pending_utf8),
+                              entry.pending_style, false);
         entry.pending_utf8.clear();
       } else if (!plausible_utf8_prefix(entry.pending_utf8)) {
         // A non-continuation proves the held lead was malformed now; do not
         // strand an ordinary ASCII byte until another chunk or finalization.
-        visible_changed |= append_clean_span(
-            entry, Screen::sanitize(entry.pending_utf8), entry.pending_style,
-            false);
+        visible_changed |=
+            append_clean_span(entry, Screen::sanitize(entry.pending_utf8),
+                              entry.pending_style, false);
         entry.pending_utf8.clear();
       }
     }
 
     if (remaining.empty()) continue;
     const std::size_t pending = incomplete_utf8_suffix(remaining);
-    const std::string_view complete = remaining.substr(0, remaining.size() - pending);
-    visible_changed |= append_clean_span(
-        entry, Screen::sanitize(complete), span.style, !span.text.empty());
+    const std::string_view complete =
+        remaining.substr(0, remaining.size() - pending);
+    visible_changed |= append_clean_span(entry, Screen::sanitize(complete),
+                                         span.style, !span.text.empty());
     if (pending != 0) {
       entry.pending_utf8.assign(remaining.substr(remaining.size() - pending));
       entry.pending_style = span.style;
@@ -515,8 +534,8 @@ auto TextBox::note_entry_change(Entry& entry, std::size_t old_bytes,
 auto TextBox::enforce_retention() -> bool {
   bool evicted = false;
   while (retention_over_budget()) {
-    const auto victim = std::find_if(
-        m_order.begin(), m_order.end(), [this](std::size_t index) {
+    const auto victim =
+        std::find_if(m_order.begin(), m_order.end(), [this](std::size_t index) {
           return m_slots[index].entry && m_slots[index].entry->finalized;
         });
     if (victim == m_order.end()) break;
@@ -571,8 +590,8 @@ auto TextBox::anchor_from_top(std::size_t top, int width) -> void {
     Entry& entry = *m_slots[index].entry;
     const std::size_t count = ensure_wrapped(entry, width).size();
     if (top < first + count) {
-      m_anchor = ViewAnchor{
-          TextEntryHandle{index, m_slots[index].generation}, top - first};
+      m_anchor = ViewAnchor{TextEntryHandle{index, m_slots[index].generation},
+                            top - first};
       return;
     }
     first += count;
@@ -589,9 +608,8 @@ auto TextBox::anchored_top(int width, std::size_t max_top)
     const auto& rows = ensure_wrapped(entry, width);
     const TextEntryHandle handle{index, m_slots[index].generation};
     if (handle == m_anchor->entry) {
-      const std::size_t row = rows.empty()
-                                  ? 0
-                                  : std::min(m_anchor->row, rows.size() - 1);
+      const std::size_t row =
+          rows.empty() ? 0 : std::min(m_anchor->row, rows.size() - 1);
       return std::min(first + row, max_top);
     }
     first += rows.size();
@@ -612,12 +630,11 @@ auto TextBox::refresh_anchor_from_scroll() -> void {
   }
   const int width = content_w();
   const std::size_t total = wrapped_total(width);
-  const std::size_t max_scroll =
-      total > static_cast<std::size_t>(r.h)
-          ? total - static_cast<std::size_t>(r.h)
-          : 0;
-  const std::size_t scroll = std::min<std::size_t>(
-      static_cast<std::size_t>(m_scroll), max_scroll);
+  const std::size_t max_scroll = total > static_cast<std::size_t>(r.h)
+                                     ? total - static_cast<std::size_t>(r.h)
+                                     : 0;
+  const std::size_t scroll =
+      std::min<std::size_t>(static_cast<std::size_t>(m_scroll), max_scroll);
   m_scroll = static_cast<int>(scroll);
   m_follow = (m_scroll == 0);
   if (m_follow) {
@@ -625,11 +642,10 @@ auto TextBox::refresh_anchor_from_scroll() -> void {
     return;
   }
   const std::size_t bottom = total - scroll;
-  const std::size_t top =
-      bottom > static_cast<std::size_t>(r.h)
-          ? bottom - static_cast<std::size_t>(r.h)
-          : 0;
+  const std::size_t top = bottom > static_cast<std::size_t>(r.h)
+                              ? bottom - static_cast<std::size_t>(r.h)
+                              : 0;
   anchor_from_top(top, width);
 }
 
-}  // namespace termforge
+} // namespace termforge

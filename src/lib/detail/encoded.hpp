@@ -46,10 +46,10 @@ namespace termforge::detail {
 // back.
 [[nodiscard]] inline auto rgba_at(std::span<const std::byte> rgba, Extent px,
                                   int x, int y) noexcept -> Pixel {
-  const std::size_t i = (static_cast<std::size_t>(y) *
-                             static_cast<std::size_t>(px.w) +
-                         static_cast<std::size_t>(x)) *
-                        4U;
+  const std::size_t i =
+      (static_cast<std::size_t>(y) * static_cast<std::size_t>(px.w) +
+       static_cast<std::size_t>(x)) *
+      4U;
   return Pixel{std::to_integer<std::uint8_t>(rgba[i]),
                std::to_integer<std::uint8_t>(rgba[i + 1]),
                std::to_integer<std::uint8_t>(rgba[i + 2]),
@@ -63,9 +63,9 @@ namespace termforge::detail {
 [[nodiscard]] inline auto format_name(ImageFormat format) noexcept
     -> std::string_view {
   switch (format) {
-    case ImageFormat::Rgba32:     return "Rgba32";
+    case ImageFormat::Rgba32: return "Rgba32";
     case ImageFormat::Rgba32Zlib: return "Rgba32Zlib";
-    case ImageFormat::Png:        return "Png";
+    case ImageFormat::Png: return "Png";
   }
   return "?";
 }
@@ -76,9 +76,9 @@ namespace termforge::detail {
 [[nodiscard]] inline auto requires_terminal_reply(ImageFormat format) noexcept
     -> bool {
   switch (format) {
-    case ImageFormat::Rgba32:     return false;
+    case ImageFormat::Rgba32: return false;
     case ImageFormat::Rgba32Zlib:
-    case ImageFormat::Png:        return true;
+    case ImageFormat::Png: return true;
   }
   return true;
 }
@@ -103,11 +103,11 @@ namespace termforge::detail {
   if (!driver.supports_image_format(image.format)) {
     // Never a guess, and never a silent success that draws nothing: a tier
     // with no decoder for this payload emits nothing and says why.
-    return std::unexpected{ErrorEvent{
-        Severity::Warning, std::string{source},
-        std::format("{}: this tier cannot decode ImageFormat::{} -- "
-                    "ask supports_image_format() before drawing",
-                    fn, format_name(image.format))}};
+    return std::unexpected{
+        ErrorEvent{Severity::Warning, std::string{source},
+                   std::format("{}: this tier cannot decode ImageFormat::{} -- "
+                               "ask supports_image_format() before drawing",
+                               fn, format_name(image.format))}};
   }
   if (image.format == ImageFormat::Rgba32) {
     // In 64 bits deliberately. `w * h * 4` in int overflows for extents a
@@ -154,4 +154,4 @@ namespace termforge::detail {
   return validate_payload(image, driver, source, "draw_image");
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

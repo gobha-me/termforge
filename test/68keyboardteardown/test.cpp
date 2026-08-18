@@ -135,7 +135,8 @@ class PtyPeer {
       if (ready < 0 && errno == EINTR) continue;
       if (ready <= 0) continue;
       drain_wire();
-      if (!m_saw_barrier.load() && m_wire.find(kBarrierWire) != std::string::npos) {
+      if (!m_saw_barrier.load() &&
+          m_wire.find(kBarrierWire) != std::string::npos) {
         m_saw_barrier.store(true);
         if (m_release_at_barrier) feed(kRelease);
         // Split the response at every parser boundary. A scanner that only
@@ -161,12 +162,15 @@ class PtyPeer {
 class TeardownProbe final : public App {
  public:
   TeardownProbe(PtyPeer& peer, bool throw_frame, bool queue_release)
-      : m_peer(peer), m_throw_frame(throw_frame), m_queue_release(queue_release) {}
+      : m_peer(peer), m_throw_frame(throw_frame),
+        m_queue_release(queue_release) {}
 
   auto configure() -> bool {
     Capabilities caps;
     caps.kitty_keyboard = true;
-    return terminal().set_io(TerminalIo{m_peer.slave(), m_peer.slave()}).has_value() &&
+    return terminal()
+               .set_io(TerminalIo{m_peer.slave(), m_peer.slave()})
+               .has_value() &&
            terminal().set_capabilities(caps).has_value();
   }
 
@@ -220,7 +224,7 @@ auto run_case(bool throw_frame, bool queue_release, bool release_at_barrier)
       threw = true;
       REQUIRE(std::string_view{error.what()} == "frame failed");
     }
-  }  // ~App must not emit or restore a second time.
+  } // ~App must not emit or restore a second time.
 
   REQUIRE(threw == throw_frame);
   peer.stop();
@@ -249,7 +253,7 @@ auto run_case(bool throw_frame, bool queue_release, bool release_at_barrier)
   REQUIRE(read_shell_line(peer.slave()) == kShellLine);
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("normal teardown discards an enhanced release already queued",
           "[keyboard][teardown][regression]") {

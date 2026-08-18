@@ -41,8 +41,8 @@ auto RadioGroup::set_selected(int index) -> void {
   // 3): a clamped no-change set must not flag a repaint that repaints
   // nothing. (Inert while nothing reads dirty() and draw isn't dirty-gated,
   // but the flag shouldn't lie -- #56 item 2.)
-  if (!m_list.empty() && std::clamp(index, 0, m_list.count() - 1) ==
-                             m_list.selected())
+  if (!m_list.empty() &&
+      std::clamp(index, 0, m_list.count() - 1) == m_list.selected())
     return;
   m_list.select(index);
   ensure_visible();
@@ -57,7 +57,7 @@ auto RadioGroup::ensure_visible() -> void {
 auto RadioGroup::select(int index) -> void {
   if (m_list.empty()) return;
   const int prev = m_list.selected();
-  set_selected(index);  // clamped no-op: consumed, but silent
+  set_selected(index); // clamped no-op: consumed, but silent
   if (m_list.selected() == prev) return;
   // The callback may call set_options() (invalidating our own storage) or
   // on_change() (destroying the std::function it runs inside) — invoke_copy
@@ -126,7 +126,7 @@ auto RadioGroup::on_event(const Event& ev) -> bool {
     // who tries the other axis should not find it dead.
     if (k->key == Key::Up || k->key == Key::Left) {
       select(m_list.selected() - 1);
-      return true;  // consumed even when clamped to a no-op
+      return true; // consumed even when clamped to a no-op
     }
     if (k->key == Key::Down || k->key == Key::Right) {
       select(m_list.selected() + 1);
@@ -153,9 +153,8 @@ auto RadioGroup::on_event(const Event& ev) -> bool {
     if (m->scroll_up || m->scroll_down) return false;
 
     if (m->pressed && m->button == 0 && rect().contains(m->x, m->y)) {
-      const int clicked =
-          detail::row_item_at(rect(), /*header_rows=*/0, m_scroll,
-                              m_list.count(), m->y);
+      const int clicked = detail::row_item_at(rect(), /*header_rows=*/0,
+                                              m_scroll, m_list.count(), m->y);
       if (clicked >= 0) select(clicked);
       // A press on a blank row inside the rect is consumed and inert, so it
       // cannot fall through to whatever is underneath.
@@ -166,4 +165,4 @@ auto RadioGroup::on_event(const Event& ev) -> bool {
   return false;
 }
 
-}  // namespace termforge
+} // namespace termforge

@@ -18,8 +18,9 @@ namespace {
 // rather than shared for one file-picker call site).
 auto place_buttons(Rect area, std::initializer_list<Button*> buttons) -> void {
   int total = 0;
-  for (auto* b : buttons) total += detail::display_width(b->label()) + 1;
-  if (total > 0) total -= 1;  // no gap after the last
+  for (auto* b : buttons)
+    total += detail::display_width(b->label()) + 1;
+  if (total > 0) total -= 1; // no gap after the last
 
   const int right = area.x + area.w;
   int x = area.x + std::max(0, area.w - total);
@@ -33,7 +34,8 @@ auto place_buttons(Rect area, std::initializer_list<Button*> buttons) -> void {
 
 auto buttons_width(std::initializer_list<const Button*> buttons) -> int {
   int total = 0;
-  for (const auto* b : buttons) total += detail::display_width(b->label()) + 1;
+  for (const auto* b : buttons)
+    total += detail::display_width(b->label()) + 1;
   return total > 0 ? total - 1 : 0;
 }
 
@@ -41,8 +43,7 @@ auto buttons_width(std::initializer_list<const Button*> buttons) -> int {
 auto normalize_ext(std::string ext) -> std::string {
   if (!ext.empty() && ext.front() != '.') ext.insert(ext.begin(), '.');
   for (auto& c : ext)
-    c = static_cast<char>(
-        std::tolower(static_cast<unsigned char>(c)));
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   return ext;
 }
 
@@ -54,7 +55,7 @@ auto matches_filter(const std::filesystem::path& p,
   return std::find(filter.begin(), filter.end(), ext) != filter.end();
 }
 
-}  // namespace
+} // namespace
 
 // ── construction ─────────────────────────────────────────────────────────────
 
@@ -67,18 +68,17 @@ FilePickerDialog::FilePickerDialog(
 
 auto FilePickerDialog::build() -> void {
   m_path.set_placeholder("type a path; Enter navigates or picks");
-  set_max_width(72);  // a browser wants more than the 48-col prose default
+  set_max_width(72); // a browser wants more than the 48-col prose default
 
   // The list drives navigation: Enter on a dir descends, on a file picks.
-  m_list.on_select([this](int index, const std::string&) {
-    activate_entry(index);
-  });
+  m_list.on_select(
+      [this](int index, const std::string&) { activate_entry(index); });
   m_ok.on_activate([this] { finish_ok(); });
   m_cancel.on_activate([this] { finish_cancel(); });
   // The error dialog is pushed as its own overlay; the host owns its on_close
   // (to pop it). The flood gate lives in report_error via error_overlay_up.
 
-  add_child(&m_path);  // first added starts focused: type a path immediately
+  add_child(&m_path); // first added starts focused: type a path immediately
   add_child(&m_list);
   add_child(&m_ok);
   add_child(&m_cancel);
@@ -102,7 +102,8 @@ auto FilePickerDialog::set_start_dir(std::filesystem::path dir) -> void {
 auto FilePickerDialog::set_filter(std::vector<std::string> extensions) -> void {
   m_filter.clear();
   m_filter.reserve(extensions.size());
-  for (auto& e : extensions) m_filter.push_back(normalize_ext(std::move(e)));
+  for (auto& e : extensions)
+    m_filter.push_back(normalize_ext(std::move(e)));
   mark_dirty();
 }
 
@@ -117,8 +118,7 @@ auto FilePickerDialog::refresh() -> bool {
   // if it still exists.
   const int prev_selected = m_list.selected();
   const std::string prev_leaf =
-      (prev_selected >= 0 &&
-       prev_selected < static_cast<int>(m_entries.size()))
+      (prev_selected >= 0 && prev_selected < static_cast<int>(m_entries.size()))
           ? m_entries[static_cast<std::size_t>(prev_selected)].leaf
           : std::string{};
 
@@ -131,9 +131,9 @@ auto FilePickerDialog::refresh() -> bool {
     m_entries.push_back(Entry{"..", "..", true, true});
 
   std::vector<Entry> dirs, files;
-  for (std::filesystem::directory_iterator it{m_dir,
-                                              std::filesystem::directory_options::skip_permission_denied,
-                                              ec},
+  for (std::filesystem::directory_iterator
+           it{m_dir, std::filesystem::directory_options::skip_permission_denied,
+              ec},
        end;
        !ec && it != end; it.increment(ec)) {
     const std::filesystem::path& p = it->path();
@@ -142,7 +142,7 @@ auto FilePickerDialog::refresh() -> bool {
 
     std::error_code sec;
     const bool is_dir = it->is_directory(sec);
-    if (sec) continue;  // a dangling symlink or a vanished entry: skip it
+    if (sec) continue; // a dangling symlink or a vanished entry: skip it
 
     if (is_dir) {
       dirs.push_back(Entry{leaf + "/", leaf, true, false});
@@ -169,7 +169,8 @@ auto FilePickerDialog::refresh() -> bool {
 
   std::vector<std::string> items;
   items.reserve(m_entries.size());
-  for (const auto& e : m_entries) items.push_back(e.display);
+  for (const auto& e : m_entries)
+    items.push_back(e.display);
   m_list.set_items(std::move(items));
 
   // Restore the highlight on the same entry if it survived the re-list
@@ -213,7 +214,8 @@ auto FilePickerDialog::field_target() const -> std::filesystem::path {
   // which is_directory reads as "must be a directory" (ENOTDIR for a file).
   const std::string text = m_path.text();
   if (text.empty()) return m_dir;
-  const std::filesystem::path p = std::filesystem::path(text).lexically_normal();
+  const std::filesystem::path p =
+      std::filesystem::path(text).lexically_normal();
   return p.is_absolute() ? p : (m_dir / p).lexically_normal();
 }
 
@@ -247,7 +249,9 @@ auto FilePickerDialog::activate_field() -> void {
   }
 }
 
-auto FilePickerDialog::finish_ok() -> void { finish_pick(field_path()); }
+auto FilePickerDialog::finish_ok() -> void {
+  finish_pick(field_path());
+}
 
 auto FilePickerDialog::finish_pick(const std::filesystem::path& p) -> void {
   if (!begin_result()) return;
@@ -262,7 +266,7 @@ auto FilePickerDialog::finish_pick(const std::filesystem::path& p) -> void {
 
 auto FilePickerDialog::finish_cancel() -> void {
   if (!begin_result()) return;
-  auto cb = m_on_result;  // snapshot before close() -- see finish_pick (#51)
+  auto cb = m_on_result; // snapshot before close() -- see finish_pick (#51)
   close();
   detail::invoke_copy(cb, std::nullopt);
 }
@@ -281,7 +285,8 @@ auto FilePickerDialog::report_error(const std::string& message) -> void {
   // Our glyph family reaches our own error dialog too. Pre-existing, but the
   // same defect #72 fixed one layer down: m_error is a member the app has no
   // handle on, so an Ascii-tier picker could not stop it drawing a Unicode
-  // border -- on the modal that is, at that moment, the topmost thing on screen.
+  // border -- on the modal that is, at that moment, the topmost thing on
+  // screen.
   m_error.set_border_style(border_style());
   if (m_push_overlay) m_push_overlay(m_error);
 }
@@ -312,7 +317,7 @@ auto FilePickerDialog::layout_content(Rect area) -> void {
   // A short screen collapses the list toward zero rather than spilling past
   // the area Dialog clamped for us.
   const int rows = std::max(0, area.h);
-  const int list_rows = std::max(0, rows - 3);  // field + spacer + button row
+  const int list_rows = std::max(0, rows - 3); // field + spacer + button row
   m_path.set_geometry(Rect{area.x, area.y, area.w, rows > 0 ? 1 : 0});
   m_list.set_geometry(Rect{area.x, area.y + 1, area.w, list_rows});
   const int button_row = area.y + std::max(0, rows - 1);
@@ -363,4 +368,4 @@ auto FilePickerDialog::on_event(const Event& ev) -> bool {
   return false;
 }
 
-}  // namespace termforge
+} // namespace termforge

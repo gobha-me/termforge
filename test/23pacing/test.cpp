@@ -55,27 +55,34 @@ class PacingProbe : public App {
   auto step() -> void {
     const auto before = m_now;
     test_run_frames(1, 20, 5, &m_sink);
-    frames.push_back(std::chrono::duration_cast<std::chrono::milliseconds>(m_now - before));
+    frames.push_back(
+        std::chrono::duration_cast<std::chrono::milliseconds>(m_now - before));
   }
   auto run_frames(int n) -> void {
-    for (int i = 0; i < n; ++i) step();
+    for (int i = 0; i < n; ++i)
+      step();
   }
 
-  [[nodiscard]] auto now() const -> std::chrono::steady_clock::time_point { return m_now; }
+  [[nodiscard]] auto now() const -> std::chrono::steady_clock::time_point {
+    return m_now;
+  }
 
  protected:
-  auto now_steady() const -> std::chrono::steady_clock::time_point override { return m_now; }
+  auto now_steady() const -> std::chrono::steady_clock::time_point override {
+    return m_now;
+  }
 
   auto wait_readable(int timeout_ms) -> bool override {
     waits.push_back(timeout_ms);
-    if (fd_hungup) return true;  // readable, but read yields 0
+    if (fd_hungup) return true; // readable, but read yields 0
     if (!arrive_during_wait.empty()) {
       pending.push_back(arrive_during_wait.front());
       arrive_during_wait.erase(arrive_during_wait.begin());
       return true;
     }
     if (!pending.empty()) return true;
-    m_now += std::chrono::milliseconds(timeout_ms);  // nothing came; budget spent
+    m_now +=
+        std::chrono::milliseconds(timeout_ms); // nothing came; budget spent
     return false;
   }
 
@@ -86,7 +93,8 @@ class PacingProbe : public App {
     const int n = static_cast<int>(chunk.size() < static_cast<std::size_t>(max)
                                        ? chunk.size()
                                        : static_cast<std::size_t>(max));
-    for (int i = 0; i < n; ++i) out[i] = chunk[i];
+    for (int i = 0; i < n; ++i)
+      out[i] = chunk[i];
     return n;
   }
 
@@ -95,7 +103,7 @@ class PacingProbe : public App {
   std::string m_sink;
 };
 
-}  // namespace
+} // namespace
 
 // ── the bug #58 was filed for ────────────────────────────────────────────────
 
@@ -105,7 +113,8 @@ TEST_CASE("frame budget is authoritative when idle", "[pacing]") {
   app.run_frames(60);
 
   REQUIRE(app.renders == 60);
-  for (auto f : app.frames) REQUIRE(f == 16ms);
+  for (auto f : app.frames)
+    REQUIRE(f == 16ms);
   // 60 frames of a 16ms budget is 960ms of fake time -> ~62fps sustained.
   // The old loop spent 100ms in a VTIME read plus a flat 16ms sleep here.
   REQUIRE(app.now().time_since_epoch() == 960ms);
@@ -115,7 +124,8 @@ TEST_CASE("frame budget is authoritative at 33ms too", "[pacing]") {
   PacingProbe app;
   app.set_frame_ms(33);
   app.run_frames(30);
-  for (auto f : app.frames) REQUIRE(f == 33ms);
+  for (auto f : app.frames)
+    REQUIRE(f == 33ms);
 }
 
 TEST_CASE("frame rate does not depend on input activity", "[pacing]") {
@@ -129,12 +139,14 @@ TEST_CASE("frame rate does not depend on input activity", "[pacing]") {
 
   PacingProbe busy;
   busy.set_frame_ms(16);
-  for (int i = 0; i < 200; ++i) busy.pending.emplace_back("x");
+  for (int i = 0; i < 200; ++i)
+    busy.pending.emplace_back("x");
   busy.run_frames(20);
 
   REQUIRE(busy.frames == idle.frames);
   REQUIRE(busy.now() == idle.now());
-  // ...and the input actually got through, so this isn't passing by dropping it.
+  // ...and the input actually got through, so this isn't passing by dropping
+  // it.
   REQUIRE(busy.seen.size() > 0);
 }
 
@@ -144,18 +156,22 @@ TEST_CASE("render time comes out of the budget, not on top of it", "[pacing]") {
   app.render_cost = 10ms;
   app.run_frames(5);
 
-  for (auto f : app.frames) REQUIRE(f == 16ms);   // still 16, not 26
-  for (auto w : app.waits) REQUIRE(w == 6);       // the *remaining* budget
+  for (auto f : app.frames)
+    REQUIRE(f == 16ms); // still 16, not 26
+  for (auto w : app.waits)
+    REQUIRE(w == 6); // the *remaining* budget
 }
 
-TEST_CASE("a frame that overruns its budget does not wait or spiral", "[pacing]") {
+TEST_CASE("a frame that overruns its budget does not wait or spiral",
+          "[pacing]") {
   PacingProbe app;
   app.set_frame_ms(16);
-  app.render_cost = 40ms;  // heavier than the whole budget
+  app.render_cost = 40ms; // heavier than the whole budget
   app.run_frames(5);
 
-  REQUIRE(app.waits.empty());  // never asks for a negative or zero-length wait
-  for (auto f : app.frames) REQUIRE(f == 40ms);  // no catch-up debt carried
+  REQUIRE(app.waits.empty()); // never asks for a negative or zero-length wait
+  for (auto f : app.frames)
+    REQUIRE(f == 40ms); // no catch-up debt carried
 }
 
 TEST_CASE("set_frame_ms(0) runs uncapped", "[pacing]") {
@@ -164,7 +180,8 @@ TEST_CASE("set_frame_ms(0) runs uncapped", "[pacing]") {
   app.run_frames(10);
 
   REQUIRE(app.waits.empty());
-  for (auto f : app.frames) REQUIRE(f == 0ms);
+  for (auto f : app.frames)
+    REQUIRE(f == 0ms);
 }
 
 TEST_CASE("set_frame_ms clamps negatives", "[pacing]") {
@@ -182,7 +199,7 @@ TEST_CASE("a split escape sequence still decodes as one key", "[pacing][esc]") {
   // It must read as Up, never as Escape + '[' + 'A' (which the default
   // on_event would treat as a quit).
   PacingProbe app;
-  app.set_frame_ms(16);  // budget tighter than the 50ms grace
+  app.set_frame_ms(16); // budget tighter than the 50ms grace
   app.pending = {"\x1b", "[A"};
   app.run_frames(3);
 
@@ -202,14 +219,15 @@ TEST_CASE("a held ESC extends the frame to the grace floor", "[pacing][esc]") {
   REQUIRE(app.frames[0] == 50ms);
 }
 
-TEST_CASE("a genuine lone ESC still dispatches, one frame later", "[pacing][esc]") {
+TEST_CASE("a genuine lone ESC still dispatches, one frame later",
+          "[pacing][esc]") {
   // The failure mode of deferring is deferring forever. After the grace has
   // been served and nothing more arrived, the ESC is a real keypress.
   PacingProbe app;
   app.set_frame_ms(16);
   app.pending = {"\x1b"};
   app.run_frames(1);
-  REQUIRE(app.seen.empty());  // held, not committed
+  REQUIRE(app.seen.empty()); // held, not committed
 
   app.run_frames(1);
   REQUIRE(app.seen.size() == 1);
@@ -223,8 +241,8 @@ TEST_CASE("the grace is paid once, not every frame", "[pacing][esc]") {
   app.set_frame_ms(16);
   app.pending = {"\x1b"};
   app.run_frames(4);
-  REQUIRE(app.frames[0] == 50ms);  // grace
-  REQUIRE(app.frames[1] == 16ms);  // committed; back to budget
+  REQUIRE(app.frames[0] == 50ms); // grace
+  REQUIRE(app.frames[1] == 16ms); // committed; back to budget
   REQUIRE(app.frames[2] == 16ms);
   REQUIRE(app.frames[3] == 16ms);
 }
@@ -252,11 +270,13 @@ TEST_CASE("a hung-up fd breaks the wait instead of spinning", "[pacing]") {
   app.fd_hungup = true;
   app.run_frames(3);
 
-  REQUIRE(app.waits.size() == 3);  // exactly one wait attempt per frame
-  for (auto w : app.waits) REQUIRE(w == 16);
+  REQUIRE(app.waits.size() == 3); // exactly one wait attempt per frame
+  for (auto w : app.waits)
+    REQUIRE(w == 16);
 }
 
-TEST_CASE("input arriving mid-wait is absorbed, not raced onto the frame", "[pacing]") {
+TEST_CASE("input arriving mid-wait is absorbed, not raced onto the frame",
+          "[pacing]") {
   // The contract: a byte landing during the wait is read off the fd (so the
   // tty buffer cannot back up) but does NOT end the frame early or dispatch
   // out of turn. It dispatches at the top of the following frame.
@@ -265,8 +285,8 @@ TEST_CASE("input arriving mid-wait is absorbed, not raced onto the frame", "[pac
   app.arrive_during_wait = {"a"};
 
   app.run_frames(1);
-  REQUIRE(app.seen.empty());       // absorbed, not dispatched
-  REQUIRE(app.frames[0] == 16ms);  // and the frame ran its full budget
+  REQUIRE(app.seen.empty());      // absorbed, not dispatched
+  REQUIRE(app.frames[0] == 16ms); // and the frame ran its full budget
 
   app.run_frames(1);
   REQUIRE(app.seen.size() == 1);
@@ -274,19 +294,21 @@ TEST_CASE("input arriving mid-wait is absorbed, not raced onto the frame", "[pac
   REQUIRE(app.frames[1] == 16ms);
 }
 
-TEST_CASE("input already waiting at frame start dispatches that frame", "[pacing]") {
+TEST_CASE("input already waiting at frame start dispatches that frame",
+          "[pacing]") {
   PacingProbe app;
   app.set_frame_ms(16);
   app.pending = {"a"};
   app.run_frames(1);
   REQUIRE(app.seen.size() == 1);
   REQUIRE(std::get<KeyEvent>(app.seen[0]).ch == 'a');
-  REQUIRE(app.frames[0] == 16ms);  // the byte did not shorten the frame
+  REQUIRE(app.frames[0] == 16ms); // the byte did not shorten the frame
 }
 
 // ── the primitive underneath ─────────────────────────────────────────────────
 
-TEST_CASE("Terminal::wait_readable has millisecond granularity", "[pacing][terminal]") {
+TEST_CASE("Terminal::wait_readable has millisecond granularity",
+          "[pacing][terminal]") {
   // The whole point of replacing VTIME: it could not express a wait shorter
   // than 100ms, which is what capped the loop at 10fps.
   //
@@ -296,9 +318,10 @@ TEST_CASE("Terminal::wait_readable has millisecond granularity", "[pacing][termi
   // runner hands us a readable stdin instead, the timing claim is untestable
   // here rather than false, so say so and move on: the loop-level cases above
   // are the ones that gate the fix.
-  Terminal term;  // not raw: wait_readable polls, it does not need termios
+  Terminal term; // not raw: wait_readable polls, it does not need termios
   if (term.wait_readable(0)) {
-    SUCCEED("fd is already readable in this environment — timing not measurable");
+    SUCCEED(
+        "fd is already readable in this environment — timing not measurable");
     return;
   }
 
@@ -325,9 +348,9 @@ TEST_CASE("Terminal::wait_readable has millisecond granularity", "[pacing][termi
       const auto start = std::chrono::steady_clock::now();
       REQUIRE_FALSE(term.wait_readable(30));
       const auto waited = std::chrono::steady_clock::now() - start;
-      REQUIRE(waited >= 25ms);  // it really waited, every time
+      REQUIRE(waited >= 25ms); // it really waited, every time
       if (waited < fastest) fastest = waited;
     }
-    REQUIRE(fastest < 90ms);  // nowhere near VTIME's 100ms floor
+    REQUIRE(fastest < 90ms); // nowhere near VTIME's 100ms floor
   }
 }

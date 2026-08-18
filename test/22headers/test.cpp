@@ -16,8 +16,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-TEST_CASE("public headers: every header compiled standalone (see 22headers build)",
-          "[headers]") {
+TEST_CASE(
+    "public headers: every header compiled standalone (see 22headers build)",
+    "[headers]") {
   // The check is at BUILD time; this case exists so the suite registers in
   // ctest and the directory reads like the others. If you are looking at a
   // failure here, scroll up: the real error was a compile error in one of the

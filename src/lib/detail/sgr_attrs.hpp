@@ -24,4 +24,4 @@ inline void append_sgr_attrs_enable(std::string& buf, Attr attrs) {
   if (any(attrs & Attr::Strike)) buf += "\033[9m";
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

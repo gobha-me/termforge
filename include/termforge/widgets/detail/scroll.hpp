@@ -45,15 +45,15 @@ namespace termforge::detail {
   if (count < 0) count = 0;
   if (visible_rows <= 0) return scroll;
   scroll = std::clamp(scroll, 0, std::max(0, count - visible_rows));
-  // `selected > 0` after the min, not `selected >= 0` before it: with count == 0
-  // the min drives any selection to -1, and the ensure-visible step below would
-  // then assign scroll = -1 -- breaking this function's own documented
+  // `selected > 0` after the min, not `selected >= 0` before it: with count ==
+  // 0 the min drives any selection to -1, and the ensure-visible step below
+  // would then assign scroll = -1 -- breaking this function's own documented
   // postcondition that the result stays in [0, max(0, count - visible_rows)],
-  // and handing an operator[] a negative index one step later. No in-tree caller
-  // reaches it (the three list widgets pass selected() == -1 when empty, and a
-  // dropdown's height is derived from its count so visible_rows > 0 implies
-  // count > 0), but this header is public as of #85 and #21's scrollbar is
-  // queued as the fifth caller with an INDEPENDENT viewport height, which is
+  // and handing an operator[] a negative index one step later. No in-tree
+  // caller reaches it (the three list widgets pass selected() == -1 when empty,
+  // and a dropdown's height is derived from its count so visible_rows > 0
+  // implies count > 0), but this header is public as of #85 and #21's scrollbar
+  // is queued as the fifth caller with an INDEPENDENT viewport height, which is
   // exactly the shape that gets there.
   selected = std::min(selected, count - 1);
   if (selected >= 0) {
@@ -87,10 +87,10 @@ namespace termforge::detail {
 }
 
 // The deliberate INVERSE of clamp_scroll: there, the selection is fixed and the
-// window is pulled onto it; here, the window has already moved (a wheel) and the
-// selection is carried into it. Returns `selected` unchanged when it is already
-// inside [scroll, scroll + visible_rows), when there is no window to be inside
-// of, and when there is no selection.
+// window is pulled onto it; here, the window has already moved (a wheel) and
+// the selection is carried into it. Returns `selected` unchanged when it is
+// already inside [scroll, scroll + visible_rows), when there is no window to be
+// inside of, and when there is no selection.
 //
 // Which one you want is decided by what the user just moved. An arrow key moves
 // the selection, so the window follows: clamp_scroll. A wheel moves the window,
@@ -124,4 +124,4 @@ namespace termforge::detail {
   return std::clamp(selected, scroll, last);
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

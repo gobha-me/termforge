@@ -37,11 +37,12 @@ auto reference_base64(const std::vector<std::byte>& bytes) -> std::string {
     }
   }
   if (available != 0) out += kAlphabet[(bits << (6 - available)) & 0x3F];
-  while (out.size() % 4 != 0) out += '=';
+  while (out.size() % 4 != 0)
+    out += '=';
   return out;
 }
 
-}  // namespace
+} // namespace
 
 // ── RFC 4648 test vectors ───────────────────────────────────────────────────
 
@@ -62,7 +63,7 @@ TEST_CASE("base64: empty input returns empty string", "[base64]") {
 }
 
 TEST_CASE("base64: single byte produces two chars + two padding", "[base64]") {
-  const std::vector<std::byte> one{std::byte{0x41}};  // 'A'
+  const std::vector<std::byte> one{std::byte{0x41}}; // 'A'
   const auto r = base64_encode(one);
   REQUIRE(r.size() == 4);
   REQUIRE(r.substr(2) == "==");
@@ -70,7 +71,7 @@ TEST_CASE("base64: single byte produces two chars + two padding", "[base64]") {
 }
 
 TEST_CASE("base64: two bytes produces three chars + one padding", "[base64]") {
-  const std::vector<std::byte> two{std::byte{0x41}, std::byte{0x42}};  // "AB"
+  const std::vector<std::byte> two{std::byte{0x41}, std::byte{0x42}}; // "AB"
   const auto r = base64_encode(two);
   REQUIRE(r.size() == 4);
   REQUIRE(r.back() == '=');
@@ -79,7 +80,7 @@ TEST_CASE("base64: two bytes produces three chars + one padding", "[base64]") {
 
 TEST_CASE("base64: three bytes produces four chars, no padding", "[base64]") {
   const std::vector<std::byte> three{std::byte{0x41}, std::byte{0x42},
-                                     std::byte{0x43}};  // "ABC"
+                                     std::byte{0x43}}; // "ABC"
   const auto r = base64_encode(three);
   REQUIRE(r.size() == 4);
   REQUIRE(r.find('=') == std::string::npos);
@@ -92,7 +93,8 @@ TEST_CASE("base64: all 256 byte values encode without loss", "[base64]") {
   // 256 bytes: 0x00 through 0xFF. Verify the encoded string is valid base64
   // and decodes back to the same bytes (via known properties of the format).
   std::vector<std::byte> all(256);
-  for (int i = 0; i < 256; ++i) all[static_cast<std::size_t>(i)] = static_cast<std::byte>(i);
+  for (int i = 0; i < 256; ++i)
+    all[static_cast<std::size_t>(i)] = static_cast<std::byte>(i);
 
   const auto encoded = base64_encode(all);
   // 256 bytes -> ceil(256/3)*4 = 344 chars (86 groups of 3 -> 344, last group
@@ -120,7 +122,7 @@ TEST_CASE("base64: 1x1 RGBA pixel (4 bytes)", "[base64]") {
   const std::vector<std::byte> px{std::byte{255}, std::byte{0}, std::byte{0},
                                   std::byte{255}};
   const auto r = base64_encode(px);
-  REQUIRE(r.size() == 8);  // 4 bytes -> ceil(4/3)*4 = 8
+  REQUIRE(r.size() == 8); // 4 bytes -> ceil(4/3)*4 = 8
 }
 
 TEST_CASE("base64: encoded size formula", "[base64]") {
@@ -132,8 +134,9 @@ TEST_CASE("base64: encoded size formula", "[base64]") {
   }
 }
 
-TEST_CASE("base64: direct-write kernel matches an independent oracle at every tail",
-          "[base64][failure]") {
+TEST_CASE(
+    "base64: direct-write kernel matches an independent oracle at every tail",
+    "[base64][failure]") {
   std::vector<std::byte> data;
   data.reserve(8192);
   for (std::size_t n = 0; n <= 8192; ++n) {

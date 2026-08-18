@@ -98,4 +98,4 @@ namespace termforge::detail {
   return clean;
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

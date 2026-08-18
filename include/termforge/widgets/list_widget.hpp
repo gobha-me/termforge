@@ -26,8 +26,8 @@
 #include "termforge/widgets/detail/options_list.hpp"
 #include "termforge/widgets/detail/width.hpp"
 #include "termforge/widgets/glyphs.hpp"
-#include "termforge/widgets/widget.hpp"
 #include "termforge/widgets/theme.hpp"
+#include "termforge/widgets/widget.hpp"
 
 namespace termforge {
 
@@ -186,7 +186,7 @@ class ListWidget final : public Widget {
   // #72: the affordance that survives a driver which drops colour.
   BorderStyle m_style{BorderStyle::Single};
   bool m_marker_enabled{true};
-  std::string m_marker;  // empty == use the style's glyph
+  std::string m_marker; // empty == use the style's glyph
 
   // #21: the scrollbar strip's colours (see set_scrollbar_colors).
   Rgb m_track_fg{theme::kDim};
@@ -195,4 +195,4 @@ class ListWidget final : public Widget {
   std::function<void(int, const std::string&)> m_on_select;
 };
 
-}  // namespace termforge
+} // namespace termforge

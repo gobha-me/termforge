@@ -105,9 +105,9 @@ class DialogsDemo final : public App {
         m_status.set_text("choice: cancelled");
         return;
       }
-      std::string summary = "choice: " +
-                            std::to_string(result->selected_indices.size()) +
-                            " selected";
+      std::string summary =
+          "choice: " + std::to_string(result->selected_indices.size()) +
+          " selected";
       if (result->other) summary += ", other=\"" + *result->other + "\"";
       m_status.set_text(std::move(summary));
     });
@@ -134,11 +134,12 @@ class DialogsDemo final : public App {
     // everything to the overlay instead. No modal guard needed.
     if (const auto* m = std::get_if<MouseEvent>(&ev)) {
       if (m->pressed) m_ring.focus_at(m->x, m->y);
-      route_mouse(*m, {&m_btn_message, &m_btn_confirm, &m_btn_prompt, &m_btn_open});
+      route_mouse(*m,
+                  {&m_btn_message, &m_btn_confirm, &m_btn_prompt, &m_btn_open});
       return;
     }
     if (m_ring.handle_key(ev)) return;
-    App::on_event(ev);  // ESC / Ctrl+C quits
+    App::on_event(ev); // ESC / Ctrl+C quits
   }
 
   auto on_tick(std::chrono::duration<double> dt) -> void override {
@@ -187,8 +188,8 @@ class DialogsDemo final : public App {
   FocusRing m_ring;
 
   MessageDialog m_message{"Message", "Your work has been saved."};
-  ConfirmDialog m_confirm{"Confirm", "Delete this file? This cannot be undone.",
-                          {}};
+  ConfirmDialog m_confirm{
+      "Confirm", "Delete this file? This cannot be undone.", {}};
   PromptDialog m_prompt{"Prompt", "Name the new file:", {}};
   ChoiceDialog m_choice{"Rendering", "Choose one or two output preferences:",
                         ChoiceMode::Multiple};

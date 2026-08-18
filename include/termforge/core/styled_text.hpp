@@ -33,4 +33,4 @@ struct TextSpan {
 
 using StyledText = std::vector<TextSpan>;
 
-}  // namespace termforge
+} // namespace termforge

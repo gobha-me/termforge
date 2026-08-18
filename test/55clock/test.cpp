@@ -107,7 +107,8 @@ class ScriptedInputProbe : public App {
     if (m_pending.empty()) return 0;
     const int count = static_cast<int>(
         std::min(m_pending.size(), static_cast<std::size_t>(max)));
-    for (int i = 0; i < count; ++i) out[i] = m_pending[static_cast<std::size_t>(i)];
+    for (int i = 0; i < count; ++i)
+      out[i] = m_pending[static_cast<std::size_t>(i)];
     m_pending.erase(0, static_cast<std::size_t>(count));
     return count;
   }
@@ -134,7 +135,7 @@ class ReplacementProbe : public App {
   std::string m_sink;
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("SyntheticClock advances monotonically", "[clock]") {
   SyntheticClock clock;
@@ -164,14 +165,15 @@ TEST_CASE("a synthetic clock drives exact fixed ticks and carries remainder",
   app.set_tick_hz(10);
   app.set_max_tick_dt(Seconds::zero());
 
-  app.step();  // primes the previous-frame stamp at the synthetic epoch
+  app.step(); // primes the previous-frame stamp at the synthetic epoch
   REQUIRE(app.ticks_per_frame.back() == 0);
 
   clock.advance(1s);
   app.step();
   REQUIRE(app.ticks_per_frame.back() == 10);
   REQUIRE(app.dts.size() == 10);
-  for (const auto dt : app.dts) REQUIRE(dt == Seconds{0.1});
+  for (const auto dt : app.dts)
+    REQUIRE(dt == Seconds{0.1});
 
   clock.advance(150ms);
   app.step();
@@ -201,7 +203,8 @@ TEST_CASE("nullptr restores App's real steady clock", "[clock]") {
   REQUIRE(observed <= after);
 }
 
-TEST_CASE("synthetic frame waits advance time without sleeping", "[clock][pacing]") {
+TEST_CASE("synthetic frame waits advance time without sleeping",
+          "[clock][pacing]") {
   SyntheticClock clock;
   WaitProbe app{3};
   app.set_clock(&clock);
@@ -227,7 +230,7 @@ TEST_CASE("synthetic waits still drain scripted input at zero timeout",
   app.release_during_wait = "x";
 
   app.step();
-  REQUIRE(app.seen.empty());  // absorbed during the wait, not dispatched early
+  REQUIRE(app.seen.empty()); // absorbed during the wait, not dispatched early
   REQUIRE(clock.now().time_since_epoch() == 100ms);
   REQUIRE(app.waits == std::vector<int>{0, 0});
 

@@ -9,9 +9,9 @@
 #include "termforge/core/screen.hpp"
 #include "termforge/widgets/map_widget.hpp"
 
-using termforge::MapWidget;
 using termforge::Extent;
 using termforge::Image;
+using termforge::MapWidget;
 using termforge::Pixel;
 using termforge::PixelRegionMode;
 using termforge::Rect;
@@ -59,7 +59,7 @@ auto make_sprite_tileset() -> TileSet {
   return ts;
 }
 
-}  // namespace
+} // namespace
 
 // ── TileSet ─────────────────────────────────────────────────────────────────
 
@@ -67,10 +67,11 @@ TEST_CASE("TileSet: get returns the defined TileDef", "[mapwidget]") {
   TileSet ts = make_tileset();
   REQUIRE(ts.get(1).glyph == "#");
   REQUIRE(ts.get(1).fg == kWall);
-  REQUIRE(ts.size() == 5);  // ids 0..4 (0 slot is reserved but counted)
+  REQUIRE(ts.size() == 5); // ids 0..4 (0 slot is reserved but counted)
 }
 
-TEST_CASE("TileSet: unknown id resolves blank, never throws", "[mapwidget][failure]") {
+TEST_CASE("TileSet: unknown id resolves blank, never throws",
+          "[mapwidget][failure]") {
   TileSet ts = make_tileset();
   REQUIRE(ts.get(999).glyph.empty());
   REQUIRE(ts.get(-1).glyph.empty());
@@ -80,11 +81,12 @@ TEST_CASE("TileSet: unknown id resolves blank, never throws", "[mapwidget][failu
 
 // ── basic painting ──────────────────────────────────────────────────────────
 
-TEST_CASE("MapWidget: paints a single-layer map across its rect", "[mapwidget]") {
+TEST_CASE("MapWidget: paints a single-layer map across its rect",
+          "[mapwidget]") {
   MapWidget w = make_widget(4, 3);
   w.set_geometry({0, 0, 4, 3});
-  w.set_tile(0, 0, 0, 1);  // wall at map origin
-  w.set_tile(0, 3, 2, 2);  // grass at (3,2)
+  w.set_tile(0, 0, 0, 1); // wall at map origin
+  w.set_tile(0, 3, 2, 2); // grass at (3,2)
 
   Screen s{4, 3};
   w.draw(s);
@@ -95,7 +97,8 @@ TEST_CASE("MapWidget: paints a single-layer map across its rect", "[mapwidget]")
   REQUIRE(s.at(3, 2).fg == kGrass);
 }
 
-TEST_CASE("MapWidget: empty ids stay blank (bg fill, no glyph)", "[mapwidget]") {
+TEST_CASE("MapWidget: empty ids stay blank (bg fill, no glyph)",
+          "[mapwidget]") {
   MapWidget w = make_widget(3, 2);
   w.set_geometry({0, 0, 3, 2});
   w.set_tile(0, 1, 1, 1);
@@ -103,7 +106,7 @@ TEST_CASE("MapWidget: empty ids stay blank (bg fill, no glyph)", "[mapwidget]") 
   Screen s{3, 2};
   w.draw(s);
 
-  REQUIRE(s.text_at(0, 0).empty());  // untouched cell is blank fill
+  REQUIRE(s.text_at(0, 0).empty()); // untouched cell is blank fill
   REQUIRE(s.text_at(1, 1) == "#");
 }
 
@@ -111,13 +114,13 @@ TEST_CASE("MapWidget: empty ids stay blank (bg fill, no glyph)", "[mapwidget]") 
 
 TEST_CASE("MapWidget: camera clamps at all four map edges", "[mapwidget]") {
   MapWidget w = make_widget(10, 10);
-  w.set_geometry({0, 0, 4, 4});  // 4x4 viewport over a 10x10 map
+  w.set_geometry({0, 0, 4, 4}); // 4x4 viewport over a 10x10 map
 
   w.set_camera(-5, -5);
   REQUIRE(w.camera() == std::pair{0, 0});
 
   w.set_camera(100, 100);
-  REQUIRE(w.camera() == std::pair{6, 6});  // 10 - 4
+  REQUIRE(w.camera() == std::pair{6, 6}); // 10 - 4
 
   w.set_camera(100, -3);
   REQUIRE(w.camera() == std::pair{6, 0});
@@ -126,28 +129,30 @@ TEST_CASE("MapWidget: camera clamps at all four map edges", "[mapwidget]") {
   REQUIRE(w.camera() == std::pair{0, 6});
 }
 
-TEST_CASE("MapWidget: center_on clamps near a corner instead of revealing void", "[mapwidget]") {
+TEST_CASE("MapWidget: center_on clamps near a corner instead of revealing void",
+          "[mapwidget]") {
   MapWidget w = make_widget(10, 10);
   w.set_geometry({0, 0, 4, 4});
 
-  w.center_on(0, 0);  // would centre at (-2,-2); must clamp to (0,0)
+  w.center_on(0, 0); // would centre at (-2,-2); must clamp to (0,0)
   REQUIRE(w.camera() == std::pair{0, 0});
 
-  w.center_on(9, 9);  // would centre at (7,7); must clamp to (6,6)
+  w.center_on(9, 9); // would centre at (7,7); must clamp to (6,6)
   REQUIRE(w.camera() == std::pair{6, 6});
 
-  w.center_on(5, 5);  // interior: 5 - 4/2 = 3
+  w.center_on(5, 5); // interior: 5 - 4/2 = 3
   REQUIRE(w.camera() == std::pair{3, 3});
 }
 
 TEST_CASE("MapWidget: camera larger than map pins to origin", "[mapwidget]") {
   MapWidget w = make_widget(3, 2);
-  w.set_geometry({0, 0, 8, 8});  // viewport bigger than the whole map
+  w.set_geometry({0, 0, 8, 8}); // viewport bigger than the whole map
   w.set_camera(5, 5);
   REQUIRE(w.camera() == std::pair{0, 0});
 }
 
-TEST_CASE("MapWidget: draw scrolls the visible window by the camera", "[mapwidget]") {
+TEST_CASE("MapWidget: draw scrolls the visible window by the camera",
+          "[mapwidget]") {
   MapWidget w = make_widget(10, 10);
   w.set_geometry({0, 0, 3, 3});
   // Distinct tile deep in the map, only visible once the camera moves.
@@ -156,32 +161,34 @@ TEST_CASE("MapWidget: draw scrolls the visible window by the camera", "[mapwidge
   Screen s{3, 3};
   w.set_camera(0, 0);
   w.draw(s);
-  REQUIRE(s.text_at(0, 0).empty());  // (7,8) not in a (0,0)+3x3 window
+  REQUIRE(s.text_at(0, 0).empty()); // (7,8) not in a (0,0)+3x3 window
 
-  w.set_camera(5, 6);  // now (7,8) is the window's (2,2)
+  w.set_camera(5, 6); // now (7,8) is the window's (2,2)
   w.draw(s);
   REQUIRE(s.text_at(2, 2) == "@");
 }
 
-TEST_CASE("MapWidget: resizing the viewport re-clamps a stranded camera", "[mapwidget]") {
+TEST_CASE("MapWidget: resizing the viewport re-clamps a stranded camera",
+          "[mapwidget]") {
   MapWidget w = make_widget(8, 8);
   w.set_geometry({0, 0, 2, 2});
-  w.set_camera(6, 6);  // legal for a 2x2 viewport (8-2)
+  w.set_camera(6, 6); // legal for a 2x2 viewport (8-2)
   REQUIRE(w.camera() == std::pair{6, 6});
 
   // Grow the viewport to 6x6: now max camera is 8-6=2, and no setter runs.
   w.set_geometry({0, 0, 6, 6});
   Screen s{6, 6};
-  w.draw(s);  // draw() re-clamps against the current geometry
+  w.draw(s); // draw() re-clamps against the current geometry
   REQUIRE(w.camera() == std::pair{2, 2});
 }
 
 // ── tile size & the partial-tile rule ───────────────────────────────────────
 
-TEST_CASE("MapWidget: non-square {2,1} tiles lay out two cells per tile", "[mapwidget]") {
+TEST_CASE("MapWidget: non-square {2,1} tiles lay out two cells per tile",
+          "[mapwidget]") {
   MapWidget w = make_widget(3, 1);
   w.set_tile_size(2, 1);
-  w.set_geometry({0, 0, 6, 1});  // exactly three 2-cell tiles
+  w.set_geometry({0, 0, 6, 1}); // exactly three 2-cell tiles
   w.set_tile(0, 0, 0, 1);
   w.set_tile(0, 1, 0, 2);
   w.set_tile(0, 2, 0, 3);
@@ -191,18 +198,20 @@ TEST_CASE("MapWidget: non-square {2,1} tiles lay out two cells per tile", "[mapw
 
   // Tile 0 occupies cells 0-1, tile 1 cells 2-3, tile 2 cells 4-5.
   REQUIRE(s.text_at(0, 0) == "#");
-  REQUIRE(s.text_at(1, 0).empty());  // rest of tile 0 is bg fill (no glyph)
+  REQUIRE(s.text_at(1, 0).empty()); // rest of tile 0 is bg fill (no glyph)
   REQUIRE(s.text_at(2, 0) == ".");
   REQUIRE(s.text_at(4, 0) == "@");
 }
 
-TEST_CASE("MapWidget: trailing partial tile is not drawn, leftover gets bg fill", "[mapwidget]") {
+TEST_CASE(
+    "MapWidget: trailing partial tile is not drawn, leftover gets bg fill",
+    "[mapwidget]") {
   MapWidget w = make_widget(4, 1);
   w.set_tile_size(2, 1);
-  w.set_geometry({0, 0, 5, 1});  // 5 cells wide: two full tiles + 1 leftover col
+  w.set_geometry({0, 0, 5, 1}); // 5 cells wide: two full tiles + 1 leftover col
   w.set_tile(0, 0, 0, 1);
   w.set_tile(0, 1, 0, 2);
-  w.set_tile(0, 2, 0, 3);  // would start at cell 4, but only 1 col remains
+  w.set_tile(0, 2, 0, 3); // would start at cell 4, but only 1 col remains
 
   Screen s{5, 1};
   w.draw(s);
@@ -216,7 +225,8 @@ TEST_CASE("MapWidget: trailing partial tile is not drawn, leftover gets bg fill"
 
 // ── degenerate geometry ─────────────────────────────────────────────────────
 
-TEST_CASE("MapWidget: zero-size rect is a no-op, not a crash", "[mapwidget][failure]") {
+TEST_CASE("MapWidget: zero-size rect is a no-op, not a crash",
+          "[mapwidget][failure]") {
   MapWidget w = make_widget(4, 4);
   w.set_geometry({0, 0, 0, 0});
   Screen s{4, 4};
@@ -224,7 +234,8 @@ TEST_CASE("MapWidget: zero-size rect is a no-op, not a crash", "[mapwidget][fail
   REQUIRE(s.text_at(0, 0).empty());
 }
 
-TEST_CASE("MapWidget: zero-size map draws only background", "[mapwidget][failure]") {
+TEST_CASE("MapWidget: zero-size map draws only background",
+          "[mapwidget][failure]") {
   MapWidget w;
   w.set_tileset(make_tileset());
   w.set_map_size(0, 0);
@@ -235,11 +246,12 @@ TEST_CASE("MapWidget: zero-size map draws only background", "[mapwidget][failure
   REQUIRE(s.text_at(2, 2).empty());
 }
 
-TEST_CASE("MapWidget: set_geometry before and after set_map_size both work", "[mapwidget]") {
+TEST_CASE("MapWidget: set_geometry before and after set_map_size both work",
+          "[mapwidget]") {
   MapWidget w;
   w.set_tileset(make_tileset());
-  w.set_geometry({0, 0, 4, 4});  // geometry FIRST
-  w.set_map_size(4, 4);          // then the map
+  w.set_geometry({0, 0, 4, 4}); // geometry FIRST
+  w.set_map_size(4, 4);         // then the map
   w.set_tile(0, 1, 1, 1);
 
   Screen s{4, 4};
@@ -252,12 +264,12 @@ TEST_CASE("MapWidget: set_geometry before and after set_map_size both work", "[m
 TEST_CASE("MapWidget: re-asserting the same size is a no-op, layers survive",
           "[mapwidget][preserve]") {
   MapWidget w = make_widget(10, 10);
-  w.set_tile(0, 3, 4, 1);   // wall
-  w.set_tile(0, 7, 2, 3);   // player
+  w.set_tile(0, 3, 4, 1); // wall
+  w.set_tile(0, 7, 2, 3); // player
   const int entities = w.add_layer("entities");
-  w.set_tile(entities, 5, 5, 4);  // item on its own layer
+  w.set_tile(entities, 5, 5, 4); // item on its own layer
 
-  w.set_map_size(10, 10);  // identical dimensions: must NOT wipe
+  w.set_map_size(10, 10); // identical dimensions: must NOT wipe
 
   REQUIRE(w.tile(0, 3, 4) == 1);
   REQUIRE(w.tile(0, 7, 2) == 3);
@@ -267,28 +279,29 @@ TEST_CASE("MapWidget: re-asserting the same size is a no-op, layers survive",
 TEST_CASE("MapWidget: shrinking keeps the overlapping top-left corner (#127)",
           "[mapwidget][preserve]") {
   MapWidget w = make_widget(8, 8);
-  w.set_tile(0, 1, 1, 1);   // inside the surviving 4x4 corner
-  w.set_tile(0, 6, 6, 3);   // outside: dropped
-  w.set_tile(0, 0, 7, 2);   // row beyond new height: dropped
+  w.set_tile(0, 1, 1, 1); // inside the surviving 4x4 corner
+  w.set_tile(0, 6, 6, 3); // outside: dropped
+  w.set_tile(0, 0, 7, 2); // row beyond new height: dropped
 
   w.set_map_size(4, 4);
 
-  REQUIRE(w.tile(0, 1, 1) == 1);        // corner preserved
-  REQUIRE(w.tile(0, 3, 3) == 0);        // untouched cell stays empty
+  REQUIRE(w.tile(0, 1, 1) == 1); // corner preserved
+  REQUIRE(w.tile(0, 3, 3) == 0); // untouched cell stays empty
   // Old (6,6) and (0,7) are now out of range; the accessor returns kEmptyId.
   REQUIRE(w.tile(0, 6, 6) == 0);
   REQUIRE(w.tile(0, 0, 7) == 0);
 }
 
-TEST_CASE("MapWidget: growing zero-fills the new cells, keeps the corner (#127)",
-          "[mapwidget][preserve]") {
+TEST_CASE(
+    "MapWidget: growing zero-fills the new cells, keeps the corner (#127)",
+    "[mapwidget][preserve]") {
   MapWidget w = make_widget(3, 3);
-  w.set_tile(0, 2, 2, 3);   // bottom-right of the original 3x3
+  w.set_tile(0, 2, 2, 3); // bottom-right of the original 3x3
 
   w.set_map_size(6, 6);
 
-  REQUIRE(w.tile(0, 2, 2) == 3);   // corner preserved
-  REQUIRE(w.tile(0, 5, 5) == 0);   // new area is empty
+  REQUIRE(w.tile(0, 2, 2) == 3); // corner preserved
+  REQUIRE(w.tile(0, 5, 5) == 0); // new area is empty
   REQUIRE(w.tile(0, 0, 0) == 0);
 }
 
@@ -315,24 +328,25 @@ TEST_CASE("MapWidget: size change still re-clamps the camera (#127)",
   w.set_map_size(10, 10);
   w.set_tile_size(1, 1);
   w.set_geometry({0, 0, 4, 4});
-  w.set_camera(9, 9);   // clamped to (6,6) while the map is 10x10
+  w.set_camera(9, 9); // clamped to (6,6) while the map is 10x10
   REQUIRE(w.camera() == std::pair{6, 6});
 
-  w.set_map_size(5, 5);  // shrink: max camera is now (1,1)
+  w.set_map_size(5, 5); // shrink: max camera is now (1,1)
   REQUIRE(w.camera() == std::pair{1, 1});
 }
 
-TEST_CASE("MapWidget: an entity on a higher layer paints over terrain", "[mapwidget]") {
+TEST_CASE("MapWidget: an entity on a higher layer paints over terrain",
+          "[mapwidget]") {
   MapWidget w = make_widget(3, 3);
-  w.set_tile(0, 1, 1, 2);             // terrain: grass at (1,1)
+  w.set_tile(0, 1, 1, 2); // terrain: grass at (1,1)
   const int entities = w.add_layer("entities");
-  w.set_tile(entities, 1, 1, 3);      // player standing on the grass
+  w.set_tile(entities, 1, 1, 3); // player standing on the grass
 
   Screen s{3, 3};
   w.set_geometry({0, 0, 3, 3});
   w.draw(s);
 
-  REQUIRE(s.text_at(1, 1) == "@");  // topmost non-empty wins
+  REQUIRE(s.text_at(1, 1) == "@"); // topmost non-empty wins
   REQUIRE(s.at(1, 1).fg == kPlayer);
 }
 
@@ -347,22 +361,23 @@ TEST_CASE("MapWidget: a hidden layer does not paint", "[mapwidget]") {
   w.set_geometry({0, 0, 3, 3});
   w.draw(s);
 
-  REQUIRE(s.text_at(1, 1) == ".");  // terrain shows through the hidden layer
+  REQUIRE(s.text_at(1, 1) == "."); // terrain shows through the hidden layer
 }
 
-TEST_CASE("MapWidget: an empty id on top falls through to the layer beneath", "[mapwidget]") {
+TEST_CASE("MapWidget: an empty id on top falls through to the layer beneath",
+          "[mapwidget]") {
   MapWidget w = make_widget(3, 3);
-  w.set_tile(0, 0, 0, 1);             // terrain wall
-  w.set_tile(0, 1, 0, 2);             // terrain grass
+  w.set_tile(0, 0, 0, 1); // terrain wall
+  w.set_tile(0, 1, 0, 2); // terrain grass
   const int overlay = w.add_layer("overlay");
-  w.set_tile(overlay, 1, 0, 4);       // item over the grass only
+  w.set_tile(overlay, 1, 0, 4); // item over the grass only
 
   Screen s{3, 3};
   w.set_geometry({0, 0, 3, 3});
   w.draw(s);
 
-  REQUIRE(s.text_at(0, 0) == "#");  // overlay empty here -> terrain shows
-  REQUIRE(s.text_at(1, 0) == "$");  // overlay item wins on its own cell
+  REQUIRE(s.text_at(0, 0) == "#"); // overlay empty here -> terrain shows
+  REQUIRE(s.text_at(1, 0) == "$"); // overlay item wins on its own cell
 }
 
 TEST_CASE("MapWidget: clear_layer empties only that layer", "[mapwidget]") {
@@ -375,22 +390,24 @@ TEST_CASE("MapWidget: clear_layer empties only that layer", "[mapwidget]") {
   Screen s{2, 2};
   w.set_geometry({0, 0, 2, 2});
   w.draw(s);
-  REQUIRE(s.text_at(0, 0) == "#");  // terrain again, overlay cleared
+  REQUIRE(s.text_at(0, 0) == "#"); // terrain again, overlay cleared
 }
 
-TEST_CASE("MapWidget: layer 0 is implicit — no add_layer needed", "[mapwidget]") {
+TEST_CASE("MapWidget: layer 0 is implicit — no add_layer needed",
+          "[mapwidget]") {
   MapWidget w = make_widget(2, 2);
-  REQUIRE(w.tile(0, 0, 0) == 0);  // layer 0 exists and is empty
+  REQUIRE(w.tile(0, 0, 0) == 0); // layer 0 exists and is empty
   w.set_tile(0, 1, 1, 2);
   REQUIRE(w.tile(0, 1, 1) == 2);
 }
 
 // ── out-of-bounds safety ────────────────────────────────────────────────────
 
-TEST_CASE("MapWidget: set_tile out of map bounds is a clipped no-op", "[mapwidget][failure]") {
+TEST_CASE("MapWidget: set_tile out of map bounds is a clipped no-op",
+          "[mapwidget][failure]") {
   MapWidget w = make_widget(3, 3);
-  w.set_tile(0, 3, 0, 1);   // x just past the edge
-  w.set_tile(0, 0, 3, 1);   // y just past the edge
+  w.set_tile(0, 3, 0, 1); // x just past the edge
+  w.set_tile(0, 0, 3, 1); // y just past the edge
   w.set_tile(0, -1, -1, 1);
   w.set_tile(0, 100, 100, 1);
 
@@ -399,29 +416,33 @@ TEST_CASE("MapWidget: set_tile out of map bounds is a clipped no-op", "[mapwidge
   w.draw(s);
   // Nothing painted anywhere — every write was out of bounds.
   for (int y = 0; y < 3; ++y)
-    for (int x = 0; x < 3; ++x) REQUIRE(s.text_at(x, y).empty());
+    for (int x = 0; x < 3; ++x)
+      REQUIRE(s.text_at(x, y).empty());
 }
 
-TEST_CASE("MapWidget: tile reads out of bounds return the empty id", "[mapwidget][failure]") {
+TEST_CASE("MapWidget: tile reads out of bounds return the empty id",
+          "[mapwidget][failure]") {
   MapWidget w = make_widget(3, 3);
   REQUIRE(w.tile(0, 100, 100) == 0);
   REQUIRE(w.tile(0, -1, 0) == 0);
-  REQUIRE(w.tile(7, 0, 0) == 0);  // no such layer
+  REQUIRE(w.tile(7, 0, 0) == 0); // no such layer
 }
 
-TEST_CASE("MapWidget: unknown tile id renders blank rather than throwing", "[mapwidget][failure]") {
+TEST_CASE("MapWidget: unknown tile id renders blank rather than throwing",
+          "[mapwidget][failure]") {
   MapWidget w = make_widget(3, 3);
-  w.set_tile(0, 1, 1, 42);  // never defined in the tileset
+  w.set_tile(0, 1, 1, 42); // never defined in the tileset
 
   Screen s{3, 3};
   w.set_geometry({0, 0, 3, 3});
   w.draw(s);
-  REQUIRE(s.text_at(1, 1).empty());  // resolves to the blank TileDef
+  REQUIRE(s.text_at(1, 1).empty()); // resolves to the blank TileDef
 }
 
 // ── mutation redraws (dirty contract) ───────────────────────────────────────
 
-TEST_CASE("MapWidget: a mutation then redraw reflects the new state", "[mapwidget]") {
+TEST_CASE("MapWidget: a mutation then redraw reflects the new state",
+          "[mapwidget]") {
   MapWidget w = make_widget(3, 3);
   w.set_tile(0, 0, 0, 1);
   Screen s{3, 3};
@@ -430,14 +451,15 @@ TEST_CASE("MapWidget: a mutation then redraw reflects the new state", "[mapwidge
   w.draw(s);
   REQUIRE(s.text_at(0, 0) == "#");
 
-  w.set_tile(0, 0, 0, 2);  // mutate
-  w.draw(s);               // redraw without re-geometry
+  w.set_tile(0, 0, 0, 2); // mutate
+  w.draw(s);              // redraw without re-geometry
   REQUIRE(s.text_at(0, 0) == ".");
 }
 
 // ── tile_at (hit testing) ───────────────────────────────────────────────────
 
-TEST_CASE("MapWidget: tile_at maps a cell back to its map tile", "[mapwidget]") {
+TEST_CASE("MapWidget: tile_at maps a cell back to its map tile",
+          "[mapwidget]") {
   MapWidget w = make_widget(4, 3);
   w.set_geometry({0, 0, 4, 3});
 
@@ -449,40 +471,43 @@ TEST_CASE("MapWidget: tile_at honours the rect origin", "[mapwidget]") {
   MapWidget w = make_widget(4, 3);
   w.set_geometry({5, 2, 4, 3});
 
-  REQUIRE(w.tile_at(5, 2) == std::pair{0, 0});       // rect top-left
-  REQUIRE(w.tile_at(8, 4) == std::pair{3, 2});       // rect bottom-right
-  REQUIRE(w.tile_at(0, 0) == std::nullopt);          // left of the rect
-  REQUIRE(w.tile_at(5, 1) == std::nullopt);          // above the rect
-  REQUIRE(w.tile_at(4, 2) == std::nullopt);          // one column left
-  REQUIRE(w.tile_at(9, 2) == std::nullopt);          // one column right
+  REQUIRE(w.tile_at(5, 2) == std::pair{0, 0}); // rect top-left
+  REQUIRE(w.tile_at(8, 4) == std::pair{3, 2}); // rect bottom-right
+  REQUIRE(w.tile_at(0, 0) == std::nullopt);    // left of the rect
+  REQUIRE(w.tile_at(5, 1) == std::nullopt);    // above the rect
+  REQUIRE(w.tile_at(4, 2) == std::nullopt);    // one column left
+  REQUIRE(w.tile_at(9, 2) == std::nullopt);    // one column right
 }
 
-TEST_CASE("MapWidget: tile_at outside the rect is nullopt, not clamped", "[mapwidget]") {
+TEST_CASE("MapWidget: tile_at outside the rect is nullopt, not clamped",
+          "[mapwidget]") {
   MapWidget w = make_widget(4, 3);
   w.set_geometry({0, 0, 4, 3});
 
   REQUIRE(w.tile_at(-1, 0) == std::nullopt);
   REQUIRE(w.tile_at(0, -1) == std::nullopt);
-  REQUIRE(w.tile_at(4, 0) == std::nullopt);   // one past the right edge
-  REQUIRE(w.tile_at(0, 3) == std::nullopt);   // one past the bottom edge
+  REQUIRE(w.tile_at(4, 0) == std::nullopt); // one past the right edge
+  REQUIRE(w.tile_at(0, 3) == std::nullopt); // one past the bottom edge
 }
 
-TEST_CASE("MapWidget: tile_at with {2,1} tiles divides cells by the tile size", "[mapwidget]") {
+TEST_CASE("MapWidget: tile_at with {2,1} tiles divides cells by the tile size",
+          "[mapwidget]") {
   MapWidget w = make_widget(3, 1);
   w.set_tile_size(2, 1);
   w.set_geometry({0, 0, 6, 1});
 
   REQUIRE(w.tile_at(0, 0) == std::pair{0, 0});
-  REQUIRE(w.tile_at(1, 0) == std::pair{0, 0});  // second cell of tile 0
+  REQUIRE(w.tile_at(1, 0) == std::pair{0, 0}); // second cell of tile 0
   REQUIRE(w.tile_at(2, 0) == std::pair{1, 0});
   REQUIRE(w.tile_at(3, 0) == std::pair{1, 0});
   REQUIRE(w.tile_at(5, 0) == std::pair{2, 0});
 }
 
-TEST_CASE("MapWidget: tile_at in a trailing partial tile is nullopt", "[mapwidget]") {
+TEST_CASE("MapWidget: tile_at in a trailing partial tile is nullopt",
+          "[mapwidget]") {
   MapWidget w = make_widget(4, 1);
   w.set_tile_size(2, 1);
-  w.set_geometry({0, 0, 5, 1});  // two full tiles + 1 leftover column
+  w.set_geometry({0, 0, 5, 1}); // two full tiles + 1 leftover column
 
   REQUIRE(w.tile_at(3, 0) == std::pair{1, 0});
   // Column 4 is inside rect() but the widget draws only background there —
@@ -490,17 +515,19 @@ TEST_CASE("MapWidget: tile_at in a trailing partial tile is nullopt", "[mapwidge
   REQUIRE(w.tile_at(4, 0) == std::nullopt);
 }
 
-TEST_CASE("MapWidget: tile_at past the map edge in a large viewport is nullopt", "[mapwidget]") {
+TEST_CASE("MapWidget: tile_at past the map edge in a large viewport is nullopt",
+          "[mapwidget]") {
   MapWidget w = make_widget(3, 2);
-  w.set_geometry({0, 0, 8, 8});  // viewport bigger than the whole map
+  w.set_geometry({0, 0, 8, 8}); // viewport bigger than the whole map
 
-  REQUIRE(w.tile_at(2, 1) == std::pair{2, 1});  // last map tile
-  REQUIRE(w.tile_at(3, 0) == std::nullopt);     // inside rect, past the map
+  REQUIRE(w.tile_at(2, 1) == std::pair{2, 1}); // last map tile
+  REQUIRE(w.tile_at(3, 0) == std::nullopt);    // inside rect, past the map
   REQUIRE(w.tile_at(0, 2) == std::nullopt);
   REQUIRE(w.tile_at(7, 7) == std::nullopt);
 }
 
-TEST_CASE("MapWidget: tile_at answers in the camera's visible window", "[mapwidget]") {
+TEST_CASE("MapWidget: tile_at answers in the camera's visible window",
+          "[mapwidget]") {
   MapWidget w = make_widget(10, 10);
   w.set_geometry({0, 0, 3, 3});
   w.set_camera(5, 6);
@@ -509,10 +536,11 @@ TEST_CASE("MapWidget: tile_at answers in the camera's visible window", "[mapwidg
   REQUIRE(w.tile_at(2, 2) == std::pair{7, 8});
 }
 
-TEST_CASE("MapWidget: tile_at uses the clamped window draw() would paint", "[mapwidget]") {
+TEST_CASE("MapWidget: tile_at uses the clamped window draw() would paint",
+          "[mapwidget]") {
   MapWidget w = make_widget(8, 8);
   w.set_geometry({0, 0, 2, 2});
-  w.set_camera(6, 6);  // legal for a 2x2 viewport
+  w.set_camera(6, 6); // legal for a 2x2 viewport
   REQUIRE(w.camera() == std::pair{6, 6});
 
   // Grow the viewport: the camera is stranded at (6,6) until draw() re-clamps
@@ -521,31 +549,33 @@ TEST_CASE("MapWidget: tile_at uses the clamped window draw() would paint", "[map
   w.set_geometry({0, 0, 6, 6});
   REQUIRE(w.tile_at(0, 0) == std::pair{2, 2});
   REQUIRE(w.tile_at(3, 3) == std::pair{5, 5});
-  REQUIRE(w.camera() == std::pair{6, 6});  // and it does not mutate
+  REQUIRE(w.camera() == std::pair{6, 6}); // and it does not mutate
 }
 
-TEST_CASE("MapWidget: tile_at on degenerate geometry is nullopt, not a crash", "[mapwidget][failure]") {
+TEST_CASE("MapWidget: tile_at on degenerate geometry is nullopt, not a crash",
+          "[mapwidget][failure]") {
   MapWidget w = make_widget(4, 4);
-  w.set_geometry({0, 0, 0, 0});  // zero-size rect
+  w.set_geometry({0, 0, 0, 0}); // zero-size rect
   REQUIRE(w.tile_at(0, 0) == std::nullopt);
 
-  MapWidget bare;  // never sized, never laid out
+  MapWidget bare; // never sized, never laid out
   REQUIRE(bare.tile_at(0, 0) == std::nullopt);
 }
 
 // ── viewport_tiles (public) ─────────────────────────────────────────────────
 
-TEST_CASE("MapWidget: viewport_tiles reports the floored whole-tile window", "[mapwidget]") {
+TEST_CASE("MapWidget: viewport_tiles reports the floored whole-tile window",
+          "[mapwidget]") {
   MapWidget w = make_widget(10, 10);
   w.set_tile_size(2, 1);
 
   w.set_geometry({0, 0, 7, 3});
-  REQUIRE(w.viewport_tiles() == std::pair{3, 3});  // 7/2 floors to 3
+  REQUIRE(w.viewport_tiles() == std::pair{3, 3}); // 7/2 floors to 3
 
   w.set_geometry({0, 0, 6, 1});
   REQUIRE(w.viewport_tiles() == std::pair{3, 1});
 
-  w.set_geometry({0, 0, 1, 1});  // smaller than one tile
+  w.set_geometry({0, 0, 1, 1}); // smaller than one tile
   REQUIRE(w.viewport_tiles() == std::pair{0, 1});
 
   w.set_geometry({0, 0, 0, 0});
@@ -578,9 +608,9 @@ TEST_CASE("MapWidget: sprite layers source-over compose from one atlas",
   w.set_map_size(1, 1);
   w.set_tile_size(2, 1);
   w.set_geometry({3, 2, 2, 1});
-  w.set_tile(0, 0, 0, 1);  // opaque red terrain
+  w.set_tile(0, 0, 0, 1); // opaque red terrain
   const int actors = w.add_layer("actors");
-  w.set_tile(actors, 0, 0, 2);  // half-alpha blue actor
+  w.set_tile(actors, 0, 0, 2); // half-alpha blue actor
 
   REQUIRE(w.pixel_regions() == std::vector<Rect>{{3, 2, 2, 1}});
   const Image* raster = w.draw_pixels({3, 2, 2, 1}, Extent{16, 16});
@@ -594,11 +624,12 @@ TEST_CASE("MapWidget: sprite layers source-over compose from one atlas",
   CHECK(w.pixel_region_state(w.rect()).mode == PixelRegionMode::Persistent);
 }
 
-TEST_CASE("MapWidget: incomplete visible sprite authoring keeps the whole glyph Baseline",
+TEST_CASE("MapWidget: incomplete visible sprite authoring keeps the whole "
+          "glyph Baseline",
           "[mapwidget][sprites][failure]") {
   TileSet ts = make_sprite_tileset();
-  ts.define(3, TileDef{"GG", kGrass, {}});  // deliberately glyph-only
-  ts.define(4, TileDef{"XX", kItem, {}, Rect{3, 0, 2, 2}});  // outside atlas
+  ts.define(3, TileDef{"GG", kGrass, {}}); // deliberately glyph-only
+  ts.define(4, TileDef{"XX", kItem, {}, Rect{3, 0, 2, 2}}); // outside atlas
 
   MapWidget w;
   w.set_tileset(std::move(ts));
@@ -625,7 +656,7 @@ TEST_CASE("MapWidget: sprite region excludes trailing partial cells",
   w.set_tileset(make_sprite_tileset());
   w.set_map_size(3, 1);
   w.set_tile_size(2, 1);
-  w.set_geometry({5, 4, 5, 1});  // two complete tiles plus one leftover cell
+  w.set_geometry({5, 4, 5, 1}); // two complete tiles plus one leftover cell
   w.set_tile(0, 0, 0, 1);
   w.set_tile(0, 1, 0, 2);
 

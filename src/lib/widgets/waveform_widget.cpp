@@ -8,19 +8,20 @@
 namespace termforge {
 
 WaveformWidget::WaveformWidget(int capacity)
-    : m_capacity(capacity > 0 ? capacity : 256) {}
+    : m_capacity(capacity > 0 ? capacity : 256) {
+}
 
 auto WaveformWidget::push(float value) -> void {
   m_samples.push_back(value);
-  if (static_cast<int>(m_samples.size()) > m_capacity)
-    m_samples.pop_front();
+  if (static_cast<int>(m_samples.size()) > m_capacity) m_samples.pop_front();
   ++m_gen;
   m_content_dirty = true;
   mark_dirty();
 }
 
 auto WaveformWidget::push(std::span<const float> values) -> void {
-  for (const float v : values) push(v);
+  for (const float v : values)
+    push(v);
 }
 
 auto WaveformWidget::set_range(float min, float max) -> void {
@@ -63,7 +64,7 @@ auto compute_range(const std::deque<float>& samples, bool auto_range,
   return {lo - margin, hi + margin};
 }
 
-}  // namespace
+} // namespace
 
 // ── cell rendering (fallback — always present) ──────────────────────────────
 
@@ -177,14 +178,14 @@ auto WaveformWidget::draw_pixels(Rect region, Extent pixels) -> const Image* {
     const int y_cur = y_for(detail::sample_index(col, visible, w));
 
     for (int y = y_cur + 1; y < h; ++y)
-      buf[static_cast<std::size_t>(y) * width +
-          static_cast<std::size_t>(col)] = fill_px;
+      buf[static_cast<std::size_t>(y) * width + static_cast<std::size_t>(col)] =
+          fill_px;
 
     const int y_top = std::min(y_prev, y_cur);
     const int y_bot = std::max(y_prev, y_cur);
     for (int y = y_top; y <= y_bot; ++y)
-      buf[static_cast<std::size_t>(y) * width +
-          static_cast<std::size_t>(col)] = fg_px;
+      buf[static_cast<std::size_t>(y) * width + static_cast<std::size_t>(col)] =
+          fg_px;
 
     y_prev = y_cur;
   }
@@ -206,4 +207,4 @@ auto WaveformWidget::pixel_region_submitted(Rect /*region*/) noexcept -> void {
   m_content_dirty = false;
 }
 
-}  // namespace termforge
+} // namespace termforge
