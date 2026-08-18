@@ -68,6 +68,8 @@ TEST_CASE("payload hash: tails, metadata and every payload byte carry identity",
                                ImageFormat::Rgba32Zlib) != original);
   REQUIRE(detail::payload_hash(bytes, Extent{17, 19}, ImageFormat::Png) !=
           original);
+  REQUIRE(detail::payload_hash(bytes, Extent{17, 19}, ImageFormat::Rgb24) !=
+          original);
   for (std::size_t i = 0; i < bytes.size(); ++i) {
     const auto saved = bytes[i];
     bytes[i] ^= std::byte{0x80};

@@ -113,6 +113,43 @@ auto cursor_moves(std::string_view out) -> std::vector<std::pair<int, int>> {
 
 // ── mutable resident frames (#196) ─────────────────────────────────────────
 
+TEST_CASE("pinned: Rgb24 pins, replaces, and edits as locally checked data",
+          "[pinned][kitty][rgb24]") {
+  KittyDriver d;
+  std::string out;
+  d.set_output(&out);
+  const std::vector<std::byte> first(4 * 4 * 3, std::byte{0x11});
+  const std::vector<std::byte> second(4 * 4 * 3, std::byte{0x22});
+  const std::vector<std::byte> block(2 * 2 * 3, std::byte{0x33});
+
+  const auto pinned =
+      d.pin_image(EncodedImage{ImageFormat::Rgb24, first, Extent{4, 4}});
+  REQUIRE(pinned);
+  d.flush();
+  CHECK(d.residency().source_payload_bytes == first.size());
+
+  REQUIRE(d.replace_pinned(
+      *pinned, EncodedImage{ImageFormat::Rgb24, second, Extent{4, 4}}));
+  d.flush();
+  CHECK(d.residency().source_payload_bytes == second.size());
+
+  REQUIRE(d.edit_pinned(*pinned, PixelPoint{1, 1},
+                        EncodedImage{ImageFormat::Rgb24, block, Extent{2, 2}},
+                        ImageComposition::Overwrite));
+  d.flush();
+  CHECK(d.residency().source_payload_bytes == second.size() + block.size());
+
+  const auto chunks = tfsupport::transmit_chunks(tfsupport::apcs(out));
+  REQUIRE(chunks.size() == 3);
+  for (const auto& chunk : chunks) {
+    CHECK(tfsupport::key_value(chunk, "f") == "24");
+    CHECK(tfsupport::key_value(chunk, "q") == "2");
+    CHECK_FALSE(tfsupport::has_key(chunk, "o"));
+  }
+  CHECK(transmits_of(out, pinned->id) == 1);
+  CHECK(frame_updates_of(out, pinned->id) == 2);
+}
+
 TEST_CASE("pinned: 1800 changed frames replace one root without re-placement",
           "[pinned][kitty][replacement]") {
   KittyDriver d;

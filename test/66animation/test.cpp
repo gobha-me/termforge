@@ -140,6 +140,34 @@ TEST_CASE("animation: chunk continuations stay new-frame data without r",
   CHECK(decoded.size() == 10'000);
 }
 
+TEST_CASE("animation: Rgb24 frames are verbatim and need no replies",
+          "[animation][kitty][rgb24]") {
+  KittyDriver d;
+  d.set_image_animation_support(true);
+  std::string out;
+  d.set_output(&out);
+  const auto first = bytes(1, 2 * 2 * 3);
+  const auto second = bytes(30, 2 * 2 * 3);
+  const std::array frames{
+      AnimationFrame{EncodedImage{ImageFormat::Rgb24, first, Extent{2, 2}},
+                     10ms},
+      AnimationFrame{EncodedImage{ImageFormat::Rgb24, second, Extent{2, 2}},
+                     0ms}};
+
+  REQUIRE(d.register_animation(frames));
+  d.flush();
+  const auto chunks = tfsupport::transmit_chunks(tfsupport::apcs(out));
+  REQUIRE(chunks.size() == 2);
+  for (const auto& chunk : chunks) {
+    CHECK(tfsupport::key_value(chunk, "f") == "24");
+    CHECK(tfsupport::key_value(chunk, "q") == "2");
+  }
+  std::vector<std::byte> expected = first;
+  expected.insert(expected.end(), second.begin(), second.end());
+  CHECK(tfsupport::reassemble(out) == expected);
+  CHECK(d.residency().source_payload_bytes == expected.size());
+}
+
 TEST_CASE("animation: identical registrations remain independent",
           "[animation][kitty][identity]") {
   KittyDriver d;

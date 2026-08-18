@@ -155,12 +155,18 @@ completed items.
 > view anchors by entry/row instead of moving when the tail grows. Existing
 > `append` callers remain source-compatible finalized-entry producers.
 >
+> **2026-08-18 — dependency-free packed RGB.** **#166** is complete:
+> `ImageFormat::Rgb24` carries tightly packed row-major RGB through Kitty as
+> `f=24`, including direct, resident, partial-edit, animation and persistent
+> paths. Exact 3-byte length validation keeps it locally checked and reply-free;
+> flat tiers refuse honestly. W5 schema 2 distinguishes RGBA32 and RGB24 so a
+> direct-terminal capture can measure the 25% source-payload reduction.
+>
 > **2026-08-17 — application-supplied zlib RGBA.** The first half of **#166**
 > adds `ImageFormat::Rgba32Zlib` as an opaque caller-owned payload. Kitty emits
 > `f=32,o=z` across direct, resident-edit and animation paths; acknowledgement,
 > metering and residency use the compressed input bytes without adding a zlib
-> dependency. Non-Kitty tiers refuse honestly. `Rgb24` remains independently
-> measured on #166.
+> dependency. Non-Kitty tiers refuse honestly.
 >
 > **2026-08-17 — encoded widget pixel regions.** **#167** carries borrowed
 > `EncodedImage` payloads through Widget and App without decoding them. The
@@ -230,8 +236,10 @@ completed items.
 - Mutable resident frames + dirty submission (#196/#197) — stable Kitty image
   id/root-frame edits, placement-only moves, accepted-write acknowledgement,
   and clean-frame suppression on both enhanced tiers
-- Application-supplied zlib RGBA (#166 slice) — opaque `Rgba32Zlib` bytes ride
-  Kitty as `f=32,o=z` without a codec dependency and retain correlated replies,
+- Dependency-free raw and compressed formats (#166) — packed `Rgb24` bytes
+  ride Kitty as `f=24` with exact raw-length validation, while opaque
+  `Rgba32Zlib` bytes ride Kitty as `f=32,o=z` without a codec dependency and
+  retain correlated replies,
   exact compressed-byte accounting and format-distinct resident identity
 - Encoded widget pixel regions (#167) — fixed-resolution PNG/zlib/raw payloads
   reach the App-managed Kitty/ANSI enhancement path with Baseline-preserving
