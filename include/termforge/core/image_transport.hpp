@@ -37,8 +37,7 @@ class ImageTransferLease {
   ImageTransferLease(ImageTransferLease&&) = delete;
   auto operator=(ImageTransferLease&&) -> ImageTransferLease& = delete;
 
-  [[nodiscard]] virtual auto medium() const noexcept
-      -> ImageTransferMedium = 0;
+  [[nodiscard]] virtual auto medium() const noexcept -> ImageTransferMedium = 0;
   [[nodiscard]] virtual auto locator() const noexcept -> std::string_view = 0;
 };
 
@@ -62,7 +61,8 @@ class ImageTransport {
 class PosixSharedMemoryTransport final : public ImageTransport {
  public:
   [[nodiscard]] auto stage(std::span<const std::byte> payload)
-      -> std::expected<std::unique_ptr<ImageTransferLease>, ErrorEvent> override;
+      -> std::expected<std::unique_ptr<ImageTransferLease>,
+                       ErrorEvent> override;
 };
 
 } // namespace termforge

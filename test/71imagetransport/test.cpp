@@ -42,8 +42,7 @@ class FakeLease final : public ImageTransferLease {
       : m_locator(std::move(locator)), m_retired(retired) {}
   ~FakeLease() override { ++m_retired; }
 
-  [[nodiscard]] auto medium() const noexcept
-      -> ImageTransferMedium override {
+  [[nodiscard]] auto medium() const noexcept -> ImageTransferMedium override {
     return ImageTransferMedium::SharedMemory;
   }
   [[nodiscard]] auto locator() const noexcept -> std::string_view override {
@@ -60,8 +59,8 @@ class FakeTransport final : public ImageTransport {
   explicit FakeTransport(bool fail = false) : m_fail(fail) {}
 
   [[nodiscard]] auto stage(std::span<const std::byte> payload)
-      -> std::expected<std::unique_ptr<ImageTransferLease>, ErrorEvent>
-      override {
+      -> std::expected<std::unique_ptr<ImageTransferLease>,
+                       ErrorEvent> override {
     ++calls;
     staged.assign(payload.begin(), payload.end());
     if (m_fail) {
@@ -165,8 +164,7 @@ TEST_CASE("image transport: successful Kitty upload holds lease through reply",
   CHECK(driver.take_driver_events().empty());
 
   out.clear();
-  const Image changed =
-      tfsupport::solid(1, 1, Pixel{0x55, 0x66, 0x77, 0x88});
+  const Image changed = tfsupport::solid(1, 1, Pixel{0x55, 0x66, 0x77, 0x88});
   REQUIRE(driver.draw_image(Rect{0, 0, 1, 1}, changed));
   driver.flush();
   CHECK(transport->calls == 1);
@@ -220,8 +218,7 @@ TEST_CASE("image transport: rejection retries direct and latches the route",
   REQUIRE(driver.pinned_image_status(*first).update_pending);
   out.clear();
 
-  driver.consume_reply(
-      TerminalReply{first->id, std::nullopt, "ENOTSUP: t=s"});
+  driver.consume_reply(TerminalReply{first->id, std::nullopt, "ENOTSUP: t=s"});
   CHECK(transport->retired == 1);
   CHECK(driver.take_driver_events().empty());
   driver.flush();

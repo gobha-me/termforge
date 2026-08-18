@@ -69,8 +69,8 @@ class ScreenGuard {
   Terminal& m_terminal;
 };
 
-[[nodiscard]] auto parse_positive(std::string_view value,
-                                  std::string_view name) -> int {
+[[nodiscard]] auto parse_positive(std::string_view value, std::string_view name)
+    -> int {
   int out = 0;
   const auto [end, error] =
       std::from_chars(value.data(), value.data() + value.size(), out);
@@ -131,8 +131,9 @@ class ScreenGuard {
     const auto chunk = std::string_view{encoded}.substr(offset, kChunk);
     const bool more = offset + kChunk < encoded.size();
     if (first) {
-      out += std::format("\033_Ga=t,t=d,f=32,i={},s=512,v=512,m={},q=2;{}\033\\",
-                         id, more ? 1 : 0, chunk);
+      out +=
+          std::format("\033_Ga=t,t=d,f=32,i={},s=512,v=512,m={},q=2;{}\033\\",
+                      id, more ? 1 : 0, chunk);
       first = false;
     } else {
       out += std::format("\033_Gm={},q=2;{}\033\\", more ? 1 : 0, chunk);
@@ -145,8 +146,7 @@ class ScreenGuard {
 [[nodiscard]] auto shared_command(const ImageTransferLease& lease,
                                   std::size_t size, std::uint32_t id)
     -> std::string {
-  const auto locator =
-      std::as_bytes(std::span<const char>{lease.locator()});
+  const auto locator = std::as_bytes(std::span<const char>{lease.locator()});
   return std::format("\033_Ga=t,t=s,f=32,i={},s=512,v=512,S={},q=2;{}\033\\",
                      id, size, termforge::detail::base64_encode(locator));
 }
@@ -155,7 +155,8 @@ auto write_all(int fd, std::string_view bytes) -> double {
   const auto started = Clock::now();
   std::size_t offset = 0;
   while (offset < bytes.size()) {
-    const auto count = ::write(fd, bytes.data() + offset, bytes.size() - offset);
+    const auto count =
+        ::write(fd, bytes.data() + offset, bytes.size() - offset);
     if (count > 0) {
       offset += static_cast<std::size_t>(count);
       continue;
@@ -190,7 +191,8 @@ auto write_all(int fd, std::string_view bytes) -> double {
     const auto status = std::string_view{reply}.substr(
         begin + prefix.size(), end - begin - prefix.size());
     if (status != "OK")
-      throw std::runtime_error{std::format("terminal rejected image: {}", status)};
+      throw std::runtime_error{
+          std::format("terminal rejected image: {}", status)};
     return std::chrono::duration<double, std::milli>(Clock::now() - started)
         .count();
   }
@@ -209,18 +211,19 @@ auto write_all(int fd, std::string_view bytes) -> double {
 
 [[nodiscard]] auto percentile(std::vector<double> values, double p) -> double {
   std::sort(values.begin(), values.end());
-  const auto index = std::min(
-      values.size() - 1,
-      static_cast<std::size_t>(
-          std::ceil(static_cast<double>(values.size()) * p)) - 1);
+  const auto index =
+      std::min(values.size() - 1, static_cast<std::size_t>(std::ceil(
+                                      static_cast<double>(values.size()) * p)) -
+                                      1);
   return values[index];
 }
 
 [[nodiscard]] auto median(const std::vector<Sample>& samples,
-                          double Sample::*member) -> double {
+                          double Sample::* member) -> double {
   std::vector<double> values;
   values.reserve(samples.size());
-  for (const auto& sample : samples) values.push_back(sample.*member);
+  for (const auto& sample : samples)
+    values.push_back(sample.*member);
   return percentile(std::move(values), 0.5);
 }
 
@@ -233,10 +236,12 @@ auto print_json(std::ostream& out, const std::vector<Sample>& direct,
         "\"assembly_median_ms\": {:.6f}, \"write_median_ms\": {:.6f}, "
         "\"reply_median_ms\": {:.6f}, \"total_median_ms\": {:.6f}}}",
         name, samples.size(), samples.front().wire_bytes,
-        median(samples, &Sample::assembly_ms), median(samples, &Sample::write_ms),
-        median(samples, &Sample::reply_ms), median(samples, &Sample::total_ms));
+        median(samples, &Sample::assembly_ms),
+        median(samples, &Sample::write_ms), median(samples, &Sample::reply_ms),
+        median(samples, &Sample::total_ms));
   };
-  out << "{\n  \"schema\": 1,\n  \"payload_bytes\": 1048576,\n  \"routes\": {\n";
+  out << "{\n  \"schema\": 1,\n  \"payload_bytes\": 1048576,\n  \"routes\": "
+         "{\n";
   route("direct", direct);
   out << ",\n";
   route("shared_memory", shared);
@@ -280,16 +285,14 @@ int main(int argc, char** argv) try {
         } else {
           command = direct_command(bytes, id);
         }
-        const double assembly_ms =
-            std::chrono::duration<double, std::milli>(Clock::now() -
-                                                      assembly_started)
-                .count();
+        const double assembly_ms = std::chrono::duration<double, std::milli>(
+                                       Clock::now() - assembly_started)
+                                       .count();
         const double write_ms = write_all(terminal.io().out, command);
         const double reply_ms = wait_for_fence(terminal, options.timeout_ms);
-        const double total_ms =
-            std::chrono::duration<double, std::milli>(Clock::now() -
-                                                      total_started)
-                .count();
+        const double total_ms = std::chrono::duration<double, std::milli>(
+                                    Clock::now() - total_started)
+                                    .count();
         lease.reset();
         write_all(terminal.io().out,
                   std::format("\033_Ga=d,d=I,i={},q=2\033\\", id));

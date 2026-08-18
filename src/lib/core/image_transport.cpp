@@ -31,8 +31,7 @@ class PosixSharedMemoryLease final : public ImageTransferLease {
     if (!m_name.empty()) (void)::shm_unlink(m_name.c_str());
   }
 
-  [[nodiscard]] auto medium() const noexcept
-      -> ImageTransferMedium override {
+  [[nodiscard]] auto medium() const noexcept -> ImageTransferMedium override {
     return ImageTransferMedium::SharedMemory;
   }
   [[nodiscard]] auto locator() const noexcept -> std::string_view override {
@@ -50,10 +49,10 @@ std::atomic<std::uint64_t> g_next_name{1};
 
 [[nodiscard]] auto transport_error(std::string_view operation, int error)
     -> std::unexpected<ErrorEvent> {
-  return std::unexpected{ErrorEvent{
-      Severity::Warning, "image-transport",
-      std::format("POSIX shared memory {} failed: {}", operation,
-                  std::strerror(error))}};
+  return std::unexpected{
+      ErrorEvent{Severity::Warning, "image-transport",
+                 std::format("POSIX shared memory {} failed: {}", operation,
+                             std::strerror(error))}};
 }
 
 } // namespace
@@ -83,9 +82,9 @@ auto PosixSharedMemoryTransport::stage(std::span<const std::byte> payload)
     if (errno != EEXIST) return transport_error("creation", errno);
   }
   if (fd < 0) {
-    return std::unexpected{ErrorEvent{
-        Severity::Warning, "image-transport",
-        "could not allocate a unique POSIX shared-memory name"}};
+    return std::unexpected{
+        ErrorEvent{Severity::Warning, "image-transport",
+                   "could not allocate a unique POSIX shared-memory name"}};
   }
 
   const auto fail = [&](std::string_view operation, int error)
@@ -100,14 +99,14 @@ auto PosixSharedMemoryTransport::stage(std::span<const std::byte> payload)
     return fail("resize", errno);
   }
 
-  void* mapping =
-      ::mmap(nullptr, payload.size(), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  void* mapping = ::mmap(nullptr, payload.size(), PROT_READ | PROT_WRITE,
+                         MAP_SHARED, fd, 0);
   if (mapping == MAP_FAILED) return fail("mapping", errno);
   std::memcpy(mapping, payload.data(), payload.size());
 
   try {
-    return std::make_unique<PosixSharedMemoryLease>(
-        std::move(name), fd, mapping, payload.size());
+    return std::make_unique<PosixSharedMemoryLease>(std::move(name), fd,
+                                                    mapping, payload.size());
   } catch (...) {
     // Ownership has not crossed into a lease yet. Preserve the allocation
     // exception while keeping its external side effects out of /dev/shm.
