@@ -1399,7 +1399,11 @@ class App {
   std::vector<OverlayEntry> m_overlays;
   // The frame as the app drew it, saved before a backdrop damages it and put
   // back after present. Empty whenever no backdrop was applied this frame.
-  std::vector<Cell> m_backdrop_backup;
+  struct BackdropCell {
+    Cell cell;
+    std::string text;
+  };
+  std::vector<BackdropCell> m_backdrop_backup;
   bool m_running{false};
   // Unlike m_running, this answers whether run_loop/test_run_frames is on the
   // stack right now. The bounded test hook deliberately leaves running() true

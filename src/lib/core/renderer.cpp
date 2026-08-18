@@ -1,5 +1,6 @@
 #include "termforge/core/renderer.hpp"
 
+#include <cstring>
 #include <string_view>
 
 namespace termforge {
@@ -18,6 +19,13 @@ auto Renderer::present(const Screen& screen) -> void {
   const bool full = m_prev_cols != cols || m_prev_rows != rows || m_prev.empty();
 
   for (int y = 0; y < rows; ++y) {
+    const std::size_t row_offset =
+        static_cast<std::size_t>(y) * static_cast<std::size_t>(cols);
+    if (cols > 0 && !full &&
+        std::memcmp(screen.m_cells.data() + row_offset,
+                    m_prev.data() + row_offset,
+                    static_cast<std::size_t>(cols) * sizeof(Cell)) == 0)
+      continue;
     for (int x = 0; x < cols; ++x) {
       const Cell& cur = screen.at(x, y);
       if (!full) {
@@ -30,12 +38,13 @@ auto Renderer::present(const Screen& screen) -> void {
       if (cur.blank()) {
         // Emit a space to clear the cell with its background.
         m_driver.draw_text(x, y, " ", cur.fg, cur.bg, cur.attrs);
-      } else if (!cur.text.empty() &&
-                 cur.text != std::string_view("\0", 1)) {
+      } else {
+        const std::string_view text = screen.text_at(x, y);
+        if (text.empty() || text == std::string_view("\0", 1)) continue;
         // The guard above skips continuation cells of width-2 graphemes,
         // which hold a single NUL byte (a bare "\0" literal would compare
         // as an empty C-string and never match).
-        m_driver.draw_text(x, y, cur.text, cur.fg, cur.bg, cur.attrs);
+        m_driver.draw_text(x, y, text, cur.fg, cur.bg, cur.attrs);
       }
       // image_id cells are emitted by graphics drivers via draw_image at the
       // widget layer; the cell renderer skips them here.
@@ -45,7 +54,10 @@ auto Renderer::present(const Screen& screen) -> void {
   // Cache the frame for the next diff. Renderer is Screen's private shadow
   // consumer, so copy the contiguous grid once: the former assign(Cell{}) plus
   // at()-based overwrite performed two full non-trivial Cell writes here.
-  m_prev = screen.m_cells;
+  m_prev.resize(screen.m_cells.size());
+  if (!m_prev.empty())
+    std::memcpy(m_prev.data(), screen.m_cells.data(),
+                m_prev.size() * sizeof(Cell));
   m_prev_cols = cols;
   m_prev_rows = rows;
 }

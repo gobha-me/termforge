@@ -89,9 +89,9 @@ TEST_CASE("MapWidget: paints a single-layer map across its rect", "[mapwidget]")
   Screen s{4, 3};
   w.draw(s);
 
-  REQUIRE(s.at(0, 0).text == "#");
+  REQUIRE(s.text_at(0, 0) == "#");
   REQUIRE(s.at(0, 0).fg == kWall);
-  REQUIRE(s.at(3, 2).text == ".");
+  REQUIRE(s.text_at(3, 2) == ".");
   REQUIRE(s.at(3, 2).fg == kGrass);
 }
 
@@ -103,8 +103,8 @@ TEST_CASE("MapWidget: empty ids stay blank (bg fill, no glyph)", "[mapwidget]") 
   Screen s{3, 2};
   w.draw(s);
 
-  REQUIRE(s.at(0, 0).text.empty());  // untouched cell is blank fill
-  REQUIRE(s.at(1, 1).text == "#");
+  REQUIRE(s.text_at(0, 0).empty());  // untouched cell is blank fill
+  REQUIRE(s.text_at(1, 1) == "#");
 }
 
 // ── camera clamping ─────────────────────────────────────────────────────────
@@ -156,11 +156,11 @@ TEST_CASE("MapWidget: draw scrolls the visible window by the camera", "[mapwidge
   Screen s{3, 3};
   w.set_camera(0, 0);
   w.draw(s);
-  REQUIRE(s.at(0, 0).text.empty());  // (7,8) not in a (0,0)+3x3 window
+  REQUIRE(s.text_at(0, 0).empty());  // (7,8) not in a (0,0)+3x3 window
 
   w.set_camera(5, 6);  // now (7,8) is the window's (2,2)
   w.draw(s);
-  REQUIRE(s.at(2, 2).text == "@");
+  REQUIRE(s.text_at(2, 2) == "@");
 }
 
 TEST_CASE("MapWidget: resizing the viewport re-clamps a stranded camera", "[mapwidget]") {
@@ -190,10 +190,10 @@ TEST_CASE("MapWidget: non-square {2,1} tiles lay out two cells per tile", "[mapw
   w.draw(s);
 
   // Tile 0 occupies cells 0-1, tile 1 cells 2-3, tile 2 cells 4-5.
-  REQUIRE(s.at(0, 0).text == "#");
-  REQUIRE(s.at(1, 0).text.empty());  // rest of tile 0 is bg fill (no glyph)
-  REQUIRE(s.at(2, 0).text == ".");
-  REQUIRE(s.at(4, 0).text == "@");
+  REQUIRE(s.text_at(0, 0) == "#");
+  REQUIRE(s.text_at(1, 0).empty());  // rest of tile 0 is bg fill (no glyph)
+  REQUIRE(s.text_at(2, 0) == ".");
+  REQUIRE(s.text_at(4, 0) == "@");
 }
 
 TEST_CASE("MapWidget: trailing partial tile is not drawn, leftover gets bg fill", "[mapwidget]") {
@@ -207,11 +207,11 @@ TEST_CASE("MapWidget: trailing partial tile is not drawn, leftover gets bg fill"
   Screen s{5, 1};
   w.draw(s);
 
-  REQUIRE(s.at(0, 0).text == "#");
-  REQUIRE(s.at(2, 0).text == ".");
+  REQUIRE(s.text_at(0, 0) == "#");
+  REQUIRE(s.text_at(2, 0) == ".");
   // The third tile needs 2 cells from column 4; only one remains, so it is
   // dropped entirely and column 4 keeps the widget background fill.
-  REQUIRE(s.at(4, 0).text.empty());
+  REQUIRE(s.text_at(4, 0).empty());
 }
 
 // ── degenerate geometry ─────────────────────────────────────────────────────
@@ -221,7 +221,7 @@ TEST_CASE("MapWidget: zero-size rect is a no-op, not a crash", "[mapwidget][fail
   w.set_geometry({0, 0, 0, 0});
   Screen s{4, 4};
   w.draw(s);
-  REQUIRE(s.at(0, 0).text.empty());
+  REQUIRE(s.text_at(0, 0).empty());
 }
 
 TEST_CASE("MapWidget: zero-size map draws only background", "[mapwidget][failure]") {
@@ -231,8 +231,8 @@ TEST_CASE("MapWidget: zero-size map draws only background", "[mapwidget][failure
   w.set_geometry({0, 0, 3, 3});
   Screen s{3, 3};
   w.draw(s);
-  REQUIRE(s.at(0, 0).text.empty());
-  REQUIRE(s.at(2, 2).text.empty());
+  REQUIRE(s.text_at(0, 0).empty());
+  REQUIRE(s.text_at(2, 2).empty());
 }
 
 TEST_CASE("MapWidget: set_geometry before and after set_map_size both work", "[mapwidget]") {
@@ -244,7 +244,7 @@ TEST_CASE("MapWidget: set_geometry before and after set_map_size both work", "[m
 
   Screen s{4, 4};
   w.draw(s);
-  REQUIRE(s.at(1, 1).text == "#");
+  REQUIRE(s.text_at(1, 1) == "#");
 }
 
 // ── set_map_size preservation (#127) ────────────────────────────────────────
@@ -332,7 +332,7 @@ TEST_CASE("MapWidget: an entity on a higher layer paints over terrain", "[mapwid
   w.set_geometry({0, 0, 3, 3});
   w.draw(s);
 
-  REQUIRE(s.at(1, 1).text == "@");  // topmost non-empty wins
+  REQUIRE(s.text_at(1, 1) == "@");  // topmost non-empty wins
   REQUIRE(s.at(1, 1).fg == kPlayer);
 }
 
@@ -347,7 +347,7 @@ TEST_CASE("MapWidget: a hidden layer does not paint", "[mapwidget]") {
   w.set_geometry({0, 0, 3, 3});
   w.draw(s);
 
-  REQUIRE(s.at(1, 1).text == ".");  // terrain shows through the hidden layer
+  REQUIRE(s.text_at(1, 1) == ".");  // terrain shows through the hidden layer
 }
 
 TEST_CASE("MapWidget: an empty id on top falls through to the layer beneath", "[mapwidget]") {
@@ -361,8 +361,8 @@ TEST_CASE("MapWidget: an empty id on top falls through to the layer beneath", "[
   w.set_geometry({0, 0, 3, 3});
   w.draw(s);
 
-  REQUIRE(s.at(0, 0).text == "#");  // overlay empty here -> terrain shows
-  REQUIRE(s.at(1, 0).text == "$");  // overlay item wins on its own cell
+  REQUIRE(s.text_at(0, 0) == "#");  // overlay empty here -> terrain shows
+  REQUIRE(s.text_at(1, 0) == "$");  // overlay item wins on its own cell
 }
 
 TEST_CASE("MapWidget: clear_layer empties only that layer", "[mapwidget]") {
@@ -375,7 +375,7 @@ TEST_CASE("MapWidget: clear_layer empties only that layer", "[mapwidget]") {
   Screen s{2, 2};
   w.set_geometry({0, 0, 2, 2});
   w.draw(s);
-  REQUIRE(s.at(0, 0).text == "#");  // terrain again, overlay cleared
+  REQUIRE(s.text_at(0, 0) == "#");  // terrain again, overlay cleared
 }
 
 TEST_CASE("MapWidget: layer 0 is implicit — no add_layer needed", "[mapwidget]") {
@@ -399,7 +399,7 @@ TEST_CASE("MapWidget: set_tile out of map bounds is a clipped no-op", "[mapwidge
   w.draw(s);
   // Nothing painted anywhere — every write was out of bounds.
   for (int y = 0; y < 3; ++y)
-    for (int x = 0; x < 3; ++x) REQUIRE(s.at(x, y).text.empty());
+    for (int x = 0; x < 3; ++x) REQUIRE(s.text_at(x, y).empty());
 }
 
 TEST_CASE("MapWidget: tile reads out of bounds return the empty id", "[mapwidget][failure]") {
@@ -416,7 +416,7 @@ TEST_CASE("MapWidget: unknown tile id renders blank rather than throwing", "[map
   Screen s{3, 3};
   w.set_geometry({0, 0, 3, 3});
   w.draw(s);
-  REQUIRE(s.at(1, 1).text.empty());  // resolves to the blank TileDef
+  REQUIRE(s.text_at(1, 1).empty());  // resolves to the blank TileDef
 }
 
 // ── mutation redraws (dirty contract) ───────────────────────────────────────
@@ -428,11 +428,11 @@ TEST_CASE("MapWidget: a mutation then redraw reflects the new state", "[mapwidge
   w.set_geometry({0, 0, 3, 3});
 
   w.draw(s);
-  REQUIRE(s.at(0, 0).text == "#");
+  REQUIRE(s.text_at(0, 0) == "#");
 
   w.set_tile(0, 0, 0, 2);  // mutate
   w.draw(s);               // redraw without re-geometry
-  REQUIRE(s.at(0, 0).text == ".");
+  REQUIRE(s.text_at(0, 0) == ".");
 }
 
 // ── tile_at (hit testing) ───────────────────────────────────────────────────
@@ -611,8 +611,8 @@ TEST_CASE("MapWidget: incomplete visible sprite authoring keeps the whole glyph 
   CHECK(w.pixel_regions().empty());
   Screen s{4, 1};
   w.draw(s);
-  CHECK(s.at(0, 0).text == "R");
-  CHECK(s.at(2, 0).text == "G");
+  CHECK(s.text_at(0, 0) == "R");
+  CHECK(s.text_at(2, 0) == "G");
 
   w.set_tile(0, 1, 0, 4);
   CHECK(w.pixel_regions().empty());

@@ -139,7 +139,7 @@ TEST_CASE("WaveformWidget: cell fallback still works when pixel path exists", "[
   w.push(1.0f);
   w.draw(s);
   // The cell path should still render (half-block characters).
-  REQUIRE(s.at(0, 3).text == "█");
+  REQUIRE(s.text_at(0, 3) == "█");
 }
 
 // ── #84: the App borrows, the widget owns ───────────────────────────────────

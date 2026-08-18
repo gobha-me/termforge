@@ -40,7 +40,7 @@ TEST_CASE("WaveformWidget: full-scale value renders full blocks", "[waveform]") 
   w.draw(s);
 
   // The rightmost column should be all full blocks (or at least mostly filled).
-  REQUIRE(s.at(0, 3).text == "█");  // bottom-right
+  REQUIRE(s.text_at(0, 3) == "█");  // bottom-right
 }
 
 TEST_CASE("WaveformWidget: zero value renders empty cells", "[waveform]") {
@@ -52,8 +52,8 @@ TEST_CASE("WaveformWidget: zero value renders empty cells", "[waveform]") {
   w.draw(s);
 
   // The column should be all spaces.
-  REQUIRE(s.at(0, 3).text == " ");
-  REQUIRE(s.at(0, 0).text == " ");
+  REQUIRE(s.text_at(0, 3) == " ");
+  REQUIRE(s.text_at(0, 0) == " ");
 }
 
 TEST_CASE("WaveformWidget: auto-range adapts to data", "[waveform]") {
@@ -97,7 +97,7 @@ TEST_CASE("WaveformWidget: half-block characters used", "[waveform]") {
   // Check that at least one cell is not a full block and not a space.
   bool found_partial = false;
   for (int y = 0; y < 2; ++y) {
-    const auto& t = s.at(0, y).text;
+    const auto& t = s.text_at(0, y);
     if (t == "▀" || t == "▄") found_partial = true;
   }
   // 0.75 in a 2-row (4 sub-position) grid: level = 0.75*3 = 2 (0-based)
@@ -116,7 +116,7 @@ TEST_CASE("WaveformWidget: newest sample at right edge", "[waveform]") {
   w.draw(s);
 
   // Right column should have full blocks at bottom.
-  REQUIRE(s.at(2, 1).text == "█");
+  REQUIRE(s.text_at(2, 1) == "█");
 }
 
 TEST_CASE("WaveformWidget: degenerate fixed range (min == max) is safe",

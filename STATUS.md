@@ -6,7 +6,25 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-18, latest)
 
-**Current stable release: v0.49.0 — partial-update paint evidence.** The W2
+**Current stable release: v0.50.0 — compact, lossless Cell storage.** #92
+replaces each 48-byte `std::string` Cell with an exactly 24-byte trivially
+copyable token. UTF-8 scalars through four bytes stay inline; longer grapheme
+clusters spill into Screen-owned storage without a length cap or truncation.
+`Screen::text_at` is the new resolution boundary, and colored clears use the
+explicit `clear(fg, bg, attrs)` overload.
+
+Renderer row diffs and shadow copies now use bulk byte operations, while
+Screen clear/fill uses trivial whole-grid or row fills. On the same GCC 14.2
+reference host, the Cell comparison median fell from 0.797 to 0.288 ms and
+400×120 clean-frame W3 cases improved 66–75%; fully dirty frames remained
+within -2.7% to +6.4%. Failure tests cover inline/spill boundaries, a 25-byte
+cluster, final-column combining marks, identity-safe diffs, resize/copy/clear
+ownership, and backdrop restoration after spill reclamation. This is a
+source-breaking API release; terminal wire behavior is unchanged.
+
+## Previous stable release: v0.49.0
+
+**v0.49.0 — partial-update paint evidence.** The W2
 slice of #88 drives one deterministic buttonless-motion record through App's
 real input-to-write cadence per frame, mutates one pinned canvas, and compares
 full-root `replace_pinned` with block-sized `edit_pinned` across 320×180 through

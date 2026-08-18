@@ -56,7 +56,7 @@ inline const std::string kContinuation{"\0", 1};
 inline auto row_text(const Screen& s, int y, int x0, int w) -> std::string {
   std::string out;
   for (int x = x0; x < x0 + w; ++x) {
-    const std::string& t = s.at(x, y).text;
+    const std::string_view t = s.text_at(x, y);
     if (t.empty())
       out += " ";
     else if (t != kContinuation)

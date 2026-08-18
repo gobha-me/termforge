@@ -151,7 +151,7 @@ TEST_CASE("TabBar: a zero-width rect draws nothing and does not crash",
   t.set_geometry({0, 0, 12, 1});
   const Screen laid = drawn(t, 12);
   REQUIRE(t.first_visible() == 0);
-  REQUIRE(laid.at(0, 0).text != "‹");
+  REQUIRE(laid.text_at(0, 0) != "‹");
 
   TabBar k{kTitles};
   k.set_focused(true);
@@ -294,14 +294,14 @@ TEST_CASE("TabBar: the drawn indicator columns are the columns that scroll",
   drawn(t, 12);
 
   const Screen wide = drawn(t, 12);
-  REQUIRE(wide.at(11, 0).text == ">");  // more to the right
-  REQUIRE(wide.at(0, 0).text != "<");   // nothing to the left yet
+  REQUIRE(wide.text_at(11, 0) == ">");  // more to the right
+  REQUIRE(wide.text_at(0, 0) != "<");   // nothing to the left yet
 
   t.on_event(press(11, 0));
   REQUIRE(t.first_visible() == 1);
   const Screen s = drawn(t, 12);
-  REQUIRE(s.at(0, 0).text == "<");
-  REQUIRE(s.at(11, 0).text == ">");
+  REQUIRE(s.text_at(0, 0) == "<");
+  REQUIRE(s.text_at(11, 0) == ">");
 
   t.on_event(press(0, 0));
   REQUIRE(t.first_visible() == 0);
@@ -404,7 +404,7 @@ TEST_CASE("TabBar: a tab wider than the strip is truncated but still reachable",
   // overflow indicator -- there IS a tab past this one, and suppressing the
   // indicator because the first tab is greedy would hide it.
   REQUIRE(row_text(s, 0, 0, 3) == "*Ga");
-  REQUIRE(s.at(3, 0).text == ">");
+  REQUIRE(s.text_at(3, 0) == ">");
 
   // Reaching a clipped tab that is NOT already active takes the wheel: at four
   // columns only one tab is ever on the strip, and any key or click that
@@ -416,7 +416,7 @@ TEST_CASE("TabBar: a tab wider than the strip is truncated but still reachable",
   REQUIRE(t.first_visible() == 1);
   REQUIRE(t.active() == 0);  // still tab 0, now scrolled off
   const Screen s2 = drawn(t, 4);
-  REQUIRE(s2.at(0, 0).text == "<");
+  REQUIRE(s2.text_at(0, 0) == "<");
 
   t.on_event(press(2, 0));   // a column tab 1 paints, while tab 0 is active
   REQUIRE(t.active() == 1);  // a clipped tab is selectable where it paints
@@ -448,8 +448,8 @@ TEST_CASE("TabBar: a narrow strip never paints two indicators in one column",
       int left_col = -1;
       int right_col = -1;
       for (int c = 0; c < w; ++c) {
-        if (s.at(c, 0).text == "‹") left_col = c;
-        if (s.at(c, 0).text == "›") right_col = c;
+        if (s.text_at(c, 0) == "‹") left_col = c;
+        if (s.text_at(c, 0) == "›") right_col = c;
       }
       // The collision itself, stated directly: never the same cell.
       if (left_col >= 0 && right_col >= 0) REQUIRE(left_col != right_col);
@@ -773,12 +773,12 @@ TEST_CASE("TabBar: unfocused, the marker stays and the focus colours go",
   t.set_focused(false);
   const Screen cold = drawn(t, 20);
   REQUIRE(highlighted_run(cold, 0).second == 0);  // no focus colours...
-  REQUIRE(cold.at(4, 0).text == "▸");             // ...but the mark remains
+  REQUIRE(cold.text_at(4, 0) == "▸");             // ...but the mark remains
 
   t.set_focused(true);
   const Screen hot = drawn(t, 20);
   REQUIRE(highlighted_run(hot, 0) == std::pair{4, 6});
-  REQUIRE(hot.at(4, 0).text == "▸");
+  REQUIRE(hot.text_at(4, 0) == "▸");
   // Which is to say the two states differ on screen at all.
   REQUIRE(row_text(cold, 0) == row_text(hot, 0));  // same cells...
   REQUIRE(cold.at(4, 0).bg != hot.at(4, 0).bg);    // ...different colours
@@ -823,8 +823,8 @@ TEST_CASE("TabBar: BorderStyle::Ascii keeps the whole strip 7-bit",
   drawn(t, 12);
   t.on_event(wheel(5, 0, /*up=*/false));  // both indicators up
   const Screen s = drawn(t, 12);
-  REQUIRE(s.at(0, 0).text == "<");
-  REQUIRE(s.at(11, 0).text == ">");
+  REQUIRE(s.text_at(0, 0) == "<");
+  REQUIRE(s.text_at(11, 0) == ">");
   REQUIRE(all_seven_bit(row_text(s, 0)));
 }
 
@@ -883,7 +883,7 @@ TEST_CASE("TabBar: a bar whose rect starts left of the screen leaks no marker",
   const Screen s = drawn(t, 16);
 
   REQUIRE(t.active() == 0);
-  REQUIRE(s.at(0, 0).text != "▸");
+  REQUIRE(s.text_at(0, 0) != "▸");
   REQUIRE(s.at(0, 0).blank());
 }
 
@@ -916,7 +916,7 @@ TEST_CASE("TabBar: height one keeps indicator columns, not a track (#131)",
   t.set_focused(true);
   drawn(t, 12);
   const Screen s = drawn(t, 12);
-  REQUIRE(s.at(11, 0).text == ">");
+  REQUIRE(s.text_at(11, 0) == ">");
   // No second row exists to host a track.
   REQUIRE(s.rows() == 1);
 }
@@ -930,14 +930,14 @@ TEST_CASE("TabBar: height two paints a horizontal track and no indicators (#131)
   Screen s{12, 2};
   t.draw(s);
   // Content row keeps every column for titles -- no < > chrome.
-  REQUIRE(s.at(0, 0).text != "<");
-  REQUIRE(s.at(11, 0).text != ">");
+  REQUIRE(s.text_at(0, 0) != "<");
+  REQUIRE(s.text_at(11, 0) != ">");
   // Second row is the shared horizontal scrollbar (ASCII -/#).
   bool saw_thumb = false;
   bool saw_track = false;
   for (int c = 0; c < 12; ++c) {
-    if (s.at(c, 1).text == "#") saw_thumb = true;
-    if (s.at(c, 1).text == "-") saw_track = true;
+    if (s.text_at(c, 1) == "#") saw_thumb = true;
+    if (s.text_at(c, 1) == "-") saw_track = true;
   }
   REQUIRE(saw_thumb);
   REQUIRE(saw_track);
@@ -1013,9 +1013,9 @@ TEST_CASE("TabBar: two-row bar with room for every tab paints no track (#131)",
   Screen s{20, 2};
   t.draw(s);
   for (int c = 0; c < 20; ++c) {
-    REQUIRE(s.at(c, 1).text != "█");
-    REQUIRE(s.at(c, 1).text != "─");
-    REQUIRE(s.at(c, 1).text != "#");
-    REQUIRE(s.at(c, 1).text != "-");
+    REQUIRE(s.text_at(c, 1) != "█");
+    REQUIRE(s.text_at(c, 1) != "─");
+    REQUIRE(s.text_at(c, 1) != "#");
+    REQUIRE(s.text_at(c, 1) != "-");
   }
 }

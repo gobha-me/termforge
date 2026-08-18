@@ -7,9 +7,14 @@
 // driver. Screen also owns resize handling (SIGWINCH) and the escape
 // sanitization boundary for text.
 
+#include <array>
+#include <cstdint>
+#include <cstring>
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <unordered_map>
 #include <vector>
 
 #include "termforge/core/styled_text.hpp"
@@ -18,22 +23,54 @@
 namespace termforge {
 
 class Renderer;
+class App;
 
-// A single terminal cell: one grapheme, fg/bg color, optional image ref.
+// A single terminal cell: one grapheme token, fg/bg color, optional image ref.
+//
+// The common case (one UTF-8 scalar, up to four bytes) lives inline. Longer
+// graphemes carry a process-unique token into their owning Screen's spill
+// table. Resolve text through Screen::text_at(): a standalone Cell deliberately
+// cannot turn a Screen-owned token back into bytes (#92).
 struct Cell {
-  // The grapheme as UTF-8 bytes (may be multi-byte, may be width-2). Empty =
-  // blank cell. Continuation cells of a width-2 grapheme use "\0".
-  std::string text;
+ private:
+  static constexpr std::size_t kInlineTextBytes = 4;
+  static constexpr std::uint8_t kSpilledText = 0xFF;
+
+  std::uint64_t m_text_token{0};
+
+ public:
+  std::int32_t image_id{-1};  // >=0 references an image placement
+
+ private:
+  std::array<char, kInlineTextBytes> m_inline_text{};
+
+ public:
   Rgb fg{0xE0, 0xE0, 0xF0};
   Rgb bg{0x0A, 0x0A, 0x14};
   Attr attrs{Attr::None};  // per-cell display attributes (#62)
-  int image_id{-1};  // >=0 references an image placement (graphics drivers)
 
+ private:
+  std::uint8_t m_text_size{0};
+
+ public:
   [[nodiscard]] auto blank() const noexcept -> bool {
-    return text.empty() && image_id < 0;
+    return m_text_size == 0 && image_id < 0;
   }
-  auto operator==(const Cell&) const -> bool = default;
+  [[nodiscard]] auto operator==(const Cell& other) const noexcept -> bool {
+    // Every byte has one canonical value: unused inline bytes and the token
+    // are zeroed, all members have unique object representations, and the
+    // struct has no padding. Equality can therefore be the exact operation
+    // the renderer's hot path needs rather than N small string comparisons.
+    return std::memcmp(this, &other, sizeof(Cell)) == 0;
+  }
+
+ private:
+  friend class Screen;
 };
+
+static_assert(std::is_trivially_copyable_v<Cell>);
+static_assert(std::has_unique_object_representations_v<Cell>);
+static_assert(sizeof(Cell) == 24);
 
 class Screen {
  public:
@@ -50,8 +87,15 @@ class Screen {
   [[nodiscard]] auto at(int x, int y) const -> const Cell&;
   auto at(int x, int y) -> Cell&;
 
-  // Fill the whole grid with a cell (default: blank).
-  auto clear(const Cell& fill = Cell{}) -> void;
+  // Resolve a cell's grapheme. The view may be invalidated by any mutating
+  // Screen operation and is always invalidated by clear, resize or destruction.
+  // OOB coordinates return an empty view.
+  [[nodiscard]] auto text_at(int x, int y) const noexcept -> std::string_view;
+
+  // Fill the whole grid with blank cells. The styled overload preserves the
+  // old colored-clear use case without accepting a standalone spill token.
+  auto clear() -> void;
+  auto clear(Rgb fg, Rgb bg, Attr attrs = Attr::None) -> void;
 
   // Blank a sub-rectangle to a colored blank cell (empty text, fg/bg, no image),
   // clamped to the grid. This is how a widget repaints its whole rect() each
@@ -102,14 +146,30 @@ class Screen {
   auto write_text_impl(int x, int y, std::string_view text, Rgb fg, Rgb bg,
                        Attr attrs) -> WriteResult;
 
+  struct SpillEntry {
+    std::string text;
+    bool referenced{false};
+  };
+
+  [[nodiscard]] auto cell_text(const Cell& cell) const noexcept
+      -> std::string_view;
+  auto reset_text(Cell& cell) noexcept -> void;
+  auto set_text(Cell& cell, std::string_view text) -> void;
+  auto append_text(Cell& cell, std::string_view suffix) -> void;
+  auto restore_cell(int x, int y, const Cell& cell, std::string_view text)
+      -> void;
+  auto clear_cell(int x, int y) -> void;
+  auto reclaim_unused_spills() -> void;
+
   // Renderer owns the shadow copy of this exact grid. Keeping the contiguous
-  // hand-off private avoids exposing Cell's current vector representation as
-  // public API immediately before #92 changes it.
+  // hand-off private avoids exposing Screen's vector representation as API.
   friend class Renderer;
+  friend class App;
 
   int m_cols{0};
   int m_rows{0};
   std::vector<Cell> m_cells;
+  std::unordered_map<std::uint64_t, SpillEntry> m_spills;
   Cell m_out_of_bounds;  // returned (const) for OOB reads; writes are dropped
 };
 

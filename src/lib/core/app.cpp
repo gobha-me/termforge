@@ -2201,7 +2201,8 @@ auto App::save_backdrop(const Screen& screen) -> void {
       static_cast<std::size_t>(screen.rows() > 0 ? screen.rows() : 0));
   for (int y = 0; y < screen.rows(); ++y)
     for (int x = 0; x < screen.cols(); ++x)
-      m_backdrop_backup.push_back(screen.at(x, y));
+      m_backdrop_backup.push_back(
+          BackdropCell{screen.at(x, y), std::string{screen.text_at(x, y)}});
 }
 
 auto App::restore_backdrop(Screen& screen) -> void {
@@ -2213,7 +2214,8 @@ auto App::restore_backdrop(Screen& screen) -> void {
   for (int y = 0; y < screen.rows(); ++y) {
     for (int x = 0; x < screen.cols(); ++x) {
       if (i >= m_backdrop_backup.size()) break;  // resized mid-frame
-      screen.at(x, y) = m_backdrop_backup[i++];
+      const BackdropCell& saved = m_backdrop_backup[i++];
+      screen.restore_cell(x, y, saved.cell, saved.text);
     }
   }
   m_backdrop_backup.clear();
@@ -2494,7 +2496,7 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
       if (!awaiting_initial_opaque) {
         for (int y = region.y; y < region.y + region.h; ++y)
           for (int x = region.x; x < region.x + region.w; ++x)
-            m_screen->at(x, y) = Cell{};
+            m_screen->clear_cell(x, y);
       }
     } else if (retained != nullptr) {
       retained->visible = false;

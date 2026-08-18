@@ -53,12 +53,12 @@ namespace {
 auto border_ring(const Screen& s, termforge::Rect r) -> std::string {
   std::string out;
   for (int x = r.x; x < r.x + r.w; ++x) {
-    out += s.at(x, r.y).text;
-    out += s.at(x, r.y + r.h - 1).text;
+    out += s.text_at(x, r.y);
+    out += s.text_at(x, r.y + r.h - 1);
   }
   for (int y = r.y + 1; y < r.y + r.h - 1; ++y) {
-    out += s.at(r.x, y).text;
-    out += s.at(r.x + r.w - 1, y).text;
+    out += s.text_at(r.x, y);
+    out += s.text_at(r.x + r.w - 1, y);
   }
   return out;
 }
@@ -72,8 +72,8 @@ TEST_CASE("Label: renders text at left by default", "[primitives][label]") {
   Label l{"hello"};
   l.set_geometry({0, 0, 20, 1});
   l.draw(s);
-  REQUIRE(s.at(0, 0).text == "h");
-  REQUIRE(s.at(4, 0).text == "o");
+  REQUIRE(s.text_at(0, 0) == "h");
+  REQUIRE(s.text_at(4, 0) == "o");
 }
 
 TEST_CASE("Label: center alignment", "[primitives][label]") {
@@ -83,8 +83,8 @@ TEST_CASE("Label: center alignment", "[primitives][label]") {
   l.set_align(Label::Align::Center);
   l.draw(s);
   // "hi" centered in 10-wide: starts at (10-2)/2 = 4.
-  REQUIRE(s.at(4, 0).text == "h");
-  REQUIRE(s.at(5, 0).text == "i");
+  REQUIRE(s.text_at(4, 0) == "h");
+  REQUIRE(s.text_at(5, 0) == "i");
 }
 
 TEST_CASE("Label: right alignment", "[primitives][label]") {
@@ -94,8 +94,8 @@ TEST_CASE("Label: right alignment", "[primitives][label]") {
   l.set_align(Label::Align::Right);
   l.draw(s);
   // "end" right-aligned in 10-wide: starts at 10-3 = 7.
-  REQUIRE(s.at(7, 0).text == "e");
-  REQUIRE(s.at(9, 0).text == "d");
+  REQUIRE(s.text_at(7, 0) == "e");
+  REQUIRE(s.text_at(9, 0) == "d");
 }
 
 TEST_CASE("Label: set_text updates content", "[primitives][label]") {
@@ -104,7 +104,7 @@ TEST_CASE("Label: set_text updates content", "[primitives][label]") {
   l.set_geometry({0, 0, 10, 1});
   l.set_text("new");
   l.draw(s);
-  REQUIRE(s.at(0, 0).text == "n");
+  REQUIRE(s.text_at(0, 0) == "n");
 }
 
 TEST_CASE("Label: zero-size rect doesn't crash", "[primitives][label][failure]") {
@@ -122,8 +122,8 @@ TEST_CASE("Button: renders label centered", "[primitives][button]") {
   b.set_geometry({0, 0, 10, 3});
   b.draw(s);
   // "OK" centered: (10-2)/2 = 4, row 3/2 = 1.
-  REQUIRE(s.at(4, 1).text == "O");
-  REQUIRE(s.at(5, 1).text == "K");
+  REQUIRE(s.text_at(4, 1) == "O");
+  REQUIRE(s.text_at(5, 1) == "K");
 }
 
 TEST_CASE("Button: focused state changes colors", "[primitives][button]") {
@@ -211,7 +211,7 @@ TEST_CASE("ProgressBar: 0% renders all empty", "[primitives][progress]") {
   p.set_geometry({0, 0, 10, 1});
   p.set_value(0.0f);
   p.draw(s);
-  REQUIRE(s.at(0, 0).text == "─");
+  REQUIRE(s.text_at(0, 0) == "─");
 }
 
 TEST_CASE("ProgressBar: 100% renders all filled", "[primitives][progress]") {
@@ -221,7 +221,7 @@ TEST_CASE("ProgressBar: 100% renders all filled", "[primitives][progress]") {
   p.set_value(1.0f);
   p.draw(s);
   for (int x = 0; x < 5; ++x)
-    REQUIRE(s.at(x, 0).text == "█");
+    REQUIRE(s.text_at(x, 0) == "█");
 }
 
 TEST_CASE("ProgressBar: 50% renders half filled", "[primitives][progress]") {
@@ -230,9 +230,9 @@ TEST_CASE("ProgressBar: 50% renders half filled", "[primitives][progress]") {
   p.set_geometry({0, 0, 10, 1});
   p.set_value(0.5f);
   p.draw(s);
-  REQUIRE(s.at(0, 0).text == "█");
-  REQUIRE(s.at(4, 0).text == "█");
-  REQUIRE(s.at(5, 0).text == "─");
+  REQUIRE(s.text_at(0, 0) == "█");
+  REQUIRE(s.text_at(4, 0) == "█");
+  REQUIRE(s.text_at(5, 0) == "─");
 }
 
 TEST_CASE("ProgressBar: value clamps to 0-1", "[primitives][progress][failure]") {
@@ -251,9 +251,9 @@ TEST_CASE("ProgressBar: label overlays the bar", "[primitives][progress]") {
   p.set_label("50%");
   p.draw(s);
   // "50%" centered: (10-3)/2 = 3.
-  REQUIRE(s.at(3, 0).text == "5");
-  REQUIRE(s.at(4, 0).text == "0");
-  REQUIRE(s.at(5, 0).text == "%");
+  REQUIRE(s.text_at(3, 0) == "5");
+  REQUIRE(s.text_at(4, 0) == "0");
+  REQUIRE(s.text_at(5, 0) == "%");
 }
 
 TEST_CASE("ProgressBar: indeterminate mode animates", "[primitives][progress]") {
@@ -270,7 +270,7 @@ TEST_CASE("ProgressBar: indeterminate mode animates", "[primitives][progress]") 
     p.on_tick(std::chrono::duration<double>{1.0 / 30.0});
     p.draw(s);
     for (int x = 0; x < 20; ++x)
-      if (s.at(x, 0).text == "█") has_block = true;
+      if (s.text_at(x, 0) == "█") has_block = true;
   }
   REQUIRE(has_block);
 }
@@ -287,7 +287,7 @@ TEST_CASE("ProgressBar: drawing alone does not animate it (#69)",
   // design accepts for an app that forgets to forward ticks.
   const auto row = [&] {
     std::string out;
-    for (int x = 0; x < 20; ++x) out += s.at(x, 0).text;
+    for (int x = 0; x < 20; ++x) out += s.text_at(x, 0);
     return out;
   };
   p.draw(s);
@@ -308,7 +308,7 @@ TEST_CASE("ProgressBar: the sweep is wall-clock, not per-draw (#69)",
   // independent of how often the app happens to draw.
   const auto painted = [](const Screen& s) {
     std::string out;
-    for (int x = 0; x < 20; ++x) out += s.at(x, 0).text;
+    for (int x = 0; x < 20; ++x) out += s.text_at(x, 0);
     return out;
   };
 
@@ -396,8 +396,8 @@ TEST_CASE("TextInput: empty with placeholder shows dimmed text", "[primitives][i
   ti.set_geometry({0, 0, 20, 1});
   ti.set_placeholder("Type here...");
   ti.draw(s);
-  REQUIRE(s.at(0, 0).text == "T");
-  REQUIRE(s.at(1, 0).text == "y");
+  REQUIRE(s.text_at(0, 0) == "T");
+  REQUIRE(s.text_at(1, 0) == "y");
 }
 
 TEST_CASE("TextInput: typing inserts characters", "[primitives][input]") {
@@ -577,7 +577,7 @@ TEST_CASE("TextInput: an unfocused pre-filled field head-anchors (#40)",
 
   ti.draw(s);
   std::string row;
-  for (int x = 0; x < 10; ++x) row += s.at(x, 0).text;
+  for (int x = 0; x < 10; ++x) row += s.text_at(x, 0);
   REQUIRE(row == "0123456789");
 }
 
@@ -591,7 +591,7 @@ TEST_CASE("TextInput: focusing a pre-filled field reveals the cursor",
   ti.set_text("0123456789abcdefghij");
 
   ti.draw(s);
-  REQUIRE(s.at(0, 0).text == "0");  // head-anchored
+  REQUIRE(s.text_at(0, 0) == "0");  // head-anchored
 
   ti.set_focused(true);
   ti.draw(s);
@@ -606,10 +606,10 @@ TEST_CASE("Frame: draws border corners", "[primitives][frame]") {
   Frame f;
   f.set_geometry({0, 0, 10, 5});
   f.draw(s);
-  REQUIRE(s.at(0, 0).text == "┌");
-  REQUIRE(s.at(9, 0).text == "┐");
-  REQUIRE(s.at(0, 4).text == "└");
-  REQUIRE(s.at(9, 4).text == "┘");
+  REQUIRE(s.text_at(0, 0) == "┌");
+  REQUIRE(s.text_at(9, 0) == "┐");
+  REQUIRE(s.text_at(0, 4) == "└");
+  REQUIRE(s.text_at(9, 4) == "┘");
 }
 
 TEST_CASE("Frame: draws horizontal and vertical edges", "[primitives][frame]") {
@@ -617,10 +617,10 @@ TEST_CASE("Frame: draws horizontal and vertical edges", "[primitives][frame]") {
   Frame f;
   f.set_geometry({0, 0, 6, 4});
   f.draw(s);
-  REQUIRE(s.at(3, 0).text == "─");   // top edge
-  REQUIRE(s.at(3, 3).text == "─");   // bottom edge
-  REQUIRE(s.at(0, 2).text == "│");   // left edge
-  REQUIRE(s.at(5, 2).text == "│");   // right edge
+  REQUIRE(s.text_at(3, 0) == "─");   // top edge
+  REQUIRE(s.text_at(3, 3) == "─");   // bottom edge
+  REQUIRE(s.text_at(0, 2) == "│");   // left edge
+  REQUIRE(s.text_at(5, 2) == "│");   // right edge
 }
 
 TEST_CASE("Frame: title in top border", "[primitives][frame]") {
@@ -630,14 +630,14 @@ TEST_CASE("Frame: title in top border", "[primitives][frame]") {
   Frame f{"Settings"};
   f.set_geometry({0, 0, 20, 5});
   f.draw(s);
-  REQUIRE(s.at(1, 0).text == "┤");
-  REQUIRE(s.at(2, 0).text == " ");
-  REQUIRE(s.at(3, 0).text == "S");
-  REQUIRE(s.at(10, 0).text == "s");
-  REQUIRE(s.at(11, 0).text == " ");
-  REQUIRE(s.at(12, 0).text == "├");
-  REQUIRE(s.at(13, 0).text == "─");  // border resumes after the title
-  REQUIRE(s.at(19, 0).text == "┐");
+  REQUIRE(s.text_at(1, 0) == "┤");
+  REQUIRE(s.text_at(2, 0) == " ");
+  REQUIRE(s.text_at(3, 0) == "S");
+  REQUIRE(s.text_at(10, 0) == "s");
+  REQUIRE(s.text_at(11, 0) == " ");
+  REQUIRE(s.text_at(12, 0) == "├");
+  REQUIRE(s.text_at(13, 0) == "─");  // border resumes after the title
+  REQUIRE(s.text_at(19, 0) == "┐");
 }
 
 TEST_CASE("Frame: Double style draws double glyphs", "[primitives][frame]") {
@@ -646,17 +646,17 @@ TEST_CASE("Frame: Double style draws double glyphs", "[primitives][frame]") {
   f.set_style(BorderStyle::Double);
   f.set_geometry({0, 0, 12, 4});
   f.draw(s);
-  REQUIRE(s.at(0, 0).text == "╔");
-  REQUIRE(s.at(11, 0).text == "╗");
-  REQUIRE(s.at(0, 3).text == "╚");
-  REQUIRE(s.at(11, 3).text == "╝");
-  REQUIRE(s.at(5, 3).text == "═");
-  REQUIRE(s.at(0, 1).text == "║");
-  REQUIRE(s.at(11, 2).text == "║");
+  REQUIRE(s.text_at(0, 0) == "╔");
+  REQUIRE(s.text_at(11, 0) == "╗");
+  REQUIRE(s.text_at(0, 3) == "╚");
+  REQUIRE(s.text_at(11, 3) == "╝");
+  REQUIRE(s.text_at(5, 3) == "═");
+  REQUIRE(s.text_at(0, 1) == "║");
+  REQUIRE(s.text_at(11, 2) == "║");
   // Matching-weight tees around the title.
-  REQUIRE(s.at(1, 0).text == "╣");
-  REQUIRE(s.at(6, 0).text == "╠");
-  REQUIRE(s.at(7, 0).text == "═");
+  REQUIRE(s.text_at(1, 0) == "╣");
+  REQUIRE(s.text_at(6, 0) == "╠");
+  REQUIRE(s.text_at(7, 0) == "═");
 }
 
 TEST_CASE("Frame: Rounded style keeps light edges and tees",
@@ -667,14 +667,14 @@ TEST_CASE("Frame: Rounded style keeps light edges and tees",
   f.set_style(BorderStyle::Rounded);
   f.set_geometry({0, 0, 12, 4});
   f.draw(s);
-  REQUIRE(s.at(0, 0).text == "╭");
-  REQUIRE(s.at(11, 0).text == "╮");
-  REQUIRE(s.at(0, 3).text == "╰");
-  REQUIRE(s.at(11, 3).text == "╯");
-  REQUIRE(s.at(5, 3).text == "─");
-  REQUIRE(s.at(0, 1).text == "│");
-  REQUIRE(s.at(1, 0).text == "┤");
-  REQUIRE(s.at(6, 0).text == "├");
+  REQUIRE(s.text_at(0, 0) == "╭");
+  REQUIRE(s.text_at(11, 0) == "╮");
+  REQUIRE(s.text_at(0, 3) == "╰");
+  REQUIRE(s.text_at(11, 3) == "╯");
+  REQUIRE(s.text_at(5, 3) == "─");
+  REQUIRE(s.text_at(0, 1) == "│");
+  REQUIRE(s.text_at(1, 0) == "┤");
+  REQUIRE(s.text_at(6, 0) == "├");
 }
 
 TEST_CASE("Frame: Heavy style draws heavy glyphs", "[primitives][frame]") {
@@ -683,14 +683,14 @@ TEST_CASE("Frame: Heavy style draws heavy glyphs", "[primitives][frame]") {
   f.set_style(BorderStyle::Heavy);
   f.set_geometry({0, 0, 12, 4});
   f.draw(s);
-  REQUIRE(s.at(0, 0).text == "┏");
-  REQUIRE(s.at(11, 0).text == "┓");
-  REQUIRE(s.at(0, 3).text == "┗");
-  REQUIRE(s.at(11, 3).text == "┛");
-  REQUIRE(s.at(5, 3).text == "━");
-  REQUIRE(s.at(0, 1).text == "┃");
-  REQUIRE(s.at(1, 0).text == "┫");
-  REQUIRE(s.at(6, 0).text == "┣");
+  REQUIRE(s.text_at(0, 0) == "┏");
+  REQUIRE(s.text_at(11, 0) == "┓");
+  REQUIRE(s.text_at(0, 3) == "┗");
+  REQUIRE(s.text_at(11, 3) == "┛");
+  REQUIRE(s.text_at(5, 3) == "━");
+  REQUIRE(s.text_at(0, 1) == "┃");
+  REQUIRE(s.text_at(1, 0) == "┫");
+  REQUIRE(s.text_at(6, 0) == "┣");
 }
 
 TEST_CASE("Frame: Ascii style draws only 7-bit glyphs",
@@ -704,14 +704,14 @@ TEST_CASE("Frame: Ascii style draws only 7-bit glyphs",
   f.set_style(BorderStyle::Ascii);
   f.set_geometry({0, 0, 12, 4});
   f.draw(s);
-  REQUIRE(s.at(0, 0).text == "+");
-  REQUIRE(s.at(11, 0).text == "+");
-  REQUIRE(s.at(0, 3).text == "+");
-  REQUIRE(s.at(11, 3).text == "+");
-  REQUIRE(s.at(5, 3).text == "-");
-  REQUIRE(s.at(0, 1).text == "|");
-  REQUIRE(s.at(1, 0).text == "|");  // title delimiters too
-  REQUIRE(s.at(6, 0).text == "|");
+  REQUIRE(s.text_at(0, 0) == "+");
+  REQUIRE(s.text_at(11, 0) == "+");
+  REQUIRE(s.text_at(0, 3) == "+");
+  REQUIRE(s.text_at(11, 3) == "+");
+  REQUIRE(s.text_at(5, 3) == "-");
+  REQUIRE(s.text_at(0, 1) == "|");
+  REQUIRE(s.text_at(1, 0) == "|");  // title delimiters too
+  REQUIRE(s.text_at(6, 0) == "|");
   REQUIRE(all_seven_bit(border_ring(s, f.rect())));
 }
 
@@ -723,11 +723,11 @@ TEST_CASE("Frame: a narrow frame truncates the title inside its delimiters",
   Frame f{"abc"};
   f.set_geometry({0, 0, 8, 3});
   f.draw(s);
-  REQUIRE(s.at(3, 0).text == "a");
-  REQUIRE(s.at(4, 0).text == "b");
-  REQUIRE(s.at(5, 0).text == " ");
-  REQUIRE(s.at(6, 0).text == "├");
-  REQUIRE(s.at(7, 0).text == "┐");
+  REQUIRE(s.text_at(3, 0) == "a");
+  REQUIRE(s.text_at(4, 0) == "b");
+  REQUIRE(s.text_at(5, 0) == " ");
+  REQUIRE(s.text_at(6, 0) == "├");
+  REQUIRE(s.text_at(7, 0) == "┐");
 }
 
 TEST_CASE("Frame: one column of budget still renders a delimited title",
@@ -736,10 +736,10 @@ TEST_CASE("Frame: one column of budget still renders a delimited title",
   Frame f{"abc"};
   f.set_geometry({0, 0, 7, 3});
   f.draw(s);
-  REQUIRE(s.at(1, 0).text == "┤");
-  REQUIRE(s.at(3, 0).text == "a");
-  REQUIRE(s.at(5, 0).text == "├");
-  REQUIRE(s.at(6, 0).text == "┐");
+  REQUIRE(s.text_at(1, 0) == "┤");
+  REQUIRE(s.text_at(3, 0) == "a");
+  REQUIRE(s.text_at(5, 0) == "├");
+  REQUIRE(s.text_at(6, 0) == "┐");
 }
 
 TEST_CASE("Frame: a frame too narrow for one title column drops the title",
@@ -750,9 +750,9 @@ TEST_CASE("Frame: a frame too narrow for one title column drops the title",
   Frame f{"abc"};
   f.set_geometry({0, 0, 6, 3});
   f.draw(s);
-  for (int x = 1; x <= 4; ++x) REQUIRE(s.at(x, 0).text == "─");
-  REQUIRE(s.at(0, 0).text == "┌");
-  REQUIRE(s.at(5, 0).text == "┐");
+  for (int x = 1; x <= 4; ++x) REQUIRE(s.text_at(x, 0) == "─");
+  REQUIRE(s.text_at(0, 0) == "┌");
+  REQUIRE(s.text_at(5, 0) == "┐");
 }
 
 TEST_CASE("Frame: the title never overwrites the corners",
@@ -764,10 +764,10 @@ TEST_CASE("Frame: the title never overwrites the corners",
     Frame f{"LongTitle"};
     f.set_geometry({0, 0, w, 3});
     f.draw(s);
-    REQUIRE(s.at(0, 0).text == "┌");
-    REQUIRE(s.at(w - 1, 0).text == "┐");
-    REQUIRE(s.at(0, 2).text == "└");
-    REQUIRE(s.at(w - 1, 2).text == "┘");
+    REQUIRE(s.text_at(0, 0) == "┌");
+    REQUIRE(s.text_at(w - 1, 0) == "┐");
+    REQUIRE(s.text_at(0, 2) == "└");
+    REQUIRE(s.text_at(w - 1, 2) == "┘");
   }
 }
 
@@ -780,15 +780,15 @@ TEST_CASE("Frame: a wide-glyph title is not split by truncation",
   Frame f{"日本語"};
   f.set_geometry({0, 0, 11, 3});
   f.draw(s);
-  REQUIRE(s.at(1, 0).text == "┤");
-  REQUIRE(s.at(3, 0).text == "日");
-  REQUIRE(s.at(4, 0).text == kContinuation);
-  REQUIRE(s.at(5, 0).text == "本");
-  REQUIRE(s.at(6, 0).text == kContinuation);
-  REQUIRE(s.at(7, 0).text == " ");
-  REQUIRE(s.at(8, 0).text == "├");
-  REQUIRE(s.at(9, 0).text == "─");
-  REQUIRE(s.at(10, 0).text == "┐");
+  REQUIRE(s.text_at(1, 0) == "┤");
+  REQUIRE(s.text_at(3, 0) == "日");
+  REQUIRE(s.text_at(4, 0) == kContinuation);
+  REQUIRE(s.text_at(5, 0) == "本");
+  REQUIRE(s.text_at(6, 0) == kContinuation);
+  REQUIRE(s.text_at(7, 0) == " ");
+  REQUIRE(s.text_at(8, 0) == "├");
+  REQUIRE(s.text_at(9, 0) == "─");
+  REQUIRE(s.text_at(10, 0) == "┐");
 
   // The same row read back the way the terminal shows it (#94). This is the
   // only assertion in the suite that reads a row containing a width-2 glyph,
@@ -809,8 +809,8 @@ TEST_CASE("Frame: a shorter title leaves no stale glyphs",
   f.draw(s);
   f.set_title("Hi");
   f.draw(s);
-  REQUIRE(s.at(6, 0).text == "├");
-  for (int x = 7; x <= 18; ++x) REQUIRE(s.at(x, 0).text == "─");
+  REQUIRE(s.text_at(6, 0) == "├");
+  for (int x = 7; x <= 18; ++x) REQUIRE(s.text_at(x, 0) == "─");
 }
 
 TEST_CASE("Frame: content_rect is inside border", "[primitives][frame]") {
@@ -882,8 +882,8 @@ TEST_CASE("Frame: a frame wider than the screen writes nothing out of bounds",
   f.draw(s);
   REQUIRE(s.cols() == 6);
   REQUIRE(s.rows() == 3);
-  REQUIRE(s.at(0, 0).text == "┌");
-  REQUIRE(s.at(1, 0).text == "┤");
+  REQUIRE(s.text_at(0, 0) == "┌");
+  REQUIRE(s.text_at(1, 0) == "┤");
 }
 
 // ── border glyph sets ───────────────────────────────────────────────────────
@@ -941,8 +941,8 @@ TEST_CASE("MenuBar: renders menu titles", "[primitives][menu]") {
   mb.add_menu({"File", {{"New", {}}, {"Open", {}}}});
   mb.add_menu({"Edit", {{"Cut", {}}, {"Copy", {}}}});
   mb.draw(s);
-  REQUIRE(s.at(1, 0).text == "F");
-  REQUIRE(s.at(2, 0).text == "i");
+  REQUIRE(s.text_at(1, 0) == "F");
+  REQUIRE(s.text_at(2, 0) == "i");
 }
 
 TEST_CASE("MenuBar: draw before any menu is added is not UB (#52)",
@@ -1038,9 +1038,9 @@ TEST_CASE("MenuBar: dropdown renders items below bar", "[primitives][menu]") {
   mb.draw(s);
 
   // "New" should be at row 1 (below the bar).
-  REQUIRE(s.at(2, 1).text == "N");
-  REQUIRE(s.at(3, 1).text == "e");
-  REQUIRE(s.at(4, 1).text == "w");
+  REQUIRE(s.text_at(2, 1) == "N");
+  REQUIRE(s.text_at(3, 1) == "e");
+  REQUIRE(s.text_at(4, 1) == "w");
 }
 
 TEST_CASE("MenuBar: selecting item fires action", "[primitives][menu]") {
@@ -1096,7 +1096,7 @@ TEST_CASE("MenuBar: off-screen dropdown rows are unreachable and uncommittable (
   // Only rows 1..5 fit under a bar on row 0 of a 6-row screen: 5 visible.
   // Row 5 (the last that fits) holds item4 (MenuBar's label_pad is 2); a
   // 20-item unclamped menu would have painted through row 20+.
-  REQUIRE(s.at(2, 5).text == "i");  // item4 on the last visible row
+  REQUIRE(s.text_at(2, 5) == "i");  // item4 on the last visible row
 
   // Hammering Down walks the whole menu (#85) -- the window is 5 rows, but the
   // ITEMS are 20 and all of them are reachable. What #53 still guarantees is
@@ -1300,8 +1300,8 @@ TEST_CASE("TextInput: cursor sits just past a wide glyph",
   ti.set_text("\xE4\xB8\x96");  // 世 (width 2); cursor at end
   ti.draw(s);
   // 世 occupies columns 0-1 (glyph + continuation cell); cursor at column 2.
-  REQUIRE(s.at(0, 0).text == "\xE4\xB8\x96");
-  REQUIRE(s.at(1, 0).text == std::string("\0", 1));
+  REQUIRE(s.text_at(0, 0) == "\xE4\xB8\x96");
+  REQUIRE(s.text_at(1, 0) == std::string("\0", 1));
   REQUIRE(is_cursor_cell(s.at(2, 0)));
 }
 
@@ -1335,13 +1335,13 @@ TEST_CASE("MenuBar: the open dropdown marks its selection with a glyph (#76)",
   open_file_menu(mb);
   mb.draw(s);
 
-  REQUIRE(s.at(0, 1).text == "▸");   // selected item
-  REQUIRE(s.at(1, 1).text.empty());  // the separator column of the pad
-  REQUIRE(s.at(0, 2).text.empty());  // unselected: gutter stays blank
-  REQUIRE(s.at(0, 3).text.empty());
+  REQUIRE(s.text_at(0, 1) == "▸");   // selected item
+  REQUIRE(s.text_at(1, 1).empty());  // the separator column of the pad
+  REQUIRE(s.text_at(0, 2).empty());  // unselected: gutter stays blank
+  REQUIRE(s.text_at(0, 3).empty());
   // The labels did not move: label_pad already reserved these two columns, so
   // this is exactly the geometry the pre-#76 test above asserts.
-  REQUIRE(s.at(2, 1).text == "N");
+  REQUIRE(s.text_at(2, 1) == "N");
 }
 
 TEST_CASE("MenuBar: the marker follows Down/Up (#76)",
@@ -1353,14 +1353,14 @@ TEST_CASE("MenuBar: the marker follows Down/Up (#76)",
   Event down = KeyEvent{Key::Down};
   mb.on_event(down);
   mb.draw(s);
-  REQUIRE(s.at(0, 1).text.empty());
-  REQUIRE(s.at(0, 2).text == "▸");
+  REQUIRE(s.text_at(0, 1).empty());
+  REQUIRE(s.text_at(0, 2) == "▸");
 
   Event up = KeyEvent{Key::Up};
   mb.on_event(up);
   mb.draw(s);
-  REQUIRE(s.at(0, 1).text == "▸");
-  REQUIRE(s.at(0, 2).text.empty());
+  REQUIRE(s.text_at(0, 1) == "▸");
+  REQUIRE(s.text_at(0, 2).empty());
 }
 
 TEST_CASE("MenuBar: a hover moves the marker too (#76)",
@@ -1374,8 +1374,8 @@ TEST_CASE("MenuBar: a hover moves the marker too (#76)",
   REQUIRE(mb.on_event(motion(3, 3)));  // third item's row
   mb.draw(s);
 
-  REQUIRE(s.at(0, 3).text == "▸");
-  REQUIRE(s.at(0, 1).text.empty());
+  REQUIRE(s.text_at(0, 3) == "▸");
+  REQUIRE(s.text_at(0, 1).empty());
 }
 
 TEST_CASE("MenuBar: BorderStyle::Ascii keeps the open menu 7-bit (#76)",
@@ -1389,9 +1389,9 @@ TEST_CASE("MenuBar: BorderStyle::Ascii keeps the open menu 7-bit (#76)",
   mb.draw(s);
 
   REQUIRE(mb.style() == BorderStyle::Ascii);
-  REQUIRE(s.at(0, 1).text == "*");
+  REQUIRE(s.text_at(0, 1) == "*");
   for (int y = 0; y < 5; ++y)
-    for (int x = 0; x < 40; ++x) REQUIRE(all_seven_bit(s.at(x, y).text));
+    for (int x = 0; x < 40; ++x) REQUIRE(all_seven_bit(s.text_at(x, y)));
 }
 
 TEST_CASE("MenuBar: the selection survives a driver that drops colour (#76)",
@@ -1411,8 +1411,8 @@ TEST_CASE("MenuBar: the selection survives a driver that drops colour (#76)",
 
   std::string row1, row2;
   for (int x = 0; x < 8; ++x) {
-    row1 += s.at(x, 1).text.empty() ? " " : s.at(x, 1).text;
-    row2 += s.at(x, 2).text.empty() ? " " : s.at(x, 2).text;
+    row1 += s.text_at(x, 1).empty() ? " " : s.text_at(x, 1);
+    row2 += s.text_at(x, 2).empty() ? " " : s.text_at(x, 2);
   }
   REQUIRE(row1 != row2);  // in CELL TEXT, not only in colour
 
@@ -1425,7 +1425,7 @@ TEST_CASE("MenuBar: the selection survives a driver that drops colour (#76)",
   // neither of the other two does. test/34menubar carries the mirror image:
   // the same driver assertion with the dropdown CLOSED, where the bar's marker
   // is the only one in the frame.
-  REQUIRE(s.at(0, 1).text == "▸");
+  REQUIRE(s.text_at(0, 1) == "▸");
 
   FallbackDriver d;
   std::string out;

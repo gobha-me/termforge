@@ -492,5 +492,5 @@ TEST_CASE("a Widget that never heard of on_tick still builds and draws",
   w.draw(s);
 
   REQUIRE(w.draws == 2);
-  REQUIRE(s.at(0, 0).text == "L");
+  REQUIRE(s.text_at(0, 0) == "L");
 }

@@ -112,7 +112,7 @@ auto bar_with(const std::vector<std::string>& titles, int active, int cols)
 auto last_painted(const Screen& s, int x, int w) -> int {
   int last = -1;
   for (int c = x; c < x + w; ++c)
-    if (s.at(c, 0).text != " " && !s.at(c, 0).blank()) last = c;
+    if (s.text_at(c, 0) != " " && !s.at(c, 0).blank()) last = c;
   return last;
 }
 
@@ -302,10 +302,10 @@ TEST_CASE("MenuBar: the marker sits in the active title's pad column",
   const Screen s = bar_with(titles, 1, 20);
   const auto [x, w] = active_run(s);
 
-  REQUIRE(s.at(x, 0).text == "▸");       // the pad column, taken from the paint
-  REQUIRE(s.at(x + 1, 0).text == "B");   // the title still starts one in
-  REQUIRE(s.at(0, 0).text != "▸");       // and no INACTIVE title carries one
-  REQUIRE(s.at(x + w + 1, 0).text != "▸");
+  REQUIRE(s.text_at(x, 0) == "▸");       // the pad column, taken from the paint
+  REQUIRE(s.text_at(x + 1, 0) == "B");   // the title still starts one in
+  REQUIRE(s.text_at(0, 0) != "▸");       // and no INACTIVE title carries one
+  REQUIRE(s.text_at(x + w + 1, 0) != "▸");
 }
 
 TEST_CASE("MenuBar: BorderStyle::Ascii keeps the bar row 7-bit",
@@ -320,7 +320,7 @@ TEST_CASE("MenuBar: BorderStyle::Ascii keeps the bar row 7-bit",
   const Screen s = drawn(mb, 20);
 
   const auto [x, w] = active_run(s);
-  REQUIRE(s.at(x, 0).text == "*");  // selector; arrow_right stays ">"
+  REQUIRE(s.text_at(x, 0) == "*");  // selector; arrow_right stays ">"
   REQUIRE(all_seven_bit(row_text(s, 0)));
 }
 
@@ -336,14 +336,14 @@ TEST_CASE("MenuBar: unfocused, the marker stays and the focus colours go",
 
   const Screen cold = drawn(mb, 20);
   REQUIRE(active_run(cold).second == 0);  // no focus colours...
-  REQUIRE(cold.at(4, 0).text == "▸");     // ...but the mark remains
+  REQUIRE(cold.text_at(4, 0) == "▸");     // ...but the mark remains
   REQUIRE_FALSE(mb.dirty());
 
   mb.set_focused(true);
   REQUIRE(mb.dirty());
   const Screen hot = drawn(mb, 20);
   REQUIRE(active_run(hot) == std::pair{4, 6});
-  REQUIRE(hot.at(4, 0).text == "▸");
+  REQUIRE(hot.text_at(4, 0) == "▸");
   REQUIRE(row_text(cold, 0) == row_text(hot, 0));
   REQUIRE(cold.at(4, 0).bg != hot.at(4, 0).bg);
 
@@ -471,7 +471,7 @@ TEST_CASE("MenuBar: the marker follows the bar's rect, not the screen origin",
   const auto [x, w] = tfsupport::highlighted_run(s, 1, termforge::theme::kFocusBg);
   REQUIRE(w == 6);            // " Beta " on row 1
   REQUIRE(x == 2 + 3 + 1);    // rect().x + span 0 + the gap
-  REQUIRE(s.at(x, 1).text == "▸");
+  REQUIRE(s.text_at(x, 1) == "▸");
   REQUIRE(row_text(s, 1, x, w) == "▸Beta ");
   // Nothing on the rows the bar does not own, and nothing left of rect().x.
   REQUIRE(row_text(s, 0) == std::string(24, ' '));
@@ -498,7 +498,7 @@ TEST_CASE("MenuBar: a bar whose rect starts left of the screen leaks no marker",
   const Screen s = drawn(mb, 16);
 
   REQUIRE(mb.active_menu() == 0);
-  REQUIRE(s.at(0, 0).text != "▸");
+  REQUIRE(s.text_at(0, 0) != "▸");
   REQUIRE(s.at(0, 0).blank());
 }
 

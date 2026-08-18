@@ -62,7 +62,7 @@ namespace {
 auto rect_is_ascii(const Screen& s, Rect r) -> bool {
   for (int y = r.y; y < r.y + r.h; ++y)
     for (int x = r.x; x < r.x + r.w; ++x)
-      if (!all_seven_bit(s.at(x, y).text)) return false;
+      if (!all_seven_bit(s.text_at(x, y))) return false;
   return true;
 }
 
@@ -278,8 +278,8 @@ TEST_CASE("Checkbox: a wide label glyph is never split",
   Checkbox c{"日本"};
   c.set_geometry({0, 0, 6, 1});
   c.draw(s);
-  REQUIRE(s.at(4, 0).text == "日");
-  REQUIRE(s.at(5, 0).text == kContinuation);  // continuation cell, not a second glyph
+  REQUIRE(s.text_at(4, 0) == "日");
+  REQUIRE(s.text_at(5, 0) == kContinuation);  // continuation cell, not a second glyph
 
   Screen s2{10, 1};
   c.set_geometry({0, 0, 5, 1});
@@ -629,8 +629,8 @@ TEST_CASE("RadioGroup: a wide option glyph is never split",
   g.set_options({"日本"});
   g.set_geometry({0, 0, 6, 1});
   g.draw(s);
-  REQUIRE(s.at(4, 0).text == "日");
-  REQUIRE(s.at(5, 0).text == kContinuation);
+  REQUIRE(s.text_at(4, 0) == "日");
+  REQUIRE(s.text_at(5, 0) == kContinuation);
 
   Screen s2{10, 1};
   g.set_geometry({0, 0, 5, 1});
@@ -722,7 +722,7 @@ TEST_CASE("Select: the closed box renders the value between the chrome",
 
   sel.draw(s);
   REQUIRE(row_text(s, 0, 0, 14) == "[ kitty    ▾ ]");
-  REQUIRE(s.at(13, 0).text == "]");  // the bracket sits on the last column
+  REQUIRE(s.text_at(13, 0) == "]");  // the bracket sits on the last column
   REQUIRE_FALSE(sel.dropdown_open());
   // Nothing below the closed box.
   REQUIRE(s.at(0, 1).blank());
@@ -1306,18 +1306,18 @@ TEST_CASE("Select: overflow indicators mark the ends the window is cut at "
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(s);
   // Top of the list: more below, nothing above.
-  REQUIRE(s.at(hint_x, 5).text != "▴");
-  REQUIRE(s.at(hint_x, 7).text == "▾");
+  REQUIRE(s.text_at(hint_x, 5) != "▴");
+  REQUIRE(s.text_at(hint_x, 7) == "▾");
 
   REQUIRE(sel.on_event(wheel(3, 6)));  // window [1,4): cut at BOTH ends
   sel.draw(s);
-  REQUIRE(s.at(hint_x, 5).text == "▴");
-  REQUIRE(s.at(hint_x, 7).text == "▾");
+  REQUIRE(s.text_at(hint_x, 5) == "▴");
+  REQUIRE(s.text_at(hint_x, 7) == "▾");
 
   REQUIRE(sel.on_event(key(Key::End)));  // window [3,6): bottom of the list
   sel.draw(s);
-  REQUIRE(s.at(hint_x, 5).text == "▴");
-  REQUIRE(s.at(hint_x, 7).text != "▾");
+  REQUIRE(s.text_at(hint_x, 5) == "▴");
+  REQUIRE(s.text_at(hint_x, 7) != "▾");
 }
 
 TEST_CASE("Select: a list that fits gets no indicators (#85)",
@@ -1331,8 +1331,8 @@ TEST_CASE("Select: a list that fits gets no indicators (#85)",
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(s);
   for (int y = 1; y <= 3; ++y) {
-    REQUIRE(s.at(11, y).text != "▴");
-    REQUIRE(s.at(11, y).text != "▾");
+    REQUIRE(s.text_at(11, y) != "▴");
+    REQUIRE(s.text_at(11, y) != "▾");
   }
 }
 
@@ -1352,8 +1352,8 @@ TEST_CASE("Select: the Ascii family keeps a SCROLLED dropdown 7-bit (#85)",
   REQUIRE(sel.on_event(wheel(3, 6)));
   sel.draw(s);
 
-  REQUIRE(s.at(11, 5).text == "^");
-  REQUIRE(s.at(11, 7).text == "v");
+  REQUIRE(s.text_at(11, 5) == "^");
+  REQUIRE(s.text_at(11, 7) == "v");
   REQUIRE(rect_is_ascii(s, Rect{0, 0, 20, 8}));
 }
 
@@ -1370,7 +1370,7 @@ TEST_CASE("Select: an indicator never eats a label column (#85)",
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(s);
   REQUIRE(row_text(s, 5, 1, 10) == "abcdefghij");  // intact
-  REQUIRE(s.at(11, 7).text == "▾");                // and the hint still fits
+  REQUIRE(s.text_at(11, 7) == "▾");                // and the hint still fits
 }
 
 TEST_CASE("Select: a dropdown one column wide draws no indicator (#85)",
@@ -1391,8 +1391,8 @@ TEST_CASE("Select: a dropdown one column wide draws no indicator (#85)",
                                         /*highlight=*/1, /*scroll=*/1,
                                         /*label_pad=*/1, c, c, c, c,
                                         termforge::kUnicodeMarks, label);
-  REQUIRE(s.at(0, 0).text != "▴");
-  REQUIRE(s.at(0, 1).text != "▾");
+  REQUIRE(s.text_at(0, 0) != "▴");
+  REQUIRE(s.text_at(0, 1) != "▾");
 }
 
 TEST_CASE("Select: a wheel with no window at all changes nothing (#85)",
@@ -1684,9 +1684,9 @@ TEST_CASE("Select: a click commits the sanitized option painted on that row (#15
   sel.draw(s);
   // Row 2 (dropdown option 1) shows the sanitized form; the label sits past
   // the one-column marker pad, truncated/padded into the dropdown window.
-  REQUIRE(s.at(1, 2).text == "t");
-  REQUIRE(s.at(2, 2).text == "w");
-  REQUIRE(s.at(3, 2).text == "o");
+  REQUIRE(s.text_at(1, 2) == "t");
+  REQUIRE(s.text_at(2, 2) == "w");
+  REQUIRE(s.text_at(3, 2) == "o");
 
   Event click = MouseEvent{.x = 2, .y = 2, .button = 0, .pressed = true};
   REQUIRE(sel.on_event(click));
@@ -1705,11 +1705,11 @@ TEST_CASE("Select: a wide value glyph is never split",
   // 6 chrome + 4 inner: two full-width glyphs fit, the third must not split.
   sel.set_geometry({0, 0, 10, 1});
   sel.draw(s);
-  REQUIRE(s.at(2, 0).text == "日");
-  REQUIRE(s.at(3, 0).text == kContinuation);
-  REQUIRE(s.at(4, 0).text == "本");
-  REQUIRE(s.at(5, 0).text == kContinuation);
-  REQUIRE(s.at(9, 0).text == "]");  // chrome still lands on the last column
+  REQUIRE(s.text_at(2, 0) == "日");
+  REQUIRE(s.text_at(3, 0) == kContinuation);
+  REQUIRE(s.text_at(4, 0) == "本");
+  REQUIRE(s.text_at(5, 0) == kContinuation);
+  REQUIRE(s.text_at(9, 0) == "]");  // chrome still lands on the last column
 }
 
 TEST_CASE("Select: the dirty flag round-trips through every setter",
@@ -1793,13 +1793,13 @@ TEST_CASE("Select: the open list marks its highlight with a glyph, not only "
   sel.draw(s);
 
   // Row 1 is the highlight (selection starts at option 0); 2 and 3 are not.
-  REQUIRE(s.at(0, 1).text == "▸");
-  REQUIRE(s.at(0, 2).text.empty());
-  REQUIRE(s.at(0, 3).text.empty());
+  REQUIRE(s.text_at(0, 1) == "▸");
+  REQUIRE(s.text_at(0, 2).empty());
+  REQUIRE(s.text_at(0, 3).empty());
   // And the labels did NOT move: label_pad already reserved column 0, so this
   // is the same geometry as before #76.
-  REQUIRE(s.at(1, 1).text == "k");
-  REQUIRE(s.at(1, 2).text == "a");
+  REQUIRE(s.text_at(1, 1) == "k");
+  REQUIRE(s.text_at(1, 2) == "a");
 }
 
 TEST_CASE("Select: the marker follows the highlight without committing (#76)",
@@ -1814,8 +1814,8 @@ TEST_CASE("Select: the marker follows the highlight without committing (#76)",
   REQUIRE(sel.on_event(key(Key::Down)));   // move the highlight
   sel.draw(s);
 
-  REQUIRE(s.at(0, 1).text.empty());
-  REQUIRE(s.at(0, 2).text == "▸");
+  REQUIRE(s.text_at(0, 1).empty());
+  REQUIRE(s.text_at(0, 2) == "▸");
   REQUIRE(calls == 0);  // arrows still do not commit
 }
 
@@ -1831,8 +1831,8 @@ TEST_CASE("Select: a hover moves the marker too (#76)",
   REQUIRE(sel.on_event(motion(3, 3)));  // third option row
   sel.draw(s);
 
-  REQUIRE(s.at(0, 3).text == "▸");
-  REQUIRE(s.at(0, 1).text.empty());
+  REQUIRE(s.text_at(0, 3) == "▸");
+  REQUIRE(s.text_at(0, 1).empty());
 }
 
 TEST_CASE("Select: BorderStyle::Ascii keeps the OPEN list 7-bit too (#76)",
@@ -1846,7 +1846,7 @@ TEST_CASE("Select: BorderStyle::Ascii keeps the OPEN list 7-bit too (#76)",
   REQUIRE(sel.on_event(key(Key::Enter)));
   sel.draw(s);
 
-  REQUIRE(s.at(0, 1).text == "*");
+  REQUIRE(s.text_at(0, 1) == "*");
   REQUIRE(rect_is_ascii(s, Rect{0, 0, 20, 6}));
 }
 
@@ -1928,7 +1928,7 @@ TEST_CASE("Select: the marker is dropped, never the label, when it will not "
                                           /*highlight=*/0, /*scroll=*/0,
                                           /*label_pad=*/2, c, c, c, c,
                                           marked("»»"), label);
-    REQUIRE(s.at(0, 0).text.empty());  // nothing spilled into the one column
+    REQUIRE(s.text_at(0, 0).empty());  // nothing spilled into the one column
   }
 }
 

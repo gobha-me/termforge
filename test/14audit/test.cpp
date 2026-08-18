@@ -326,7 +326,7 @@ TEST_CASE("TextBox: clear() leaves no stale text on the next draw",
   tb.append("line one");
   tb.append("line two");
   tb.draw(s);
-  REQUIRE(s.at(0, 0).text == "l");  // "line one" is on screen (top-aligned)
+  REQUIRE(s.text_at(0, 0) == "l");  // "line one" is on screen (top-aligned)
 
   // Clear the content and redraw WITHOUT s.clear() in between.
   tb.clear();
@@ -374,7 +374,7 @@ TEST_CASE("WaveformWidget: blanks columns with no sample and an empty series",
   w.draw(s);
   for (int x = 3; x < 20; ++x)          // columns beyond the 3 samples
     for (int y = 0; y < 4; ++y)
-      REQUIRE(s.at(x, y).text != "#");  // marker gone → blanked
+      REQUIRE(s.text_at(x, y) != "#");  // marker gone → blanked
 
   // An empty series must still blank the whole rect (old code early-returned
   // before painting, leaving stale content).
@@ -398,8 +398,8 @@ TEST_CASE("TextInput: a tall rect blanks rows other than the input row",
   seed(s, r, "#");
   ti.draw(s);
   for (int x = 0; x < 20; ++x) {
-    REQUIRE(s.at(x, 0).text != "#");  // row above the input row blanked
-    REQUIRE(s.at(x, 2).text != "#");  // row below the input row blanked
+    REQUIRE(s.text_at(x, 0) != "#");  // row above the input row blanked
+    REQUIRE(s.text_at(x, 2) != "#");  // row below the input row blanked
   }
 }
 
@@ -459,7 +459,7 @@ TEST_CASE("MenuBar: an overflowing title is clipped to the bar's right edge",
   bar.set_menus({Menu{"VeryLongTitle", {{"x", nullptr}}}});
   bar.draw(s);
 
-  REQUIRE(s.at(1, 0).text == "V");  // title still renders inside the bar
+  REQUIRE(s.text_at(1, 0) == "V");  // title still renders inside the bar
   // Nothing may be painted past the bar's right edge (cols 8..11), where it
   // would be visible but dead to clicks (gated by rect().contains).
   for (int x = 8; x < 12; ++x)
