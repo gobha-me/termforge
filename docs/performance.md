@@ -43,13 +43,65 @@ no runner-dependent time is a pass/fail threshold.
 
 ```bash
 cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -Dtermforge_BENCH=ON
-cmake --build build-bench -j4 --target termforge_bench termforge_terminal_bench
+cmake --build build-bench -j4 --target termforge_bench termforge_terminal_bench \
+  termforge_shm_bench
 ./build-bench/bench/termforge_bench --format json --output benchmark.json
 ```
 
 `termforge_terminal_bench` is the separate schema-2 live harness described in
 W5 below. Its smoke mode is offline and deterministic; live runs require an
 explicit report path and a direct terminal child pty.
+
+### Explicit shared-memory startup upload
+
+Issue #111 adds an opt-in `ImageTransport` policy for Kitty's non-direct
+transfer media. The default remains direct `t=d`: a tty, `TERM`, SSH variables,
+or an emulator name cannot prove that the application and terminal share a
+filesystem or POSIX shared-memory namespace. A local embedding that knows they
+do may install the shipped strategy after driver selection:
+
+```cpp
+#include <memory>
+#include "termforge/core/image_transport.hpp"
+
+auto MyApp::on_start() -> void {
+  driver().set_image_transport(
+      std::make_shared<termforge::PosixSharedMemoryTransport>());
+}
+```
+
+The strategy stages each initial region or pinned-image payload in an
+owner-only POSIX shared-memory object and Kitty receives a short `t=s` command.
+The driver retains the cleanup lease through the ordered terminal reply. A
+staging failure retries direct and reports one `Info`; a terminal rejection
+also retries direct, reports one `Info`, and latches direct transport for the
+rest of that driver session. Sink refusal, timeout, invalidation, unpin, and
+driver retirement release the same owned lease rather than leaking a named
+object.
+Animation frames, resident replacements, and partial edits keep their existing
+direct action-specific wire paths.
+
+`termforge_shm_bench` is a live, same-namespace comparison rather than a CI
+timing threshold. Run it as a direct child of Kitty, outside tmux/SSH/proxies:
+
+```bash
+./build-bench/bench/termforge_shm_bench \
+  --samples 7 --warmup 2 --output /tmp/termforge-shm.json
+```
+
+The harness alternates routes for one deterministic 512×512 RGBA payload and
+waits for a later ordered graphics fence after every upload. A reference run
+on 2026-08-18 used Kitty 0.32.2, GCC 14.2 Release, Linux 6.12.74, seven samples
+after two warmups:
+
+| route | terminal wire bytes | assembly median | write median | end-to-fence median |
+| --- | ---: | ---: | ---: | ---: |
+| direct `t=d` | 1,402,582 | 1.315 ms | 17.333 ms | 31.617 ms |
+| POSIX shm `t=s` | 107 | 0.444 ms | 0.003 ms | 9.054 ms |
+
+These numbers establish the local startup gate, not a portable promise. The
+terminal still copies and decodes the source bytes; namespace topology,
+payload format, host, and terminal implementation remain part of the result.
 
 The kernel suite covers Kitty payload hashing and base64, Image fill/blit/blend,
 text sanitization and width, Cell comparison, ANSI half-block assembly, and

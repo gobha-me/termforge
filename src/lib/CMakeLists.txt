@@ -8,6 +8,7 @@ add_library(${PROJECT_NAME}_lib STATIC
   core/app.cpp
   core/image_loader.cpp
   core/image.cpp
+  core/image_transport.cpp
   detail/base64.cpp
   detail/payload_hash.cpp
   detail/simd.cpp

@@ -74,6 +74,19 @@ file is the tactical version.
   them, and a later Kitty rejection/timeout invalidates or restores the relevant
   belief. The ledger is per-driver instance state. `invalidate_images` clears it
   without wire, while an accepted shutdown delete-all clears it with wire.
+- **Indirect image transport is explicit embedding policy** (#111). Never
+  infer a shared filesystem/shm namespace from `TERM`, SSH variables, a tty,
+  or an emulator name. `TerminalDriver::set_image_transport` is base-owned
+  non-virtual state; no strategy means Kitty's historical direct `t=d` wire.
+  The shipped `PosixSharedMemoryTransport` is opt-in and applies only to
+  initial region and pinned-image `a=t` uploads — animation frames, root
+  replacements and partial edits keep their action-specific direct paths. A
+  staged resource stays owned through the ordered terminal reply. Strategy
+  failure falls back direct with one `Info`; terminal rejection releases the
+  resource, retries direct with one `Info`, and latches direct for that driver
+  session. Sink refusal, timeout, invalidation and explicit retirement release
+  the lease. Meter only the short indirect command handed to the sink, while
+  residency continues to count the exact source payload bytes.
 - **`emit_frame` is the write boundary AND the meter boundary** (#178). They
   are one function on `TerminalDriver` precisely so that "sent but not metered"
   and "metered but not sent" are both unspellable — a driver's `flush()` is

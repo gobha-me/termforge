@@ -808,8 +808,9 @@ auto KittyDriver::register_animation(std::span<const AnimationFrame> frames)
     tally_image_transmit(m_buf.size() - before);
   };
   emit_transmit([&] {
-    transmit(prepared.front().payload, prepared.front().format,
-             prepared.front().px, id, prepared.front().request_reply);
+    static_cast<void>(transmit(prepared.front().payload,
+                               prepared.front().format, prepared.front().px, id,
+                               prepared.front().request_reply, false));
   });
   if (prepared.front().request_reply) ++reply_count;
 
@@ -841,8 +842,17 @@ auto KittyDriver::register_animation(std::span<const AnimationFrame> frames)
                       static_cast<std::size_t>(source_bytes));
   if (reply_count != 0) {
     m_pending_replies.emplace(id, PendingReply{PendingKind::AnimationRegister,
-                                               0, serial, 0, m_flush_count, 0,
-                                               false, 0, reply_count});
+                                               0,
+                                               serial,
+                                               0,
+                                               m_flush_count,
+                                               0,
+                                               false,
+                                               0,
+                                               reply_count,
+                                               {},
+                                               false,
+                                               {}});
   }
   return AnimationHandle{id, instance_token(), serial};
 }
@@ -1158,7 +1168,7 @@ auto KittyDriver::pin_payload(std::span<const std::byte> payload,
   // bytes sit in m_buf until the next flush() -- pin_image does not write, it
   // queues, exactly like every draw does.
   const std::size_t before = m_buf.size();
-  transmit(payload, format, px, id, request_reply);
+  auto transfer = transmit(payload, format, px, id, request_reply, true);
   tally_image_transmit(m_buf.size() - before);
 
   const std::uint32_t serial = ++m_next_pin_serial;
@@ -1170,9 +1180,22 @@ auto KittyDriver::pin_payload(std::span<const std::byte> payload,
                                    .accepted = !request_reply,
                                    .serial = serial});
   stage_residency_set(id, serial, ResidencyKind::Pinned, payload.size());
-  if (request_reply) {
-    m_pending_replies.emplace(id, PendingReply{PendingKind::PinTransmit, 0,
-                                               serial, hash, m_flush_count});
+  if (transfer.request_reply) {
+    PendingReply pending{PendingKind::PinTransmit,
+                         0,
+                         serial,
+                         hash,
+                         m_flush_count,
+                         0,
+                         false,
+                         0,
+                         1,
+                         {},
+                         false,
+                         {}};
+    pending.indirect = std::move(transfer.indirect);
+    pending.success_event = std::move(transfer.success_event);
+    m_pending_replies.emplace(id, std::move(pending));
   }
   return PinnedImage{id, instance_token(), serial};
 }
@@ -1302,10 +1325,18 @@ auto KittyDriver::replace_payload(std::uint32_t id, PinnedEntry& entry,
   tally_image_transmit(m_buf.size() - before);
   stage_residency_set(id, entry.serial, ResidencyKind::Pinned, payload.size());
   if (request_reply) {
-    m_pending_replies.emplace(
-        id, PendingReply{PendingKind::PinnedReplace, 0, entry.serial, hash,
-                         m_flush_count, previous_source_payload_bytes,
-                         previously_accounted, previous_content_hash});
+    m_pending_replies.emplace(id, PendingReply{PendingKind::PinnedReplace,
+                                               0,
+                                               entry.serial,
+                                               hash,
+                                               m_flush_count,
+                                               previous_source_payload_bytes,
+                                               previously_accounted,
+                                               previous_content_hash,
+                                               1,
+                                               {},
+                                               false,
+                                               {}});
   } else {
     stage_content_hash(id, entry.serial, hash, true);
   }
@@ -1362,10 +1393,18 @@ auto KittyDriver::edit_payload(std::uint32_t id, PinnedEntry& entry,
   stage_content_hash(id, entry.serial, 0, !request_reply);
   stage_residency_add(id, entry.serial, payload.size());
   if (request_reply) {
-    m_pending_replies.emplace(
-        id, PendingReply{PendingKind::PinnedEdit, 0, entry.serial, 0,
-                         m_flush_count, previous_source_payload_bytes,
-                         previously_accounted, previous_content_hash});
+    m_pending_replies.emplace(id, PendingReply{PendingKind::PinnedEdit,
+                                               0,
+                                               entry.serial,
+                                               0,
+                                               m_flush_count,
+                                               previous_source_payload_bytes,
+                                               previously_accounted,
+                                               previous_content_hash,
+                                               1,
+                                               {},
+                                               false,
+                                               {}});
   }
   return {};
 }
@@ -1485,6 +1524,7 @@ auto KittyDriver::invalidate_images() noexcept -> void {
   m_accounted_images.clear();
   m_residency_mutations.clear();
   m_content_mutations.clear();
+  m_frame_success_events.clear();
   m_placeholder_clears.clear();
   m_transmitted = false;
 
@@ -1767,16 +1807,32 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
     }
   } else if (hash != slot.content_hash) {
     const std::size_t before = m_buf.size();
-    transmit(payload, format, px, slot.image_id, request_reply);
+    // Indirect media are the cold/startup path. A live region replacement is
+    // intentionally direct: a=t under an existing id changes terminal state,
+    // and a medium failure must not make the old root/placement rollback
+    // depend on transport-specific bookkeeping.
+    const bool initial_upload = slot.content_hash == 0;
+    auto transfer = transmit(payload, format, px, slot.image_id, request_reply,
+                             initial_upload);
     tally.transmitted = m_buf.size() - before;
     stage_residency_set(slot.image_id, slot.serial, ResidencyKind::Region,
                         payload.size());
-    if (request_reply) {
-      m_pending_replies.emplace(
-          slot.image_id,
-          PendingReply{PendingKind::RegionTransmit,
-                       region_key(dest.x, dest.y, dest.w, dest.h), slot.serial,
-                       hash, m_flush_count});
+    if (transfer.request_reply) {
+      PendingReply pending{PendingKind::RegionTransmit,
+                           region_key(dest.x, dest.y, dest.w, dest.h),
+                           slot.serial,
+                           hash,
+                           m_flush_count,
+                           0,
+                           false,
+                           0,
+                           1,
+                           {},
+                           false,
+                           {}};
+      pending.indirect = std::move(transfer.indirect);
+      pending.success_event = std::move(transfer.success_event);
+      m_pending_replies.emplace(slot.image_id, std::move(pending));
     } else {
       slot.content_hash = hash;
     }
@@ -1984,8 +2040,8 @@ auto KittyDriver::finish_animation_controls(bool accepted) -> void {
 
 auto KittyDriver::finish_pending(std::uint32_t image_id,
                                  const PendingReply& pending, bool success,
-                                 std::string_view status, bool timed_out)
-    -> void {
+                                 std::string_view status, bool timed_out,
+                                 bool report_failure) -> void {
   switch (pending.kind) {
     case PendingKind::RegionTransmit: {
       const auto it = m_regions.find(pending.region_key);
@@ -2074,7 +2130,9 @@ auto KittyDriver::finish_pending(std::uint32_t image_id,
     }
   }
 
-  if (!success) {
+  if (success && pending.success_event)
+    push_driver_event(*pending.success_event);
+  if (!success && report_failure) {
     push_driver_event(ErrorEvent{
         Severity::Warning, "kitty",
         timed_out
@@ -2092,6 +2150,75 @@ auto KittyDriver::finish_pending(std::uint32_t image_id,
   }
 }
 
+auto KittyDriver::retry_indirect_direct(std::uint32_t image_id,
+                                        PendingReply pending,
+                                        std::string_view status) -> void {
+  // Rejection proves the configured namespace/medium is not usable by this
+  // terminal. Keep direct as the session route from now on, and report the
+  // honoured lesser route once rather than repeating a failed probe per image.
+  m_indirect_transport_unavailable = true;
+
+  const auto& indirect = *pending.indirect;
+  erase_accounted(image_id, pending.serial);
+  const auto kind = pending.kind == PendingKind::RegionTransmit
+                        ? ResidencyKind::Region
+                        : ResidencyKind::Pinned;
+  if (pending.kind == PendingKind::RegionTransmit) {
+    const auto region = m_regions.find(pending.region_key);
+    if (region != m_regions.end() && region->second.image_id == image_id &&
+        region->second.serial == pending.serial) {
+      // The placement followed the rejected upload on the original stream.
+      // It may never have existed (initial upload), or Classic may still show
+      // the previous root and refuse to refresh it after the retry. Retire the
+      // known Classic placement and force the next draw to place again.
+      if (m_mode == PlacementMode::Classic && region->second.placed) {
+        const std::size_t before = m_buf.size();
+        delete_placement(image_id, kRegionPlacementId);
+        tally_image_edit(m_buf.size() - before);
+      }
+      region->second.placed = false;
+    }
+  }
+  stage_residency_set(image_id, pending.serial, kind,
+                      indirect.direct_payload.size());
+
+  const std::size_t before = m_buf.size();
+  const auto direct =
+      transmit(indirect.direct_payload, indirect.format, indirect.px, image_id,
+               indirect.direct_request_reply, false);
+  tally_image_transmit(m_buf.size() - before);
+
+  pending.indirect->lease.reset(); // release/unlink rejected staged object
+  std::vector<std::byte>{}.swap(pending.indirect->direct_payload);
+  pending.issued_flush = m_flush_count;
+  pending.complete_on_flush = !direct.request_reply;
+  pending.success_event = ErrorEvent{
+      Severity::Info, "kitty",
+      std::format("terminal rejected indirect image transfer for image {} "
+                  "({}); direct t=d fallback accepted",
+                  image_id, status)};
+  m_pending_replies.emplace(image_id, std::move(pending));
+}
+
+auto KittyDriver::finish_direct_fallbacks(bool accepted) -> void {
+  std::vector<std::pair<std::uint32_t, PendingReply>> completed;
+  for (auto it = m_pending_replies.begin(); it != m_pending_replies.end();) {
+    if (it->second.complete_on_flush &&
+        it->second.issued_flush + 1 == m_flush_count) {
+      completed.emplace_back(it->first, std::move(it->second));
+      it = m_pending_replies.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  for (const auto& [id, pending] : completed) {
+    finish_pending(id, pending, accepted,
+                   accepted ? std::string_view{"OK"}
+                            : std::string_view{"sink refusal"},
+                   false, false);
+  }
+}
+
 auto KittyDriver::discard_unwritten_edits() -> void {
   // An opaque edit installs its reply correlation while queueing, before the
   // frame reaches the sink. If that write is refused, no terminal can answer
@@ -2099,14 +2226,21 @@ auto KittyDriver::discard_unwritten_edits() -> void {
   // before reporting a fictitious terminal timeout. Content and residency
   // mutations are discarded separately at this same boundary; retire only the
   // edit operation issued for the frame that just failed.
+  std::vector<std::pair<std::uint32_t, PendingReply>> indirect;
   for (auto it = m_pending_replies.begin(); it != m_pending_replies.end();) {
     if (it->second.kind == PendingKind::PinnedEdit &&
         it->second.issued_flush + 1 == m_flush_count) {
+      it = m_pending_replies.erase(it);
+    } else if (it->second.indirect &&
+               it->second.issued_flush + 1 == m_flush_count) {
+      indirect.emplace_back(it->first, std::move(it->second));
       it = m_pending_replies.erase(it);
     } else {
       ++it;
     }
   }
+  for (const auto& [id, pending] : indirect)
+    finish_pending(id, pending, false, "sink refusal", false, false);
 }
 
 auto KittyDriver::expire_pending_replies() -> void {
@@ -2119,7 +2253,7 @@ auto KittyDriver::expire_pending_replies() -> void {
   for (const auto id : expired) {
     const auto it = m_pending_replies.find(id);
     if (it == m_pending_replies.end()) continue;
-    const PendingReply pending = it->second;
+    PendingReply pending = std::move(it->second);
     m_pending_replies.erase(it);
     finish_pending(id, pending, false, "timeout", true);
   }
@@ -2161,8 +2295,12 @@ auto KittyDriver::consume_reply(const TerminalReply& reply) -> void {
           pending->second.remaining_replies - 1;
     }
   }
-  const PendingReply operation = pending->second;
+  PendingReply operation = std::move(pending->second);
   m_pending_replies.erase(pending);
+  if (!reply.ok() && operation.indirect && operation.indirect->lease) {
+    retry_indirect_direct(reply.image_id, std::move(operation), reply.status);
+    return;
+  }
   finish_pending(reply.image_id, operation, reply.ok(), reply.status, false);
 }
 
@@ -2202,10 +2340,16 @@ void KittyDriver::flush() {
   // above, or the deletions land in the next frame.
   const bool accepted = emit_frame(m_buf);
   if (!accepted) discard_unwritten_edits();
+  if (accepted) {
+    for (auto& event : m_frame_success_events)
+      push_driver_event(std::move(event));
+  }
+  m_frame_success_events.clear();
   finish_animation_frame(accepted);
   finish_animation_controls(accepted);
   finish_residency_frame(accepted);
   finish_content_frame(accepted);
+  finish_direct_fallbacks(accepted);
   m_buf.clear();
   m_cursor_known = false;
   m_frame_start_fg = m_cur_fg;
@@ -2427,10 +2571,68 @@ auto KittyDriver::prepend_placeholder_clears() -> std::size_t {
 
 auto KittyDriver::transmit(std::span<const std::byte> payload,
                            ImageFormat format, Extent px, std::uint32_t id,
-                           bool request_reply) -> void {
+                           bool request_reply, bool allow_indirect)
+    -> TransmitResult {
   // Initial image transmission makes terminal-side ownership real; root-frame
   // replacement below can only operate on an image this path already created.
   m_transmitted = true;
+
+  if (allow_indirect && !m_indirect_transport_unavailable &&
+      image_transport()) {
+    auto staged = image_transport()->stage(payload);
+    if (staged && *staged && !(*staged)->locator().empty()) {
+      char medium = '\0';
+      switch ((*staged)->medium()) {
+        case ImageTransferMedium::File: medium = 'f'; break;
+        case ImageTransferMedium::TemporaryFile: medium = 't'; break;
+        case ImageTransferMedium::SharedMemory: medium = 's'; break;
+      }
+      if (medium != '\0') {
+        // Copy before appending any wire: callers lend payload bytes for this
+        // call only, while a later terminal rejection must be able to retry
+        // the same operation by the universal direct route.
+        IndirectTransfer indirect{
+            .lease = std::move(*staged),
+            .direct_payload = {payload.begin(), payload.end()},
+            .format = format,
+            .px = px,
+            .direct_request_reply = request_reply,
+        };
+        const auto locator = indirect.lease->locator();
+        const auto locator_bytes = std::as_bytes(
+            std::span<const char>{locator.data(), locator.size()});
+        m_buf += std::format(
+            "\033_Ga=t,t={},f={}{}"
+            ",i={},s={},v={},S={},q=0;{}\033\\",
+            medium, wire_format(format), wire_compression(format), id, px.w,
+            px.h, payload.size(), detail::base64_encode(locator_bytes));
+        return TransmitResult{true, std::move(indirect), std::nullopt};
+      }
+    }
+
+    const std::string reason = staged
+                                   ? "the strategy returned no usable locator"
+                                   : staged.error().message;
+    auto success_event = ErrorEvent{
+        Severity::Info, "kitty",
+        std::format("indirect image transfer unavailable; using direct t=d: "
+                    "{}",
+                    reason)};
+    append_chunked(m_buf, payload, ChunkTransfer::DirectImage, request_reply,
+                   [&](std::string_view chunk, bool more, int quiet) {
+                     m_buf += std::format("\033_Ga=t,t=d,f={}{}"
+                                          ",i={},s={},v={},m={},q={};{}\033\\",
+                                          wire_format(format),
+                                          wire_compression(format), id, px.w,
+                                          px.h, more ? 1 : 0, quiet, chunk);
+                   });
+    if (!request_reply) {
+      m_frame_success_events.push_back(std::move(success_event));
+      return TransmitResult{false, std::nullopt, std::nullopt};
+    }
+    return TransmitResult{true, std::nullopt, std::move(success_event)};
+  }
+
   append_chunked(m_buf, payload, ChunkTransfer::DirectImage, request_reply,
                  [&](std::string_view chunk, bool more, int quiet) {
                    // First chunk: full transmission parameters.
@@ -2450,6 +2652,7 @@ auto KittyDriver::transmit(std::span<const std::byte> payload,
                                         wire_compression(format), id, px.w,
                                         px.h, more ? 1 : 0, quiet, chunk);
                  });
+  return TransmitResult{request_reply, std::nullopt, std::nullopt};
 }
 
 auto KittyDriver::replace_root_frame(std::span<const std::byte> payload,

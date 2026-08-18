@@ -27,6 +27,7 @@
 #include <type_traits>
 
 #include "termforge/core/byte_sink.hpp"
+#include "termforge/core/image_transport.hpp"
 #include "termforge/core/types.hpp"
 
 namespace termforge {
@@ -902,6 +903,21 @@ class TerminalDriver {
   auto clear_output() noexcept -> void;
   [[nodiscard]] auto has_output() const noexcept -> bool;
 
+  // Optional out-of-band payload staging (#111). The universal default is no
+  // strategy, which keeps Kitty's direct t=d wire byte-identical. An
+  // embedding installs one only when it knows the terminal shares the named
+  // file/shm namespace; neither Terminal nor a concrete driver guesses that
+  // from environment variables, tty shape, or emulator identity.
+  //
+  // BASE-OWNED NON-VIRTUAL STATE, like set_output: the policy belongs to the
+  // session and there is nothing for a rendering tier to override. A tier
+  // without an indirect protocol simply never consults it. Shared ownership
+  // keeps the strategy alive while leases issued by it are in flight.
+  auto set_image_transport(std::shared_ptr<ImageTransport> transport) noexcept
+      -> void;
+  auto clear_image_transport() noexcept -> void;
+  [[nodiscard]] auto has_image_transport() const noexcept -> bool;
+
   // The session is ending: run the driver's terminal-side cleanup through
   // the current output, then detach the borrowed sink before destruction
   // (#148).
@@ -986,6 +1002,10 @@ class TerminalDriver {
 
  protected:
   auto push_driver_event(ErrorEvent event) -> void;
+  [[nodiscard]] auto image_transport() const noexcept
+      -> const std::shared_ptr<ImageTransport>& {
+    return m_image_transport;
+  }
   // The per-tier terminal cleanup run by shutdown(). Default: none -- most
   // tiers owe the terminal nothing at end of session. Bytes emitted here go
   // through emit_frame, so they are metered and sink-routed like a frame.
@@ -1106,6 +1126,7 @@ class TerminalDriver {
   // move are deleted above.
   ByteSink* m_sink{nullptr};
   StringSink m_string_sink{};
+  std::shared_ptr<ImageTransport> m_image_transport;
   std::optional<ErrorEvent> m_output_error{};
   std::deque<ErrorEvent> m_driver_events;
   // Latched by shutdown() after per-tier cleanup, immediately before the

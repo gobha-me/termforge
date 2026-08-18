@@ -52,6 +52,19 @@ auto TerminalDriver::has_output() const noexcept -> bool {
   return m_sink != nullptr;
 }
 
+auto TerminalDriver::set_image_transport(
+    std::shared_ptr<ImageTransport> transport) noexcept -> void {
+  m_image_transport = std::move(transport);
+}
+
+auto TerminalDriver::clear_image_transport() noexcept -> void {
+  m_image_transport.reset();
+}
+
+auto TerminalDriver::has_image_transport() const noexcept -> bool {
+  return m_image_transport != nullptr;
+}
+
 auto TerminalDriver::take_output_error() noexcept -> std::optional<ErrorEvent> {
   std::optional<ErrorEvent> taken;
   taken.swap(m_output_error);
