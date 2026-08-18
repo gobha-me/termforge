@@ -159,7 +159,8 @@ human table or schema-versioned JSON and never fails on a timing threshold:
 
 ```bash
 cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -Dtermforge_BENCH=ON
-cmake --build build-bench -j4 --target termforge_bench termforge_terminal_bench
+cmake --build build-bench -j4 --target termforge_bench termforge_terminal_bench \
+  termforge_shm_bench
 ./build-bench/bench/termforge_bench --format json --output benchmark.json
 ```
 
@@ -168,6 +169,8 @@ select the run. The W3 sweep records cell-rendering walls at 16.6 and 33.3 ms;
 results describe the named host/compiler and are not portable guarantees.
 `termforge_terminal_bench` adds W5's direct-pty Kitty/Ghostty/xterm stress
 matrix; launch it through `tools/w5_capture.sh` from the terminal under test.
+`termforge_shm_bench` compares Kitty's direct and explicitly enabled POSIX
+shared-memory startup upload paths from the same local terminal namespace.
 See [docs/performance.md](docs/performance.md).
 
 Applications can collect the same rendered-frame byte breakdown together with

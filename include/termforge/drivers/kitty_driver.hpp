@@ -63,6 +63,8 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
+#include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -360,6 +362,21 @@ class KittyDriver final : public TerminalDriver {
     AnimationRegister
   };
 
+  // An indirect a=t is not complete at the accepted write boundary: the
+  // terminal still has to open the staged object. Keep both its cleanup lease
+  // and the borrowed caller bytes needed for one direct retry until the
+  // ordered reply resolves the operation.
+  struct IndirectTransfer {
+    // Non-null while the terminal is deciding the indirect command. After a
+    // rejection this record stays engaged (so sink refusal can retire the
+    // queued direct retry) but the external-resource lease is released.
+    std::unique_ptr<ImageTransferLease> lease;
+    std::vector<std::byte> direct_payload;
+    ImageFormat format{ImageFormat::Rgba32};
+    Extent px{};
+    bool direct_request_reply{false};
+  };
+
   struct PendingReply {
     PendingKind kind{PendingKind::RegionTransmit};
     std::uint64_t region_key{0};
@@ -380,6 +397,20 @@ class KittyDriver final : public TerminalDriver {
     // count lets the operation remain singular while acknowledging every
     // opaque frame.
     std::size_t remaining_replies{1};
+    std::optional<IndirectTransfer> indirect;
+    // A locally validated raw direct retry needs no terminal reply. It still
+    // resolves only after its retry frame reaches the accepted-write boundary.
+    bool complete_on_flush{false};
+    // A lesser-route Info becomes true only if that route succeeds. Keeping it
+    // on the operation prevents a rejected/refused direct retry from claiming
+    // the application got what it asked for.
+    std::optional<ErrorEvent> success_event;
+  };
+
+  struct TransmitResult {
+    bool request_reply{false};
+    std::optional<IndirectTransfer> indirect;
+    std::optional<ErrorEvent> success_event;
   };
 
   enum class ResidencyKind { Region, Pinned };
@@ -486,7 +517,8 @@ class KittyDriver final : public TerminalDriver {
   // extent, emitted as s=/v=. Retransmit with an existing id replaces that
   // image's data on the terminal.
   auto transmit(std::span<const std::byte> payload, ImageFormat format,
-                Extent px, std::uint32_t id, bool request_reply) -> void;
+                Extent px, std::uint32_t id, bool request_reply,
+                bool allow_indirect) -> TransmitResult;
 
   // Edit the existing root frame in place. This is data transmission, not an
   // image delete/recreate and not a placement edit.
@@ -557,9 +589,12 @@ class KittyDriver final : public TerminalDriver {
   auto region_slot(Rect dest) -> std::expected<RegionSlot*, ErrorEvent>;
 
   auto finish_pending(std::uint32_t image_id, const PendingReply& pending,
-                      bool success, std::string_view status, bool timed_out)
-      -> void;
+                      bool success, std::string_view status, bool timed_out,
+                      bool report_failure = true) -> void;
   auto discard_unwritten_edits() -> void;
+  auto finish_direct_fallbacks(bool accepted) -> void;
+  auto retry_indirect_direct(std::uint32_t image_id, PendingReply pending,
+                             std::string_view status) -> void;
   auto expire_pending_replies() -> void;
   [[nodiscard]] auto pending_warning(std::string_view operation,
                                      std::uint32_t image_id) const
@@ -715,6 +750,13 @@ class KittyDriver final : public TerminalDriver {
   // its delete into m_buf, so an unflushed one leaves the image resident with
   // m_pinned already empty.
   bool m_transmitted{false};
+  // A terminal-side rejection proves this explicit policy is unusable for the
+  // rest of the driver session. Keep the configured strategy installed for
+  // diagnostics, but do not repeat a known-bad medium or its Info event.
+  bool m_indirect_transport_unavailable{false};
+  // Locally validated direct transfers resolve at the frame write boundary,
+  // so strategy-failure Info events wait at that same boundary.
+  std::vector<ErrorEvent> m_frame_success_events;
   // One latch PER ENTRY POINT. A shared one would let whichever path clamped
   // first consume the only report the driver ever makes, and the other would
   // then degrade in silence.

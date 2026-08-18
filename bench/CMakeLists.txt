@@ -6,6 +6,10 @@ add_executable(${PROJECT_NAME}_terminal_bench
   terminal.cpp
 )
 
+add_executable(${PROJECT_NAME}_shm_bench
+  shm.cpp
+)
+
 target_include_directories(${PROJECT_NAME}_bench PRIVATE
   ${PROJECT_SOURCE_DIR}/include
   ${PROJECT_SOURCE_DIR}/src/lib
@@ -27,6 +31,14 @@ target_compile_features(${PROJECT_NAME}_terminal_bench PRIVATE cxx_std_23)
 target_compile_definitions(${PROJECT_NAME}_terminal_bench PRIVATE
   TERMFORGE_BENCH_VERSION="${PROJECT_VERSION}"
 )
+
+target_include_directories(${PROJECT_NAME}_shm_bench PRIVATE
+  ${PROJECT_SOURCE_DIR}/include
+  ${PROJECT_SOURCE_DIR}/src/lib
+)
+
+target_link_libraries(${PROJECT_NAME}_shm_bench PRIVATE ${PROJECT_NAME}::lib)
+target_compile_features(${PROJECT_NAME}_shm_bench PRIVATE cxx_std_23)
 
 if (${PROJECT_NAME}_TESTS AND BUILD_TESTING)
   add_test(

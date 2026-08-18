@@ -175,7 +175,7 @@ jobs:
           -Dtermforge_EXAMPLES=OFF
 
       - name: Build harness
-        run: cmake --build build --target termforge_bench termforge_terminal_bench -j$(nproc)
+        run: cmake --build build --target termforge_bench termforge_terminal_bench termforge_shm_bench -j$(nproc)
 
       - name: Validate CLI and JSON
         run: ctest --test-dir build -R '^(benchmark|terminal-benchmark)-smoke$' --output-on-failure
