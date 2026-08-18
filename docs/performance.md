@@ -27,9 +27,9 @@ no observation. Synthetic clocks and traces keep controlling application time;
 telemetry deliberately measures real process wall time. With no callback there
 are no telemetry clock reads or allocations.
 
-This document begins with the game-readiness slice of issue #88. The W2 paint
-and W4 many-region slices are recorded below; cross-terminal W5 throughput is
-the remaining open workload.
+This document begins with the game-readiness slice of issue #88. The W2 paint,
+W4 many-region, and W5 live-terminal slices are recorded below. Together with
+the kernel and W3 matrix, W5 completes that issue's performance baseline.
 
 ## Reproducible kernel and cell-churn harness
 
@@ -43,9 +43,13 @@ no runner-dependent time is a pass/fail threshold.
 
 ```bash
 cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -Dtermforge_BENCH=ON
-cmake --build build-bench -j4 --target termforge_bench
+cmake --build build-bench -j4 --target termforge_bench termforge_terminal_bench
 ./build-bench/bench/termforge_bench --format json --output benchmark.json
 ```
+
+`termforge_terminal_bench` is the separate schema-1 live harness described in
+W5 below. Its smoke mode is offline and deterministic; live runs require an
+explicit report path and a direct terminal child pty.
 
 The kernel suite covers Kitty payload hashing and base64, Image fill/blit/blend,
 text sanitization and width, Cell comparison, ANSI half-block assembly, and
@@ -189,6 +193,91 @@ budgets, but the largest Immediate case offers roughly 40.27 MiB/s at 30 FPS
 or 80.54 MiB/s at 60 FPS. Those are calculated wire loads, not terminal
 throughput results; W5 remains responsible for whether a pty and emulator can
 sustain them.
+
+## W5 live-terminal throughput matrix
+
+W5 measures the boundary deliberately excluded from the headless harness. The
+live executable writes through the terminal's child pty with a blocking
+`ByteSink`, then sends an ordered protocol query after each batch and waits for
+its reply. The Kitty-protocol route alternates two deterministic opaque RGBA
+buffers, retransmits them under one stable ordinary-region image id with
+`a=t`, and retains one placement. Using the baseline full-transmit action is
+intentional: Ghostty 1.3.1 accepts broad Kitty graphics but rejects Kitty's
+mutable-root `a=f,r=1` action, so measuring that action would count discarded
+bytes rather than decoded frames. The xterm route sends exact ANSI truecolour
+half-block frames and uses DA1 as its ordered reply.
+
+The reply proves that the emulator parser reached the fence after the measured
+bytes. It does not claim when pixels became visible on a monitor. The JSON
+separates library assembly, blocking pty write, batch fence wait, and total
+end-to-reply time; the total and throughput below include all four. Every case
+uses one warmup and five measured batches targeting 16 MiB each. Timing is
+evidence only, never a CI threshold.
+
+This is deliberately an adversarial sustained-load scenario, not a typical UI:
+every frame is fully dirty, the deterministic pixels are high-entropy,
+uncompressed RGBA, batches run back-to-back with no application think time,
+and the largest frames exceed any ordinary terminal viewport. It finds a
+worst-case full-transmit wall. Static regions, dirty rectangles, compressible
+art, demand rendering, and normal user-paced interaction can be much cheaper.
+
+Reference run on 2026-08-18: GCC 14.2 Release in a Linux 6.12.74 x86-64
+Kubernetes pod on an MS-01 desktop. The emulator child ptys were direct and
+had no tmux or SSH relay, but the graphical viewport travelled through
+Guacamole rather than a local display or local-network RDP. Kitty 0.32.2 ran
+at 118×45; Ghostty 1.3.1 was an official-source `ReleaseFast` build at 119×39
+on the same X11 display, whose log reported that DRI3 was unavailable; xterm
+390 used a 3-point Monospace font to expose the complete 400×120 sweep. This
+is a constrained worst-case environment. Results are not portable across
+hosts, schedulers, renderers, terminal versions, fonts, viewports, or
+transports.
+
+| terminal / workload | bytes/frame | end-to-reply median / p95 | blocking write median | sustained throughput | max FPS | 30 / 60 Hz |
+| --- | ---: | ---: | ---: | ---: | ---: | :---: |
+| Kitty, 320×180 RGBA | 307,988 | 18.711 / 20.448 ms | 17.702 ms | 15.698 MiB/s | 53.4 | yes / no |
+| Kitty, 640×360 RGBA | 1,231,597 | 35.837 / 36.617 ms | 33.143 ms | 32.774 MiB/s | 27.9 | no / no |
+| Kitty, 1280×720 RGBA | 4,926,098 | 67.260 / 226.333 ms | 60.135 ms | 69.846 MiB/s | 14.9 | no / no |
+| Kitty, 1920×1080 RGBA | 11,083,599 | 147.343 / 154.496 ms | 133.820 ms | 71.739 MiB/s | 6.8 | no / no |
+| Ghostty, 320×180 RGBA | 307,988 | 38.367 / 41.839 ms | 37.741 ms | 7.656 MiB/s | 26.1 | no / no |
+| Ghostty, 640×360 RGBA | 1,231,597 | 39.030 / 98.372 ms | 37.876 ms | 30.094 MiB/s | 25.6 | no / no |
+| Ghostty, 1280×720 RGBA | 4,926,098 | 547.934 / 873.740 ms | 543.001 ms | 8.574 MiB/s | 1.8 | no / no |
+| Ghostty, 1920×1080 RGBA | 11,083,599 | 1,146.241 / 1,620.498 ms | 1,132.038 ms | 9.222 MiB/s | 0.9 | no / no |
+| xterm, 80×24 cells | 73,960 | 4.020 / 4.325 ms | 3.728 ms | 17.548 MiB/s | 248.8 | yes / yes |
+| xterm, 120×40 cells | 184,793 | 10.367 / 10.567 ms | 9.671 ms | 16.999 MiB/s | 96.5 | yes / yes |
+| xterm, 200×50 cells | 384,633 | 20.832 / 22.595 ms | 19.485 ms | 17.608 MiB/s | 48.0 | yes / no |
+| xterm, 300×80 cells | 922,802 | 68.552 / 88.709 ms | 65.041 ms | 12.838 MiB/s | 14.6 | no / no |
+| xterm, 400×120 cells | 1,845,394 | 103.946 / 116.091 ms | 98.037 ms | 16.931 MiB/s | 9.6 | no / no |
+
+The direct Kitty wall is below 320×180 at 60 Hz and between 320×180 and
+640×360 at 30 Hz. Ghostty's measured configuration is below both budgets at
+the smallest RGBA case. xterm reaches 120×40 at 60 Hz and 200×50 at 30 Hz.
+Throughput is not one emulator constant: frame size, batching, parser cadence,
+and rendering work change it materially, which is why the wall is reported per
+workload rather than extrapolated from the largest MiB/s number. In particular,
+the Ghostty row describes this build, display path, and worst-case stream; it is
+not a general terminal ranking or a prediction for ordinary Ghostty workloads.
+
+For architecture, a 320×180 full RGBA frame offers about 8.81 MiB/s at 30 Hz.
+That is viable on the reference Kitty but not a portable cross-terminal floor;
+larger compose-and-transmit surfaces need damage rectangles, atlas placement,
+or a smaller wire format. W2 already proves that partial edits are the correct
+paint path. The next cheap full-frame lever is #166's opaque `Rgb24` route: an
+opaque composed frame has no useful alpha and can shed 25% of its payload
+without a runtime codec dependency. Application-supplied zlib remains
+available for assets that can pay the terminal decode cost, but these results
+do not justify adding a library-owned compression dependency.
+
+Build and launch one capture from the terminal being measured:
+
+```bash
+cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -Dtermforge_BENCH=ON
+cmake --build build-bench -j4 --target termforge_terminal_bench
+tools/w5_capture.sh ./build-bench/bench/termforge_terminal_bench \
+  kitty "Kitty 0.32.2" kitty /tmp/kitty-w5.json
+```
+
+The helper refuses non-ttys, tmux, and SSH. Launch it as the direct child of
+the named emulator; an inner `script`, tmux, or relay measures that proxy too.
 
 ## Non-SIMD frame-time bundle
 

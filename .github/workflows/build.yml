@@ -175,18 +175,22 @@ jobs:
           -Dtermforge_EXAMPLES=OFF
 
       - name: Build harness
-        run: cmake --build build --target termforge_bench -j$(nproc)
+        run: cmake --build build --target termforge_bench termforge_terminal_bench -j$(nproc)
 
       - name: Validate CLI and JSON
-        run: ctest --test-dir build -R '^benchmark-smoke$' --output-on-failure
+        run: ctest --test-dir build -R '^(benchmark|terminal-benchmark)-smoke$' --output-on-failure
 
       - name: Record smoke evidence
-        run: ./build/bench/termforge_bench --smoke --format json --output benchmark-smoke.json
+        run: |
+          ./build/bench/termforge_bench --smoke --format json --output benchmark-smoke.json
+          ./build/bench/termforge_terminal_bench --smoke --format json --output terminal-benchmark-smoke.json
 
       - uses: actions/upload-artifact@v4
         with:
           name: termforge-benchmark-smoke-gcc14
-          path: benchmark-smoke.json
+          path: |
+            benchmark-smoke.json
+            terminal-benchmark-smoke.json
 
   asan-ubsan:
     name: ASan + UBSan (GCC, Ubuntu latest)
