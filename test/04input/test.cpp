@@ -36,6 +36,14 @@ TEST_CASE("Input: multibyte UTF-8 decodes to a code point", "[input]") {
   REQUIRE(first_key(ev).ch == 0xE9);
 }
 
+TEST_CASE("Input: four-byte UTF-8 preserves high-bit continuation bytes",
+          "[input][failure]") {
+  Input in;
+  auto ev = in.decode("\xF4\x8F\xBF\xBF");  // U+10FFFF
+  REQUIRE(ev.size() == 1);
+  REQUIRE(first_key(ev).ch == 0x10FFFF);
+}
+
 TEST_CASE("Input: arrow keys via CSI", "[input]") {
   Input in;
   auto up = in.decode("\033[A");
@@ -99,6 +107,23 @@ TEST_CASE("Input: kitty graphics replies use a separate ordered channel",
   REQUIRE(reply->placement_id.has_value());
   CHECK(*reply->placement_id == 7);
   CHECK(reply->ok());
+}
+
+TEST_CASE("Input: high-bit kitty reply status is rejected as non-ASCII",
+          "[input][kitty-reply][failure]") {
+  Input in;
+  std::string bytes{"\033_Gi=42;"};
+  bytes.push_back(static_cast<char>(0x80));
+  bytes += "\033\\";
+  in.feed(bytes);
+
+  CHECK(in.poll().empty());
+  const auto replies = in.poll_replies();
+  REQUIRE(replies.size() == 1);
+  const auto* error = std::get_if<termforge::ErrorEvent>(&replies.front());
+  REQUIRE(error != nullptr);
+  CHECK(error->message.find("status is not printable ASCII") !=
+        std::string::npos);
 }
 
 TEST_CASE("Input: a new APC cannot complete a held user Escape",

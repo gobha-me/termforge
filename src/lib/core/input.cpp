@@ -379,10 +379,24 @@ auto Input::decode_one(std::string_view buf) -> std::size_t {
     return 1;  // resync: drop just this byte, re-examine the rest
   }
   char32_t cp = 0;
-  if (len == 1) cp = c;
-  else if (len == 2) cp = ((c & 0x1F) << 6) | (buf[1] & 0x3F);
-  else if (len == 3) cp = ((c & 0x0F) << 12) | ((buf[1] & 0x3F) << 6) | (buf[2] & 0x3F);
-  else cp = ((c & 0x07) << 18) | ((buf[1] & 0x3F) << 12) | ((buf[2] & 0x3F) << 6) | (buf[3] & 0x3F);
+  if (len == 1) {
+    cp = c;
+  } else if (len == 2) {
+    const auto b1 = static_cast<unsigned char>(buf[1]);
+    cp = static_cast<char32_t>(((c & 0x1FU) << 6U) | (b1 & 0x3FU));
+  } else if (len == 3) {
+    const auto b1 = static_cast<unsigned char>(buf[1]);
+    const auto b2 = static_cast<unsigned char>(buf[2]);
+    cp = static_cast<char32_t>(((c & 0x0FU) << 12U) |
+                               ((b1 & 0x3FU) << 6U) | (b2 & 0x3FU));
+  } else {
+    const auto b1 = static_cast<unsigned char>(buf[1]);
+    const auto b2 = static_cast<unsigned char>(buf[2]);
+    const auto b3 = static_cast<unsigned char>(buf[3]);
+    cp = static_cast<char32_t>(((c & 0x07U) << 18U) |
+                               ((b1 & 0x3FU) << 12U) |
+                               ((b2 & 0x3FU) << 6U) | (b3 & 0x3FU));
+  }
   m_events.push_back(KeyEvent{Key::Char, cp});
   return len;
 }
@@ -487,7 +501,8 @@ auto Input::parse_apc(std::string_view buf) -> std::size_t {
     malformed("empty status");
     return used;
   }
-  for (const unsigned char c : status) {
+  for (const char byte : status) {
+    const auto c = static_cast<unsigned char>(byte);
     if (c < 0x20 || c > 0x7e) {
       malformed("status is not printable ASCII");
       return used;

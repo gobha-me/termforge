@@ -176,7 +176,8 @@ auto FallbackDriver::draw_rgba(Rect cells, std::span<const std::byte> rgba,
                           m_cursor_x, m_cursor_y);
     const int sy = map(row, px.h, cells.h);
     if (identity) {
-      const auto pixel = static_cast<std::size_t>(sy) * px.w;
+      const auto pixel = static_cast<std::size_t>(sy) *
+                         static_cast<std::size_t>(px.w);
       detail::luminance_chars(
           rgba.subspan(pixel * 4, static_cast<std::size_t>(cover_w) * 4),
           glyphs);

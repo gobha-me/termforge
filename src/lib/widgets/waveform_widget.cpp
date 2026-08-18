@@ -142,7 +142,8 @@ auto WaveformWidget::draw_pixels(Rect region, Extent pixels) -> const Image* {
   // cell, which the cell renderer could already do on every tier.
   const int w = pixels.w;
   const int h = pixels.h;
-  const auto count = static_cast<std::size_t>(w) * h;
+  const auto width = static_cast<std::size_t>(w);
+  const auto count = width * static_cast<std::size_t>(h);
 
   const Pixel bg_px{m_bg.r, m_bg.g, m_bg.b, 255};
   const Pixel fg_px{m_fg.r, m_fg.g, m_fg.b, 255};
@@ -176,12 +177,14 @@ auto WaveformWidget::draw_pixels(Rect region, Extent pixels) -> const Image* {
     const int y_cur = y_for(detail::sample_index(col, visible, w));
 
     for (int y = y_cur + 1; y < h; ++y)
-      buf[static_cast<std::size_t>(y) * w + col] = fill_px;
+      buf[static_cast<std::size_t>(y) * width +
+          static_cast<std::size_t>(col)] = fill_px;
 
     const int y_top = std::min(y_prev, y_cur);
     const int y_bot = std::max(y_prev, y_cur);
     for (int y = y_top; y <= y_bot; ++y)
-      buf[static_cast<std::size_t>(y) * w + col] = fg_px;
+      buf[static_cast<std::size_t>(y) * width +
+          static_cast<std::size_t>(col)] = fg_px;
 
     y_prev = y_cur;
   }
