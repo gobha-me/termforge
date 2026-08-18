@@ -44,4 +44,4 @@ class ImageLoader {
   static constexpr std::size_t kHeaderSize = 8;
 };
 
-}  // namespace termforge
+} // namespace termforge

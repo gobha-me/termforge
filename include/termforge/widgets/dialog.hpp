@@ -52,8 +52,8 @@
 #include "termforge/widgets/focus_ring.hpp"
 #include "termforge/widgets/frame.hpp"
 #include "termforge/widgets/glyphs.hpp"
-#include "termforge/widgets/widget.hpp"
 #include "termforge/widgets/theme.hpp"
+#include "termforge/widgets/widget.hpp"
 
 namespace termforge {
 
@@ -209,7 +209,7 @@ class Dialog : public Widget {
  private:
   std::string m_title;
   std::string m_text;
-  std::vector<std::string> m_lines;  // wrapped body, rebuilt by layout()
+  std::vector<std::string> m_lines; // wrapped body, rebuilt by layout()
   Frame m_frame;
   FocusRing m_ring;
   std::vector<Widget*> m_children;
@@ -224,4 +224,4 @@ class Dialog : public Widget {
   std::function<void()> m_on_close;
 };
 
-}  // namespace termforge
+} // namespace termforge

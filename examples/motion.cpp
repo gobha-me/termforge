@@ -45,18 +45,13 @@ class MotionDemo final : public App {
           // library itself no longer sleeps anywhere.
           busy_wait(std::chrono::seconds{2});
           return;
-        case '-':
-          set_frame_ms(frame_ms() + 8);
-          return;
+        case '-': set_frame_ms(frame_ms() + 8); return;
         case '+':
-        case '=':
-          set_frame_ms(frame_ms() > 8 ? frame_ms() - 8 : 0);
-          return;
-        default:
-          break;
+        case '=': set_frame_ms(frame_ms() > 8 ? frame_ms() - 8 : 0); return;
+        default: break;
       }
     }
-    App::on_event(ev);  // ESC / Ctrl+C quit
+    App::on_event(ev); // ESC / Ctrl+C quit
   }
 
   auto on_tick(std::chrono::duration<double> dt) -> void override {
@@ -72,10 +67,26 @@ class MotionDemo final : public App {
     // has already resized — that is why the tick runs after the resize check.
     const auto max_x = static_cast<double>(screen().cols() - kBoxW);
     const auto max_y = static_cast<double>(screen().rows() - kBoxH - 2);
-    if (m_x < 0.0) { m_x = -m_x; m_vx = -m_vx; ++m_bounces; }
-    if (m_y < 1.0) { m_y = 2.0 - m_y; m_vy = -m_vy; ++m_bounces; }
-    if (m_x > max_x) { m_x = 2.0 * max_x - m_x; m_vx = -m_vx; ++m_bounces; }
-    if (m_y > max_y) { m_y = 2.0 * max_y - m_y; m_vy = -m_vy; ++m_bounces; }
+    if (m_x < 0.0) {
+      m_x = -m_x;
+      m_vx = -m_vx;
+      ++m_bounces;
+    }
+    if (m_y < 1.0) {
+      m_y = 2.0 - m_y;
+      m_vy = -m_vy;
+      ++m_bounces;
+    }
+    if (m_x > max_x) {
+      m_x = 2.0 * max_x - m_x;
+      m_vx = -m_vx;
+      ++m_bounces;
+    }
+    if (m_y > max_y) {
+      m_y = 2.0 * max_y - m_y;
+      m_vy = -m_vy;
+      ++m_bounces;
+    }
   }
 
   auto on_render(Screen& screen) -> void override {
@@ -103,12 +114,13 @@ class MotionDemo final : public App {
 
     screen.write_text(
         0, H - 1,
-        std::format(" F: fixed/variable | S: stall 2s | -/+: budget | ESC: quit "
-                    "   {:.1f}s elapsed ",
-                    m_elapsed),
+        std::format(
+            " F: fixed/variable | S: stall 2s | -/+: budget | ESC: quit "
+            "   {:.1f}s elapsed ",
+            m_elapsed),
         Rgb{0x80, 0x80, 0x80}, Rgb{0x10, 0x10, 0x20});
 
-    m_ticks_this_frame = 0;  // per-frame counter, reset once it has been shown
+    m_ticks_this_frame = 0; // per-frame counter, reset once it has been shown
   }
 
  private:

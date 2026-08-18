@@ -137,4 +137,4 @@ class PromptDialog final : public Dialog {
   std::function<void()> m_on_cancel;
 };
 
-}  // namespace termforge
+} // namespace termforge

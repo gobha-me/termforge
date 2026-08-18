@@ -43,8 +43,8 @@ class FailingOnceSink final : public ByteSink {
       -> std::expected<void, ErrorEvent> override {
     ++writes;
     if (writes == fail_on) {
-      return std::unexpected{ErrorEvent{Severity::Warning, "sink",
-                                        "first frame refused"}};
+      return std::unexpected{
+          ErrorEvent{Severity::Warning, "sink", "first frame refused"}};
     }
     accepted.append(bytes.data(), bytes.size());
     return {};
@@ -184,7 +184,7 @@ class DynamicSurfaceApp final : public App {
   std::chrono::steady_clock::time_point m_now{};
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("Image exposes mutable values without exposing its shape",
           "[pixelsurface][image]") {
@@ -308,7 +308,8 @@ TEST_CASE("PixelSurface Exact keeps a one-pixel-per-cell map",
   CHECK(text_at(screen, 1, 0) == "@");
   CHECK(text_at(screen, 2, 0).empty());
   CHECK(text_at(screen, 3, 0).empty());
-  for (int x = 0; x < 4; ++x) CHECK(text_at(screen, x, 1).empty());
+  for (int x = 0; x < 4; ++x)
+    CHECK(text_at(screen, x, 1).empty());
 }
 
 TEST_CASE(
@@ -364,7 +365,8 @@ TEST_CASE("320x180 dynamic App workload keeps one id and emits no clean-frame "
   // production frame boundary, not merely the aggregate stream.
   REQUIRE(app.sink.segments.size() == 63);
   std::string wire;
-  for (std::size_t i = 0; i < 62; ++i) wire += app.sink.segments[i];
+  for (std::size_t i = 0; i < 62; ++i)
+    wire += app.sink.segments[i];
 
   CHECK(tfsupport::ids_named(wire) == std::set<std::uint32_t>{272});
   CHECK(tfsupport::transmits_of(wire, 272) == 1);
@@ -528,7 +530,7 @@ TEST_CASE("a refused frame keeps PixelSurface dirty and retries its payload",
   app.surface.image().fill({0, 0, 320, 180}, Pixel{40, 100, 180, 255});
   app.run_with(std::make_unique<KittyDriver>(), 2);
 
-  REQUIRE(sink.writes == 3);  // two frames, then shutdown
+  REQUIRE(sink.writes == 3); // two frames, then shutdown
   CHECK(app.errors == 1);
   CHECK(app.content_dirty_on_second_frame);
   CHECK(tfsupport::transmits_of(sink.accepted, 272) == 1);
@@ -546,7 +548,7 @@ TEST_CASE("a refused clean frame does not manufacture new pixel content",
   app.surface.image().fill({0, 0, 320, 180}, Pixel{40, 100, 180, 255});
   app.run_with(std::make_unique<KittyDriver>(), 3);
 
-  REQUIRE(sink.writes == 4);  // three frames, then shutdown
+  REQUIRE(sink.writes == 4); // three frames, then shutdown
   CHECK(app.errors == 1);
   CHECK(tfsupport::transmits_of(sink.accepted, 272) == 1);
   CHECK(tfsupport::frame_updates_of(sink.accepted, 272) == 0);

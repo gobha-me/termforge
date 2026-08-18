@@ -46,7 +46,7 @@ static_assert(std::is_trivially_copyable_v<Pixel>);
                           blend_opaque_half(src_hi, dst_hi));
 }
 
-}  // namespace
+} // namespace
 
 [[gnu::target("avx2")]] auto avx2_fill(std::span<Pixel> dst,
                                        Pixel value) noexcept -> void {
@@ -83,7 +83,8 @@ static_assert(std::is_trivially_copyable_v<Pixel>);
     _mm256_storeu_si256(reinterpret_cast<__m256i*>(dst.data() + i),
                         _mm256_set_m128i(hi, lo));
   }
-  for (; i < count; ++i) dst[i] = blend_pixel(src[i], dst[i]);
+  for (; i < count; ++i)
+    dst[i] = blend_pixel(src[i], dst[i]);
 }
 
 [[gnu::target("avx2")]] auto avx2_base64(std::span<const std::byte> input,
@@ -180,6 +181,6 @@ static_assert(std::is_trivially_copyable_v<Pixel>);
   }
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail
 
 #endif

@@ -36,7 +36,7 @@ namespace {
   return {std::move(s), std::move(t)};
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("TableWidget: empty table draws header only", "[tablewidget]") {
   Screen s{30, 5};
@@ -91,11 +91,11 @@ TEST_CASE("TableWidget: scroll clamps to bounds", "[tablewidget][failure]") {
   t.add_row({"a"});
   t.add_row({"b"});
 
-  t.scroll(-10);  // scroll above top
+  t.scroll(-10); // scroll above top
   REQUIRE(t.scroll_offset() == 0);
 
-  t.scroll(100);  // scroll past bottom
-  const int max_scroll = 2 - (4 - 1);  // 2 rows, 3 visible → 0
+  t.scroll(100);                      // scroll past bottom
+  const int max_scroll = 2 - (4 - 1); // 2 rows, 3 visible → 0
   REQUIRE(t.scroll_offset() == std::max(0, max_scroll));
 }
 
@@ -106,27 +106,29 @@ TEST_CASE("TableWidget: a height grow re-clamps the scroll at draw (#48)",
   // leave the rest blank, hiding rows 0-6 until a manual scroll.
   Screen s{20, 12};
   TableWidget t;
-  t.set_geometry({0, 0, 20, 4});  // header + 3 visible rows
+  t.set_geometry({0, 0, 20, 4}); // header + 3 visible rows
   t.set_columns({{"N", Align::Left}});
-  for (int i = 0; i < 10; ++i) t.add_row({std::format("row{}", i)});
+  for (int i = 0; i < 10; ++i)
+    t.add_row({std::format("row{}", i)});
 
   Event end = KeyEvent{Key::End};
   t.on_event(end);
   REQUIRE(t.scroll_offset() == 7);
 
-  t.set_geometry({0, 0, 20, 12});  // grow: header + 11 visible rows
+  t.set_geometry({0, 0, 20, 12}); // grow: header + 11 visible rows
   t.draw(s);
-  REQUIRE(t.scroll_offset() == 0);  // 10 rows fit in 11 visible rows
-  REQUIRE(s.text_at(5, 1) == "0");  // row0 is back at the top (past the gutter)
+  REQUIRE(t.scroll_offset() == 0); // 10 rows fit in 11 visible rows
+  REQUIRE(s.text_at(5, 1) == "0"); // row0 is back at the top (past the gutter)
 }
 
-TEST_CASE("TableWidget: zero-size rect doesn't crash", "[tablewidget][failure]") {
+TEST_CASE("TableWidget: zero-size rect doesn't crash",
+          "[tablewidget][failure]") {
   Screen s{10, 10};
   TableWidget t;
   t.set_geometry({0, 0, 0, 0});
   t.set_columns({{"A", Align::Left}});
   t.add_row({"x"});
-  t.draw(s);  // must not crash
+  t.draw(s); // must not crash
 }
 
 TEST_CASE("TableWidget: arrow keys move the selection (#35 Q3, breaking)",
@@ -139,13 +141,15 @@ TEST_CASE("TableWidget: arrow keys move the selection (#35 Q3, breaking)",
   TableWidget t;
   t.set_geometry({0, 0, 20, 4});
   t.set_columns({{"N", Align::Left}});
-  for (int i = 0; i < 10; ++i) t.add_row({std::format("{}", i)});
+  for (int i = 0; i < 10; ++i)
+    t.add_row({std::format("{}", i)});
 
   // First Down on a never-selected table (m_selected == -1) selects row 0.
   Event down = KeyEvent{Key::Down};
   REQUIRE(t.on_event(down));
   REQUIRE(t.selected() == 0);
-  REQUIRE(t.scroll_offset() == 0);  // nothing scrolled: row 0 was already visible
+  REQUIRE(t.scroll_offset() ==
+          0); // nothing scrolled: row 0 was already visible
 
   // Subsequent Downs walk the selection down.
   REQUIRE(t.on_event(down));
@@ -156,12 +160,14 @@ TEST_CASE("TableWidget: arrow keys move the selection (#35 Q3, breaking)",
   REQUIRE(t.selected() == 0);
 }
 
-TEST_CASE("TableWidget: arrows reveal the selection they move", "[tablewidget]") {
-  Screen s{20, 4};  // 4 rows -> 3 visible data rows (header takes one)
+TEST_CASE("TableWidget: arrows reveal the selection they move",
+          "[tablewidget]") {
+  Screen s{20, 4}; // 4 rows -> 3 visible data rows (header takes one)
   TableWidget t;
   t.set_geometry({0, 0, 20, 4});
   t.set_columns({{"N", Align::Left}});
-  for (int i = 0; i < 10; ++i) t.add_row({std::format("{}", i)});
+  for (int i = 0; i < 10; ++i)
+    t.add_row({std::format("{}", i)});
 
   // End selects the last row and pulls the window onto it.
   Event end = KeyEvent{Key::End};
@@ -177,25 +183,27 @@ TEST_CASE("TableWidget: arrows reveal the selection they move", "[tablewidget]")
   REQUIRE(t.scroll_offset() == 0);
 }
 
-TEST_CASE("TableWidget: wheel scrolls the selection out of view and it STAYS out (#35 Q2)",
+TEST_CASE("TableWidget: wheel scrolls the selection out of view and it STAYS "
+          "out (#35 Q2)",
           "[tablewidget]") {
   // The Q2 regression guard -- the exact bug #35 diagnosed. Before #35,
   // draw() fed m_selected into clamp_scroll on every frame, so any wheel
   // scroll that pushed the selected row off-screen was silently snapped back
   // on the next draw ("wheel scrolls until the selection disagrees"). Now
   // draw()'s clamp is bounds-only and the selection may stay off-screen.
-  Screen s{20, 4};  // 3 visible data rows
+  Screen s{20, 4}; // 3 visible data rows
   TableWidget t;
   t.set_geometry({0, 0, 20, 4});
   t.set_columns({{"N", Align::Left}});
-  for (int i = 0; i < 10; ++i) t.add_row({std::format("{}", i)});
-  t.set_selected(0);  // selection at the top, scroll = 0
+  for (int i = 0; i < 10; ++i)
+    t.add_row({std::format("{}", i)});
+  t.set_selected(0); // selection at the top, scroll = 0
   REQUIRE(t.scroll_offset() == 0);
 
   // Wheel down over the table: the VIEW scrolls, the selection does not move.
   t.on_event(tfsupport::wheel(2, 2, /*up=*/false));
   REQUIRE(t.selected() == 0);
-  REQUIRE(t.scroll_offset() == 3);  // kWheelStep
+  REQUIRE(t.scroll_offset() == 3); // kWheelStep
 
   t.draw(s);
   // THE guard: draw() did NOT snap the view back to row 0.
@@ -244,7 +252,7 @@ TEST_CASE("TableWidget: set_cell updates a single value", "[tablewidget]") {
   t.add_row({"cpu", "10%"});
   t.add_row({"mem", "50%"});
   t.draw(s);
-  REQUIRE(s.text_at(2, 1) == "c");  // "cpu" row visible, past the #76 gutter
+  REQUIRE(s.text_at(2, 1) == "c"); // "cpu" row visible, past the #76 gutter
 
   t.set_cell(0, 1, "47%");
   t.draw(s);
@@ -252,16 +260,17 @@ TEST_CASE("TableWidget: set_cell updates a single value", "[tablewidget]") {
   REQUIRE(s.text_at(2, 1) == "c");
 }
 
-TEST_CASE("TableWidget: set_cell out-of-bounds is a no-op", "[tablewidget][failure]") {
+TEST_CASE("TableWidget: set_cell out-of-bounds is a no-op",
+          "[tablewidget][failure]") {
   Screen s{10, 3};
   TableWidget t;
   t.set_geometry({0, 0, 10, 3});
   t.set_columns({{"A", Align::Left}});
   t.add_row({"x"});
 
-  t.set_cell(99, 0, "bad");  // row OOB
-  t.set_cell(0, 99, "bad");  // col OOB
-  t.draw(s);  // must not crash
+  t.set_cell(99, 0, "bad"); // row OOB
+  t.set_cell(0, 99, "bad"); // col OOB
+  t.draw(s);                // must not crash
   REQUIRE(s.text_at(2, 1) == "x");
 }
 
@@ -275,11 +284,12 @@ TEST_CASE("TableWidget: set_row replaces an entire row", "[tablewidget]") {
 
   t.set_row(0, {"new", "99"});
   t.draw(s);
-  REQUIRE(s.text_at(2, 1) == "n");  // "new" replaced "old", past the #76 gutter
-  REQUIRE(s.text_at(2, 2) == "k");  // "keep" unchanged
+  REQUIRE(s.text_at(2, 1) == "n"); // "new" replaced "old", past the #76 gutter
+  REQUIRE(s.text_at(2, 2) == "k"); // "keep" unchanged
 }
 
-TEST_CASE("TableWidget: set_row out-of-bounds is a no-op", "[tablewidget][failure]") {
+TEST_CASE("TableWidget: set_row out-of-bounds is a no-op",
+          "[tablewidget][failure]") {
   Screen s{10, 3};
   TableWidget t;
   t.set_geometry({0, 0, 10, 3});
@@ -298,7 +308,8 @@ TEST_CASE("TableWidget: set_row out-of-bounds is a no-op", "[tablewidget][failur
 // App::test_run_frames runs every headless test on. These cases pin the
 // affordance that survives it, and the geometry the gutter costs.
 
-TEST_CASE("TableWidget: the marker is on the selected row only", "[tablewidget]") {
+TEST_CASE("TableWidget: the marker is on the selected row only",
+          "[tablewidget]") {
   Screen s{20, 5};
   TableWidget t;
   t.set_geometry({0, 0, 20, 5});
@@ -309,9 +320,9 @@ TEST_CASE("TableWidget: the marker is on the selected row only", "[tablewidget]"
   t.draw(s);
 
   REQUIRE(s.text_at(0, 1) == "▸");  // selected
-  REQUIRE(s.text_at(1, 1).empty());     // the separator column
-  REQUIRE(s.text_at(0, 2).empty());     // unselected: gutter stays blank
-  REQUIRE(s.text_at(0, 0).empty());     // the header's gutter stays blank too
+  REQUIRE(s.text_at(1, 1).empty()); // the separator column
+  REQUIRE(s.text_at(0, 2).empty()); // unselected: gutter stays blank
+  REQUIRE(s.text_at(0, 0).empty()); // the header's gutter stays blank too
 }
 
 TEST_CASE("TableWidget: the marker follows the selection", "[tablewidget]") {
@@ -347,7 +358,8 @@ TEST_CASE("TableWidget: the gutter indents the header with its column",
   REQUIRE(s.text_at(2, 1) == "d");
 }
 
-TEST_CASE("TableWidget: no selection means no marker anywhere", "[tablewidget]") {
+TEST_CASE("TableWidget: no selection means no marker anywhere",
+          "[tablewidget]") {
   // -1 is the default and clear_rows() restores it (#12): a table that never
   // selects must not sprout a mark on row 0.
   Screen s{20, 4};
@@ -373,9 +385,10 @@ TEST_CASE("TableWidget: BorderStyle::Ascii keeps the whole widget 7-bit",
   t.draw(s);
 
   REQUIRE(s.text_at(0, 1) == "*");
-  REQUIRE(t.gutter_cols() == 2);  // same geometry as the Unicode family
+  REQUIRE(t.gutter_cols() == 2); // same geometry as the Unicode family
   for (int y = 0; y < 3; ++y) {
-    for (int x = 0; x < 20; ++x) REQUIRE(all_seven_bit(s.text_at(x, y)));
+    for (int x = 0; x < 20; ++x)
+      REQUIRE(all_seven_bit(s.text_at(x, y)));
   }
 }
 
@@ -387,7 +400,7 @@ TEST_CASE("TableWidget: a custom marker resizes the gutter", "[tablewidget]") {
   t.add_row({"alpha"});
   t.set_selected(0);
 
-  t.set_marker("»»");  // two columns + separator
+  t.set_marker("»»"); // two columns + separator
   REQUIRE(t.gutter_cols() == 3);
   t.draw(s);
   REQUIRE(s.text_at(0, 1) == "»");
@@ -413,14 +426,14 @@ TEST_CASE("TableWidget: the measured marker is the painted marker",
   t.add_row({"alpha"});
   t.set_selected(0);
 
-  t.set_marker("\033[7m>\033[0m");  // one visible column, seven raw ones
+  t.set_marker("\033[7m>\033[0m"); // one visible column, seven raw ones
   REQUIRE(t.marker() == ">");
   REQUIRE(t.gutter_cols() == 2);
   t.draw(s);
   REQUIRE(s.text_at(0, 1) == ">");
-  REQUIRE(s.text_at(2, 1) == "a");  // NOT indented by the stripped escape
+  REQUIRE(s.text_at(2, 1) == "a"); // NOT indented by the stripped escape
 
-  t.set_marker("\t>");  // tab becomes a space
+  t.set_marker("\t>"); // tab becomes a space
   REQUIRE(t.marker() == " >");
   REQUIRE(t.gutter_cols() == 3);
   t.draw(s);
@@ -428,7 +441,8 @@ TEST_CASE("TableWidget: the measured marker is the painted marker",
   REQUIRE(s.text_at(3, 1) == "a");
 }
 
-TEST_CASE("TableWidget: a zero-width marker reserves nothing", "[tablewidget][failure]") {
+TEST_CASE("TableWidget: a zero-width marker reserves nothing",
+          "[tablewidget][failure]") {
   // A lone combining mark has no base glyph to attach to, so write_text drops
   // it -- reserving a column for it would dent every column permanently.
   TableWidget t;
@@ -450,13 +464,14 @@ TEST_CASE("TableWidget: set_marker_enabled(false) restores the old geometry",
   t.draw(s);
 
   REQUIRE(t.gutter_cols() == 0);
-  REQUIRE(s.text_at(0, 0) == "N");  // header flush left
-  REQUIRE(s.text_at(0, 1) == "a");  // data flush left, exactly as before #76
+  REQUIRE(s.text_at(0, 0) == "N"); // header flush left
+  REQUIRE(s.text_at(0, 1) == "a"); // data flush left, exactly as before #76
   REQUIRE(s.text_at(0, 2) == "b");
 }
 
-TEST_CASE("TableWidget: a rect too narrow for both drops the marker, not the text",
-          "[tablewidget][failure]") {
+TEST_CASE(
+    "TableWidget: a rect too narrow for both drops the marker, not the text",
+    "[tablewidget][failure]") {
   // w == 3: gutter (2) still leaves a column for text.
   {
     Screen s{10, 2};
@@ -477,7 +492,7 @@ TEST_CASE("TableWidget: a rect too narrow for both drops the marker, not the tex
     t.set_columns({{"N", Align::Left}});
     t.add_row({"alpha"});
     t.set_selected(0);
-    t.draw(n);  // must not crash
+    t.draw(n); // must not crash
     // And the accessor says so: gutter_cols() is what draw() used, not a
     // configured value a consumer would lay out against and be wrong by two.
     REQUIRE(t.gutter_cols() == 0);
@@ -485,17 +500,19 @@ TEST_CASE("TableWidget: a rect too narrow for both drops the marker, not the tex
   }
 }
 
-TEST_CASE("TableWidget: gutter_cols reports the configured width before geometry",
-          "[tablewidget]") {
+TEST_CASE(
+    "TableWidget: gutter_cols reports the configured width before geometry",
+    "[tablewidget]") {
   // A consumer sizing the widget asks BEFORE set_geometry. With no rect yet
   // there is no narrow-rect rule to apply, so it reports what the marker wants.
   TableWidget t;
   REQUIRE(t.gutter_cols() == 2);
   t.set_geometry({0, 0, 40, 5});
-  REQUIRE(t.gutter_cols() == 2);  // and a roomy rect agrees
+  REQUIRE(t.gutter_cols() == 2); // and a roomy rect agrees
 }
 
-TEST_CASE("TableWidget: a click in the marker gutter selects (#76)", "[tablewidget]") {
+TEST_CASE("TableWidget: a click in the marker gutter selects (#76)",
+          "[tablewidget]") {
   // The gutter is inside rect(), unlike a marker an app draws beside the
   // widget -- so the column that shows the selection can also set it.
   Screen s{20, 5};
@@ -550,18 +567,19 @@ TEST_CASE("TableWidget: selection survives a driver that drops colour (#76)",
 
   const std::string row0 = row_text(s, 1);
   const std::string row1 = row_text(s, 2);
-  REQUIRE(row0 != row1);  // in CELL TEXT, not only in colour
+  REQUIRE(row0 != row1); // in CELL TEXT, not only in colour
 
   FallbackDriver d;
   std::string out;
   d.set_output(&out);
   Renderer r(d);
   r.present(s);
-  r.flush();  // first frame: the renderer diffs, so assert on this one
+  r.flush(); // first frame: the renderer diffs, so assert on this one
   REQUIRE(out.find("▸") != std::string::npos);
 }
 
-TEST_CASE("TableWidget: clear_rows resets the selection (#12)", "[tablewidget][failure]") {
+TEST_CASE("TableWidget: clear_rows resets the selection (#12)",
+          "[tablewidget][failure]") {
   Screen s{20, 4};
   TableWidget t;
   t.set_geometry({0, 0, 20, 4});
@@ -594,7 +612,8 @@ TEST_CASE("TableWidget: scrollbar appears only when rows overflow (#21)",
   t.draw(s);
   REQUIRE_FALSE(t.scrollbar_visible());
   REQUIRE(s.text_at(11, 1) != "█");
-  for (int i = 1; i < 6; ++i) t.add_row({std::to_string(i)});
+  for (int i = 1; i < 6; ++i)
+    t.add_row({std::to_string(i)});
   t.draw(s);
   REQUIRE(t.scrollbar_visible());
   // 6 rows in a 3-row view: the thumb covers half the track (1 of the 3
@@ -615,13 +634,15 @@ TEST_CASE("TableWidget: scrollbar thumb tracks the view offset (#21)",
   TableWidget t;
   t.set_geometry({0, 0, 12, 4});
   t.set_columns({{"n"}});
-  for (int i = 0; i < 12; ++i) t.add_row({std::to_string(i)});
+  for (int i = 0; i < 12; ++i)
+    t.add_row({std::to_string(i)});
   t.draw(s);
   REQUIRE(s.text_at(11, 1) == "█");
   // Wheel to the bottom (12 rows, 3 visible -> max offset 9).
-  for (int i = 0; i < 3; ++i) t.on_event(tfsupport::wheel(1, 2, /*up=*/false));
+  for (int i = 0; i < 3; ++i)
+    t.on_event(tfsupport::wheel(1, 2, /*up=*/false));
   t.draw(s);
-  REQUIRE(s.text_at(11, 3) == "█");  // thumb pinned at the bottom data row
+  REQUIRE(s.text_at(11, 3) == "█"); // thumb pinned at the bottom data row
   REQUIRE(s.text_at(11, 1) == "│");
 }
 
@@ -632,7 +653,8 @@ TEST_CASE("TableWidget: scrollbar glyphs follow the ascii style (#21)",
   t.set_geometry({0, 0, 12, 4});
   t.set_style(termforge::BorderStyle::Ascii);
   t.set_columns({{"n"}});
-  for (int i = 0; i < 8; ++i) t.add_row({std::to_string(i)});
+  for (int i = 0; i < 8; ++i)
+    t.add_row({std::to_string(i)});
   t.draw(s);
   REQUIRE(s.text_at(11, 1) == "#");
   REQUIRE(s.text_at(11, 2) == "|");
@@ -644,8 +666,9 @@ TEST_CASE("TableWidget: click on the scrollbar track page-jumps the view (#21)",
   TableWidget t;
   t.set_geometry({0, 0, 12, 4});
   t.set_columns({{"n"}});
-  for (int i = 0; i < 12; ++i) t.add_row({std::to_string(i)});
-  t.draw(s);  // bar up, offset 0
+  for (int i = 0; i < 12; ++i)
+    t.add_row({std::to_string(i)});
+  t.draw(s); // bar up, offset 0
   // Click the last data row of the track (below the thumb): page down (3).
   REQUIRE(t.on_event(tfsupport::press(11, 3)));
   REQUIRE(t.scroll_offset() == 3);
@@ -670,7 +693,8 @@ TEST_CASE("TableWidget: a narrow rect drops the bar before the columns (#21)",
   TableWidget t;
   t.set_geometry({0, 0, 3, 3});
   t.set_columns({{"n"}});
-  for (int i = 0; i < 6; ++i) t.add_row({std::to_string(i)});
+  for (int i = 0; i < 6; ++i)
+    t.add_row({std::to_string(i)});
   t.draw(s);
   REQUIRE_FALSE(t.scrollbar_visible());
   REQUIRE(s.text_at(2, 1) != "█");
@@ -678,7 +702,8 @@ TEST_CASE("TableWidget: a narrow rect drops the bar before the columns (#21)",
   TableWidget t2;
   t2.set_geometry({0, 0, 4, 3});
   t2.set_columns({{"n"}});
-  for (int i = 0; i < 6; ++i) t2.add_row({std::to_string(i)});
+  for (int i = 0; i < 6; ++i)
+    t2.add_row({std::to_string(i)});
   t2.draw(s2);
   REQUIRE(t2.scrollbar_visible());
   REQUIRE(s2.text_at(3, 1) == "█");

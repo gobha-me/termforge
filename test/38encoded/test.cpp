@@ -66,15 +66,14 @@ namespace {
 // actually accept, so that what the driver emits is a thing kitty can be
 // asked about in tools/png_repro.sh.
 constexpr std::array<unsigned char, 95> kPng2x2{
-    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00,
-    0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
-    0x00, 0x02, 0x08, 0x03, 0x00, 0x00, 0x00, 0x45, 0x68, 0xFD, 0x16,
-    0x00, 0x00, 0x00, 0x0C, 0x50, 0x4C, 0x54, 0x45, 0xFF, 0x00, 0x00,
-    0x00, 0xFF, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0x00, 0xD6, 0x02,
-    0x8F, 0x7B, 0x00, 0x00, 0x00, 0x0E, 0x49, 0x44, 0x41, 0x54, 0x78,
-    0xDA, 0x63, 0x60, 0x60, 0x64, 0x60, 0x62, 0x06, 0x00, 0x00, 0x11,
-    0x00, 0x07, 0x83, 0xCA, 0x64, 0x64, 0x00, 0x00, 0x00, 0x00, 0x49,
-    0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82};
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+    0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02,
+    0x08, 0x03, 0x00, 0x00, 0x00, 0x45, 0x68, 0xFD, 0x16, 0x00, 0x00, 0x00,
+    0x0C, 0x50, 0x4C, 0x54, 0x45, 0xFF, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00,
+    0x00, 0xFF, 0xFF, 0xFF, 0x00, 0xD6, 0x02, 0x8F, 0x7B, 0x00, 0x00, 0x00,
+    0x0E, 0x49, 0x44, 0x41, 0x54, 0x78, 0xDA, 0x63, 0x60, 0x60, 0x64, 0x60,
+    0x62, 0x06, 0x00, 0x00, 0x11, 0x00, 0x07, 0x83, 0xCA, 0x64, 0x64, 0x00,
+    0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82};
 
 auto png_bytes() -> std::span<const std::byte> {
   return std::as_bytes(std::span{kPng2x2});
@@ -100,8 +99,8 @@ auto blob(std::size_t n, unsigned seed = 0) -> std::vector<std::byte> {
 // The APC parser, the independent base64 decoder and LegacyDriver all live in
 // test/support/ now: test/39fit (#137) needs the same tools, and two copies of
 // a parser is two things that can drift apart while both stay green.
-using tfsupport::apcs;
 using tfsupport::Apc;
+using tfsupport::apcs;
 using tfsupport::b64_decode;
 using tfsupport::count_of;
 using tfsupport::LegacyDriver;
@@ -111,7 +110,7 @@ using tfsupport::transmit_chunks;
 constexpr Pixel kP1{10, 20, 30, 255};
 constexpr Pixel kP2{200, 150, 100, 255};
 
-}  // namespace
+} // namespace
 
 // ── the format actually on the wire ─────────────────────────────────────────
 
@@ -161,18 +160,16 @@ TEST_CASE("encoded: zlib compression key appears only on the chunk opener",
   std::string out;
   d.set_output(&out);
   const auto compressed = blob(5000, 5);
-  REQUIRE(d.draw_image(
-      Rect{0, 0, 8, 4},
-      EncodedImage{ImageFormat::Rgba32Zlib, as_span(compressed),
-                   Extent{50, 25}}));
+  REQUIRE(d.draw_image(Rect{0, 0, 8, 4},
+                       EncodedImage{ImageFormat::Rgba32Zlib,
+                                    as_span(compressed), Extent{50, 25}}));
   d.flush();
 
   const auto chunks = transmit_chunks(apcs(out));
   REQUIRE(chunks.size() >= 2);
   for (std::size_t i = 0; i < chunks.size(); ++i) {
     const bool last = i + 1 == chunks.size();
-    CHECK(chunks[i].keys.find(last ? "q=0" : "q=2") !=
-          std::string::npos);
+    CHECK(chunks[i].keys.find(last ? "q=0" : "q=2") != std::string::npos);
     CHECK((chunks[i].keys.find("o=z") != std::string::npos) == (i == 0));
     if (i > 0) CHECK(chunks[i].keys.find("f=") == std::string::npos);
   }
@@ -262,8 +259,7 @@ TEST_CASE("encoded: opaque transfers request one correlated final reply",
   REQUIRE(chunks.size() >= 2);
   for (std::size_t i = 0; i < chunks.size(); ++i) {
     const bool last = i + 1 == chunks.size();
-    CHECK(chunks[i].keys.find(last ? "q=0" : "q=2") !=
-          std::string::npos);
+    CHECK(chunks[i].keys.find(last ? "q=0" : "q=2") != std::string::npos);
   }
 }
 
@@ -320,7 +316,8 @@ TEST_CASE("encoded: timed-out ids stay quarantined until their late reply",
   d.set_output(&out);
   const EncodedImage img{ImageFormat::Png, png_bytes(), Extent{2, 2}};
   REQUIRE(d.draw_image(Rect{0, 0, 2, 2}, img));
-  for (int frame = 0; frame < 120; ++frame) d.flush();
+  for (int frame = 0; frame < 120; ++frame)
+    d.flush();
 
   const auto errors = d.take_driver_events();
   REQUIRE(errors.size() == 1);
@@ -381,10 +378,9 @@ TEST_CASE("encoded: zlib RGBA length is opaque despite a declared extent",
   KittyDriver d;
   std::string out;
   d.set_output(&out);
-  REQUIRE(d.draw_image(
-      Rect{0, 0, 4, 4},
-      EncodedImage{ImageFormat::Rgba32Zlib, as_span(compressed),
-                   Extent{640, 480}}));
+  REQUIRE(d.draw_image(Rect{0, 0, 4, 4},
+                       EncodedImage{ImageFormat::Rgba32Zlib,
+                                    as_span(compressed), Extent{640, 480}}));
   d.flush();
   CHECK(out.find("f=32,o=z") != std::string::npos);
   CHECK(out.find("s=640,v=480") != std::string::npos);
@@ -480,14 +476,16 @@ TEST_CASE("encoded: two different payloads of the same size are two images",
   REQUIRE(a.size() == b.size());
   REQUIRE(a != b);
 
-  REQUIRE(d.draw_image(Rect{0, 0, 4, 4},
-                       EncodedImage{ImageFormat::Png, as_span(a), Extent{8, 8}}));
+  REQUIRE(
+      d.draw_image(Rect{0, 0, 4, 4},
+                   EncodedImage{ImageFormat::Png, as_span(a), Extent{8, 8}}));
   d.flush();
   REQUIRE(d.last_frame_bytes().image_transmit > 0);
   d.consume_reply(termforge::TerminalReply{1, std::nullopt, "OK"});
 
-  REQUIRE(d.draw_image(Rect{0, 0, 4, 4},
-                       EncodedImage{ImageFormat::Png, as_span(b), Extent{8, 8}}));
+  REQUIRE(
+      d.draw_image(Rect{0, 0, 4, 4},
+                   EncodedImage{ImageFormat::Png, as_span(b), Extent{8, 8}}));
   d.flush();
   CHECK(d.last_frame_bytes().image_transmit > 0);
   CHECK(reassemble(out).size() == a.size() + b.size());
@@ -622,7 +620,7 @@ TEST_CASE("encoded: an Rgba32 payload that disagrees with its extent warns",
   // The one format whose length is derivable is the one format where this
   // mistake is visible at all. Left unchecked it is an out-of-bounds read that
   // gets base64'd to the terminal.
-  const auto bytes = blob(4 * 4 * 4);  // a 4x4, declared as 8x8
+  const auto bytes = blob(4 * 4 * 4); // a 4x4, declared as 8x8
 
   SECTION("kitty") {
     KittyDriver d;
@@ -846,11 +844,11 @@ TEST_CASE("encoded: image_cell_extent answers from an extent alone",
 
   AnsiRgbDriver a;
   CHECK(a.image_cell_extent(px) == a.image_cell_extent(art));
-  CHECK(a.image_cell_extent(px) == Extent{16, 5});  // two pixel rows per cell
+  CHECK(a.image_cell_extent(px) == Extent{16, 5}); // two pixel rows per cell
 
   FallbackDriver f;
   CHECK(f.image_cell_extent(px) == f.image_cell_extent(art));
-  CHECK(f.image_cell_extent(px) == Extent{16, 9});  // one glyph per cell
+  CHECK(f.image_cell_extent(px) == Extent{16, 9}); // one glyph per cell
 
   // An empty extent is empty, matching the Image overload on an empty image.
   CHECK(f.image_cell_extent(Extent{}) == Extent{});

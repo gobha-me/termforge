@@ -119,8 +119,8 @@ class FormsDemo final : public App {
       }
 
       if (m->pressed) m_ring.focus_at(m->x, m->y);
-      route_mouse(*m, {&m_telemetry, &m_wrap, &m_theme, &m_ok, &m_cancel,
-                       &m_driver});
+      route_mouse(
+          *m, {&m_telemetry, &m_wrap, &m_theme, &m_ok, &m_cancel, &m_driver});
       return;
     }
 
@@ -135,7 +135,7 @@ class FormsDemo final : public App {
     // Select closes and declines Tab, so one press both closes and moves on.
     if (m_ring.handle_key(ev)) return;
 
-    App::on_event(ev);  // Escape quits
+    App::on_event(ev); // Escape quits
   }
 
   auto on_tick(std::chrono::duration<double> dt) -> void override {

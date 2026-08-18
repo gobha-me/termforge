@@ -22,12 +22,12 @@
 #include <system_error>
 #include <vector>
 
+#include "support/events.hpp"
 #include "termforge/core/app.hpp"
 #include "termforge/core/screen.hpp"
 #include "termforge/core/types.hpp"
 #include "termforge/widgets/dialog.hpp"
 #include "termforge/widgets/file_picker_dialog.hpp"
-#include "support/events.hpp"
 
 using termforge::App;
 using namespace tfsupport;
@@ -51,10 +51,11 @@ struct TempTree {
   fs::path root;
   TempTree() {
     static int counter = 0;
-    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    root = fs::temp_directory_path() /
-           ("termforge-fp-" + std::to_string(stamp) + "-" +
-            std::to_string(++counter));
+    const auto stamp =
+        std::chrono::steady_clock::now().time_since_epoch().count();
+    root =
+        fs::temp_directory_path() / ("termforge-fp-" + std::to_string(stamp) +
+                                     "-" + std::to_string(++counter));
     fs::create_directories(root);
   }
   ~TempTree() {
@@ -77,10 +78,10 @@ struct TempTree {
   }
 };
 
-
 // Type a whole string into the focused control.
 auto type(FilePickerDialog& d, const std::string& s) -> void {
-  for (const char c : s) d.on_event(ch(static_cast<unsigned char>(c)));
+  for (const char c : s)
+    d.on_event(ch(static_cast<unsigned char>(c)));
 }
 
 // An App that exists only to own the overlay stack for the error-dialog path.
@@ -95,14 +96,13 @@ struct WiredPicker {
     picker.set_start_dir(start);
     picker.on_close([this] { host.pop_overlay(); });
     picker.on_error_overlay([this](Dialog& d) { host.push_overlay(d); });
-    picker.error_overlay_up(
-        [this] { return host.top_overlay() != &picker; });
+    picker.error_overlay_up([this] { return host.top_overlay() != &picker; });
     picker.on_result(
         [this](std::optional<fs::path> p) { results.push_back(std::move(p)); });
   }
   auto show(Screen& screen) -> void {
     host.push_overlay(picker);
-    picker.draw(screen);  // a frame goes by: lists the start dir, lays out
+    picker.draw(screen); // a frame goes by: lists the start dir, lays out
   }
 
   OverlayHost host;
@@ -110,7 +110,7 @@ struct WiredPicker {
   std::vector<std::optional<fs::path>> results;
 };
 
-}  // namespace
+} // namespace
 
 // ── listing and ordering ─────────────────────────────────────────────────────
 
@@ -133,9 +133,9 @@ TEST_CASE("FilePicker: dirs sort before files with a trailing slash",
   w.picker.on_event(key(Key::Home));
   // Entry 0 is ".."; entry 1 is the lexicographically-first dir "adir".
   w.picker.on_event(key(Key::Down));
-  w.picker.on_event(key(Key::Enter));  // descend into adir
+  w.picker.on_event(key(Key::Enter)); // descend into adir
   REQUIRE(w.picker.current_dir() == t.root / "adir");
-  REQUIRE(w.results.empty());  // descending is not a pick
+  REQUIRE(w.results.empty()); // descending is not a pick
 }
 
 TEST_CASE("FilePicker: the .. entry ascends to the parent",
@@ -147,7 +147,7 @@ TEST_CASE("FilePicker: the .. entry ascends to the parent",
   Screen screen{80, 30};
   w.show(screen);
 
-  w.picker.on_event(key(Key::Home));  // ".." is entry 0
+  w.picker.on_event(key(Key::Home)); // ".." is entry 0
   w.picker.on_event(key(Key::Enter));
   REQUIRE(w.picker.current_dir() == t.root);
 }
@@ -169,7 +169,7 @@ TEST_CASE("FilePicker: Enter on a file reports its path and closes",
   REQUIRE(w.results.size() == 1);
   REQUIRE(w.results[0].has_value());
   REQUIRE(fs::equivalent(*w.results[0], target));
-  REQUIRE(w.host.overlay_count() == 0);  // picked + closed
+  REQUIRE(w.host.overlay_count() == 0); // picked + closed
 }
 
 // ── path field ───────────────────────────────────────────────────────────────
@@ -204,7 +204,7 @@ TEST_CASE("FilePicker: typing a file path and Enter picks it",
   Screen screen{80, 30};
   w.show(screen);
 
-  w.picker.on_event(key(Key::Tab, 0, /*shift=*/true));  // list -> path field
+  w.picker.on_event(key(Key::Tab, 0, /*shift=*/true)); // list -> path field
   for (std::size_t i = 0; i < t.root.string().size(); ++i)
     w.picker.on_event(key(Key::Backspace));
   type(w.picker, target.string());
@@ -245,21 +245,23 @@ TEST_CASE("FilePicker: OK picks the field's current directory",
   REQUIRE(fs::equivalent(*w.results[0], t.root));
 }
 
-TEST_CASE("FilePicker: the result fires exactly once across a double activation",
-          "[filepicker][failure]") {
+TEST_CASE(
+    "FilePicker: the result fires exactly once across a double activation",
+    "[filepicker][failure]") {
   TempTree t;
   WiredPicker w{t.root};
   Screen screen{80, 30};
   w.show(screen);
 
   w.picker.on_event(key(Key::Escape));
-  w.picker.on_event(key(Key::Escape));  // same showing: no second result
+  w.picker.on_event(key(Key::Escape)); // same showing: no second result
   w.picker.on_event(key(Key::Enter));
   REQUIRE(w.results.size() == 1);
 }
 
-TEST_CASE("FilePicker: on_close re-arming the result cannot hijack the pick (#51)",
-          "[filepicker][failure]") {
+TEST_CASE(
+    "FilePicker: on_close re-arming the result cannot hijack the pick (#51)",
+    "[filepicker][failure]") {
   // Same regression class as the plain dialogs: v0.1.4 read m_on_result
   // AFTER close() ran on_close, so an on_close that armed the next picker's
   // handler received this pick. The slot is snapshotted before close().
@@ -274,10 +276,10 @@ TEST_CASE("FilePicker: on_close re-arming the result cannot hijack the pick (#51
   });
 
   Screen screen{80, 30};
-  picker.draw(screen);  // first showing: lists the start dir
+  picker.draw(screen); // first showing: lists the start dir
 
-  picker.on_event(key(Key::Escape));  // cancel: close, then fire nullopt
-  REQUIRE(fired == std::vector<int>{1});  // the ORIGINAL handler
+  picker.on_event(key(Key::Escape));     // cancel: close, then fire nullopt
+  REQUIRE(fired == std::vector<int>{1}); // the ORIGINAL handler
 }
 
 // ── filter ───────────────────────────────────────────────────────────────────
@@ -288,10 +290,10 @@ TEST_CASE("FilePicker: the extension filter hides non-matching files",
   t.file("keep.txt");
   t.file("drop.log");
   t.file("keep2.md");
-  t.dir("subdir");  // dirs are never filtered
+  t.dir("subdir"); // dirs are never filtered
 
   WiredPicker w{t.root};
-  w.picker.set_filter({".txt", "md"});  // dot optional
+  w.picker.set_filter({".txt", "md"}); // dot optional
   Screen screen{80, 30};
   w.show(screen);
 
@@ -308,8 +310,9 @@ TEST_CASE("FilePicker: the extension filter hides non-matching files",
 
 // ── failure: unreadable directory ────────────────────────────────────────────
 
-TEST_CASE("FilePicker: a file where a directory is expected raises a MessageDialog",
-          "[filepicker][failure]") {
+TEST_CASE(
+    "FilePicker: a file where a directory is expected raises a MessageDialog",
+    "[filepicker][failure]") {
   // "Unreadable directory" cannot be simulated by chmod 000 in CI: the test
   // runs as root, for whom a mode-0 dir is still readable. A *regular file*
   // passed as a directory fails for every user — opening it with a directory
@@ -319,13 +322,14 @@ TEST_CASE("FilePicker: a file where a directory is expected raises a MessageDial
 
   WiredPicker w{t.root};
   Screen screen{80, 30};
-  w.show(screen);  // lists the root fine
+  w.show(screen); // lists the root fine
 
   // Navigate into the file-as-dir through the path field.
-  w.picker.on_event(key(Key::Tab, 0, /*shift=*/true));  // list -> path field
+  w.picker.on_event(key(Key::Tab, 0, /*shift=*/true)); // list -> path field
   for (std::size_t i = 0; i < t.root.string().size(); ++i)
     w.picker.on_event(key(Key::Backspace));
-  type(w.picker, not_a_dir.string() + "/");  // trailing slash: force the dir read
+  type(w.picker,
+       not_a_dir.string() + "/"); // trailing slash: force the dir read
   w.picker.on_event(key(Key::Enter));
 
   // Navigation declined: nothing picked.
@@ -335,16 +339,17 @@ TEST_CASE("FilePicker: a file where a directory is expected raises a MessageDial
   REQUIRE(w.host.top_overlay() != &w.picker);
 }
 
-TEST_CASE("FilePicker: a nonexistent directory reports an error, keeps the dialog",
-          "[filepicker][failure]") {
+TEST_CASE(
+    "FilePicker: a nonexistent directory reports an error, keeps the dialog",
+    "[filepicker][failure]") {
   TempTree t;
-  t.dir("real");  // so the typed path is never mistaken for the root
+  t.dir("real"); // so the typed path is never mistaken for the root
 
   WiredPicker w{t.root};
   Screen screen{80, 30};
   w.show(screen);
 
-  w.picker.on_event(key(Key::Tab, 0, /*shift=*/true));  // list -> path field
+  w.picker.on_event(key(Key::Tab, 0, /*shift=*/true)); // list -> path field
   for (std::size_t i = 0; i < t.root.string().size(); ++i)
     w.picker.on_event(key(Key::Backspace));
   // A path that is neither an existing dir nor an existing file, with a
@@ -353,7 +358,7 @@ TEST_CASE("FilePicker: a nonexistent directory reports an error, keeps the dialo
   w.picker.on_event(key(Key::Enter));
 
   REQUIRE(w.results.empty());
-  REQUIRE(w.picker.current_dir() == t.root);  // did not move
+  REQUIRE(w.picker.current_dir() == t.root); // did not move
   // The error overlay is up; the picker is still underneath it.
   REQUIRE(w.host.overlay_count() == 2);
 }
@@ -372,7 +377,7 @@ TEST_CASE("FilePicker: non-ASCII filenames list and pick by columns, not bytes",
   w.show(screen);
 
   w.picker.on_event(key(Key::Home));
-  w.picker.on_event(key(Key::Down));  // ".." -> the CJK file
+  w.picker.on_event(key(Key::Down)); // ".." -> the CJK file
   w.picker.on_event(key(Key::Enter));
 
   REQUIRE(w.results.size() == 1);
@@ -389,12 +394,12 @@ TEST_CASE("FilePicker: re-showing refreshes the listing and reports again",
   WiredPicker w{t.root};
   Screen screen{80, 30};
   w.show(screen);
-  w.picker.on_event(key(Key::Escape));  // cancel the first showing
+  w.picker.on_event(key(Key::Escape)); // cancel the first showing
   REQUIRE(w.results.size() == 1);
 
   // The directory changed while the picker was dismissed.
   t.file("second.txt");
-  w.show(screen);  // re-show: a fresh read
+  w.show(screen); // re-show: a fresh read
 
   // The list is focused again on the re-showing (focus is re-asserted).
   // Entries are "..", first.txt, second.txt: End lands on the last file.
@@ -410,7 +415,8 @@ TEST_CASE("FilePicker: re-showing refreshes the listing and reports again",
 // App::run() loop, because no test interleaved a draw() between events. These
 // do -- the single shape that catches the whole class.
 
-TEST_CASE("FilePicker: a draw between keypresses does not reset list navigation (#45)",
+TEST_CASE("FilePicker: a draw between keypresses does not reset list "
+          "navigation (#45)",
           "[filepicker][failure]") {
   // Item 1: refresh() ran in draw(), and set_items() resets the selection to
   // 0 -- so Down (0->1) followed by an idle frame's draw reset it to 0, and
@@ -424,19 +430,21 @@ TEST_CASE("FilePicker: a draw between keypresses does not reset list navigation 
   Screen screen{80, 30};
   w.show(screen);
 
-  w.picker.on_event(key(Key::Home));  // entry 0 = \"..\"
-  w.picker.on_event(key(Key::Down));  // -> first dir (\"other\" sorts first)
-  w.picker.draw(screen);              // an idle frame goes by
-  w.picker.draw(screen);              // ...and another
-  w.picker.on_event(key(Key::Down));  // -> second dir (\"target\")
-  w.picker.draw(screen);              // another idle frame before Enter
-  w.picker.on_event(key(Key::Enter)); // must descend into \"target\", not \"..\"
+  w.picker.on_event(key(Key::Home)); // entry 0 = \"..\"
+  w.picker.on_event(key(Key::Down)); // -> first dir (\"other\" sorts first)
+  w.picker.draw(screen);             // an idle frame goes by
+  w.picker.draw(screen);             // ...and another
+  w.picker.on_event(key(Key::Down)); // -> second dir (\"target\")
+  w.picker.draw(screen);             // another idle frame before Enter
+  w.picker.on_event(
+      key(Key::Enter)); // must descend into \"target\", not \"..\"
 
   REQUIRE(w.picker.current_dir() == t.root / "target");
-  REQUIRE(w.results.empty());  // descending is not a pick
+  REQUIRE(w.results.empty()); // descending is not a pick
 }
 
-TEST_CASE("FilePicker: a draw while typing does not steal focus from the path field (#45)",
+TEST_CASE("FilePicker: a draw while typing does not steal focus from the path "
+          "field (#45)",
           "[filepicker][failure][field]") {
   // Item 2: ring().focus(&m_list) ran in draw(), so Shift+Tab to the path
   // field and typing was undone within one idle frame -- subsequent chars
@@ -449,20 +457,21 @@ TEST_CASE("FilePicker: a draw while typing does not steal focus from the path fi
   Screen screen{80, 30};
   w.show(screen);
 
-  w.picker.on_event(key(Key::Tab, 0, /*shift=*/true));  // list -> path field
+  w.picker.on_event(key(Key::Tab, 0, /*shift=*/true)); // list -> path field
   for (std::size_t i = 0; i < t.root.string().size(); ++i) {
     w.picker.on_event(key(Key::Backspace));
-    w.picker.draw(screen);  // idle frames interleaved with the editing
+    w.picker.draw(screen); // idle frames interleaved with the editing
   }
   type(w.picker, (t.root / "dest").string());
-  w.picker.draw(screen);   // another frame before committing
+  w.picker.draw(screen); // another frame before committing
   w.picker.on_event(key(Key::Enter));
 
   REQUIRE(w.picker.current_dir() == t.root / "dest");
   REQUIRE(w.results.empty());
 }
 
-TEST_CASE("FilePicker: an unreadable dir surfaces the error once per showing, not per frame (#45)",
+TEST_CASE("FilePicker: an unreadable dir surfaces the error once per showing, "
+          "not per frame (#45)",
           "[filepicker][failure]") {
   // Item 3: with refresh() in draw(), a directory that stayed unreadable
   // pushed a fresh MessageDialog every frame (~10/second). Two things now
@@ -476,17 +485,18 @@ TEST_CASE("FilePicker: an unreadable dir surfaces the error once per showing, no
   Screen screen{80, 30};
   w.show(screen);
 
-  w.picker.on_event(key(Key::Tab, 0, /*shift=*/true));  // list -> path field
+  w.picker.on_event(key(Key::Tab, 0, /*shift=*/true)); // list -> path field
   for (std::size_t i = 0; i < t.root.string().size(); ++i)
     w.picker.on_event(key(Key::Backspace));
   type(w.picker, not_a_dir.string() + "/");
-  w.picker.on_event(key(Key::Enter));  // navigation declines, one error raised
+  w.picker.on_event(key(Key::Enter)); // navigation declines, one error raised
   REQUIRE(w.host.overlay_count() == 2);
 
   // Idle frames go by (same showing): refresh() no longer runs per frame, so
   // nothing re-fires even with the dir still unreadable and the error up.
-  for (int i = 0; i < 5; ++i) w.picker.draw(screen);
-  REQUIRE(w.host.overlay_count() == 2);  // still exactly one error dialog
+  for (int i = 0; i < 5; ++i)
+    w.picker.draw(screen);
+  REQUIRE(w.host.overlay_count() == 2); // still exactly one error dialog
 
   // Re-trigger the same bad navigation while the first error is STILL up:
   // the flood gate holds it to one, where the per-frame refresh stacked them.
@@ -496,11 +506,12 @@ TEST_CASE("FilePicker: an unreadable dir surfaces the error once per showing, no
   // Dismiss the one that's up: the gate re-arms, and the next showing of a
   // still-unreadable start dir may surface it again -- exactly once.
   w.host.pop_overlay();
-  w.picker.on_event(key(Key::Enter));  // same bad navigation, gate now re-armed
-  REQUIRE(w.host.overlay_count() == 2);  // one new dialog, not a flood
+  w.picker.on_event(key(Key::Enter)); // same bad navigation, gate now re-armed
+  REQUIRE(w.host.overlay_count() == 2); // one new dialog, not a flood
 }
 
-TEST_CASE("FilePicker: the path field is seeded with the start dir on first showing (#45)",
+TEST_CASE("FilePicker: the path field is seeded with the start dir on first "
+          "showing (#45)",
           "[filepicker][field]") {
   // Satellite 4: set_start_dir never seeded the field, so the first showing
   // opened on an empty field and the tests' backspace-the-seeded-root loops
@@ -513,7 +524,7 @@ TEST_CASE("FilePicker: the path field is seeded with the start dir on first show
   // The seeded absolute root renders in the path field's top row region; the
   // strongest portable assertion is behavioral: OK with an untouched field
   // picks the seeded directory itself.
-  w.picker.on_event(key(Key::Tab));   // list -> OK
+  w.picker.on_event(key(Key::Tab)); // list -> OK
   w.picker.on_event(key(Key::Enter));
   REQUIRE(w.results.size() == 1);
   REQUIRE(fs::equivalent(*w.results[0], t.root));
@@ -522,7 +533,8 @@ TEST_CASE("FilePicker: the path field is seeded with the start dir on first show
 // ── glyph family reaches the children (#72) ─────────────────────────────────
 
 TEST_CASE("FilePicker: BorderStyle::Ascii reaches the entry list and the error"
-          " dialog", "[filepicker][glyphs][failure]") {
+          " dialog",
+          "[filepicker][glyphs][failure]") {
   // The picker owns two style-aware widgets the app has no handle on: the
   // ListWidget it browses with, and the MessageDialog it reports an unreadable
   // directory through. Neither took the dialog's style, so an Ascii-tier picker
@@ -559,12 +571,12 @@ TEST_CASE("FilePicker: BorderStyle::Ascii reaches the entry list and the error"
   // Same trick as the failure cases above: a regular file passed as a
   // directory raises ENOTDIR for every user, root included.
   const fs::path not_a_dir = t.file("gamma.txt");
-  p.picker.on_event(key(Key::Tab, 0, /*shift=*/true));  // list -> path field
+  p.picker.on_event(key(Key::Tab, 0, /*shift=*/true)); // list -> path field
   for (std::size_t i = 0; i < t.root.string().size(); ++i)
     p.picker.on_event(key(Key::Backspace));
   type(p.picker, not_a_dir.string() + "/");
   p.picker.on_event(key(Key::Enter));
-  REQUIRE(p.host.overlay_count() == 2);  // the error is up, on top
+  REQUIRE(p.host.overlay_count() == 2); // the error is up, on top
 
   Screen over{80, 30};
   p.picker.draw(over);

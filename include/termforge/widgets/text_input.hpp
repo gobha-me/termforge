@@ -15,8 +15,8 @@
 #include <functional>
 #include <string>
 
-#include "termforge/widgets/widget.hpp"
 #include "termforge/widgets/theme.hpp"
+#include "termforge/widgets/widget.hpp"
 
 namespace termforge {
 
@@ -71,8 +71,8 @@ class TextInput final : public Widget {
 
   std::string m_text;
   std::string m_placeholder;
-  int m_cursor{0};   // byte offset into m_text
-  int m_scroll{0};   // byte offset of the leftmost visible column
+  int m_cursor{0}; // byte offset into m_text
+  int m_scroll{0}; // byte offset of the leftmost visible column
 
   Rgb m_fg{theme::kFg};
   Rgb m_bg{theme::kBg};
@@ -84,4 +84,4 @@ class TextInput final : public Widget {
   std::function<void()> m_on_click;
 };
 
-}  // namespace termforge
+} // namespace termforge

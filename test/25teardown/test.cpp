@@ -35,8 +35,8 @@ struct Boom : std::runtime_error {
 
 class GuardProbe : public App {
  public:
-  int throw_on_frame{0};  // 1-based render index to throw from; 0 = never
-  int quit_after{4};      // hard cap: a regressed guard must fail, not hang ctest
+  int throw_on_frame{0}; // 1-based render index to throw from; 0 = never
+  int quit_after{4}; // hard cap: a regressed guard must fail, not hang ctest
   int renders{0};
 
   auto on_render(Screen&) -> void override {
@@ -52,7 +52,7 @@ class GuardProbe : public App {
     return m_now;
   }
   auto wait_readable(int timeout_ms) -> bool override {
-    m_now += std::chrono::milliseconds(timeout_ms);  // nothing ever arrives
+    m_now += std::chrono::milliseconds(timeout_ms); // nothing ever arrives
     return false;
   }
   auto read_available(char*, int) -> int override { return 0; }
@@ -62,14 +62,15 @@ class GuardProbe : public App {
   std::string m_sink;
 };
 
-}  // namespace
+} // namespace
 
 // The regression. Before the guard, the exception left run_loop() with the
 // alt-screen still entered — and for the shape the examples teach (a bare
 // `main` with no handler) that means std::terminate with no unwinding, so
 // ~App never ran either and the terminal was rescued only by the SIGABRT
 // entry in the fatal-signal backstop.
-TEST_CASE("run loop: a throwing frame still tears the terminal down", "[teardown]") {
+TEST_CASE("run loop: a throwing frame still tears the terminal down",
+          "[teardown]") {
   GuardProbe probe;
   probe.throw_on_frame = 2;
   REQUIRE(probe.test_winch_hooked() == false);
@@ -80,7 +81,7 @@ TEST_CASE("run loop: a throwing frame still tears the terminal down", "[teardown
   REQUIRE_THROWS_AS(probe.go(), Boom);
 
   REQUIRE_FALSE(probe.test_winch_hooked());
-  REQUIRE(probe.renders == 2);  // stopped at the throw, did not keep looping
+  REQUIRE(probe.renders == 2); // stopped at the throw, did not keep looping
 }
 
 // The other half of the guard: the normal path must be exactly as it was.
@@ -99,7 +100,8 @@ TEST_CASE("run loop: quit() still exits 0 and tears down", "[teardown]") {
 // exception through an `int` return, so it restores the terminal and gets out
 // of the way; the exception reaches the caller unchanged, type and message.
 // Pinned so a future well-meaning catch(...)-return-1 has to argue with a test.
-TEST_CASE("run loop: the app's exception reaches the caller unchanged", "[teardown]") {
+TEST_CASE("run loop: the app's exception reaches the caller unchanged",
+          "[teardown]") {
   GuardProbe probe;
   probe.throw_on_frame = 1;
 
@@ -114,13 +116,14 @@ TEST_CASE("run loop: the app's exception reaches the caller unchanged", "[teardo
 // teardown() now runs twice on the throw path — once from the guard, once from
 // ~App — and must stay idempotent. Worth a case of its own because the second
 // call happens inside a destructor, where a throw would be std::terminate.
-TEST_CASE("run loop: teardown survives the second call from ~App", "[teardown]") {
+TEST_CASE("run loop: teardown survives the second call from ~App",
+          "[teardown]") {
   {
     GuardProbe probe;
     probe.throw_on_frame = 1;
     REQUIRE_THROWS_AS(probe.go(), Boom);
     REQUIRE_FALSE(probe.test_winch_hooked());
-  }  // ~App -> teardown() again
+  } // ~App -> teardown() again
   SUCCEED("second teardown from ~App was clean");
 }
 
@@ -140,7 +143,7 @@ TEST_CASE("terminal: leave_raw is a no-op when raw mode was never entered",
   Terminal term;
   REQUIRE_FALSE(term.raw());
   term.leave_raw();
-  term.leave_raw();  // twice: idempotent
+  term.leave_raw(); // twice: idempotent
 
   REQUIRE_FALSE(term.raw());
   REQUIRE(rs.armed == armed_before);
@@ -159,7 +162,7 @@ TEST_CASE("terminal: leave_raw is a no-op when raw mode was never entered",
 // when the call returns.
 TEST_CASE("running() observes a quit dispatched during a frame", "[teardown]") {
   GuardProbe probe;
-  probe.quit_after = 2;  // quit() fires inside the second on_render
+  probe.quit_after = 2; // quit() fires inside the second on_render
 
   probe.go();
   REQUIRE_FALSE(probe.running());
@@ -169,7 +172,7 @@ TEST_CASE("running() observes a quit dispatched during a frame", "[teardown]") {
 // The companion: when no quit happens, running() stays true after the call.
 TEST_CASE("running() stays true when no quit was dispatched", "[teardown]") {
   GuardProbe probe;
-  probe.quit_after = 100;  // never reached within 4 frames
+  probe.quit_after = 100; // never reached within 4 frames
 
   // Drive just 2 frames via test_run_frames so quit_after is not hit.
   probe.test_run_frames(2, 20, 5, nullptr);
@@ -189,7 +192,7 @@ class HookProbe : public GuardProbe {
   // rather than asserted in-body.
   std::vector<std::string> log;
   bool stop_saw_winch{false};
-  int throw_on_start{0};  // 1 = on_start throws Boom
+  int throw_on_start{0}; // 1 = on_start throws Boom
 
   auto on_start() -> void override {
     log.emplace_back("start");
@@ -209,26 +212,30 @@ class HookProbe : public GuardProbe {
 // is fully up and before the first frame; on_stop runs once, after the last
 // frame, while the terminal is still up (winch still hooked) and before
 // teardown() unwinds it.
-TEST_CASE("lifecycle: on_start precedes the first frame, on_stop follows the last",
-          "[teardown]") {
+TEST_CASE(
+    "lifecycle: on_start precedes the first frame, on_stop follows the last",
+    "[teardown]") {
   HookProbe probe;
   probe.quit_after = 2;
 
   REQUIRE(probe.go() == 0);
-  REQUIRE(probe.log == std::vector<std::string>{"start", "render", "render", "stop"});
-  REQUIRE(probe.stop_saw_winch);          // terminal still up inside on_stop
-  REQUIRE_FALSE(probe.test_winch_hooked());  // ...and torn down after it
+  REQUIRE(probe.log ==
+          std::vector<std::string>{"start", "render", "render", "stop"});
+  REQUIRE(probe.stop_saw_winch);            // terminal still up inside on_stop
+  REQUIRE_FALSE(probe.test_winch_hooked()); // ...and torn down after it
 }
 
 // The exception path pays the same on_stop, before teardown, and the app's
 // exception still reaches the caller. This is the path where a throwing hook
 // would be std::terminate, which is why the signature is noexcept.
-TEST_CASE("lifecycle: a throwing frame still gets exactly one on_stop", "[teardown]") {
+TEST_CASE("lifecycle: a throwing frame still gets exactly one on_stop",
+          "[teardown]") {
   HookProbe probe;
   probe.throw_on_frame = 2;
 
   REQUIRE_THROWS_AS(probe.go(), Boom);
-  REQUIRE(probe.log == std::vector<std::string>{"start", "render", "render", "stop"});
+  REQUIRE(probe.log ==
+          std::vector<std::string>{"start", "render", "render", "stop"});
   REQUIRE(probe.stop_saw_winch);
   REQUIRE_FALSE(probe.test_winch_hooked());
 }
@@ -247,13 +254,14 @@ TEST_CASE("lifecycle: a throwing on_start gets no on_stop and still tears down",
     REQUIRE(std::string{e.what()} == "on_start blew up");
   }
   REQUIRE(probe.log == std::vector<std::string>{"start"});
-  REQUIRE(probe.renders == 0);  // the loop never began
+  REQUIRE(probe.renders == 0); // the loop never began
   REQUIRE_FALSE(probe.test_winch_hooked());
 }
 
 // The default no-op hooks keep every pre-#97 app source-compatible: GuardProbe
 // overrides neither, and its behavior is byte-identical to before.
-TEST_CASE("lifecycle: apps that override nothing are unaffected", "[teardown]") {
+TEST_CASE("lifecycle: apps that override nothing are unaffected",
+          "[teardown]") {
   GuardProbe probe;
   probe.quit_after = 3;
 

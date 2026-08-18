@@ -42,8 +42,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <vector>
 #include <variant>
+#include <vector>
 
 #include "termforge/core/app.hpp"
 #include "termforge/core/types.hpp"
@@ -53,7 +53,7 @@ using namespace termforge;
 
 namespace {
 
-constexpr int kSprite = 48;  // px; two or three cells on a typical terminal
+constexpr int kSprite = 48; // px; two or three cells on a typical terminal
 
 // A soft green disc on transparent, generated so the example needs no asset.
 auto make_sprite() -> Image {
@@ -99,7 +99,7 @@ class Plate final : public Widget {
   Image m_cache;
 };
 
-}  // namespace
+} // namespace
 
 class PinnedDemo final : public App {
  public:
@@ -137,7 +137,7 @@ class PinnedDemo final : public App {
       m_wrong_window = !m_wrong_window;
       return;
     }
-    App::on_event(ev);  // ESC / Ctrl+C quit
+    App::on_event(ev); // ESC / Ctrl+C quit
   }
 
   auto on_tick(std::chrono::duration<double> dt) -> void override {

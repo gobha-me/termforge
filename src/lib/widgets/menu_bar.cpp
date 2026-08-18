@@ -33,17 +33,19 @@ namespace {
 // inside one Menu.
 auto sanitize_menu(Menu& menu) -> void {
   menu.title = Screen::sanitize(menu.title);
-  for (auto& item : menu.items) item.label = Screen::sanitize(item.label);
+  for (auto& item : menu.items)
+    item.label = Screen::sanitize(item.label);
 }
 
-}  // namespace
+} // namespace
 
 auto MenuBar::set_menus(std::vector<Menu> menus) -> void {
-  for (auto& menu : menus) sanitize_menu(menu);  // before the move, not after
+  for (auto& menu : menus)
+    sanitize_menu(menu); // before the move, not after
   m_menus = std::move(menus);
   m_active = 0;
-  m_selected = -1;  // closed: dropdown_open() derives from m_selected (#56/7)
-  m_paint.clear();  // content replaced; any prior paint is not this list (#96)
+  m_selected = -1; // closed: dropdown_open() derives from m_selected (#56/7)
+  m_paint.clear(); // content replaced; any prior paint is not this list (#96)
   mark_dirty();
 }
 
@@ -57,8 +59,8 @@ auto MenuBar::add_menu(Menu menu) -> void {
 }
 
 auto MenuBar::close_dropdown() -> void {
-  m_selected = -1;  // the ONLY open/closed fact: dropdown_open() == >= 0
-  m_paint.clear();  // no painted list to hit (#96)
+  m_selected = -1; // the ONLY open/closed fact: dropdown_open() == >= 0
+  m_paint.clear(); // no painted list to hit (#96)
   mark_dirty();
 }
 
@@ -139,15 +141,15 @@ auto MenuBar::open_menu(int index) -> void {
   // changes here -- the offset belongs to the menu, not to the bar.
   m_scroll = 0;
   if (!m_menus[static_cast<std::size_t>(index)].items.empty())
-    m_selected = 0;  // selecting row 0 IS opening the dropdown (#56 item 7)
+    m_selected = 0; // selecting row 0 IS opening the dropdown (#56 item 7)
   mark_dirty();
 }
 
 auto MenuBar::draw(Screen& screen) -> void {
   const Rect r = rect();
-  m_screen_rows = screen.rows();  // dropdown_rect() clamps to this (#48/3, #53)
+  m_screen_rows = screen.rows(); // dropdown_rect() clamps to this (#48/3, #53)
   if (r.w <= 0 || r.h <= 0) {
-    m_paint.clear();  // nothing on screen to hit (#96)
+    m_paint.clear(); // nothing on screen to hit (#96)
     clear_dirty();
     return;
   }
@@ -212,7 +214,8 @@ auto MenuBar::draw(Screen& screen) -> void {
     // column wide (fitted_glyph's budget is 1), so at a negative mx it now
     // paints nothing on its own -- and the guard came out with it. Re-adding it
     // would be dead code that restates Screen's contract and would mask a
-    // regression of it; TabBar deliberately carries no such guard either (#159).
+    // regression of it; TabBar deliberately carries no such guard either
+    // (#159).
     //
     // `span.w > 0` is the old `mx < right` exactly, not an approximation of it:
     // span.w == min(natural, right - mx) and natural >= 2 for every title
@@ -259,8 +262,7 @@ auto MenuBar::draw(Screen& screen) -> void {
     detail::draw_dropdown_rows(
         screen, ddr, count, /*highlight=*/m_selected, /*scroll=*/m_scroll,
         /*label_pad=*/2, m_dropdown_fg, m_dropdown_bg, m_selected_fg,
-        m_selected_bg, glyphs,
-        [&](int i) -> const std::string& {
+        m_selected_bg, glyphs, [&](int i) -> const std::string& {
           return menu.items[static_cast<std::size_t>(i)].label;
         });
     // Memoize what was just painted (#96). Hover/press/hit_test read this until
@@ -289,12 +291,11 @@ auto MenuBar::handle_mouse(const MouseEvent& m) -> bool {
   // been drawn must not resize the scroll window. m_scroll updates for the
   // NEXT draw; m_paint.scroll stays until then so a press before the redraw
   // still resolves the pixels on screen.
-  const auto wheeled = detail::dropdown_wheel(m, dropdown_open(), *this,
-                                              m_scroll, m_selected, count,
-                                              dr.h);
+  const auto wheeled = detail::dropdown_wheel(
+      m, dropdown_open(), *this, m_scroll, m_selected, count, dr.h);
   if (wheeled == detail::WheelResult::Scrolled) mark_dirty();
   if (wheeled != detail::WheelResult::Declined) return true;
-  if (m.scroll_up || m.scroll_down) return false;  // wheel outside: decline
+  if (m.scroll_up || m.scroll_down) return false; // wheel outside: decline
 
   // Hover over the open dropdown moves the selection highlight.
   if (!m.pressed) {
@@ -386,7 +387,7 @@ auto MenuBar::on_event(const Event& ev) -> bool {
       close_dropdown();
       return true;
     }
-    if (visible <= 0) return true;  // nothing fits: only dismissal keys work
+    if (visible <= 0) return true; // nothing fits: only dismissal keys work
     const auto reveal = [this, count, visible] {
       m_scroll = detail::dropdown_reveal(m_scroll, m_selected, count, visible);
       mark_dirty();
@@ -447,7 +448,7 @@ auto MenuBar::on_event(const Event& ev) -> bool {
       }
       return true;
     }
-    return true;  // consume all keys while dropdown is open
+    return true; // consume all keys while dropdown is open
   }
 
   // Dropdown closed.
@@ -469,4 +470,4 @@ auto MenuBar::on_event(const Event& ev) -> bool {
   return false;
 }
 
-}  // namespace termforge
+} // namespace termforge

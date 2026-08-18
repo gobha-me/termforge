@@ -74,9 +74,11 @@ auto write_trace_record(std::ostream& out, const TraceRecord& record)
 auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent>;
 
 auto encode_size(TraceSize size) -> std::vector<std::uint8_t>;
-auto decode_size(const TraceRecord& record) -> std::expected<TraceSize, ErrorEvent>;
+auto decode_size(const TraceRecord& record)
+    -> std::expected<TraceSize, ErrorEvent>;
 auto encode_event(const Event& event) -> std::vector<std::uint8_t>;
-auto decode_event(const TraceRecord& record) -> std::expected<Event, ErrorEvent>;
+auto decode_event(const TraceRecord& record)
+    -> std::expected<Event, ErrorEvent>;
 auto encode_input_capabilities(InputCapabilities capabilities)
     -> std::vector<std::uint8_t>;
 auto decode_input_capabilities(const TraceRecord& record)
@@ -86,6 +88,7 @@ auto encode_terminal_reply(const TerminalReplyRecord& reply)
 auto decode_terminal_reply(const TraceRecord& record)
     -> std::expected<TerminalReplyRecord, ErrorEvent>;
 auto encode_end(TraceEnd end) -> std::vector<std::uint8_t>;
-auto decode_end(const TraceRecord& record) -> std::expected<TraceEnd, ErrorEvent>;
+auto decode_end(const TraceRecord& record)
+    -> std::expected<TraceEnd, ErrorEvent>;
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

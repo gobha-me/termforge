@@ -44,7 +44,7 @@ int count(const std::string& hay, const std::string& needle) {
   return n;
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("Attr: bitmask operators combine and test", "[attrs]") {
   const Attr a = Attr::Bold | Attr::Underline;
@@ -80,7 +80,7 @@ TEST_CASE("Cell: attr-only change differs (drives the renderer diff)",
   Cell a;
   Cell b = a;
   b.attrs = Attr::Bold;
-  REQUIRE(a != b);  // same text/colors, different attrs → not equal
+  REQUIRE(a != b); // same text/colors, different attrs → not equal
 }
 
 TEST_CASE("AnsiRgbDriver: emits SGR for each attribute", "[attrs][ansi]") {
@@ -91,12 +91,12 @@ TEST_CASE("AnsiRgbDriver: emits SGR for each attribute", "[attrs][ansi]") {
               Attr::Bold | Attr::Dim | Attr::Italic | Attr::Underline |
                   Attr::Reverse | Attr::Strike);
   d.flush();
-  REQUIRE(out.find("\033[1m") != std::string::npos);  // bold
-  REQUIRE(out.find("\033[2m") != std::string::npos);  // dim
-  REQUIRE(out.find("\033[3m") != std::string::npos);  // italic
-  REQUIRE(out.find("\033[4m") != std::string::npos);  // underline
-  REQUIRE(out.find("\033[7m") != std::string::npos);  // reverse
-  REQUIRE(out.find("\033[9m") != std::string::npos);  // strike
+  REQUIRE(out.find("\033[1m") != std::string::npos); // bold
+  REQUIRE(out.find("\033[2m") != std::string::npos); // dim
+  REQUIRE(out.find("\033[3m") != std::string::npos); // italic
+  REQUIRE(out.find("\033[4m") != std::string::npos); // underline
+  REQUIRE(out.find("\033[7m") != std::string::npos); // reverse
+  REQUIRE(out.find("\033[9m") != std::string::npos); // strike
 }
 
 TEST_CASE("Renderer: attribute-only change breaks the run (same colors)",
@@ -107,7 +107,7 @@ TEST_CASE("Renderer: attribute-only change breaks the run (same colors)",
   Renderer r(d);
   Screen s{2, 1};
   s.write_text(0, 0, "A", kFg, kBg, Attr::None);
-  s.write_text(1, 0, "B", kFg, kBg, Attr::Bold);  // same colors, +bold
+  s.write_text(1, 0, "B", kFg, kBg, Attr::Bold); // same colors, +bold
   r.present(s);
   r.flush();
   // The bold cell needs its own SGR 1 even though fg/bg are unchanged.
@@ -119,8 +119,8 @@ TEST_CASE("AnsiRgbDriver: dropping an attribute clears it (no leaked SGR)",
   AnsiRgbDriver d;
   std::string out;
   d.set_output(&out);
-  d.draw_text(0, 0, "A", kFg, kBg, Attr::Bold);   // bold on
-  d.draw_text(1, 0, "B", kFg, kBg, Attr::None);   // bold off
+  d.draw_text(0, 0, "A", kFg, kBg, Attr::Bold); // bold on
+  d.draw_text(1, 0, "B", kFg, kBg, Attr::None); // bold off
   d.flush();
   // The transition back to None must reset SGR, or B (and the rest of the
   // line) would render bold. Expect bold enabled once, and a reset between.
@@ -136,9 +136,9 @@ TEST_CASE("AnsiRgbDriver: same-attr run does not re-emit (coalescing)",
   std::string out;
   d.set_output(&out);
   d.draw_text(0, 0, "A", kFg, kBg, Attr::Bold);
-  d.draw_text(1, 0, "B", kFg, kBg, Attr::Bold);  // same attrs → no new SGR
+  d.draw_text(1, 0, "B", kFg, kBg, Attr::Bold); // same attrs → no new SGR
   d.flush();
-  REQUIRE(count(out, "\033[1m") == 1);   // bold enabled exactly once
+  REQUIRE(count(out, "\033[1m") == 1); // bold enabled exactly once
   // The run is not broken on the second call: B arrives with no attribute
   // change, so the only reset is the single one that precedes A's enable.
   REQUIRE(count(out, "\033[0m") == 1);
@@ -151,8 +151,8 @@ TEST_CASE("KittyDriver: text path honors attributes like AnsiRgb",
   d.set_output(&out);
   d.draw_text(0, 0, "x", kFg, kBg, Attr::Underline | Attr::Reverse);
   d.flush();
-  REQUIRE(out.find("\033[4m") != std::string::npos);  // underline
-  REQUIRE(out.find("\033[7m") != std::string::npos);  // reverse
+  REQUIRE(out.find("\033[4m") != std::string::npos); // underline
+  REQUIRE(out.find("\033[7m") != std::string::npos); // reverse
 }
 
 TEST_CASE("FallbackDriver: keeps Reverse and Bold, drops the rest",
@@ -165,12 +165,12 @@ TEST_CASE("FallbackDriver: keeps Reverse and Bold, drops the rest",
               Attr::Bold | Attr::Reverse | Attr::Italic | Attr::Underline |
                   Attr::Strike | Attr::Dim);
   d.flush();
-  REQUIRE(out.find("\033[7m") != std::string::npos);  // reverse kept
-  REQUIRE(out.find("\033[1m") != std::string::npos);  // bold kept
-  REQUIRE(out.find("\033[3m") == std::string::npos);  // italic dropped
-  REQUIRE(out.find("\033[4m") == std::string::npos);  // underline dropped
-  REQUIRE(out.find("\033[9m") == std::string::npos);  // strike dropped
-  REQUIRE(out.find("\033[2m") == std::string::npos);  // dim dropped
+  REQUIRE(out.find("\033[7m") != std::string::npos); // reverse kept
+  REQUIRE(out.find("\033[1m") != std::string::npos); // bold kept
+  REQUIRE(out.find("\033[3m") == std::string::npos); // italic dropped
+  REQUIRE(out.find("\033[4m") == std::string::npos); // underline dropped
+  REQUIRE(out.find("\033[9m") == std::string::npos); // strike dropped
+  REQUIRE(out.find("\033[2m") == std::string::npos); // dim dropped
   // The kept attributes are reset after the run so they don't bleed on.
   REQUIRE(out.find("\033[0m") != std::string::npos);
 }

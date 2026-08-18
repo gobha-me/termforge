@@ -3,10 +3,11 @@
 // it — pushed size, then TIOCGWINSZ on the Terminal's `out` fd, then 80x24.
 //
 // A remote session has no window to interrogate. Its dimensions arrive in
-// ssh's `pty-req` and change on `window-change`, the fd is a socket that answers
-// ENOTTY, and there is no SIGWINCH because the resize happened on somebody
-// else's machine. Everything below is that shape, and the fixtures are #179's
-// (test/42fds) for the same reason: no dup2 anywhere, the fds are handed over.
+// ssh's `pty-req` and change on `window-change`, the fd is a socket that
+// answers ENOTTY, and there is no SIGWINCH because the resize happened on
+// somebody else's machine. Everything below is that shape, and the fixtures are
+// #179's (test/42fds) for the same reason: no dup2 anywhere, the fds are handed
+// over.
 //
 // Three rules hold for every case here, and breaking any of them makes a case
 // lie rather than fail:
@@ -129,7 +130,9 @@ class PtyPair {
 
 class SizeApp final : public App {
  public:
-  auto inject(TerminalIo io) -> bool { return terminal().set_io(io).has_value(); }
+  auto inject(TerminalIo io) -> bool {
+    return terminal().set_io(io).has_value();
+  }
   // Raw mode ahead of setup(), for the pty cases: enter_raw uses TCSAFLUSH,
   // which discards anything already queued, so a synthetic probe reply written
   // before it would vanish.
@@ -142,7 +145,9 @@ class SizeApp final : public App {
   }
   // Read through the BASE, the same spelling image_cell_extent uses -- no
   // dynamic_cast, so the oracle does not name a tier.
-  auto cell_px() -> Extent { return driver().preferred_pixel_extent(Rect{0, 0, 1, 1}); }
+  auto cell_px() -> Extent {
+    return driver().preferred_pixel_extent(Rect{0, 0, 1, 1});
+  }
 
   auto on_render(Screen& s) -> void override {
     renders.emplace_back(s.cols(), s.rows());
@@ -165,7 +170,7 @@ class SizeApp final : public App {
   std::expected<void, ErrorEvent> push_result{};
 };
 
-}  // namespace
+} // namespace
 
 // ── precedence ──────────────────────────────────────────────────────────────
 
@@ -341,7 +346,7 @@ TEST_CASE("App: pushing the size already in force still reports a resize",
   REQUIRE(app.measure() == std::pair{100, 40});
 
   app.push_at = 0;
-  app.pending = {100, 40};  // exactly what the fd already reports
+  app.pending = {100, 40}; // exactly what the fd already reports
   std::string sink;
   app.test_run_frames(2, 7, 7, &sink);
   app.test_teardown();
@@ -363,13 +368,21 @@ TEST_CASE("App: set_size refuses a size no window could have", "[size][app]") {
   REQUIRE(app.test_setup().has_value());
 
   const App::Size bad[] = {
-      {0, 24}, {80, 0}, {-5, 24}, {80, -1},
-      {80, 24, -1, 100}, {80, 24, 100, -1},
+      {0, 24},
+      {80, 0},
+      {-5, 24},
+      {80, -1},
+      {80, 24, -1, 100},
+      {80, 24, 100, -1},
       // One past the pull's domain, on each of the four fields. The pixel pair
       // is bounded for the same reason the grid is, and is the half that bites:
       // push_cell_pixel_size divides it by the grid.
-      {65536, 24}, {80, 65536}, {80, 24, 65536, 100}, {80, 24, 100, 65536},
-      {70000, 24}, {80, 70000},
+      {65536, 24},
+      {80, 65536},
+      {80, 24, 65536, 100},
+      {80, 24, 100, 65536},
+      {70000, 24},
+      {80, 70000},
   };
   for (const auto& s : bad) {
     const auto r = app.set_size(s);
@@ -389,7 +402,8 @@ TEST_CASE("App: set_size refuses a size no window could have", "[size][app]") {
   // Totality from the other side: a session with a good size keeps ALL of it,
   // including the pixel pair, through every refusal above.
   REQUIRE(app.set_size({132, 43, 1320, 860}).has_value());
-  for (const auto& s : bad) REQUIRE_FALSE(app.set_size(s).has_value());
+  for (const auto& s : bad)
+    REQUIRE_FALSE(app.set_size(s).has_value());
   REQUIRE(app.has_pushed_size());
   REQUIRE(app.current_size() == App::Size{132, 43, 1320, 860});
   app.test_teardown();

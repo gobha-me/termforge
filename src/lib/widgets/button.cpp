@@ -88,8 +88,7 @@ auto Button::reset_transient() -> void {
 
 auto Button::on_event(const Event& ev) -> bool {
   if (const auto* k = std::get_if<KeyEvent>(&ev)) {
-    if (k->key == Key::Enter ||
-        (k->key == Key::Char && k->ch == U' ')) {
+    if (k->key == Key::Enter || (k->key == Key::Char && k->ch == U' ')) {
       m_flash_left = m_flash_duration;
       mark_dirty();
       detail::invoke_copy(m_on_activate);
@@ -109,4 +108,4 @@ auto Button::on_event(const Event& ev) -> bool {
   return false;
 }
 
-}  // namespace termforge
+} // namespace termforge

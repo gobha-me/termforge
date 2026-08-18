@@ -27,8 +27,8 @@
 #include <string>
 
 #include "termforge/widgets/glyphs.hpp"
-#include "termforge/widgets/widget.hpp"
 #include "termforge/widgets/theme.hpp"
+#include "termforge/widgets/widget.hpp"
 
 namespace termforge {
 
@@ -39,7 +39,7 @@ class Checkbox final : public Widget {
 
   auto set_label(std::string label) -> void {
     m_label = std::move(label);
-    m_line.clear();  // invalidate the composed draw line (#42 item 5)
+    m_line.clear(); // invalidate the composed draw line (#42 item 5)
     mark_dirty();
   }
   [[nodiscard]] auto label() const noexcept -> const std::string& {
@@ -59,7 +59,7 @@ class Checkbox final : public Widget {
   // FallbackDriver choice — see widgets/glyphs.hpp.
   auto set_style(BorderStyle style) -> void {
     m_style = style;
-    m_line.clear();  // glyphs change: invalidate the composed line
+    m_line.clear(); // glyphs change: invalidate the composed line
     mark_dirty();
   }
   [[nodiscard]] auto style() const noexcept -> BorderStyle { return m_style; }
@@ -98,4 +98,4 @@ class Checkbox final : public Widget {
   std::function<void(bool)> m_on_change;
 };
 
-}  // namespace termforge
+} // namespace termforge

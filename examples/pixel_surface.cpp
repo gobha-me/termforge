@@ -27,7 +27,7 @@ using namespace termforge;
 class PixelSurfaceDemo final : public App {
  public:
   PixelSurfaceDemo() {
-    set_frame_ms(33);  // requested ~30 FPS display cadence
+    set_frame_ms(33); // requested ~30 FPS display cadence
     render_frame();
   }
 
@@ -59,8 +59,8 @@ class PixelSurfaceDemo final : public App {
     const int w = std::max(0, screen.cols() - 2);
     const int h = std::max(0, screen.rows() - 3);
     m_surface.set_geometry({1, 2, w, h});
-    m_surface.draw(screen);           // Baseline: ASCII luminance
-    render_pixel_regions(m_surface);  // Kitty/ANSI: owned RGBA image
+    m_surface.draw(screen);          // Baseline: ASCII luminance
+    render_pixel_regions(m_surface); // Kitty/ANSI: owned RGBA image
   }
 
  private:

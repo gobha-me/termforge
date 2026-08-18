@@ -34,4 +34,4 @@ struct AppRequirements {
   Extent min_cell_pixels{};
 };
 
-}  // namespace termforge
+} // namespace termforge

@@ -26,18 +26,20 @@ auto map_final_key(char fin) -> Key {
     case 'Q': return Key::F2;
     case 'R': return Key::F3;
     case 'S': return Key::F4;
-    default:  return Key::Unknown;
+    default: return Key::Unknown;
   }
 }
 
 // Map the CSI "~" number family (ESC[<n>~) to a Key.
 auto map_tilde_key(int n) -> Key {
   switch (n) {
-    case 3:  return Key::Delete;
-    case 5:  return Key::PageUp;
-    case 6:  return Key::PageDown;
-    case 1:  case 7: return Key::Home;
-    case 4:  case 8: return Key::End;
+    case 3: return Key::Delete;
+    case 5: return Key::PageUp;
+    case 6: return Key::PageDown;
+    case 1:
+    case 7: return Key::Home;
+    case 4:
+    case 8: return Key::End;
     case 11: return Key::F1;
     case 12: return Key::F2;
     case 13: return Key::F3;
@@ -65,8 +67,8 @@ void apply_key_mods(KeyEvent& ev, int mod_param) {
   const int m = mod_param - 1;
   if (m <= 0) return;
   ev.shift = (m & 1) != 0;
-  ev.alt   = (m & 2) != 0;
-  ev.ctrl  = (m & 4) != 0;
+  ev.alt = (m & 2) != 0;
+  ev.ctrl = (m & 4) != 0;
 }
 
 // Apply a kitty event-type sub-parameter (#60): the 3 in ESC[1;1:3A. Absent
@@ -74,8 +76,8 @@ void apply_key_mods(KeyEvent& ev, int mod_param) {
 // because inventing a release the user never made is the worse failure.
 void apply_key_action(KeyEvent& ev, int event_param) {
   switch (event_param) {
-    case 2:  ev.action = KeyAction::Repeat; break;
-    case 3:  ev.action = KeyAction::Release; break;
+    case 2: ev.action = KeyAction::Repeat; break;
+    case 3: ev.action = KeyAction::Release; break;
     default: ev.action = KeyAction::Press; break;
   }
 }
@@ -85,10 +87,10 @@ void apply_key_action(KeyEvent& ev, int event_param) {
 // private-use area; a few of those are keys TermForge cannot represent, and a
 // few must produce nothing at all.
 enum class CsiUKind {
-  Drop,     // emit no event — see map_csi_u_key for why this is not Unknown
-  Named,    // a Key enumerator; ch stays 0
-  Text,     // Key::Char with the resolved code point
-  Unknown,  // a real key TermForge has no enumerator for
+  Drop,    // emit no event — see map_csi_u_key for why this is not Unknown
+  Named,   // a Key enumerator; ch stays 0
+  Text,    // Key::Char with the resolved code point
+  Unknown, // a real key TermForge has no enumerator for
 };
 
 // A Unicode scalar value: in range and not a surrogate. Every other route to
@@ -126,14 +128,14 @@ struct CsiUKey {
 // modifiers and event type attached) and never as CSI-u.
 auto map_csi_u_key(char32_t code) -> CsiUKey {
   switch (code) {
-    case 9:   return {CsiUKind::Named, Key::Tab, 0};
-    case 13:  return {CsiUKind::Named, Key::Enter, 0};
-    case 27:  return {CsiUKind::Named, Key::Escape, 0};
+    case 9: return {CsiUKind::Named, Key::Tab, 0};
+    case 13: return {CsiUKind::Named, Key::Enter, 0};
+    case 27: return {CsiUKind::Named, Key::Escape, 0};
     case 127: return {CsiUKind::Named, Key::Backspace, 0};
     // Keypad: kitty gives these their own code points so an app *can* tell
     // them apart. TermForge cannot name them, so they resolve to the key the
     // user pressed — a keypad 7 is a 7, keypad Up is Up.
-    case 57414: return {CsiUKind::Named, Key::Enter, 0};      // KP_ENTER
+    case 57414: return {CsiUKind::Named, Key::Enter, 0}; // KP_ENTER
     case 57417: return {CsiUKind::Named, Key::Left, 0};
     case 57418: return {CsiUKind::Named, Key::Right, 0};
     case 57419: return {CsiUKind::Named, Key::Up, 0};
@@ -142,7 +144,7 @@ auto map_csi_u_key(char32_t code) -> CsiUKey {
     case 57422: return {CsiUKind::Named, Key::PageDown, 0};
     case 57423: return {CsiUKind::Named, Key::Home, 0};
     case 57424: return {CsiUKind::Named, Key::End, 0};
-    case 57426: return {CsiUKind::Named, Key::Delete, 0};     // KP_DELETE
+    case 57426: return {CsiUKind::Named, Key::Delete, 0}; // KP_DELETE
     case 57409: return {CsiUKind::Text, Key::Char, U'.'};
     case 57410: return {CsiUKind::Text, Key::Char, U'/'};
     case 57411: return {CsiUKind::Text, Key::Char, U'*'};
@@ -160,7 +162,7 @@ auto map_csi_u_key(char32_t code) -> CsiUKey {
     case 57449: return {CsiUKind::Named, Key::RightAlt, 0};
     default: break;
   }
-  if (code >= 57399 && code <= 57408) {  // KP_0 … KP_9
+  if (code >= 57399 && code <= 57408) { // KP_0 … KP_9
     return {CsiUKind::Text, Key::Char, U'0' + (code - 57399)};
   }
   // Locks, PrintScreen/Pause/Menu, media keys, and the remaining modifiers
@@ -175,10 +177,10 @@ auto map_csi_u_key(char32_t code) -> CsiUKey {
   if (code < 32 || !is_scalar_value(code)) {
     return {CsiUKind::Drop, Key::Unknown, 0};
   }
-  if (code >= 57344 && code <= 63743) {  // remaining private-use functionals
+  if (code >= 57344 && code <= 63743) { // remaining private-use functionals
     return {CsiUKind::Unknown, Key::Unknown, 0};
   }
-  return {CsiUKind::Text, Key::Char, 0};  // ch resolved from text / key code
+  return {CsiUKind::Text, Key::Char, 0}; // ch resolved from text / key code
 }
 
 // A CSI parameter list with sub-parameters (#60). Sub-params are a *generic*
@@ -205,7 +207,8 @@ struct CsiParams {
 // Scan a CSI body from `i` up to its final byte, leaving `i` on that byte.
 // Returns false when the final byte has not arrived yet — the caller answers
 // "need more data" with 0, exactly as the old inline scan did.
-auto scan_csi_params(std::string_view buf, std::size_t& i, CsiParams& out) -> bool {
+auto scan_csi_params(std::string_view buf, std::size_t& i, CsiParams& out)
+    -> bool {
   int pi = 0, si = 0;
   while (i < buf.size()) {
     const char c = buf[i];
@@ -220,7 +223,10 @@ auto scan_csi_params(std::string_view buf, std::size_t& i, CsiParams& out) -> bo
       ++i;
       continue;
     }
-    if (c == '<') { ++i; continue; }  // SGR marker that fell through to here
+    if (c == '<') {
+      ++i;
+      continue;
+    } // SGR marker that fell through to here
     if (std::isdigit(static_cast<unsigned char>(c)) == 0) break;
     if (pi < CsiParams::kParams && si < CsiParams::kSubs) {
       int& v = out.v[pi][si];
@@ -231,7 +237,7 @@ auto scan_csi_params(std::string_view buf, std::size_t& i, CsiParams& out) -> bo
   return i < buf.size();
 }
 
-}  // namespace
+} // namespace
 
 auto Input::feed(std::string_view bytes) -> void {
   // Bytes following a held ESC normally complete its sequence, so put it back
@@ -251,8 +257,9 @@ auto Input::feed(std::string_view bytes) -> void {
   m_pending += bytes;
   std::size_t off = 0;
   while (off < m_pending.size()) {
-    const std::size_t used = decode_one(std::string_view{m_pending}.substr(off));
-    if (used == 0) break;  // incomplete sequence; keep it in m_pending
+    const std::size_t used =
+        decode_one(std::string_view{m_pending}.substr(off));
+    if (used == 0) break; // incomplete sequence; keep it in m_pending
     off += used;
   }
   m_pending.erase(0, off);
@@ -265,7 +272,8 @@ auto Input::feed(std::string_view bytes) -> void {
   // immediately, with no timeout). Only flush() — invoked once the caller
   // has drained the fd — commits the Escape interpretation.
   // (Not while a bracketed paste is open: a trailing ESC there is either the
-  // start of the ESC[201~ terminator or a literal pasted ESC, never a keypress.)
+  // start of the ESC[201~ terminator or a literal pasted ESC, never a
+  // keypress.)
   if (!m_in_paste && !m_discard_apc && m_pending.size() == 1 &&
       m_pending[0] == '\x1B') {
     m_pending.clear();
@@ -302,7 +310,7 @@ auto Input::discard_incomplete() noexcept -> void {
 
 auto Input::decode(std::string_view bytes) -> std::deque<Event> {
   feed(bytes);
-  flush();  // convenience: the fed string is the complete input
+  flush(); // convenience: the fed string is the complete input
   return poll();
 }
 
@@ -327,16 +335,17 @@ auto Input::decode_one(std::string_view buf) -> std::size_t {
 
   // ── escape sequences ──
   if (c == 0x1B) {
-    if (buf.size() < 2) return 0;  // need more
+    if (buf.size() < 2) return 0; // need more
     if (buf[1] == '[') return parse_csi(buf);
-    if (buf[1] == 'O') return parse_ss3(buf);  // SS3: app-cursor keys, F1–F4
-    if (buf[1] == '_') return parse_apc(buf);  // terminal control-plane APC
+    if (buf[1] == 'O') return parse_ss3(buf); // SS3: app-cursor keys, F1–F4
+    if (buf[1] == '_') return parse_apc(buf); // terminal control-plane APC
     // Alt+char: ESC followed by a printable char.
     if (buf[1] >= 0x20 && buf[1] < 0x7F) {
-      m_events.push_back(KeyEvent{Key::Char, static_cast<char32_t>(buf[1]), false, true, false});
+      m_events.push_back(KeyEvent{Key::Char, static_cast<char32_t>(buf[1]),
+                                  false, true, false});
       return 2;
     }
-    return 1;  // lone ESC / unknown
+    return 1; // lone ESC / unknown
   }
 
   // ── control chars ──
@@ -349,10 +358,11 @@ auto Input::decode_one(std::string_view buf) -> std::size_t {
   if (c < 0x20) {
     // Ctrl+letter (0x01..0x1A -> 'a'..'z')
     if (c >= 1 && c <= 26) {
-      m_events.push_back(KeyEvent{Key::Char, static_cast<char32_t>('a' + c - 1), true, false, false});
+      m_events.push_back(KeyEvent{Key::Char, static_cast<char32_t>('a' + c - 1),
+                                  true, false, false});
       return 1;
     }
-    return 1;  // other C0: ignore
+    return 1; // other C0: ignore
   }
 
   // ── UTF-8 (ASCII fast path + multibyte) ──
@@ -369,14 +379,16 @@ auto Input::decode_one(std::string_view buf) -> std::size_t {
     if (want > 1 && buf.size() < want) {
       // Only wait if the bytes present so far could still be the head of a
       // valid sequence; an already-illegal second byte can't be rescued.
-      bool plausible = buf.size() < 2 ||
-          ([&] { const auto [lo, hi] = detail::utf8_second_byte_range(c);
-                 const auto s = static_cast<unsigned char>(buf[1]);
-                 return s >= lo && s <= hi; }());
+      bool plausible = buf.size() < 2 || ([&] {
+                         const auto [lo, hi] =
+                             detail::utf8_second_byte_range(c);
+                         const auto s = static_cast<unsigned char>(buf[1]);
+                         return s >= lo && s <= hi;
+                       }());
       if (plausible) return 0;
     }
     m_events.push_back(KeyEvent{Key::Char, U'\uFFFD'});
-    return 1;  // resync: drop just this byte, re-examine the rest
+    return 1; // resync: drop just this byte, re-examine the rest
   }
   char32_t cp = 0;
   if (len == 1) {
@@ -387,14 +399,13 @@ auto Input::decode_one(std::string_view buf) -> std::size_t {
   } else if (len == 3) {
     const auto b1 = static_cast<unsigned char>(buf[1]);
     const auto b2 = static_cast<unsigned char>(buf[2]);
-    cp = static_cast<char32_t>(((c & 0x0FU) << 12U) |
-                               ((b1 & 0x3FU) << 6U) | (b2 & 0x3FU));
+    cp = static_cast<char32_t>(((c & 0x0FU) << 12U) | ((b1 & 0x3FU) << 6U) |
+                               (b2 & 0x3FU));
   } else {
     const auto b1 = static_cast<unsigned char>(buf[1]);
     const auto b2 = static_cast<unsigned char>(buf[2]);
     const auto b3 = static_cast<unsigned char>(buf[3]);
-    cp = static_cast<char32_t>(((c & 0x07U) << 18U) |
-                               ((b1 & 0x3FU) << 12U) |
+    cp = static_cast<char32_t>(((c & 0x07U) << 18U) | ((b1 & 0x3FU) << 12U) |
                                ((b2 & 0x3FU) << 6U) | (b3 & 0x3FU));
   }
   m_events.push_back(KeyEvent{Key::Char, cp});
@@ -419,9 +430,9 @@ auto Input::parse_apc(std::string_view buf) -> std::size_t {
   const auto end = buf.find("\033\\", 2);
   if (end == std::string_view::npos) {
     if (buf.size() <= kMaxReplyBytes) return 0;
-    m_replies.emplace_back(ErrorEvent{
-        Severity::Warning, "input",
-        "kitty graphics reply exceeded the 4096-byte limit"});
+    m_replies.emplace_back(
+        ErrorEvent{Severity::Warning, "input",
+                   "kitty graphics reply exceeded the 4096-byte limit"});
     m_discard_apc = true;
     // A trailing ESC may be the first half of ST split across reads. Leave it
     // in m_pending, and unlike an ordinary lone ESC never expose it as a key.
@@ -429,14 +440,14 @@ auto Input::parse_apc(std::string_view buf) -> std::size_t {
   }
   const std::size_t used = end + 2;
   if (used > kMaxReplyBytes) {
-    m_replies.emplace_back(ErrorEvent{
-        Severity::Warning, "input",
-        "kitty graphics reply exceeded the 4096-byte limit"});
+    m_replies.emplace_back(
+        ErrorEvent{Severity::Warning, "input",
+                   "kitty graphics reply exceeded the 4096-byte limit"});
     return used;
   }
 
   const auto body = buf.substr(2, end - 2);
-  if (body.empty() || body.front() != 'G') return used;  // unrelated APC
+  if (body.empty() || body.front() != 'G') return used; // unrelated APC
   const auto semi = body.find(';');
   const auto malformed = [&](std::string_view why) {
     m_replies.emplace_back(ErrorEvent{
@@ -455,9 +466,8 @@ auto Input::parse_apc(std::string_view buf) -> std::size_t {
   while (!controls.empty()) {
     const auto comma = controls.find(',');
     const auto item = controls.substr(0, comma);
-    controls = comma == std::string_view::npos
-                   ? std::string_view{}
-                   : controls.substr(comma + 1);
+    controls = comma == std::string_view::npos ? std::string_view{}
+                                               : controls.substr(comma + 1);
     const auto equals = item.find('=');
     if (equals == std::string_view::npos || equals == 0 ||
         equals + 1 == item.size()) {
@@ -468,10 +478,10 @@ auto Input::parse_apc(std::string_view buf) -> std::size_t {
     if (key != "i" && key != "p") continue;
     std::uint32_t value{0};
     const auto digits = item.substr(equals + 1);
-    const auto parsed = std::from_chars(digits.data(), digits.data() + digits.size(),
-                                        value);
-    if (parsed.ec != std::errc{} || parsed.ptr != digits.data() + digits.size() ||
-        value == 0) {
+    const auto parsed =
+        std::from_chars(digits.data(), digits.data() + digits.size(), value);
+    if (parsed.ec != std::errc{} ||
+        parsed.ptr != digits.data() + digits.size() || value == 0) {
       malformed("invalid numeric identifier");
       return used;
     }
@@ -522,29 +532,33 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
     std::size_t i = 3;
     int params[3] = {0, 0, 0};
     int pi = 0;
-    while (i < buf.size() && pi < 3 &&
-           (std::isdigit(static_cast<unsigned char>(buf[i])) ||
-            buf[i] == ';')) {
-      if (buf[i] == ';') { ++pi; ++i; continue; }
+    while (
+        i < buf.size() && pi < 3 &&
+        (std::isdigit(static_cast<unsigned char>(buf[i])) || buf[i] == ';')) {
+      if (buf[i] == ';') {
+        ++pi;
+        ++i;
+        continue;
+      }
       // Cap accumulation so a hostile digit run can't overflow int (UB).
       if (pi < 3 && params[pi] < 100000)
         params[pi] = params[pi] * 10 + (buf[i] - '0');
       ++i;
     }
-    if (i >= buf.size()) return 0;  // incomplete
+    if (i >= buf.size()) return 0; // incomplete
     const char fin = buf[i];
     ++i;
 
     if (fin == 'M' || fin == 'm') {
       MouseEvent me;
       const int btn = params[0];
-      me.x = params[1] - 1;  // SGR is 1-based, we're 0-based
+      me.x = params[1] - 1; // SGR is 1-based, we're 0-based
       me.y = params[2] - 1;
       // Keyboard modifiers ride in the button code (shift=4, meta/alt=8,
       // ctrl=16), independent of the button/wheel/motion bits below.
       me.shift = (btn & 4) != 0;
-      me.alt   = (btn & 8) != 0;
-      me.ctrl  = (btn & 16) != 0;
+      me.alt = (btn & 8) != 0;
+      me.ctrl = (btn & 16) != 0;
       // Decode button + wheel/motion from the button code. Wheel events
       // (bit 6) reuse the low bits for direction — they are not presses
       // and must not masquerade as button 0/1 clicks.
@@ -582,26 +596,29 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
     std::size_t i = 3;
     while (i < buf.size()) {
       const auto b = static_cast<unsigned char>(buf[i]);
-      if (b >= 0x40 && b <= 0x7E) return i + 1;  // final byte: drop the report
-      if (b >= 0x20 && b <= 0x3F) { ++i; continue; }  // param / intermediate
+      if (b >= 0x40 && b <= 0x7E) return i + 1; // final byte: drop the report
+      if (b >= 0x20 && b <= 0x3F) {
+        ++i;
+        continue;
+      } // param / intermediate
       // A byte outside the CSI body (e.g. an ESC starting the next sequence):
       // the report was truncated. Drop just "ESC[<marker>" and resync on the
       // rest rather than swallowing an unrelated sequence.
       return 3;
     }
-    return 0;  // no final byte yet — wait for the rest of the report
+    return 0; // no final byte yet — wait for the rest of the report
   }
 
   // Generic CSI: params (0-9 ; :) + final byte.
   std::size_t i = 2;
   CsiParams p;
-  if (!scan_csi_params(buf, i, p)) return 0;  // incomplete
+  if (!scan_csi_params(buf, i, p)) return 0; // incomplete
   const char fin = buf[i];
   ++i;
 
   const int p1 = p.v[0][0];
-  const int mods = p.v[1][0];   // xterm 1+bitmask: the 5 in ESC[1;5C
-  const int event = p.v[1][1];  // kitty event type: the 3 in ESC[1;1:3A
+  const int mods = p.v[1][0];  // xterm 1+bitmask: the 5 in ESC[1;5C
+  const int event = p.v[1][1]; // kitty event type: the 3 in ESC[1;1:3A
 
   // Letter finals shared with SS3 (arrows, Home/End, F1–F4). A modifier rides
   // in the second param: ESC[1;5C = Ctrl+Right, ESC[1;2A = Shift+Up. These
@@ -615,12 +632,17 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
     return i;
   }
   switch (fin) {
-    case 'Z': m_events.push_back(KeyEvent{Key::Tab, 0, false, false, true}); break;
+    case 'Z':
+      m_events.push_back(KeyEvent{Key::Tab, 0, false, false, true});
+      break;
     case '~':
       // Bracketed-paste brackets: ESC[200~ opens (content streams until the
       // ESC[201~ close, handled by consume_paste); a stray close with no open
       // paste is swallowed. Otherwise it's the numbered key family.
-      if (p1 == 200) { m_in_paste = true; break; }
+      if (p1 == 200) {
+        m_in_paste = true;
+        break;
+      }
       if (p1 == 201) break;
       {
         KeyEvent ev{map_tilde_key(p1)};
@@ -648,16 +670,15 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
         const auto text = static_cast<char32_t>(p.v[2][0]);
         const bool usable = text != 0 && is_scalar_value(text);
         ev.ch = resolved.ch != 0 ? resolved.ch
-                                 : usable ? text : static_cast<char32_t>(p1);
+                : usable         ? text
+                                 : static_cast<char32_t>(p1);
       }
       apply_key_mods(ev, mods);
       apply_key_action(ev, event);
       m_events.push_back(ev);
       break;
     }
-    default:
-      m_events.push_back(KeyEvent{Key::Unknown});
-      break;
+    default: m_events.push_back(KeyEvent{Key::Unknown}); break;
   }
   return i;
 }
@@ -666,22 +687,29 @@ auto Input::parse_ss3(std::string_view buf) -> std::size_t {
   // buf starts with ESC O (SS3). Application-cursor-keys mode and F1–F4:
   //   ESC O A/B/C/D -> arrows,  ESC O H/F -> Home/End,  ESC O P/Q/R/S -> F1–F4.
   // Some terminals encode modifiers as ESC O 1 ; <mod> <final> (like CSI).
-  if (buf.size() < 3) return 0;  // need the final byte
+  if (buf.size() < 3) return 0; // need the final byte
   std::size_t i = 2;
   int p1 = 0, p2 = 0;
   bool have_p2 = false;
   while (i < buf.size() &&
          (std::isdigit(static_cast<unsigned char>(buf[i])) || buf[i] == ';')) {
-    if (buf[i] == ';') { have_p2 = true; ++i; continue; }
-    if (!have_p2) { if (p1 < 100000) p1 = p1 * 10 + (buf[i] - '0'); }
-    else { if (p2 < 100000) p2 = p2 * 10 + (buf[i] - '0'); }
+    if (buf[i] == ';') {
+      have_p2 = true;
+      ++i;
+      continue;
+    }
+    if (!have_p2) {
+      if (p1 < 100000) p1 = p1 * 10 + (buf[i] - '0');
+    } else {
+      if (p2 < 100000) p2 = p2 * 10 + (buf[i] - '0');
+    }
     ++i;
   }
-  if (i >= buf.size()) return 0;  // params but no final byte yet
+  if (i >= buf.size()) return 0; // params but no final byte yet
   const char fin = buf[i];
   ++i;
   const Key k = map_final_key(fin);
-  if (k == Key::Unknown) return i;  // unrecognized SS3: consume, don't leak
+  if (k == Key::Unknown) return i; // unrecognized SS3: consume, don't leak
   KeyEvent ev{k};
   if (have_p2) apply_key_mods(ev, p2);
   m_events.push_back(ev);
@@ -696,28 +724,28 @@ auto Input::consume_paste(std::string_view buf) -> std::size_t {
   // than assumed to be it.
   static constexpr std::string_view kEnd = "\033[201~";
   const std::size_t esc = buf.find('\033');
-  if (esc == std::string_view::npos) {  // no ESC: all paste body
+  if (esc == std::string_view::npos) { // no ESC: all paste body
     m_paste_buf.append(buf.data(), buf.size());
     return buf.size();
   }
-  if (esc > 0) {  // body up to the ESC is literal; re-examine from the ESC
+  if (esc > 0) { // body up to the ESC is literal; re-examine from the ESC
     m_paste_buf.append(buf.data(), esc);
     return esc;
   }
   // buf starts with ESC — terminator, a split terminator, or a literal ESC.
   if (buf.size() < kEnd.size()) {
-    if (kEnd.substr(0, buf.size()) == buf) return 0;  // partial terminator: wait
-    m_paste_buf.push_back('\033');  // not a terminator prefix: literal ESC
+    if (kEnd.substr(0, buf.size()) == buf) return 0; // partial terminator: wait
+    m_paste_buf.push_back('\033'); // not a terminator prefix: literal ESC
     return 1;
   }
-  if (buf.substr(0, kEnd.size()) == kEnd) {  // close bracket
+  if (buf.substr(0, kEnd.size()) == kEnd) { // close bracket
     m_events.push_back(PasteEvent{std::move(m_paste_buf)});
     m_paste_buf.clear();
     m_in_paste = false;
     return kEnd.size();
   }
-  m_paste_buf.push_back('\033');  // ESC that isn't the terminator: literal
+  m_paste_buf.push_back('\033'); // ESC that isn't the terminator: literal
   return 1;
 }
 
-}  // namespace termforge
+} // namespace termforge

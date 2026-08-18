@@ -130,16 +130,16 @@ class ProtocolAuditSink final : public ByteSink {
     if (m_fd >= 0) {
       std::size_t offset = 0;
       while (offset < bytes.size()) {
-        const auto count = ::write(m_fd, bytes.data() + offset,
-                                   bytes.size() - offset);
+        const auto count =
+            ::write(m_fd, bytes.data() + offset, bytes.size() - offset);
         if (count > 0) {
           offset += static_cast<std::size_t>(count);
           continue;
         }
         if (count < 0 && errno == EINTR) continue;
         if (count == 0) {
-          return std::unexpected{ErrorEvent{
-              Severity::Warning, "game", "frame sink wrote zero bytes"}};
+          return std::unexpected{ErrorEvent{Severity::Warning, "game",
+                                            "frame sink wrote zero bytes"}};
         }
         return std::unexpected{ErrorEvent{
             Severity::Warning, "game",
@@ -225,15 +225,15 @@ auto aspect_fit(Rect available, Extent per_cell) -> Rect {
   const int cell_w = std::max(1, per_cell.w);
   const int cell_h = std::max(1, per_cell.h);
   int width = available.w;
-  int height = static_cast<int>(
-      (static_cast<std::int64_t>(width) * kHeight * cell_w) /
-      (static_cast<std::int64_t>(kWidth) * cell_h));
+  int height =
+      static_cast<int>((static_cast<std::int64_t>(width) * kHeight * cell_w) /
+                       (static_cast<std::int64_t>(kWidth) * cell_h));
   if (height <= 0) height = 1;
   if (height > available.h) {
     height = available.h;
-    width = static_cast<int>(
-        (static_cast<std::int64_t>(height) * kWidth * cell_h) /
-        (static_cast<std::int64_t>(kHeight) * cell_w));
+    width =
+        static_cast<int>((static_cast<std::int64_t>(height) * kWidth * cell_h) /
+                         (static_cast<std::int64_t>(kHeight) * cell_w));
     width = std::clamp(width, 1, available.w);
   }
   return Rect{available.x + (available.w - width) / 2,
@@ -366,10 +366,9 @@ class GameWorkload final : public App {
       out.submission_avg_ms /= n;
       out.frame_avg_ms /= n;
       out.bytes_per_frame = static_cast<double>(out.wire_bytes) / n;
-      out.elapsed_seconds =
-          std::chrono::duration<double>(m_last_observation -
-                                        m_first_observation)
-              .count();
+      out.elapsed_seconds = std::chrono::duration<double>(m_last_observation -
+                                                          m_first_observation)
+                                .count();
       if (out.elapsed_seconds > 0.0) {
         out.achieved_fps = n / out.elapsed_seconds;
         out.bytes_per_second =
@@ -411,13 +410,12 @@ class GameWorkload final : public App {
       // identify. Everything after it -- the rest of on_render, TermForge's
       // submission, and the blocking sink handoff -- remains the historical
       // "submission pipeline" field in the evidence JSON.
-      const double submission_ms =
-          std::max(0.0, milliseconds(render_and_submission) -
-                            m_pending_generation_ms);
+      const double submission_ms = std::max(
+          0.0, milliseconds(render_and_submission) - m_pending_generation_ms);
       m_samples.push_back(FrameSample{
           .bytes = observation.bytes.total(),
-          .image_bytes = observation.bytes.image_transmit +
-                         observation.bytes.image_edit,
+          .image_bytes =
+              observation.bytes.image_transmit + observation.bytes.image_edit,
           .tick_ms = tick_ms,
           .generation_ms = m_pending_generation_ms,
           .submission_ms = submission_ms,
@@ -442,11 +440,9 @@ class GameWorkload final : public App {
         const double dx = x - ship_x;
         const double dy = y - ship_y;
         if (dx * dx + dy * dy < 17.0 * 17.0) {
-          const auto glow = static_cast<std::uint8_t>(
-              std::clamp(255.0 - std::sqrt(dx * dx + dy * dy) * 8.0, 70.0,
-                         255.0));
-          pixel = Pixel{glow, static_cast<std::uint8_t>(glow * 3 / 4), 60,
-                        255};
+          const auto glow = static_cast<std::uint8_t>(std::clamp(
+              255.0 - std::sqrt(dx * dx + dy * dy) * 8.0, 70.0, 255.0));
+          pixel = Pixel{glow, static_cast<std::uint8_t>(glow * 3 / 4), 60, 255};
         }
         pixels[static_cast<std::size_t>(y) * kWidth + x] = pixel;
       }
@@ -483,8 +479,7 @@ auto print_human(const CaptureSummary& s) -> void {
       s.generation_avg_ms, s.generation_max_ms, s.submission_avg_ms,
       s.submission_max_ms, s.frame_avg_ms, s.frame_p95_ms, s.frame_max_ms,
       s.bytes_per_frame / 1024.0, s.bytes_per_second / (1024.0 * 1024.0),
-      static_cast<double>(s.wire_bytes) / (1024.0 * 1024.0),
-      s.unchanged_frames,
+      static_cast<double>(s.wire_bytes) / (1024.0 * 1024.0), s.unchanged_frames,
       static_cast<unsigned long long>(s.unchanged_image_bytes),
       s.unique_image_ids, s.peak_live_image_ids, s.data_transmits,
       s.root_updates, s.placements, s.data_deletes, s.placement_deletes,
@@ -544,7 +539,7 @@ auto usage() -> void {
       "Benchmark mode is headless; capture mode requires real Kitty graphics.");
 }
 
-}  // namespace
+} // namespace
 
 auto main(int argc, char** argv) -> int {
   std::optional<int> benchmark_frames;

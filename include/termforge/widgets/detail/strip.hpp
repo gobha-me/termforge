@@ -5,8 +5,8 @@
 //
 // MenuBar and TabBar both paint a horizontal strip of titles and both have to
 // answer "which title is at column x?". Before this header each carried its own
-// copy of the same four decisions -- span width is display_width(title) + 2, one
-// gap column between spans belonging to no title, the run is clipped at a
+// copy of the same four decisions -- span width is display_width(title) + 2,
+// one gap column between spans belonging to no title, the run is clipped at a
 // content edge, and a hit is [span.x, span.x + span.w) -- and the copies had
 // already begun to diverge: MenuBar spelled the +2 inline while TabBar had a
 // span_width(); MenuBar clipped at PAINT time (twice, with two different
@@ -46,14 +46,14 @@
 // passed. They stay in tab_bar.cpp. If a second strip ever grows indicators,
 // hoist them THEN, with two callers to keep the rule honest.
 //
-// Nor the PAINT. Both widgets fill the span, mark the active one in its left pad
-// column, and write the title truncated to span.w - 1 -- but MenuBar's fill is a
-// per-column write_text loop while TabBar's is one fill_rect. That used to be
-// load-bearing at the left edge, where fill_rect clipped and write_text clamped;
-// #152 settled it, and both clip now. What remains is the cell each leaves:
-// fill_rect writes a blank() Cell and resets image_id, write_text(" ") does
-// neither. Unifying the paint is therefore possible and still deliberately not
-// done here -- it needs its own zero-delta proof over that difference.
+// Nor the PAINT. Both widgets fill the span, mark the active one in its left
+// pad column, and write the title truncated to span.w - 1 -- but MenuBar's fill
+// is a per-column write_text loop while TabBar's is one fill_rect. That used to
+// be load-bearing at the left edge, where fill_rect clipped and write_text
+// clamped; #152 settled it, and both clip now. What remains is the cell each
+// leaves: fill_rect writes a blank() Cell and resets image_id, write_text(" ")
+// does neither. Unifying the paint is therefore possible and still deliberately
+// not done here -- it needs its own zero-delta proof over that difference.
 //
 // Pure: no widget state, no Screen, no dirty flags. Callers paint and
 // mark_dirty as they already do.
@@ -82,8 +82,8 @@ namespace termforge::detail {
 struct StripSpan {
   int index;
   int x;
-  int w;        // CLIPPED: what is on screen, what a click is tested against
-  int natural;  // what it wanted; w < natural iff this span is truncated
+  int w;       // CLIPPED: what is on screen, what a click is tested against
+  int natural; // what it wanted; w < natural iff this span is truncated
 };
 
 // What to do with a title that does not fit in the columns that remain.
@@ -118,7 +118,8 @@ enum class StripFit {
 //
 // constexpr and noexcept because display_width() is, so a caller may use it in
 // a static_assert -- test/36strip does.
-[[nodiscard]] constexpr auto span_width(std::string_view title) noexcept -> int {
+[[nodiscard]] constexpr auto span_width(std::string_view title) noexcept
+    -> int {
   return display_width(title) + 2;
 }
 
@@ -162,7 +163,7 @@ template <typename F>
     // The title at `first` is emitted clipped; a later one must fit whole.
     if (fit == StripFit::Whole && i > first && natural > avail) break;
     spans.push_back({i, x, std::clamp(avail, 0, natural), natural});
-    x += natural + 1;  // one gap column, belonging to no title
+    x += natural + 1; // one gap column, belonging to no title
   }
   return spans;
 }
@@ -184,4 +185,4 @@ template <typename F>
   return -1;
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

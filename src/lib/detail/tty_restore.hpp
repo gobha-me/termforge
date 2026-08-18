@@ -17,12 +17,12 @@
 // g_active single-app assumption in app.cpp. Header-only so the leave sequence
 // and the arming logic stay unit-testable without a real tty (test/16signals).
 //
-// Since #179 a Terminal arms this only when it owns a real tty: the termios half
-// when it captured one, the screen half when out_fd is one. A session Terminal
-// over an injected socket therefore no longer competes for the slot, and no
-// longer leaves a session fd *number* here for the atexit hook to write into
-// after that fd has been recycled. That narrows who arms — it does not make the
-// single slot safe for two who do. Concurrent sessions are still #144.
+// Since #179 a Terminal arms this only when it owns a real tty: the termios
+// half when it captured one, the screen half when out_fd is one. A session
+// Terminal over an injected socket therefore no longer competes for the slot,
+// and no longer leaves a session fd *number* here for the atexit hook to write
+// into after that fd has been recycled. That narrows who arms — it does not
+// make the single slot safe for two who do. Concurrent sessions are still #144.
 
 #include <array>
 #include <cerrno>
@@ -47,17 +47,18 @@ namespace termforge::detail {
 // the signal path (which cannot build strings) and Terminal::leave_screen()
 // stay byte-for-byte in lockstep.
 inline constexpr std::string_view kLeaveSequence =
-    "\033[<u\033[?1003l\033[?1002l\033[?1000l\033[?1006l\033[?2004l\033[0m\033[?25h\033[?1049l";
+    "\033[<u\033[?1003l\033[?1002l\033[?1000l\033[?1006l\033[?2004l\033[0m\033["
+    "?25h\033[?1049l";
 
 // Async-signal-safe restore context. Written by normal code before any signal
 // can fire and read from the handler: only volatile sig_atomic_t flags and
 // trivially-copyable members, no allocation, nothing non-AS-safe.
 struct RestoreState {
-  volatile sig_atomic_t armed{0};      // termios restore valid (raw mode on)
-  volatile sig_atomic_t in_screen{0};  // alt-screen escapes still need undoing
-  int tty_fd{-1};                      // fd termios was applied to
-  int out_fd{-1};                      // tty fd for escape output (-1 = none)
-  termios saved{};                     // cooked-mode termios to restore
+  volatile sig_atomic_t armed{0};     // termios restore valid (raw mode on)
+  volatile sig_atomic_t in_screen{0}; // alt-screen escapes still need undoing
+  int tty_fd{-1};                     // fd termios was applied to
+  int out_fd{-1};                     // tty fd for escape output (-1 = none)
+  termios saved{};                    // cooked-mode termios to restore
 };
 
 // One process-wide instance. A function-local static gives a single definition
@@ -80,9 +81,9 @@ inline void restore_terminal() {
         p += n;
         left -= static_cast<std::size_t>(n);
       } else if (n < 0 && errno == EINTR) {
-        continue;  // interrupted before any byte landed; retry
+        continue; // interrupted before any byte landed; retry
       } else {
-        break;  // EAGAIN / closed fd: nothing actionable on the signal path
+        break; // EAGAIN / closed fd: nothing actionable on the signal path
       }
     }
   }
@@ -103,8 +104,7 @@ inline void on_fatal_signal(int sig) {
 // plus hard crashes. (SIGINT/SIGQUIT are normally suppressed by raw mode's
 // ISIG clear, but an explicit `kill -INT` still delivers them.)
 inline constexpr int kFatalSignals[] = {
-    SIGHUP, SIGINT,  SIGQUIT, SIGTERM, SIGILL,
-    SIGABRT, SIGFPE, SIGSEGV, SIGBUS,
+    SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGILL, SIGABRT, SIGFPE, SIGSEGV, SIGBUS,
 };
 
 inline constexpr std::size_t kFatalSignalCount =
@@ -139,7 +139,7 @@ struct FatalHandlerState {
     return true;
   }
 
-  struct sigaction ours {};
+  struct sigaction ours{};
   ours.sa_handler = on_fatal_signal;
   ::sigemptyset(&ours.sa_mask);
   ours.sa_flags = 0;
@@ -173,7 +173,7 @@ inline void uninstall_fatal_handlers() {
   if (--state.leases != 0) return;
 
   for (std::size_t i = 0; i < kFatalSignalCount; ++i) {
-    struct sigaction current {};
+    struct sigaction current{};
     if (::sigaction(kFatalSignals[i], nullptr, &current) != 0) continue;
     if ((current.sa_flags & SA_SIGINFO) == 0 &&
         current.sa_handler == on_fatal_signal) {
@@ -182,4 +182,4 @@ inline void uninstall_fatal_handlers() {
   }
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

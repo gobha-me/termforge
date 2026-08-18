@@ -77,8 +77,7 @@ constexpr Rgb kBg{0, 0, 0};
 constexpr std::string_view kSyncBegin{"\033[?2026h"};
 constexpr std::string_view kSyncEnd{"\033[?2026l"};
 constexpr std::size_t kSyncPendingBudget = 1024U * 1024U;
-constexpr std::size_t kMaxSyncFrameBytes =
-    kSyncPendingBudget - kSyncEnd.size();
+constexpr std::size_t kMaxSyncFrameBytes = kSyncPendingBudget - kSyncEnd.size();
 
 // A sink that records every call. The COUNT is the observable:
 // "one frame is one write" is the property under test, and the std::string*
@@ -130,8 +129,7 @@ class SyncProbeDriver final : public TerminalDriver {
     return termforge::Extent{cells.w, cells.h};
   }
   auto flush() -> void override { (void)emit_frame({}); }
-  [[nodiscard]] auto capabilities() const noexcept
-      -> Capabilities override {
+  [[nodiscard]] auto capabilities() const noexcept -> Capabilities override {
     return {};
   }
   auto emit(std::string_view bytes) -> bool { return emit_frame(bytes); }
@@ -145,13 +143,12 @@ auto capture_stdout(const std::function<void()>& body) -> std::string {
 
   std::FILE* tmp = std::tmpfile();
   const int saved = tmp != nullptr ? ::dup(STDOUT_FILENO) : -1;
-  const int redirected =
-      saved >= 0 ? ::dup2(::fileno(tmp), STDOUT_FILENO) : -1;
+  const int redirected = saved >= 0 ? ::dup2(::fileno(tmp), STDOUT_FILENO) : -1;
 
   if (redirected >= 0) body();
 
   if (saved >= 0) {
-    ::dup2(saved, STDOUT_FILENO);  // no fflush of our own -- see 41sink
+    ::dup2(saved, STDOUT_FILENO); // no fflush of our own -- see 41sink
     ::close(saved);
   }
 
@@ -163,12 +160,13 @@ auto capture_stdout(const std::function<void()>& body) -> std::string {
   std::rewind(tmp);
   char buf[256];
   std::size_t n = 0;
-  while ((n = std::fread(buf, 1, sizeof buf, tmp)) > 0) out.append(buf, n);
+  while ((n = std::fread(buf, 1, sizeof buf, tmp)) > 0)
+    out.append(buf, n);
   std::fclose(tmp);
   return out;
 }
 
-}  // namespace
+} // namespace
 
 // ________________________________________________________________________
 // 1. one frame, one write -- for each driver, with an image in the frame.
@@ -189,9 +187,10 @@ TEST_CASE("one write: kitty with an image transmits in ONE sink call",
   // a text run, then a kitty graphics transmit that cannot be cell traffic
   // (the payload goes as APC chunks, out of band).
   d.draw_text(0, 0, "cells", kFg, kBg, Attr::None);
-  REQUIRE(d.draw_image(Rect{0, 1, 4, 2}, tfsupport::checker(8, 8,
-                                                            termforge::Pixel{10, 20, 30, 255},
-                                                            termforge::Pixel{200, 150, 100, 255})));
+  REQUIRE(
+      d.draw_image(Rect{0, 1, 4, 2},
+                   tfsupport::checker(8, 8, termforge::Pixel{10, 20, 30, 255},
+                                      termforge::Pixel{200, 150, 100, 255})));
   d.flush();
 
   // One frame, and the meter says the sink saw exactly the frame. Any split
@@ -219,8 +218,9 @@ TEST_CASE("one write: the text tiers stay a single sink call",
     CountingSink sink;
     d->set_output(&sink);
     d->draw_text(0, 0, "cells", kFg, kBg, Attr::None);
-    REQUIRE(d->draw_image(Rect{0, 1, 4, 2}, tfsupport::solid(2, 2,
-                                                             termforge::Pixel{255, 0, 0, 255})));
+    REQUIRE(d->draw_image(
+        Rect{0, 1, 4, 2},
+        tfsupport::solid(2, 2, termforge::Pixel{255, 0, 0, 255})));
     d->flush();
     CHECK(sink.calls() == 1);
   }
@@ -240,11 +240,12 @@ TEST_CASE("one write: a second flush splits the frame and the count says so",
   CountingSink sink;
   d.set_output(&sink);
   d.draw_text(0, 0, "cells", kFg, kBg, Attr::None);
-  d.flush();            // <-- the mutation: a second, mid-frame write
-  REQUIRE(d.draw_image(Rect{0, 1, 4, 2}, tfsupport::solid(2, 2,
-                                                          termforge::Pixel{255, 0, 0, 255})));
+  d.flush(); // <-- the mutation: a second, mid-frame write
+  REQUIRE(
+      d.draw_image(Rect{0, 1, 4, 2},
+                   tfsupport::solid(2, 2, termforge::Pixel{255, 0, 0, 255})));
   d.flush();
-  CHECK(sink.calls() == 2);  // contract broken; test documents it, not hides it
+  CHECK(sink.calls() == 2); // contract broken; test documents it, not hides it
 }
 
 // ________________________________________________________________________
@@ -263,13 +264,14 @@ TEST_CASE("one write: shutdown() routes kitty's d=A through the sink",
 
   // Transmit one image so the driver has something to free. The transmit
   // goes through the sink as the frame's single write.
-  REQUIRE(d.draw_image(Rect{0, 0, 4, 2}, tfsupport::solid(4, 2,
-                                                          termforge::Pixel{255, 0, 0, 255})));
+  REQUIRE(
+      d.draw_image(Rect{0, 0, 4, 2},
+                   tfsupport::solid(4, 2, termforge::Pixel{255, 0, 0, 255})));
   d.flush();
   CHECK(sink.calls() == 1);
 
   d.shutdown();
-  CHECK(sink.calls() == 2);  // the frame, then the teardown
+  CHECK(sink.calls() == 2); // the frame, then the teardown
 
   // The d=A reached the session's sink and was metered. Scanning for the
   // sequence rather than a byte count: the transmit's size varies with the
@@ -284,7 +286,7 @@ TEST_CASE("one write: shutdown() routes kitty's d=A through the sink",
   // frame's transmit and the teardown in one run through this sink.
   CHECK(d.total_bytes().total() == wire.size());
   CHECK(d.last_frame_bytes().image_edit == kDeleteAll.size());
-  CHECK_FALSE(d.has_output());  // shutdown detached the borrowed sink
+  CHECK_FALSE(d.has_output()); // shutdown detached the borrowed sink
 }
 
 TEST_CASE("one write: shutdown() leaves nothing for ~KittyDriver to write",
@@ -292,23 +294,26 @@ TEST_CASE("one write: shutdown() leaves nothing for ~KittyDriver to write",
   CountingSink sink;
   auto d = std::make_unique<KittyDriver>();
   d->set_output(&sink);
-  REQUIRE(d->draw_image(Rect{0, 0, 2, 2}, tfsupport::solid(
-                                                  2, 2, termforge::Pixel{255, 0, 0, 255})));
+  REQUIRE(
+      d->draw_image(Rect{0, 0, 2, 2},
+                    tfsupport::solid(2, 2, termforge::Pixel{255, 0, 0, 255})));
   d->flush();
   d->shutdown();
   const int after_shutdown = sink.calls();
   const std::string stdout_leak = capture_stdout([&d] { d.reset(); });
   CHECK(stdout_leak.empty());
-  CHECK(after_shutdown == 2);  // frame, shutdown, and nothing from destruction
+  CHECK(after_shutdown == 2); // frame, shutdown, and nothing from destruction
 }
 
-TEST_CASE("one write: unmanaged destruction is silent instead of bypassing the sink",
-          "[onewrite][shutdown][kitty]") {
+TEST_CASE(
+    "one write: unmanaged destruction is silent instead of bypassing the sink",
+    "[onewrite][shutdown][kitty]") {
   CountingSink sink;
   auto d = std::make_unique<KittyDriver>();
   d->set_output(&sink);
-  REQUIRE(d->draw_image(Rect{0, 0, 2, 2}, tfsupport::solid(
-                                                  2, 2, termforge::Pixel{255, 0, 0, 255})));
+  REQUIRE(
+      d->draw_image(Rect{0, 0, 2, 2},
+                    tfsupport::solid(2, 2, termforge::Pixel{255, 0, 0, 255})));
   d->flush();
   d->clear_output();
   const std::string stdout_leak = capture_stdout([&d] { d.reset(); });
@@ -415,8 +420,9 @@ TEST_CASE("one write: 2026 wraps the frame only when the flag is set",
   KittyDriver without;
   without.set_output(&plain);
   without.draw_text(0, 0, "text", kFg, kBg, Attr::None);
-  REQUIRE(without.draw_image(Rect{0, 1, 4, 2}, tfsupport::solid(4, 2,
-                                                                termforge::Pixel{255, 0, 0, 255})));
+  REQUIRE(without.draw_image(
+      Rect{0, 1, 4, 2},
+      tfsupport::solid(4, 2, termforge::Pixel{255, 0, 0, 255})));
   without.flush();
   CHECK(plain.calls() == 1);
   CHECK(plain.all().find("\033[?2026") == std::string::npos);
@@ -425,8 +431,9 @@ TEST_CASE("one write: 2026 wraps the frame only when the flag is set",
   with.set_sync_updates(true);
   with.set_output(&synced);
   with.draw_text(0, 0, "text", kFg, kBg, Attr::None);
-  REQUIRE(with.draw_image(Rect{0, 1, 4, 2}, tfsupport::solid(4, 2,
-                                                            termforge::Pixel{255, 0, 0, 255})));
+  REQUIRE(with.draw_image(
+      Rect{0, 1, 4, 2},
+      tfsupport::solid(4, 2, termforge::Pixel{255, 0, 0, 255})));
   with.flush();
   CHECK(synced.calls() == 1);
   const std::string_view kBegin{"\033[?2026h"};
@@ -439,7 +446,8 @@ TEST_CASE("one write: 2026 wraps the frame only when the flag is set",
   CHECK(at_begin == 0);
   CHECK(at_end != std::string::npos);
   CHECK(at_end > at_begin);
-  CHECK(synced.all().size() - plain.all().size() == kBegin.size() + kEnd.size());
+  CHECK(synced.all().size() - plain.all().size() ==
+        kBegin.size() + kEnd.size());
 }
 
 TEST_CASE("one write: 2026 wraps the frame on every tier through the base",
@@ -483,7 +491,7 @@ TEST_CASE("one write: without 2026 the bytes are byte-identical to today",
 
   FallbackDriver off;
   CountingSink off_sink;
-  off.set_sync_updates(false);  // set and off: the default
+  off.set_sync_updates(false); // set and off: the default
   off.set_output(&off_sink);
   off.draw_text(0, 0, "same", kFg, kBg, Attr::None);
   off.flush();
@@ -530,7 +538,7 @@ class SyncApp final : public termforge::App {
   auto read_available(char*, int) -> int override { return 0; }
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("one write: the probed 2026 capability wraps a KittyDriver frame",
           "[onewrite][sync][kitty]") {

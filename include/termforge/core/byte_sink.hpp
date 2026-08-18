@@ -83,4 +83,4 @@ class StringSink final : public ByteSink {
   std::string* m_target{nullptr};
 };
 
-}  // namespace termforge
+} // namespace termforge

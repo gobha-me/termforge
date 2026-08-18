@@ -40,8 +40,8 @@
 
 #include "termforge/widgets/detail/options_list.hpp"
 #include "termforge/widgets/glyphs.hpp"
-#include "termforge/widgets/widget.hpp"
 #include "termforge/widgets/theme.hpp"
+#include "termforge/widgets/widget.hpp"
 
 namespace termforge {
 
@@ -118,4 +118,4 @@ class RadioGroup final : public Widget {
   std::function<void(int)> m_on_change;
 };
 
-}  // namespace termforge
+} // namespace termforge

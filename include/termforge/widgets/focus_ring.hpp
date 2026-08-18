@@ -1,6 +1,7 @@
 #pragma once
 
-// TermForge — FocusRing: owns the Tab-order and is the keyboard-focus gatekeeper.
+// TermForge — FocusRing: owns the Tab-order and is the keyboard-focus
+// gatekeeper.
 //
 // A GUI needs exactly one owner of "who has focus"; without it every app
 // hand-rolls Tab-cycling and widgets disagree about whether to self-guard on
@@ -81,4 +82,4 @@ class FocusRing {
   int m_focused{-1};
 };
 
-}  // namespace termforge
+} // namespace termforge

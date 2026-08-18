@@ -45,20 +45,20 @@
 using termforge::Align;
 using termforge::BorderStyle;
 using termforge::ListWidget;
+using termforge::mark_glyphs;
 using termforge::Screen;
 using termforge::TableWidget;
 using termforge::detail::display_width;
 using termforge::detail::fitted_glyph;
 using termforge::detail::gutter_cols;
-using termforge::mark_glyphs;
 
 namespace {
 
 // Byte literals spelled the way test/35glyphfit spells them: escapes, not
 // source-file UTF-8, so the bytes are unambiguous.
-constexpr std::string_view kShi = "\xE4\xB8\x96";    // 世 U+4E16 two columns
-constexpr std::string_view kAcute = "\xCC\x81";      // ◌́ U+0301 combining
-constexpr std::string_view kZwsp = "\xE2\x80\x8B";   //     U+200B zero-width
+constexpr std::string_view kShi = "\xE4\xB8\x96";  // 世 U+4E16 two columns
+constexpr std::string_view kAcute = "\xCC\x81";    // ◌́ U+0301 combining
+constexpr std::string_view kZwsp = "\xE2\x80\x8B"; //     U+200B zero-width
 
 // The pre-#158 clamp expressions, re-derived by hand from v0.6.13's
 // list_widget.hpp / table_widget.hpp. This oracle does NOT call the helper --
@@ -77,7 +77,7 @@ constexpr auto expected_table(int w, int rw) noexcept -> int {
   return old_clamp(w, rw, 0);
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("gutter_cols: the extraction is zero-delta against BOTH "
           "pre-#158 clamps, swept over the drift grid",
@@ -87,12 +87,12 @@ TEST_CASE("gutter_cols: the extraction is zero-delta against BOTH "
   // the setter sanitizes, so the m_marker branch's raw == clean; the
   // fallback branch is an in-tree glyph, pinned clean by test/35glyphfit).
   const auto markers = {
-      std::string_view{">"},      // one column, the default selector families
-      std::string_view{".."},     // multi-column marker
-      kShi,                       // width-2: separator math on a wide glyph
-      kAcute,                     // width-0: the dented-every-row guard
-      kZwsp,                      // width-0 via a different table entry
-      std::string_view{""},       // empty: treated as width 0
+      std::string_view{">"},  // one column, the default selector families
+      std::string_view{".."}, // multi-column marker
+      kShi,                   // width-2: separator math on a wide glyph
+      kAcute,                 // width-0: the dented-every-row guard
+      kZwsp,                  // width-0 via a different table entry
+      std::string_view{""},   // empty: treated as width 0
   };
   // Rect widths chosen to walk every clause boundary for every marker:
   // negative (falls to the configured arm), 0 (before geometry), and the
@@ -115,7 +115,7 @@ TEST_CASE("gutter_cols: the reserve argument is the drift made visible",
   // reserve=1 drops the gutter and reserve=0 keeps it. Before the extraction
   // this difference was uncommented in TableWidget and a reader could not
   // tell rule from omission; now it is spelled in digits at both call sites.
-  const int w = display_width(">");  // 1
+  const int w = display_width(">"); // 1
   REQUIRE(gutter_cols(">", w + 2, 0) == w + 1);
   REQUIRE(gutter_cols(">", w + 2, 1) == 0);
   // And one row down, where the clamps agree again -- pinning the window is
@@ -149,7 +149,7 @@ TEST_CASE("gutter_cols: before geometry the configured width wins",
   // narrow-rect clamp must not fire on a rect that does not exist.
   REQUIRE(gutter_cols(">", 0, 1) == 2);
   REQUIRE(gutter_cols(">", -4, 0) == 2);
-  REQUIRE(gutter_cols(kShi, 0, 0) == 3);  // wide glyph + separator
+  REQUIRE(gutter_cols(kShi, 0, 0) == 3); // wide glyph + separator
 }
 
 TEST_CASE("ListWidget/TableWidget: the mapped gutter IS the helper's",
@@ -160,12 +160,12 @@ TEST_CASE("ListWidget/TableWidget: the mapped gutter IS the helper's",
   // and the OTHER widget's reserve would give a different one -- so a copy
   // that "fixed" TableWidget's missing -1 (or dropped ListWidget's) fails
   // here even though it would pass a shared-clamp oracle.
-  const int n = display_width(">");       // 1
+  const int n = display_width(">"); // 1
   ListWidget list;
-  list.set_geometry({0, 0, n + 2, 4});    // rw == n + 2: ListWidget's -1 drops
+  list.set_geometry({0, 0, n + 2, 4}); // rw == n + 2: ListWidget's -1 drops
   REQUIRE(list.gutter_cols() == 0);
   TableWidget table;
-  table.set_geometry({0, 0, n + 2, 4});   // TableWidget keeps it
+  table.set_geometry({0, 0, n + 2, 4}); // TableWidget keeps it
   table.set_columns({{"H", Align::Left}});
   REQUIRE(table.gutter_cols() == n + 1);
 
@@ -232,7 +232,7 @@ TEST_CASE("ListWidget/TableWidget: the marker() fallback returns the style's "
     ListWidget list;
     list.set_geometry({0, 0, 40, 4});
     list.set_style(style);
-    list.set_marker("");  // the fallback branch
+    list.set_marker(""); // the fallback branch
     REQUIRE(list.marker() == selector);
     REQUIRE(list.gutter_cols() == display_width(selector) + 1);
 

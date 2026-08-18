@@ -72,7 +72,7 @@ auto ProgressBar::draw(Screen& screen) -> void {
   // tall bar (immediate-mode contract, see widget.hpp).
   screen.fill_rect(r.x, r.y, r.w, r.h, m_empty_fg, m_bg);
 
-  const int y = r.y + r.h / 2;  // draw on middle row
+  const int y = r.y + r.h / 2; // draw on middle row
 
   if (m_indeterminate) {
     // Pulse: a moving window of fill that bounces left-right. The travelled
@@ -125,4 +125,4 @@ auto ProgressBar::draw(Screen& screen) -> void {
   clear_dirty();
 }
 
-}  // namespace termforge
+} // namespace termforge

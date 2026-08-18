@@ -23,6 +23,7 @@ using namespace tfsupport;
 #include <variant>
 #include <vector>
 
+#include "support/events.hpp"
 #include "termforge/core/app.hpp"
 #include "termforge/core/screen.hpp"
 #include "termforge/core/types.hpp"
@@ -32,7 +33,6 @@ using namespace tfsupport;
 #include "termforge/widgets/dialogs.hpp"
 #include "termforge/widgets/select.hpp"
 #include "termforge/widgets/widget.hpp"
-#include "support/events.hpp"
 
 using termforge::App;
 using namespace tfsupport;
@@ -69,7 +69,7 @@ class OverlayProbe final : public App {
   auto on_render(Screen&) -> void override {}
   auto on_event(const Event& ev) -> void override {
     seen.push_back(ev);
-    App::on_event(ev);  // keep the default ESC-quits behavior in the picture
+    App::on_event(ev); // keep the default ESC-quits behavior in the picture
   }
   auto draw_overlays(Screen& screen) -> void { render_overlays(screen); }
   auto restore(Screen& screen) -> void { restore_backdrop(screen); }
@@ -120,13 +120,12 @@ class PopWidget final : public Widget {
   App* m_app;
 };
 
-
-
-}  // namespace
+} // namespace
 
 // ── overlay stack: failure modes first ──────────────────────────────────────
 
-TEST_CASE("App: popping an empty overlay stack is inert", "[overlay][failure]") {
+TEST_CASE("App: popping an empty overlay stack is inert",
+          "[overlay][failure]") {
   OverlayProbe app;
   app.pop_overlay();
   app.pop_overlay();
@@ -135,7 +134,7 @@ TEST_CASE("App: popping an empty overlay stack is inert", "[overlay][failure]") 
   REQUIRE(app.top_overlay() == nullptr);
   REQUIRE_FALSE(app.modal());
 
-  app.dispatch_event(key(Key::Enter));  // still routes normally
+  app.dispatch_event(key(Key::Enter)); // still routes normally
   REQUIRE(app.seen.size() == 1);
 }
 
@@ -153,7 +152,7 @@ TEST_CASE("App: Escape cannot quit the app while an overlay is up",
 
   app.pop_overlay();
   app.dispatch_event(key(Key::Escape));
-  REQUIRE(app.seen.size() == 1);  // and once popped, it reaches the app again
+  REQUIRE(app.seen.size() == 1); // and once popped, it reaches the app again
 }
 
 TEST_CASE("App: a mouse event outside the overlay is swallowed",
@@ -165,10 +164,10 @@ TEST_CASE("App: a mouse event outside the overlay is swallowed",
   app.push_overlay(ov);
 
   app.dispatch_event(press(2, 2));
-  REQUIRE(ov.mice == 0);     // not inside the overlay
-  REQUIRE(under.mice == 0);  // and it must not fall through either
+  REQUIRE(ov.mice == 0);    // not inside the overlay
+  REQUIRE(under.mice == 0); // and it must not fall through either
   REQUIRE(app.seen.empty());
-  REQUIRE(app.overlay_count() == 1);  // no dismissal without the opt-in
+  REQUIRE(app.overlay_count() == 1); // no dismissal without the opt-in
 }
 
 TEST_CASE("App: only a press dismisses on click-outside, never motion or wheel",
@@ -179,7 +178,7 @@ TEST_CASE("App: only a press dismisses on click-outside, never motion or wheel",
   app.push_overlay(ov, OverlayOptions{Backdrop::None, true});
 
   app.dispatch_event(wheel(2, 2));
-  REQUIRE(app.overlay_count() == 1);  // a scroll under a dialog is not a click
+  REQUIRE(app.overlay_count() == 1); // a scroll under a dialog is not a click
 
   MouseEvent release{.x = 2, .y = 2, .button = 0, .pressed = false};
   app.dispatch_event(Event{release});
@@ -195,11 +194,11 @@ TEST_CASE("App: an overlay may pop itself from inside its own handler",
   PopWidget popper{app};
   app.push_overlay(popper);
 
-  app.dispatch_event(key(Key::Enter));  // dispatch must not touch the stack
-  REQUIRE(app.overlay_count() == 0);    // after handing the event over
+  app.dispatch_event(key(Key::Enter)); // dispatch must not touch the stack
+  REQUIRE(app.overlay_count() == 0);   // after handing the event over
   REQUIRE(app.top_overlay() == nullptr);
 
-  app.dispatch_event(key(Key::Enter));  // and the app is live again
+  app.dispatch_event(key(Key::Enter)); // and the app is live again
   REQUIRE(app.seen.size() == 1);
 }
 
@@ -229,7 +228,7 @@ TEST_CASE("App: the same widget pushed twice needs two pops",
   REQUIRE(app.overlay_count() == 2);
 
   app.pop_overlay();
-  REQUIRE(app.top_overlay() == &ov);  // still modal — the stack is a stack
+  REQUIRE(app.top_overlay() == &ov); // still modal — the stack is a stack
   app.pop_overlay();
   REQUIRE_FALSE(app.modal());
 }
@@ -237,7 +236,7 @@ TEST_CASE("App: the same widget pushed twice needs two pops",
 TEST_CASE("App: clear_overlays drops the whole stack", "[overlay][failure]") {
   OverlayProbe app;
   CountWidget a, b, c;
-  app.clear_overlays();  // on an empty stack: inert
+  app.clear_overlays(); // on an empty stack: inert
   app.push_overlay(a);
   app.push_overlay(b);
   app.push_overlay(c);
@@ -324,8 +323,8 @@ TEST_CASE("App: overlays draw after the app's widgets", "[overlay][draw]") {
   app.draw_overlays(screen);
 
   REQUIRE(ov.draws == 1);
-  REQUIRE(screen.at(5, 2).bg == Rgb{0x11, 0x22, 0x33});  // overlay's fill
-  REQUIRE(screen.at(0, 0).bg == Rgb{0x22, 0x22, 0x22});  // app's, untouched
+  REQUIRE(screen.at(5, 2).bg == Rgb{0x11, 0x22, 0x33}); // overlay's fill
+  REQUIRE(screen.at(0, 0).bg == Rgb{0x22, 0x22, 0x22}); // app's, untouched
 }
 
 TEST_CASE("App: Backdrop::Fill blanks the whole screen", "[overlay][draw]") {
@@ -341,7 +340,7 @@ TEST_CASE("App: Backdrop::Fill blanks the whole screen", "[overlay][draw]") {
 
   REQUIRE(screen.at(0, 0).blank());
   REQUIRE(screen.at(0, 0).bg == Cell{}.bg);
-  REQUIRE(screen.at(5, 2).bg == Rgb{0x11, 0x22, 0x33});  // overlay still wins
+  REQUIRE(screen.at(5, 2).bg == Rgb{0x11, 0x22, 0x33}); // overlay still wins
 }
 
 TEST_CASE("App: Backdrop::Dim halves every channel", "[overlay][draw]") {
@@ -356,7 +355,7 @@ TEST_CASE("App: Backdrop::Dim halves every channel", "[overlay][draw]") {
 
   REQUIRE(screen.at(0, 0).fg == Rgb{0x40, 0x20, 0x10});
   REQUIRE(screen.at(0, 0).bg == Rgb{0x7F, 0x08, 0x00});
-  REQUIRE(screen.at(5, 2).bg == Rgb{0x11, 0x22, 0x33});  // the panel is not dim
+  REQUIRE(screen.at(5, 2).bg == Rgb{0x11, 0x22, 0x33}); // the panel is not dim
 }
 
 TEST_CASE("App: Backdrop::None leaves the frame beneath byte-identical",
@@ -398,7 +397,7 @@ TEST_CASE("App: an overlay larger than the screen writes nothing out of bounds",
   CountWidget ov;
   ov.set_geometry(Rect{-5, -5, 40, 40});
   app.push_overlay(ov, OverlayOptions{Backdrop::Dim, false});
-  app.draw_overlays(screen);  // Screen clamps; must not crash under ASan
+  app.draw_overlays(screen); // Screen clamps; must not crash under ASan
 
   REQUIRE(screen.at(0, 0).bg == Rgb{0x11, 0x22, 0x33});
   REQUIRE(screen.at(3, 2).bg == Rgb{0x11, 0x22, 0x33});
@@ -414,15 +413,15 @@ class BareDialog final : public Dialog {
   using Dialog::Dialog;
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("Dialog: degenerate screens produce an in-bounds rect",
           "[dialog][failure]") {
   BareDialog d{"T"};
   d.set_text("some body text");
 
-  for (auto [c, r] : {std::pair{3, 2}, std::pair{1, 1}, std::pair{0, 0},
-                      std::pair{-5, -5}}) {
+  for (auto [c, r] :
+       {std::pair{3, 2}, std::pair{1, 1}, std::pair{0, 0}, std::pair{-5, -5}}) {
     d.layout(c, r);
     const Rect g = d.rect();
     REQUIRE(g.x >= 0);
@@ -432,7 +431,7 @@ TEST_CASE("Dialog: degenerate screens produce an in-bounds rect",
   }
 
   Screen tiny{3, 2};
-  d.draw(tiny);  // must not crash or write OOB
+  d.draw(tiny); // must not crash or write OOB
   REQUIRE(tiny.cols() == 3);
 }
 
@@ -456,9 +455,9 @@ TEST_CASE("Dialog: a wide-glyph title is measured in columns, not bytes",
           "[dialog][width]") {
   // Regression against #10: sizing by .size() would make this dialog three
   // times too wide.
-  BareDialog d{"日本語"};  // 3 glyphs, 6 columns, 9 bytes
+  BareDialog d{"日本語"}; // 3 glyphs, 6 columns, 9 bytes
   d.layout(80, 24);
-  REQUIRE(d.rect().w == 6 + 4 + 2);  // title + title chrome + border
+  REQUIRE(d.rect().w == 6 + 4 + 2); // title + title chrome + border
 }
 
 TEST_CASE("Dialog: set_border_style reaches the frame it owns",
@@ -475,11 +474,12 @@ TEST_CASE("Dialog: set_border_style reaches the frame it owns",
   const Rect g = d.rect();
   REQUIRE(screen.text_at(g.x, g.y) == "+");
   REQUIRE(screen.text_at(g.x + g.w - 1, g.y + g.h - 1) == "+");
-  REQUIRE(screen.text_at(g.x + 1, g.y) == "|");  // title delimiter
+  REQUIRE(screen.text_at(g.x + 1, g.y) == "|"); // title delimiter
   REQUIRE(screen.text_at(g.x, g.y + 1) == "|");
   // Nothing multi-byte anywhere on the border ring.
   for (int x = g.x; x < g.x + g.w; ++x) {
-    for (const unsigned char c : screen.text_at(x, g.y)) REQUIRE(c < 0x80);
+    for (const unsigned char c : screen.text_at(x, g.y))
+      REQUIRE(c < 0x80);
     for (const unsigned char c : screen.text_at(x, g.y + g.h - 1))
       REQUIRE(c < 0x80);
   }
@@ -513,11 +513,11 @@ TEST_CASE("Dialog: body text wraps to max_width and grows the height",
           "[dialog]") {
   BareDialog d{""};
   d.set_max_width(10);
-  d.set_text("aaaaaaaaaabbbbbbbbbbccccc");  // 25 cols -> 3 rows at width 10
+  d.set_text("aaaaaaaaaabbbbbbbbbbccccc"); // 25 cols -> 3 rows at width 10
   d.layout(80, 24);
 
-  REQUIRE(d.rect().w == 12);  // 10 inner + border
-  REQUIRE(d.rect().h == 5);   // 3 body rows + border
+  REQUIRE(d.rect().w == 12); // 10 inner + border
+  REQUIRE(d.rect().h == 5);  // 3 body rows + border
 }
 
 TEST_CASE("Dialog: body prose shares TextBox word boundaries (#24)",
@@ -529,7 +529,7 @@ TEST_CASE("Dialog: body prose shares TextBox word boundaries (#24)",
   d.draw(screen);
 
   const Rect g = d.rect();
-  REQUIRE(g.h == 4);  // two body rows + border
+  REQUIRE(g.h == 4); // two body rows + border
   std::string first;
   std::string second;
   for (int x = g.x + 1; x < g.x + g.w - 1; ++x) {
@@ -544,7 +544,7 @@ TEST_CASE("Dialog: an embedded newline is a hard break", "[dialog]") {
   BareDialog d{""};
   d.set_text("one\ntwo");
   d.layout(80, 24);
-  REQUIRE(d.rect().h == 4);  // two body rows + border
+  REQUIRE(d.rect().h == 4); // two body rows + border
 }
 
 TEST_CASE("Dialog: adjacent newlines retain a blank body row (#24)",
@@ -552,7 +552,7 @@ TEST_CASE("Dialog: adjacent newlines retain a blank body row (#24)",
   BareDialog d{""};
   d.set_text("one\n\ntwo");
   d.layout(80, 24);
-  REQUIRE(d.rect().h == 5);  // three body rows + border
+  REQUIRE(d.rect().h == 5); // three body rows + border
 }
 
 TEST_CASE("Dialog: draw repaints its whole rect", "[dialog][failure]") {
@@ -561,7 +561,8 @@ TEST_CASE("Dialog: draw repaints its whole rect", "[dialog][failure]") {
   Screen screen{40, 12};
   screen.fill_rect(0, 0, 40, 12, Rgb{0xFF, 0x00, 0x00}, Rgb{0xFF, 0x00, 0x00});
   for (int y = 0; y < 12; ++y)
-    for (int x = 0; x < 40; ++x) screen.write_text(x, y, "X", {}, {});
+    for (int x = 0; x < 40; ++x)
+      screen.write_text(x, y, "X", {}, {});
 
   BareDialog d{"Hi"};
   d.set_text("body");
@@ -602,7 +603,7 @@ TEST_CASE("Dialog: Escape still cancels when the focused child declines it",
   int closes = 0;
   d.on_close([&] { ++closes; });
   Screen screen{40, 12};
-  d.draw(screen);  // focus the ring's first member, as a shown dialog would
+  d.draw(screen); // focus the ring's first member, as a shown dialog would
 
   REQUIRE(d.on_event(key(Key::Escape)));
   REQUIRE(closes == 1);
@@ -631,15 +632,15 @@ TEST_CASE("Dialog: the focused child gets first refusal on Escape",
   int closes = 0;
   d.on_close([&] { ++closes; });
 
-  REQUIRE(d.on_event(key(Key::Escape)));  // consumed by the child
+  REQUIRE(d.on_event(key(Key::Escape))); // consumed by the child
   REQUIRE(d.child.keys == 1);
-  REQUIRE(closes == 0);  // not cancelled out from under the child
+  REQUIRE(closes == 0); // not cancelled out from under the child
 }
 
 TEST_CASE("Dialog: Escape falls through once the child's sub-state is gone",
           "[dialog][failure]") {
-  // Same shape, but the child declines after its first Escape \u2014 the pattern
-  // a dismissing control actually follows.
+  // Same shape, but the child declines after its first Escape \u2014 the
+  // pattern a dismissing control actually follows.
   class Dismisser final : public Widget {
    public:
     auto draw(Screen&) -> void override {}
@@ -671,11 +672,11 @@ TEST_CASE("Dialog: Escape falls through once the child's sub-state is gone",
   int closes = 0;
   d.on_close([&] { ++closes; });
 
-  REQUIRE(d.on_event(key(Key::Escape)));  // disarms the child
+  REQUIRE(d.on_event(key(Key::Escape))); // disarms the child
   REQUIRE_FALSE(d.child.armed);
   REQUIRE(closes == 0);
 
-  REQUIRE(d.on_event(key(Key::Escape)));  // declined -> the dialog's cancel
+  REQUIRE(d.on_event(key(Key::Escape))); // declined -> the dialog's cancel
   REQUIRE(closes == 1);
 }
 
@@ -704,14 +705,14 @@ TEST_CASE("Dialog: a Select in a dialog takes one Escape for its dropdown",
   int closes = 0;
   d.on_close([&] { ++closes; });
 
-  REQUIRE(d.on_event(key(Key::Enter)));  // focused Select opens its dropdown
+  REQUIRE(d.on_event(key(Key::Enter))); // focused Select opens its dropdown
   REQUIRE(d.select.dropdown_open());
 
-  REQUIRE(d.on_event(key(Key::Escape)));  // first: closes the list...
+  REQUIRE(d.on_event(key(Key::Escape))); // first: closes the list...
   REQUIRE_FALSE(d.select.dropdown_open());
-  REQUIRE(closes == 0);  // ...NOT the dialog
+  REQUIRE(closes == 0); // ...NOT the dialog
 
-  REQUIRE(d.on_event(key(Key::Escape)));  // second: the dialog's cancel
+  REQUIRE(d.on_event(key(Key::Escape))); // second: the dialog's cancel
   REQUIRE(closes == 1);
 }
 
@@ -747,7 +748,7 @@ TEST_CASE("Dialog: a click on a dropdown row over a button commits the option",
 
   OverlapDialog d;
   Screen s{40, 12};
-  d.draw(s);  // layout: the select gets a real rect
+  d.draw(s); // layout: the select gets a real rect
 
   int ok_presses = 0;
   d.ok.on_activate([&] { ++ok_presses; });
@@ -755,14 +756,14 @@ TEST_CASE("Dialog: a click on a dropdown row over a button commits the option",
   d.select.on_change([&](int i, const std::string&) { picked = i; });
 
   const Rect sr = d.select.rect();
-  REQUIRE(d.on_event(press(sr.x + 1, sr.y)));  // open the dropdown
+  REQUIRE(d.on_event(press(sr.x + 1, sr.y))); // open the dropdown
   REQUIRE(d.select.dropdown_open());
-  d.draw(s);  // paint the popup before routing a click to its rows (#96)
+  d.draw(s); // paint the popup before routing a click to its rows (#96)
 
-  REQUIRE(d.on_event(press(sr.x + 1, sr.y + 2)));  // "two", over the OK button
-  REQUIRE(picked == 1);                            // the option committed...
+  REQUIRE(d.on_event(press(sr.x + 1, sr.y + 2))); // "two", over the OK button
+  REQUIRE(picked == 1);                           // the option committed...
   REQUIRE(d.select.selected() == 1);
-  REQUIRE(ok_presses == 0);  // ...NOT the button underneath
+  REQUIRE(ok_presses == 0); // ...NOT the button underneath
   REQUIRE_FALSE(d.select.dropdown_open());
 }
 
@@ -799,24 +800,24 @@ TEST_CASE("App: a dropdown past the dialog rect still takes clicks",
   app.push_overlay(d, OverlayOptions{Backdrop::None, true});
 
   Screen s{40, 12};
-  app.draw_overlays(s);  // draws the dialog -> it lays out
+  app.draw_overlays(s); // draws the dialog -> it lays out
 
   const Rect sr = d.select.rect();
   const Rect dr = d.rect();
-  app.dispatch_event(press(sr.x + 1, sr.y));  // open the dropdown
+  app.dispatch_event(press(sr.x + 1, sr.y)); // open the dropdown
   REQUIRE(d.select.dropdown_open());
-  app.draw_overlays(s);  // establish the popup's tree hit target (#96)
+  app.draw_overlays(s); // establish the popup's tree hit target (#96)
 
   // Row "five" renders below the dialog's rect. A left press there must
   // reach the select, commit the option, and NOT dismiss the dialog.
-  const int row_y = sr.y + 5;  // dropdown row index 4 ("five")
-  REQUIRE(row_y >= dr.y + dr.h);  // the premise: outside the dialog rect
+  const int row_y = sr.y + 5;    // dropdown row index 4 ("five")
+  REQUIRE(row_y >= dr.y + dr.h); // the premise: outside the dialog rect
   int picked = -1;
   d.select.on_change([&](int i, const std::string&) { picked = i; });
   app.dispatch_event(press(sr.x + 1, row_y));
   REQUIRE(picked == 4);
-  REQUIRE(dismisses == 0);   // still on the stack, still closable normally
-  REQUIRE(app.keys_seen() == 0);  // nothing leaked to the app underneath
+  REQUIRE(dismisses == 0);       // still on the stack, still closable normally
+  REQUIRE(app.keys_seen() == 0); // nothing leaked to the app underneath
 }
 
 TEST_CASE("Dialog: Enter with a focused Checkbox still submits the form (#39)",
@@ -842,7 +843,10 @@ TEST_CASE("Dialog: Enter with a focused Checkbox still submits the form (#39)",
     auto on_event(const Event& ev) -> bool override {
       if (Dialog::on_event(ev)) return true;
       if (const auto* k = std::get_if<KeyEvent>(&ev))
-        if (k->key == Key::Enter) { submit(); return true; }
+        if (k->key == Key::Enter) {
+          submit();
+          return true;
+        }
       return false;
     }
 
@@ -866,14 +870,14 @@ TEST_CASE("Dialog: Enter with a focused Checkbox still submits the form (#39)",
 
   FormDialog d;
   Screen s{40, 12};
-  d.draw(s);  // layout; the first-added child (Checkbox) starts focused
+  d.draw(s); // layout; the first-added child (Checkbox) starts focused
   int closes = 0;
   d.on_close([&] { ++closes; });
 
-  REQUIRE(d.focused_widget() == &d.agree);  // first-added starts focused
-  REQUIRE(d.on_event(key(Key::Enter)));  // Checkbox declines -> submit path
+  REQUIRE(d.focused_widget() == &d.agree); // first-added starts focused
+  REQUIRE(d.on_event(key(Key::Enter)));    // Checkbox declines -> submit path
   REQUIRE(closes == 1);
-  REQUIRE_FALSE(d.agree.checked());  // Enter must NOT have toggled it either
+  REQUIRE_FALSE(d.agree.checked()); // Enter must NOT have toggled it either
 
   // ...and Space still toggles instead of submitting.
   FormDialog d2;
@@ -902,10 +906,10 @@ TEST_CASE("Dialog: a right-click on a control does not activate it",
   MessageDialog d{"T", "body"};
   d.on_ok([&] { fired = true; });
   Screen screen{40, 12};
-  d.draw(screen);  // lay the button out
+  d.draw(screen); // lay the button out
 
-  REQUIRE(d.on_event(press(0, 0, 2)));  // consumed...
-  REQUIRE_FALSE(fired);                 // ...but inert
+  REQUIRE(d.on_event(press(0, 0, 2))); // consumed...
+  REQUIRE_FALSE(fired);                // ...but inert
 }
 
 TEST_CASE("Dialog: the wheel reaches the control under the cursor",
@@ -945,7 +949,7 @@ TEST_CASE("Dialog: a press on the dialog chrome is consumed and inert",
   d.draw(screen);
 
   const Rect g = d.rect();
-  REQUIRE(d.on_event(press(g.x, g.y)));  // the border corner
+  REQUIRE(d.on_event(press(g.x, g.y))); // the border corner
   REQUIRE_FALSE(fired);
 }
 
@@ -958,13 +962,12 @@ class DropdownOverScrollDialog final : public Dialog {
   // all, which is what the #85 scrolling case needs. The extras are appended,
   // so "three" is still index 2 on the row the hover case points at.
   DropdownOverScrollDialog()
-      : Dialog("S"),
-        select{{"one", "two", "three", "four", "five", "six"}} {
+      : Dialog("S"), select{{"one", "two", "three", "four", "five", "six"}} {
     add_child(&select);
     add_child(&under);
   }
   Select select;
-  CountWidget under;  // scrollable child the open dropdown overlaps
+  CountWidget under; // scrollable child the open dropdown overlaps
 
  protected:
   [[nodiscard]] auto content_rows() const -> int override { return 3; }
@@ -980,7 +983,8 @@ class DropdownOverScrollDialog final : public Dialog {
   }
 };
 
-TEST_CASE("Dialog: wheel over an open dropdown routes to the Select, not the widget under it (#47)",
+TEST_CASE("Dialog: wheel over an open dropdown routes to the Select, not the "
+          "widget under it (#47)",
           "[dialog][mouse][failure]") {
   // The pre-route gated on left presses only, so a wheel over a visible
   // option row fell through to the later-added scrollable child and scrolled
@@ -991,17 +995,17 @@ TEST_CASE("Dialog: wheel over an open dropdown routes to the Select, not the wid
   d.draw(s);
 
   const Rect sr = d.select.rect();
-  REQUIRE(d.on_event(press(sr.x + 1, sr.y)));  // open the dropdown
+  REQUIRE(d.on_event(press(sr.x + 1, sr.y))); // open the dropdown
   REQUIRE(d.select.dropdown_open());
   d.draw(s);
 
-  const int row_y = sr.y + 2;  // option row "two", over the child underneath
-  REQUIRE(row_y > sr.y);       // the premise: past the Select's own rect
-  REQUIRE(d.under.rect().contains(sr.x + 1, row_y));  // and over the child
+  const int row_y = sr.y + 2; // option row "two", over the child underneath
+  REQUIRE(row_y > sr.y);      // the premise: past the Select's own rect
+  REQUIRE(d.under.rect().contains(sr.x + 1, row_y)); // and over the child
 
   d.under.mice = 0;
   REQUIRE(d.on_event(wheel(sr.x + 1, row_y)));
-  REQUIRE(d.under.mice == 0);  // the wheel did NOT scroll the child beneath
+  REQUIRE(d.under.mice == 0); // the wheel did NOT scroll the child beneath
 
   // All four options fit on a 12-row screen, so there is nothing to scroll and
   // the highlight cannot move either -- this case is about containment only.
@@ -1020,19 +1024,20 @@ TEST_CASE("Dialog: the routed wheel scrolls the dropdown itself (#85, #47)",
   d.draw(s);
 
   const Rect sr = d.select.rect();
-  REQUIRE(d.on_event(press(sr.x + 1, sr.y)));  // open
+  REQUIRE(d.on_event(press(sr.x + 1, sr.y))); // open
   REQUIRE(d.select.dropdown_open());
   REQUIRE(d.select.highlighted() == 0);
   d.draw(s);
 
   d.under.mice = 0;
   REQUIRE(d.on_event(wheel(sr.x + 1, sr.y + 1)));
-  REQUIRE(d.under.mice == 0);        // still contained
-  REQUIRE(d.select.highlighted() == 1);  // and carried into the moved window
+  REQUIRE(d.under.mice == 0);           // still contained
+  REQUIRE(d.select.highlighted() == 1); // and carried into the moved window
 }
 
-TEST_CASE("Dialog: hover over an open dropdown moves the Select highlight (#47)",
-          "[dialog][mouse][failure]") {
+TEST_CASE(
+    "Dialog: hover over an open dropdown moves the Select highlight (#47)",
+    "[dialog][mouse][failure]") {
   // Motion was consumed-and-dropped by Dialog, so a dialog-hosted Select
   // never followed the pointer: the highlight stayed keyboard-set while the
   // click committed the row under the cursor -- a visual desync the
@@ -1042,13 +1047,13 @@ TEST_CASE("Dialog: hover over an open dropdown moves the Select highlight (#47)"
   d.draw(s);
 
   const Rect sr = d.select.rect();
-  REQUIRE(d.on_event(press(sr.x + 1, sr.y)));  // open, highlight on selected=0
+  REQUIRE(d.on_event(press(sr.x + 1, sr.y))); // open, highlight on selected=0
   REQUIRE(d.select.dropdown_open());
   REQUIRE(d.select.highlighted() == 0);
   d.draw(s);
 
-  REQUIRE(d.on_event(motion(sr.x + 1, sr.y + 3)));  // hover "three"
-  REQUIRE(d.select.highlighted() == 2);             // follows the pointer
+  REQUIRE(d.on_event(motion(sr.x + 1, sr.y + 3))); // hover "three"
+  REQUIRE(d.select.highlighted() == 2);            // follows the pointer
 }
 
 TEST_CASE("Dialog: a chrome click-away closes an open child dropdown (#47)",
@@ -1062,12 +1067,12 @@ TEST_CASE("Dialog: a chrome click-away closes an open child dropdown (#47)",
   d.draw(s);
 
   const Rect sr = d.select.rect();
-  REQUIRE(d.on_event(press(sr.x + 1, sr.y)));  // open
+  REQUIRE(d.on_event(press(sr.x + 1, sr.y))); // open
   REQUIRE(d.select.dropdown_open());
 
   const Rect dr = d.rect();
   REQUIRE(d.on_event(press(dr.x, dr.y)));  // the border corner: no child there
-  REQUIRE_FALSE(d.select.dropdown_open());  // click-away dismissed it
+  REQUIRE_FALSE(d.select.dropdown_open()); // click-away dismissed it
 }
 
 TEST_CASE("Dialog: motion is forwarded to the child under the cursor",
@@ -1130,16 +1135,16 @@ TEST_CASE("MessageDialog: on_close may destroy a heap-owned dialog (#51)",
   raw->on_close([&] { d.reset(); });
 
   REQUIRE(raw->on_event(key(Key::Enter)));
-  REQUIRE(d == nullptr);   // destroyed inside on_close
-  REQUIRE(oks == 1);       // snapshot fired anyway
+  REQUIRE(d == nullptr); // destroyed inside on_close
+  REQUIRE(oks == 1);     // snapshot fired anyway
 }
 
 TEST_CASE("MessageDialog: empty text still sizes to hold its button",
           "[dialog][message][failure]") {
   MessageDialog d{"", ""};
   d.layout(80, 24);
-  REQUIRE(d.rect().w >= 8);  // "[ OK ]" + border
-  REQUIRE(d.rect().h == 3);  // button row + border, no body, no spacer
+  REQUIRE(d.rect().w >= 8); // "[ OK ]" + border
+  REQUIRE(d.rect().h == 3); // button row + border, no body, no spacer
 }
 
 // ── ConfirmDialog ───────────────────────────────────────────────────────────
@@ -1212,7 +1217,7 @@ TEST_CASE("ConfirmDialog: the dialog is closed before the callback runs",
   ConfirmDialog d{"Delete", "Really?", {}};
   d.on_close([&] { app.pop_overlay(); });
   d.on_result([&](bool yes) {
-    REQUIRE(app.overlay_count() == 0);  // parent already gone
+    REQUIRE(app.overlay_count() == 0); // parent already gone
     if (yes) app.push_overlay(followup);
   });
 
@@ -1245,11 +1250,12 @@ TEST_CASE("ConfirmDialog: on_close re-arming the result cannot hijack it (#51)",
     d.on_result([&](bool yes) { fired.push_back(yes ? 100 : -100); });
   });
 
-  REQUIRE(d.on_event(ch(U'y')));  // finish(true): close, then fire
-  REQUIRE(fired == std::vector<int>{1});  // the ORIGINAL handler, not the re-arm
+  REQUIRE(d.on_event(ch(U'y')));         // finish(true): close, then fire
+  REQUIRE(fired == std::vector<int>{1}); // the ORIGINAL handler, not the re-arm
 
   // A freshly constructed dialog with the re-armed shape behaves normally.
-  ConfirmDialog d2{"Q2", "Sure?", [&](bool yes) { fired.push_back(yes ? 2 : -2); }};
+  ConfirmDialog d2{"Q2", "Sure?",
+                   [&](bool yes) { fired.push_back(yes ? 2 : -2); }};
   REQUIRE(d2.on_event(ch(U'n')));
   REQUIRE(fired == std::vector<int>({1, -2}));
 }
@@ -1301,8 +1307,8 @@ TEST_CASE("PromptDialog: Tab to Cancel then Enter cancels",
   PromptDialog d{"Name", "File:", [&](std::string) { submitted = true; }};
   d.on_cancel([&] { cancelled = true; });
 
-  d.on_event(key(Key::Tab));  // input -> OK
-  d.on_event(key(Key::Tab));  // OK -> Cancel
+  d.on_event(key(Key::Tab)); // input -> OK
+  d.on_event(key(Key::Tab)); // OK -> Cancel
   REQUIRE(d.on_event(key(Key::Enter)));
   REQUIRE(cancelled);
   REQUIRE_FALSE(submitted);
@@ -1359,7 +1365,7 @@ TEST_CASE("Dialog: a dialog can be shown again after it reported a result",
 
   for (int showing = 1; showing <= 3; ++showing) {
     app.push_overlay(d);
-    app.draw_overlays(screen);  // a frame goes by, as it would in run()
+    app.draw_overlays(screen); // a frame goes by, as it would in run()
     app.dispatch_event(ch(U'y'));
     REQUIRE(results == showing);
     REQUIRE(app.overlay_count() == 0);
@@ -1410,7 +1416,7 @@ TEST_CASE("App: an overlay with no geometry yet is not dismissed by a click",
   REQUIRE(app.overlay_count() == 1);
 
   Screen screen{40, 12};
-  app.draw_overlays(screen);   // now it has a rect
+  app.draw_overlays(screen); // now it has a rect
   app.dispatch_event(press(0, 0));
   REQUIRE(app.overlay_count() == 0);
 }
@@ -1431,9 +1437,9 @@ TEST_CASE("App: the overlay pass leaves no trace in the Screen",
 
   for (int frame = 0; frame < 5; ++frame) {
     app.draw_overlays(screen);
-    REQUIRE(screen.at(0, 0).bg == Rgb{0x20, 0x20, 0x20});  // dimmed on the wire
+    REQUIRE(screen.at(0, 0).bg == Rgb{0x20, 0x20, 0x20}); // dimmed on the wire
     app.restore(screen);
-    REQUIRE(screen.at(0, 0) == before);  // ...and handed back intact
+    REQUIRE(screen.at(0, 0) == before); // ...and handed back intact
   }
 }
 
@@ -1487,7 +1493,7 @@ class SelfPoppingOverlay final : public Widget {
   App* m_app;
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("App: an overlay that pops itself while drawing does not skip the "
           "one above it",
@@ -1502,7 +1508,7 @@ TEST_CASE("App: an overlay that pops itself while drawing does not skip the "
 
   app.draw_overlays(screen);
 
-  REQUIRE(dialog.draws == 1);  // not skipped by the shift the pop caused
+  REQUIRE(dialog.draws == 1); // not skipped by the shift the pop caused
   REQUIRE(app.overlay_count() == 1);
 }
 
@@ -1577,12 +1583,12 @@ TEST_CASE("App + ConfirmDialog: Escape cancels the dialog, not the app",
 
   app.dispatch_event(key(Key::Escape));
 
-  REQUIRE(result == 0);            // the dialog handled it
-  REQUIRE(app.seen.empty());       // the app never saw it (so never quit)
+  REQUIRE(result == 0);      // the dialog handled it
+  REQUIRE(app.seen.empty()); // the app never saw it (so never quit)
   REQUIRE(app.overlay_count() == 0);
 
   app.dispatch_event(key(Key::Escape));
-  REQUIRE(app.keys_seen() == 1);   // and now Escape is the app's again
+  REQUIRE(app.keys_seen() == 1); // and now Escape is the app's again
 }
 
 TEST_CASE("App + Dialog: the dialog draws centered over the app's frame",
@@ -1599,5 +1605,5 @@ TEST_CASE("App + Dialog: the dialog draws centered over the app's frame",
   REQUIRE(g.x == (40 - g.w) / 2);
   REQUIRE(g.y == (12 - g.h) / 2);
   REQUIRE(screen.at(g.x + 1, g.y + 1).bg == Rgb{0x0A, 0x0A, 0x14});
-  REQUIRE(screen.at(0, 0).bg == Rgb{0x40, 0x40, 0x40});  // dimmed by default
+  REQUIRE(screen.at(0, 0).bg == Rgb{0x40, 0x40, 0x40}); // dimmed by default
 }

@@ -34,7 +34,7 @@ auto warning(std::string message) -> std::unexpected<ErrorEvent> {
 }
 
 template <typename T>
-auto parse_integer(std::string_view text, T &value) -> bool {
+auto parse_integer(std::string_view text, T& value) -> bool {
   const auto [end, error] =
       std::from_chars(text.data(), text.data() + text.size(), value);
   return error == std::errc{} && end == text.data() + text.size();
@@ -46,22 +46,20 @@ auto numeric_name(std::string_view name) -> bool {
   });
 }
 
-auto parse_cpu_line(std::string_view line, std::string &name, CpuTicks &out)
+auto parse_cpu_line(std::string_view line, std::string& name, CpuTicks& out)
     -> bool {
   std::istringstream in{std::string{line}};
   std::uint64_t user = 0, nice = 0, system = 0, idle = 0, iowait = 0;
   std::uint64_t irq = 0, softirq = 0, steal = 0;
-  if (!(in >> name >> user >> nice >> system >> idle))
-    return false;
+  if (!(in >> name >> user >> nice >> system >> idle)) return false;
   (void)(in >> iowait >> irq >> softirq >> steal);
   out.idle = idle + iowait;
   out.total = user + nice + system + idle + iowait + irq + softirq + steal;
   return name == "cpu" || name.starts_with("cpu");
 }
 
-auto usage_between(const CpuTicks &previous, const CpuTicks &current) -> float {
-  if (current.total <= previous.total)
-    return 0.0F;
+auto usage_between(const CpuTicks& previous, const CpuTicks& current) -> float {
+  if (current.total <= previous.total) return 0.0F;
   const auto total = current.total - previous.total;
   const auto idle = current.idle >= previous.idle ? current.idle - previous.idle
                                                   : std::uint64_t{0};
@@ -70,18 +68,16 @@ auto usage_between(const CpuTicks &previous, const CpuTicks &current) -> float {
                     0.0F, 1.0F);
 }
 
-auto read_cpu_ticks(const std::filesystem::path &path)
+auto read_cpu_ticks(const std::filesystem::path& path)
     -> std::expected<std::vector<std::pair<std::string, CpuTicks>>,
                      ErrorEvent> {
   std::ifstream input{path};
-  if (!input)
-    return warning("cannot read " + path.string());
+  if (!input) return warning("cannot read " + path.string());
 
   std::vector<std::pair<std::string, CpuTicks>> result;
   std::string line;
   while (std::getline(input, line)) {
-    if (!line.starts_with("cpu"))
-      break;
+    if (!line.starts_with("cpu")) break;
     std::string name;
     CpuTicks ticks;
     if (!parse_cpu_line(line, name, ticks))
@@ -93,19 +89,17 @@ auto read_cpu_ticks(const std::filesystem::path &path)
   return result;
 }
 
-auto read_memory(const std::filesystem::path &path)
+auto read_memory(const std::filesystem::path& path)
     -> std::expected<MemoryInfo, ErrorEvent> {
   std::ifstream input{path};
-  if (!input)
-    return warning("cannot read " + path.string());
+  if (!input) return warning("cannot read " + path.string());
 
   std::unordered_map<std::string, std::uint64_t> values;
   std::string key;
   std::uint64_t kib = 0;
   std::string unit;
   while (input >> key >> kib) {
-    if (!key.empty() && key.back() == ':')
-      key.pop_back();
+    if (!key.empty() && key.back() == ':') key.pop_back();
     std::getline(input, unit);
     values[key] = kib;
   }
@@ -127,7 +121,7 @@ auto read_memory(const std::filesystem::path &path)
                     std::min(get("SwapTotal"), get("SwapFree")) * kKiB};
 }
 
-auto read_uptime(const std::filesystem::path &path)
+auto read_uptime(const std::filesystem::path& path)
     -> std::expected<double, ErrorEvent> {
   std::ifstream input{path};
   double uptime = 0.0;
@@ -136,7 +130,7 @@ auto read_uptime(const std::filesystem::path &path)
   return uptime;
 }
 
-auto read_load_average(const std::filesystem::path &path)
+auto read_load_average(const std::filesystem::path& path)
     -> std::expected<std::array<double, 3>, ErrorEvent> {
   std::ifstream input{path};
   std::array<double, 3> load{};
@@ -156,12 +150,11 @@ struct ParsedProcess {
   char state{'?'};
 };
 
-auto read_process(const std::filesystem::path &path, int pid)
+auto read_process(const std::filesystem::path& path, int pid)
     -> std::optional<ParsedProcess> {
   std::ifstream input{path};
   std::string line;
-  if (!input || !std::getline(input, line))
-    return std::nullopt;
+  if (!input || !std::getline(input, line)) return std::nullopt;
 
   const auto open = line.find('(');
   const auto close = line.rfind(')');
@@ -173,8 +166,7 @@ auto read_process(const std::filesystem::path &path, int pid)
   for (std::string field; tail >> field;)
     fields.push_back(std::move(field));
   // fields[0] is stat field 3 (state); utime/stime are 14/15 and RSS is 24.
-  if (fields.size() <= 21)
-    return std::nullopt;
+  if (fields.size() <= 21) return std::nullopt;
 
   std::uint64_t utime = 0, stime = 0, rss_pages = 0;
   if (!parse_integer(fields[11], utime) || !parse_integer(fields[12], stime) ||
@@ -185,13 +177,12 @@ auto read_process(const std::filesystem::path &path, int pid)
                        fields[0].empty() ? '?' : fields[0].front()};
 }
 
-auto read_effective_uid(const std::filesystem::path &path)
+auto read_effective_uid(const std::filesystem::path& path)
     -> std::optional<uid_t> {
   std::ifstream input{path};
   std::string line;
   while (std::getline(input, line)) {
-    if (!line.starts_with("Uid:"))
-      continue;
+    if (!line.starts_with("Uid:")) continue;
     std::istringstream fields{line.substr(4)};
     std::uint64_t real = 0, effective = 0;
     if (!(fields >> real >> effective) ||
@@ -203,36 +194,33 @@ auto read_effective_uid(const std::filesystem::path &path)
 }
 
 auto user_name(std::optional<uid_t> uid) -> std::string {
-  if (!uid)
-    return "?";
+  if (!uid) return "?";
   long capacity = ::sysconf(_SC_GETPW_R_SIZE_MAX);
-  if (capacity <= 0)
-    capacity = 16 * 1024;
+  if (capacity <= 0) capacity = 16 * 1024;
   std::vector<char> storage(static_cast<std::size_t>(capacity));
   passwd entry{};
-  passwd *result = nullptr;
-  if (::getpwuid_r(*uid, &entry, storage.data(), storage.size(), &result) == 0 &&
+  passwd* result = nullptr;
+  if (::getpwuid_r(*uid, &entry, storage.data(), storage.size(), &result) ==
+          0 &&
       result != nullptr && result->pw_name != nullptr)
     return result->pw_name;
   return std::to_string(static_cast<std::uint64_t>(*uid));
 }
 
-auto read_command(const std::filesystem::path &path, std::string_view name)
+auto read_command(const std::filesystem::path& path, std::string_view name)
     -> std::string {
   std::ifstream input{path, std::ios::binary};
-  if (!input)
-    return "[" + std::string{name} + "]";
+  if (!input) return "[" + std::string{name} + "]";
   std::string command{std::istreambuf_iterator<char>{input},
                       std::istreambuf_iterator<char>{}};
-  for (char &ch : command)
-    if (ch == '\0')
-      ch = ' ';
+  for (char& ch : command)
+    if (ch == '\0') ch = ' ';
   while (!command.empty() && command.back() == ' ')
     command.pop_back();
   return command.empty() ? "[" + std::string{name} + "]" : command;
 }
 
-auto tally_state(TaskCounts &counts, char state) -> void {
+auto tally_state(TaskCounts& counts, char state) -> void {
   ++counts.total;
   if (state == 'R')
     ++counts.running;
@@ -245,7 +233,7 @@ auto tally_state(TaskCounts &counts, char state) -> void {
 }
 
 class ProcReader final : public SystemReader {
-public:
+ public:
   ProcReader(std::filesystem::path root, ProcReaderConfig config)
       : m_root(std::move(root)),
         m_page_size(config.page_size.value_or(::sysconf(_SC_PAGESIZE))),
@@ -253,19 +241,14 @@ public:
 
   auto sample() -> std::expected<SystemSnapshot, ErrorEvent> override {
     auto ticks = read_cpu_ticks(m_root / "stat");
-    if (!ticks)
-      return std::unexpected{ticks.error()};
+    if (!ticks) return std::unexpected{ticks.error()};
     auto memory = read_memory(m_root / "meminfo");
-    if (!memory)
-      return std::unexpected{memory.error()};
+    if (!memory) return std::unexpected{memory.error()};
     auto uptime = read_uptime(m_root / "uptime");
-    if (!uptime)
-      return std::unexpected{uptime.error()};
+    if (!uptime) return std::unexpected{uptime.error()};
     auto load = read_load_average(m_root / "loadavg");
-    if (!load)
-      return std::unexpected{load.error()};
-    if (m_page_size <= 0)
-      return warning("cannot determine process page size");
+    if (!load) return std::unexpected{load.error()};
+    if (m_page_size <= 0) return warning("cannot determine process page size");
     if (m_clock_ticks <= 0)
       return warning("cannot determine clock ticks per second");
 
@@ -281,7 +264,7 @@ public:
             : usage_between(aggregate_previous->second, aggregate);
     snapshot.cpus.reserve(ticks->size() - 1);
     for (std::size_t i = 1; i < ticks->size(); ++i) {
-      const auto &[name, current] = (*ticks)[i];
+      const auto& [name, current] = (*ticks)[i];
       const auto previous = m_cpu_ticks.find(name);
       const float usage = previous == m_cpu_ticks.end()
                               ? 0.0F
@@ -292,8 +275,7 @@ public:
     std::unordered_map<int, ProcessTicks> next_process_ticks;
     std::error_code error;
     std::filesystem::directory_iterator entries{m_root, error};
-    if (error)
-      return warning("cannot enumerate " + m_root.string());
+    if (error) return warning("cannot enumerate " + m_root.string());
     const std::uint64_t page_bytes = static_cast<std::uint64_t>(m_page_size);
     const std::uint64_t total_delta =
         aggregate.total > m_total_ticks.total
@@ -304,17 +286,13 @@ public:
     for (auto it = entries; it != std::filesystem::directory_iterator{};) {
       const auto entry = *it;
       it.increment(error);
-      if (error)
-        return warning("cannot enumerate " + m_root.string());
+      if (error) return warning("cannot enumerate " + m_root.string());
       const std::string filename = entry.path().filename().string();
-      if (!numeric_name(filename))
-        continue;
+      if (!numeric_name(filename)) continue;
       int pid = 0;
-      if (!parse_integer(filename, pid) || pid <= 0)
-        continue;
+      if (!parse_integer(filename, pid) || pid <= 0) continue;
       const auto parsed = read_process(entry.path() / "stat", pid);
-      if (!parsed)
-        continue; // exited or unreadable between enumerate/read
+      if (!parsed) continue; // exited or unreadable between enumerate/read
       tally_state(snapshot.tasks, parsed->state);
 
       float cpu = 0.0F;
@@ -345,14 +323,14 @@ public:
     }
 
     m_cpu_ticks.clear();
-    for (const auto &[name, current] : *ticks)
+    for (const auto& [name, current] : *ticks)
       m_cpu_ticks.emplace(name, current);
     m_total_ticks = aggregate;
     m_process_ticks = std::move(next_process_ticks);
     return snapshot;
   }
 
-private:
+ private:
   std::filesystem::path m_root;
   std::unordered_map<std::string, CpuTicks> m_cpu_ticks;
   std::unordered_map<int, ProcessTicks> m_process_ticks;

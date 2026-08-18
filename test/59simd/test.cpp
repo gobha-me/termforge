@@ -40,7 +40,7 @@ auto bytes(std::size_t count, int seed) -> std::vector<std::byte> {
   return out;
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("SIMD dispatch always supports the scalar oracle", "[simd]") {
   TierReset reset;
@@ -62,8 +62,7 @@ TEST_CASE("AVX2 fill, copy and blend are bit-exact at every tail",
   auto midpoint_avx = midpoint_scalar;
   REQUIRE(detail::set_kernel_tier_override(detail::KernelTier::Scalar));
   detail::blend_pixels(midpoint_src, midpoint_scalar);
-  REQUIRE(midpoint_scalar ==
-          std::vector<Pixel>(8, Pixel{128, 0, 127, 255}));
+  REQUIRE(midpoint_scalar == std::vector<Pixel>(8, Pixel{128, 0, 127, 255}));
   REQUIRE(detail::set_kernel_tier_override(detail::KernelTier::Avx2));
   detail::blend_pixels(midpoint_src, midpoint_avx);
   REQUIRE(midpoint_avx == midpoint_scalar);

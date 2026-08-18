@@ -36,8 +36,8 @@
 #include <vector>
 
 #include <fcntl.h>
-#include <unistd.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #include "termforge/core/app.hpp"
 #include "termforge/core/terminal.hpp"
@@ -113,8 +113,10 @@ class EnvGuard {
   EnvGuard() = default;
   ~EnvGuard() {
     for (auto& [name, saved] : m_saved) {
-      if (saved.has_value()) ::setenv(name.c_str(), saved->c_str(), 1);
-      else ::unsetenv(name.c_str());
+      if (saved.has_value())
+        ::setenv(name.c_str(), saved->c_str(), 1);
+      else
+        ::unsetenv(name.c_str());
     }
   }
   EnvGuard(const EnvGuard&) = delete;
@@ -132,7 +134,7 @@ class EnvGuard {
  private:
   auto remember(const char* name) -> void {
     for (const auto& [n, _] : m_saved) {
-      if (n == name) return;  // already captured the original
+      if (n == name) return; // already captured the original
     }
     const char* v = ::getenv(name);
     m_saved.emplace_back(name, v != nullptr ? std::optional<std::string>{v}
@@ -150,11 +152,12 @@ constexpr std::string_view kSyncQuery = "\033[?2026$p";
 constexpr std::string_view kKeyboardQuery = "\033[?u";
 constexpr std::string_view kDa1Query = "\033[c";
 
-}  // namespace
+} // namespace
 
 // ── set_env: what it accepts, what it refuses, how totally ──────────────────
 
-TEST_CASE("set_env: the injected pair is what the Terminal reports", "[identity]") {
+TEST_CASE("set_env: the injected pair is what the Terminal reports",
+          "[identity]") {
   Terminal t;
   REQUIRE_FALSE(t.env_injected());
   REQUIRE(t.env().term.empty());
@@ -202,7 +205,8 @@ TEST_CASE("set_env: refused while a screen is up", "[identity]") {
 
 // ── env precedence: the pair is never mixed ─────────────────────────────────
 
-TEST_CASE("set_env: COLORTERM=truecolor corroborates truecolor from the session's pair",
+TEST_CASE("set_env: COLORTERM=truecolor corroborates truecolor from the "
+          "session's pair",
           "[identity][probe]") {
   EnvGuard guard;
   guard.unset("COLORTERM");
@@ -222,7 +226,8 @@ TEST_CASE("set_env: COLORTERM=truecolor corroborates truecolor from the session'
   t.leave_raw();
 }
 
-TEST_CASE("set_env: the 24bit spelling is the same corroboration", "[identity][probe]") {
+TEST_CASE("set_env: the 24bit spelling is the same corroboration",
+          "[identity][probe]") {
   EnvGuard guard;
   guard.unset("COLORTERM");
   guard.unset("TERM");
@@ -238,7 +243,8 @@ TEST_CASE("set_env: the 24bit spelling is the same corroboration", "[identity][p
   t.leave_raw();
 }
 
-TEST_CASE("set_env: TERM with 256color corroborates 256 levels", "[identity][probe]") {
+TEST_CASE("set_env: TERM with 256color corroborates 256 levels",
+          "[identity][probe]") {
   EnvGuard guard;
   guard.unset("COLORTERM");
   guard.unset("TERM");
@@ -256,7 +262,8 @@ TEST_CASE("set_env: TERM with 256color corroborates 256 levels", "[identity][pro
 }
 
 TEST_CASE("set_env: an empty injected field is 'the client sent nothing', "
-          "not 'ask the daemon'", "[identity][probe][regression]") {
+          "not 'ask the daemon'",
+          "[identity][probe][regression]") {
   // The sharp edge of the no-mixing rule. The daemon's environment DOES carry
   // truecolor; the client sent an empty COLORTERM. A per-field fallback would
   // smuggle the daemon's identity into the session -- the exact gap #181
@@ -275,7 +282,7 @@ TEST_CASE("set_env: an empty injected field is 'the client sent nothing', "
   const auto caps = t.query_capabilities();
   REQUIRE(caps.has_value());
   REQUIRE_FALSE(caps->truecolor);
-  REQUIRE(caps->color_levels == 0);  // neither needle matched the client's pair
+  REQUIRE(caps->color_levels == 0); // neither needle matched the client's pair
   t.leave_raw();
 }
 
@@ -316,7 +323,8 @@ TEST_CASE("set_env: is_console_vt reads the session's TERM when injected",
 
 // ── set_capabilities: the push ──────────────────────────────────────────────
 
-TEST_CASE("set_capabilities: the push is what the Terminal reports", "[identity]") {
+TEST_CASE("set_capabilities: the push is what the Terminal reports",
+          "[identity]") {
   Terminal t;
   REQUIRE_FALSE(t.has_pushed_capabilities());
   REQUIRE_FALSE(t.pushed_capabilities().has_value());
@@ -382,7 +390,7 @@ TEST_CASE("push: query_capabilities serves it without touching the stream",
   // stream's identical answer was never read.
   REQUIRE(got->kitty_graphics);
   REQUIRE(got->kitty_keyboard);
-  REQUIRE_FALSE(got->sixel);  // the push is the caller's statement, verbatim
+  REQUIRE_FALSE(got->sixel); // the push is the caller's statement, verbatim
   // The push did not even enter raw mode on its behalf: nothing was written.
   REQUIRE_FALSE(t.raw());
   // And the pre-loaded answers are still there for whoever reads next -- a
@@ -390,8 +398,9 @@ TEST_CASE("push: query_capabilities serves it without touching the stream",
   REQUIRE(sp.drain_peer().empty());
   char buf[64];
   const ssize_t n = ::read(sp.app(), buf, sizeof(buf));
-  REQUIRE(n == static_cast<ssize_t>(std::string_view{
-                   "\033_Gi=31;OK\033\\\033[?1u\033[?62;4;22c"}.size()));
+  REQUIRE(n == static_cast<ssize_t>(
+                   std::string_view{"\033_Gi=31;OK\033\\\033[?1u\033[?62;4;22c"}
+                       .size()));
 }
 
 TEST_CASE("push: the probe's bytes are written when no push is in force",
@@ -427,7 +436,7 @@ TEST_CASE("push: survives a re-probe until cleared", "[identity][regression]") {
   REQUIRE(first.has_value());
   REQUIRE(second.has_value());
   REQUIRE(first->truecolor);
-  REQUIRE(second->truecolor);  // not re-probed: still the push
+  REQUIRE(second->truecolor); // not re-probed: still the push
   REQUIRE(sp.drain_peer().empty());
 
   // clear_capabilities gives the probe back its job (#145 item 3: the override
@@ -437,7 +446,7 @@ TEST_CASE("push: survives a re-probe until cleared", "[identity][regression]") {
   REQUIRE_FALSE(t.has_pushed_capabilities());
   REQUIRE_FALSE(t.pushed_capabilities().has_value());
   (void)t.query_capabilities();
-  REQUIRE_FALSE(sp.drain_peer().empty());  // the probe bytes went out this time
+  REQUIRE_FALSE(sp.drain_peer().empty()); // the probe bytes went out this time
   t.leave_raw();
 }
 
@@ -449,7 +458,8 @@ TEST_CASE("clear_capabilities: a no-op when nothing is pushed", "[identity]") {
 
 // ── App: setup serves the push, and the driver follows it ───────────────────
 
-TEST_CASE("App: setup selects the driver from pushed capabilities", "[identity][app]") {
+TEST_CASE("App: setup selects the driver from pushed capabilities",
+          "[identity][app]") {
   SocketPair sp;
   REQUIRE(sp.ok());
 
@@ -457,13 +467,17 @@ TEST_CASE("App: setup selects the driver from pushed capabilities", "[identity][
   // exactly the pieces this case needs, the way test/44size does.
   class Probe final : public App {
    public:
-    auto inject(TerminalIo io) -> bool { return terminal().set_io(io).has_value(); }
+    auto inject(TerminalIo io) -> bool {
+      return terminal().set_io(io).has_value();
+    }
     auto push_caps(Capabilities caps) -> bool {
       return terminal().set_capabilities(caps).has_value();
     }
     // capabilities() returns by value; the wrapper copies rather than bind a
     // reference to the temporary.
-    [[nodiscard]] auto selected() -> Capabilities { return driver().capabilities(); }
+    [[nodiscard]] auto selected() -> Capabilities {
+      return driver().capabilities();
+    }
     [[nodiscard]] auto selected_name() -> std::string_view {
       return driver().name();
     }
@@ -475,7 +489,7 @@ TEST_CASE("App: setup selects the driver from pushed capabilities", "[identity][
   Probe app;
   REQUIRE(app.inject(TerminalIo{sp.app(), sp.app()}));
   Capabilities caps;
-  caps.truecolor = true;  // AnsiRgbDriver's tier: a socket will never probe it
+  caps.truecolor = true; // AnsiRgbDriver's tier: a socket will never probe it
   REQUIRE(app.push_caps(caps));
   REQUIRE(app.test_setup().has_value());
   // The driver was chosen from the push: its own capabilities() agrees, and
@@ -571,15 +585,15 @@ TEST_CASE("App: an invalid built-in driver request is a total warning refusal",
 
   Probe app;
   REQUIRE(app.builtin_driver() == BuiltinDriver::Automatic);
-  const auto refused =
-      app.set_builtin_driver(static_cast<BuiltinDriver>(99));
+  const auto refused = app.set_builtin_driver(static_cast<BuiltinDriver>(99));
   REQUIRE_FALSE(refused);
   CHECK(refused.error().severity == Severity::Warning);
   CHECK(refused.error().source == "driver");
   CHECK(app.builtin_driver() == BuiltinDriver::Automatic);
 }
 
-TEST_CASE("App: setup probes when no capabilities were pushed", "[identity][app]") {
+TEST_CASE("App: setup probes when no capabilities were pushed",
+          "[identity][app]") {
   // Hermetic: the discovered path corroborates from the process environment,
   // and this shell very well may carry COLORTERM=truecolor -- which the probe
   // would (correctly) read, and this assertion would call a bug.
@@ -592,7 +606,9 @@ TEST_CASE("App: setup probes when no capabilities were pushed", "[identity][app]
 
   class Probe final : public App {
    public:
-    auto inject(TerminalIo io) -> bool { return terminal().set_io(io).has_value(); }
+    auto inject(TerminalIo io) -> bool {
+      return terminal().set_io(io).has_value();
+    }
 
    protected:
     auto on_render(termforge::Screen&) -> void override {}

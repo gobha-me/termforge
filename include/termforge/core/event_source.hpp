@@ -27,8 +27,8 @@ struct InputCapabilities {
   bool key_release{false};
   bool modifier_transitions{false};
 
-  constexpr auto operator==(const InputCapabilities&) const noexcept -> bool =
-      default;
+  constexpr auto operator==(const InputCapabilities&) const noexcept
+      -> bool = default;
 };
 
 // Replacement is for a source that describes the same physical input as the
@@ -73,4 +73,4 @@ class EventSource {
   EventSource() = default;
 };
 
-}  // namespace termforge
+} // namespace termforge

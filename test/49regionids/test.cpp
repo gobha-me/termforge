@@ -70,9 +70,9 @@ namespace {
 // instead of on the property being asserted.
 auto art(int seed) -> Image {
   const auto v = static_cast<std::uint8_t>(seed);
-  return tfsupport::checker(2, 2, Pixel{v, 0, 0, 255},
-                            Pixel{0, static_cast<std::uint8_t>(255 - v), 0,
-                                  255});
+  return tfsupport::checker(
+      2, 2, Pixel{v, 0, 0, 255},
+      Pixel{0, static_cast<std::uint8_t>(255 - v), 0, 255});
 }
 
 // kMaxRegionSlots is file-local to the driver and deliberately not exported --
@@ -115,7 +115,7 @@ auto placement_delete_ids_of(std::string_view out, std::uint32_t image_id)
   return ids;
 }
 
-}  // namespace
+} // namespace
 
 // ── the acceptance test named in #190 ───────────────────────────────────────
 
@@ -192,10 +192,8 @@ TEST_CASE("placement ids: each pinned image derives and reuses its own pool",
   // p= is scoped by image id. Both images start at 1; only the three
   // simultaneous placements of A advance A's namespace. A global counter or
   // a derivation that forgets the image predicate makes B start at 4.
-  REQUIRE(placement_ids_of(out, a->id) ==
-          std::set<std::uint32_t>{1, 2, 3});
-  REQUIRE(placement_ids_of(out, b->id) ==
-          std::set<std::uint32_t>{1, 2});
+  REQUIRE(placement_ids_of(out, a->id) == std::set<std::uint32_t>{1, 2, 3});
+  REQUIRE(placement_ids_of(out, b->id) == std::set<std::uint32_t>{1, 2});
 
   // Keep A's outer placements and both of B's. Collection must retire only
   // A's middle p=2; unchanged survivors emit no fresh placement commands.
@@ -205,8 +203,7 @@ TEST_CASE("placement ids: each pinned image derives and reuses its own pool",
   REQUIRE(d.draw_pinned(b1, *b).has_value());
   REQUIRE(d.draw_pinned(b2, *b).has_value());
   d.flush();
-  REQUIRE(placement_delete_ids_of(out, a->id) ==
-          std::set<std::uint32_t>{2});
+  REQUIRE(placement_delete_ids_of(out, a->id) == std::set<std::uint32_t>{2});
   CHECK(placement_delete_ids_of(out, b->id).empty());
   CHECK(placement_ids_of(out, a->id).empty());
   CHECK(placement_ids_of(out, b->id).empty());
@@ -256,7 +253,7 @@ TEST_CASE("region ids: the SMALLEST free id is taken, so a hole is filled",
   REQUIRE(d.draw_image(a, art(1)).has_value());
   REQUIRE(d.draw_image(c, art(3)).has_value());
   d.flush();
-  REQUIRE(data_deletes_of(out, 2) == 1);  // the hole is real, not assumed
+  REQUIRE(data_deletes_of(out, 2) == 1); // the hole is real, not assumed
 
   // A fourth rect now. It takes the hole, not the next number.
   out.clear();
@@ -289,7 +286,8 @@ TEST_CASE("region ids: two live regions never share an id",
 
   for (std::uint32_t i = 0; i < kRegionSlots; ++i)
     REQUIRE(d.draw_image(Rect{static_cast<int>(i), 0, 1, 1},
-                         art(static_cast<int>(i))).has_value());
+                         art(static_cast<int>(i)))
+                .has_value());
   d.flush();
 
   // Sixteen rects, sixteen uploads -- the precondition, so a driver that
@@ -297,7 +295,8 @@ TEST_CASE("region ids: two live regions never share an id",
   // emitted fewer commands.
   CHECK(total_transmits(out) == static_cast<int>(kRegionSlots));
   std::set<std::uint32_t> pool;
-  for (std::uint32_t id = 1; id <= kRegionSlots; ++id) pool.insert(id);
+  for (std::uint32_t id = 1; id <= kRegionSlots; ++id)
+    pool.insert(id);
   CHECK(ids_named(out) == pool);
 }
 
@@ -323,7 +322,8 @@ TEST_CASE("region ids: eviction reuses the VICTIM's id, not just some free one",
   // with them.
   for (std::uint32_t i = 0; i < kRegionSlots; ++i)
     REQUIRE(d.draw_image(Rect{static_cast<int>(i), 0, 1, 1},
-                         art(static_cast<int>(i))).has_value());
+                         art(static_cast<int>(i)))
+                .has_value());
 
   // Now touch the FIRST rect again, in the same frame. It is no longer the
   // least-recently-drawn, so the eviction victim becomes the second rect --
@@ -342,12 +342,14 @@ TEST_CASE("region ids: eviction reuses the VICTIM's id, not just some free one",
   // The seventeenth region transmits under the VICTIM's id: id 2 uploads twice
   // across this frame (once as the second rect, once as the seventeenth) while
   // id 1 uploads once and is never re-used, because its region is still live.
-  // Under the constant-1 mutant these two swap, and two live regions share id 1.
+  // Under the constant-1 mutant these two swap, and two live regions share
+  // id 1.
   CHECK(transmits_of(out, 2) == 2);
   CHECK(transmits_of(out, 1) == 1);
   // Seventeen rects, sixteen ids, none outside the pool.
   std::set<std::uint32_t> pool;
-  for (std::uint32_t id = 1; id <= kRegionSlots; ++id) pool.insert(id);
+  for (std::uint32_t id = 1; id <= kRegionSlots; ++id)
+    pool.insert(id);
   CHECK(ids_named(out) == pool);
   CHECK(total_transmits(out) == static_cast<int>(kRegionSlots) + 1);
 

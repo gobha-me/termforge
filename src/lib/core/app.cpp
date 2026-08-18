@@ -24,8 +24,8 @@
 
 #include <fcntl.h>
 #include <poll.h>
-#include <sys/ioctl.h>
 #include <signal.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 
 #include "detail/encoded.hpp"
@@ -55,7 +55,7 @@ void on_cont(int) {
 }
 
 struct ContinueSignalLease {
-  struct sigaction prior {};
+  struct sigaction prior{};
   bool active{false};
 };
 
@@ -64,10 +64,10 @@ ContinueSignalLease g_continue_lease;
 auto install_continue_handler() noexcept -> bool {
   if (g_continue_lease.active) return false;
 
-  struct sigaction prior {};
+  struct sigaction prior{};
   if (::sigaction(SIGCONT, nullptr, &prior) != 0) return false;
 
-  struct sigaction action {};
+  struct sigaction action{};
   action.sa_handler = on_cont;
   ::sigemptyset(&action.sa_mask);
   // No SA_RESTART: a SIGCONT must wake a demand-mode poll so the invalidation
@@ -83,7 +83,7 @@ auto install_continue_handler() noexcept -> bool {
 auto restore_continue_handler() noexcept -> void {
   if (!g_continue_lease.active) return;
 
-  struct sigaction current {};
+  struct sigaction current{};
   if (::sigaction(SIGCONT, nullptr, &current) == 0 &&
       (current.sa_flags & SA_SIGINFO) == 0 && current.sa_handler == on_cont) {
     (void)::sigaction(SIGCONT, &g_continue_lease.prior, nullptr);
@@ -126,14 +126,13 @@ auto trace_warning(std::string message) -> ErrorEvent {
   return true;
 }
 
-[[nodiscard]] constexpr auto valid_builtin_driver(
-    BuiltinDriver driver) noexcept -> bool {
+[[nodiscard]] constexpr auto valid_builtin_driver(BuiltinDriver driver) noexcept
+    -> bool {
   switch (driver) {
-  case BuiltinDriver::Automatic:
-  case BuiltinDriver::Kitty:
-  case BuiltinDriver::AnsiRgb:
-  case BuiltinDriver::Fallback:
-    return true;
+    case BuiltinDriver::Automatic:
+    case BuiltinDriver::Kitty:
+    case BuiltinDriver::AnsiRgb:
+    case BuiltinDriver::Fallback: return true;
   }
   return false;
 }
@@ -179,8 +178,7 @@ auto trace_warning(std::string message) -> ErrorEvent {
 }
 
 auto validate_source_batch(std::span<const Event> events,
-                           InputCapabilities caps,
-                           std::vector<KeyEvent>& held,
+                           InputCapabilities caps, std::vector<KeyEvent>& held,
                            std::string& reason) -> bool {
   auto next_held = held;
   for (const auto& event : events) {
@@ -198,10 +196,9 @@ auto validate_source_batch(std::span<const Event> events,
         reason = "modifier transition exceeds the source's declared capability";
         return false;
       }
-      const auto it = std::find_if(next_held.begin(), next_held.end(),
-                                   [&](const KeyEvent& prior) {
-                                     return same_source_key(prior, *key);
-                                   });
+      const auto it = std::find_if(
+          next_held.begin(), next_held.end(),
+          [&](const KeyEvent& prior) { return same_source_key(prior, *key); });
       if (key->action == KeyAction::Press) {
         if (it != next_held.end()) {
           reason = "duplicate key press without an intervening release";
@@ -246,8 +243,8 @@ auto validate_source_batch(std::span<const Event> events,
       return false;
     }
     if (const auto* error = std::get_if<ErrorEvent>(&event)) {
-      if (error->severity < Severity::Info || error->severity > Severity::Error ||
-          error->source.empty()) {
+      if (error->severity < Severity::Info ||
+          error->severity > Severity::Error || error->source.empty()) {
         reason = "malformed ErrorEvent";
         return false;
       }
@@ -263,7 +260,7 @@ auto input_source_error(std::string message,
                         Severity severity = Severity::Warning) -> ErrorEvent {
   return ErrorEvent{severity, "input_source", std::move(message)};
 }
-}  // namespace
+} // namespace
 
 struct App::RecordingState {
   std::ostream* out{nullptr};
@@ -280,14 +277,16 @@ struct App::PlaybackState {
 
 App::App() = default;
 
-App::~App() { teardown(); }
+App::~App() {
+  teardown();
+}
 
 auto App::set_builtin_driver(BuiltinDriver driver)
     -> std::expected<void, ErrorEvent> {
   if (!valid_builtin_driver(driver)) {
-    return std::unexpected{ErrorEvent{
-        Severity::Warning, "driver",
-        "set_builtin_driver: invalid built-in tier"}};
+    return std::unexpected{
+        ErrorEvent{Severity::Warning, "driver",
+                   "set_builtin_driver: invalid built-in tier"}};
   }
   if (m_in_screen || m_loop_active) {
     return std::unexpected{ErrorEvent{
@@ -308,11 +307,11 @@ auto App::input_capabilities() const noexcept -> InputCapabilities {
   // a live loop is not.  Replacement stays replacement-only after failure so
   // terminal bytes cannot suddenly duplicate the physical input it replaced.
   const auto source_caps =
-      m_event_source_active
-          ? m_source_capabilities
-          : (!m_loop_active ? m_event_source->capabilities()
-                            : InputCapabilities{});
-  if (m_event_source_mode == EventSourceMode::ReplaceTerminal) return source_caps;
+      m_event_source_active ? m_source_capabilities
+                            : (!m_loop_active ? m_event_source->capabilities()
+                                              : InputCapabilities{});
+  if (m_event_source_mode == EventSourceMode::ReplaceTerminal)
+    return source_caps;
   return combine_input_capabilities(terminal_caps, source_caps);
 }
 
@@ -344,8 +343,8 @@ auto App::set_event_source(std::unique_ptr<EventSource> source,
       return std::unexpected{input_source_error(std::format(
           "set_event_source: source threw while starting: {}", e.what()))};
     } catch (...) {
-      return std::unexpected{input_source_error(
-          "set_event_source: source threw while starting")};
+      return std::unexpected{
+          input_source_error("set_event_source: source threw while starting")};
     }
     if (!started) {
       auto error = std::move(started.error());
@@ -357,8 +356,9 @@ auto App::set_event_source(std::unique_ptr<EventSource> source,
     if (source->poll_fd() < 0 ||
         !valid_input_capabilities(source->capabilities())) {
       source->stop();
-      return std::unexpected{input_source_error(
-          "set_event_source: started source has an invalid fd or capabilities")};
+      return std::unexpected{
+          input_source_error("set_event_source: started source has an invalid "
+                             "fd or capabilities")};
     }
   }
 
@@ -411,7 +411,8 @@ auto App::set_keyboard_mode(KeyboardMode mode) -> void {
 
 auto App::start_recording(std::ostream& out) -> void {
   if (m_loop_active) {
-    m_input.push_error(trace_warning("start_recording: the App loop is active"));
+    m_input.push_error(
+        trace_warning("start_recording: the App loop is active"));
     return;
   }
   if (m_playback) {
@@ -419,25 +420,30 @@ auto App::start_recording(std::ostream& out) -> void {
     return;
   }
   if (m_recording) {
-    m_input.push_error(trace_warning("start_recording: a recording is already active"));
+    m_input.push_error(
+        trace_warning("start_recording: a recording is already active"));
     return;
   }
   if (!out.good()) {
-    m_input.push_error(trace_warning("start_recording: output stream is not writable"));
+    m_input.push_error(
+        trace_warning("start_recording: output stream is not writable"));
     return;
   }
   m_recording = std::make_unique<RecordingState>();
   m_recording->out = &out;
 }
 
-auto App::stop_recording() -> void { finish_recording(false); }
+auto App::stop_recording() -> void {
+  finish_recording(false);
+}
 
 auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
   if (m_loop_active) {
     return std::unexpected{trace_warning("play: the App loop is active")};
   }
   if (m_recording) {
-    return std::unexpected{trace_warning("play: stop the active recording first")};
+    return std::unexpected{
+        trace_warning("play: stop the active recording first")};
   }
   auto parsed = detail::read_trace(in);
   if (!parsed) return std::unexpected{std::move(parsed.error())};
@@ -456,7 +462,8 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
       case detail::TraceKind::Frame:
         if (record.phase != detail::TracePhase::FrameStart ||
             !record.payload.empty() || record.frame != expected_frame++) {
-          return std::unexpected{trace_warning("play: frame record order is invalid")};
+          return std::unexpected{
+              trace_warning("play: frame record order is invalid")};
         }
         last_phase = detail::TracePhase::FrameStart;
         break;
@@ -464,10 +471,12 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
         if ((record.phase != detail::TracePhase::InputPump &&
              record.phase != detail::TracePhase::Wait) ||
             record.frame >= expected_frame) {
-          return std::unexpected{trace_warning("play: input record phase is invalid")};
+          return std::unexpected{
+              trace_warning("play: input record phase is invalid")};
         }
         if (record.phase < last_phase) {
-          return std::unexpected{trace_warning("play: record phases are out of order")};
+          return std::unexpected{
+              trace_warning("play: record phases are out of order")};
         }
         last_phase = record.phase;
         break;
@@ -503,8 +512,8 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
           std::string reason;
           const std::array<Event, 1> batch{*event};
           if (!validate_source_batch(batch, source_caps, source_held, reason)) {
-            return std::unexpected{trace_warning(std::format(
-                "play: source event is invalid: {}", reason))};
+            return std::unexpected{trace_warning(
+                std::format("play: source event is invalid: {}", reason))};
           }
         }
         break;
@@ -512,8 +521,8 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
         if ((record.phase != detail::TracePhase::InputPump &&
              record.phase != detail::TracePhase::Wait) ||
             record.frame >= expected_frame) {
-          return std::unexpected{trace_warning(
-              "play: input-capability record phase is invalid")};
+          return std::unexpected{
+              trace_warning("play: input-capability record phase is invalid")};
         }
         if (record.phase < last_phase)
           return std::unexpected{
@@ -533,10 +542,12 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
       case detail::TraceKind::Resize:
         if (record.phase != detail::TracePhase::FrameStart ||
             record.frame >= expected_frame) {
-          return std::unexpected{trace_warning("play: resize record phase is invalid")};
+          return std::unexpected{
+              trace_warning("play: resize record phase is invalid")};
         }
         if (record.phase < last_phase) {
-          return std::unexpected{trace_warning("play: record phases are out of order")};
+          return std::unexpected{
+              trace_warning("play: record phases are out of order")};
         }
         last_phase = record.phase;
         if (auto size = detail::decode_size(record); !size)
@@ -563,10 +574,12 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
       case detail::TraceKind::Posted:
         if (record.phase != detail::TracePhase::Posted ||
             record.frame >= expected_frame) {
-          return std::unexpected{trace_warning("play: posted-event phase is invalid")};
+          return std::unexpected{
+              trace_warning("play: posted-event phase is invalid")};
         }
         if (record.phase < last_phase) {
-          return std::unexpected{trace_warning("play: record phases are out of order")};
+          return std::unexpected{
+              trace_warning("play: record phases are out of order")};
         }
         last_phase = record.phase;
         if (auto event = detail::decode_event(record); !event)
@@ -584,7 +597,8 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
         break;
     }
   }
-  if (!saw_end) return std::unexpected{trace_warning("play: trace has no end record")};
+  if (!saw_end)
+    return std::unexpected{trace_warning("play: trace has no end record")};
 
   auto playback = std::make_unique<PlaybackState>();
   playback->trace = std::move(*parsed);
@@ -592,12 +606,13 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
   const auto prior_caps = m_term.pushed_capabilities();
   if (prior_caps &&
       !same_capabilities(*prior_caps, playback->trace.header.capabilities)) {
-    return std::unexpected{
-        trace_warning("play: recorded capabilities conflict with the caller's push")};
+    return std::unexpected{trace_warning(
+        "play: recorded capabilities conflict with the caller's push")};
   }
   const bool pushed_caps = !prior_caps.has_value();
   if (pushed_caps) {
-    if (auto applied = m_term.set_capabilities(playback->trace.header.capabilities);
+    if (auto applied =
+            m_term.set_capabilities(playback->trace.header.capabilities);
         !applied)
       return std::unexpected{std::move(applied.error())};
   }
@@ -660,7 +675,8 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
       playback_error = std::move(m_playback->failure);
       if (!playback_error &&
           m_playback->next != m_playback->trace.records.size()) {
-        playback_error = trace_warning("play: application ended before the trace");
+        playback_error =
+            trace_warning("play: application ended before the trace");
       }
     }
     restore();
@@ -684,7 +700,8 @@ auto App::begin_recording_run() -> void {
   header.capabilities = m_caps;
   header.input_capabilities = input_capabilities();
   header.initial_size = {size.cols, size.rows, size.px_w, size.px_h};
-  if (auto written = detail::write_trace_header(*m_recording->out, header); !written) {
+  if (auto written = detail::write_trace_header(*m_recording->out, header);
+      !written) {
     fail_recording(std::move(written.error()));
     return;
   }
@@ -702,14 +719,16 @@ auto App::finish_recording(bool clean) -> void {
   end.phase = detail::TracePhase::End;
   end.frame = m_frame_index + (m_frame_active ? 1U : 0U);
   const auto elapsed = now_steady() - m_recording->started;
-  end.offset_ns = elapsed > std::chrono::steady_clock::duration::zero()
-                      ? static_cast<std::uint64_t>(
-                            std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed)
-                                .count())
-                      : 0;
+  end.offset_ns =
+      elapsed > std::chrono::steady_clock::duration::zero()
+          ? static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed)
+                    .count())
+          : 0;
   end.payload = detail::encode_end(clean ? detail::TraceEnd::Clean
                                          : detail::TraceEnd::Prefix);
-  if (auto written = detail::write_trace_record(*m_recording->out, end); !written) {
+  if (auto written = detail::write_trace_record(*m_recording->out, end);
+      !written) {
     auto error = std::move(written.error());
     m_recording.reset();
     // A clean end is written after the last input pump, so queueing this one
@@ -743,44 +762,49 @@ auto App::record_payload(std::uint8_t kind, TracePoint point,
     case TracePoint::End: phase = detail::TracePhase::End; break;
   }
   const auto elapsed = now_steady() - m_recording->started;
-  detail::TraceRecord record{static_cast<detail::TraceKind>(kind), phase,
-                             elapsed > std::chrono::steady_clock::duration::zero()
-                                 ? static_cast<std::uint64_t>(
-                                       std::chrono::duration_cast<
-                                           std::chrono::nanoseconds>(elapsed)
-                                           .count())
-                                 : 0,
-                             m_frame_index, std::move(payload)};
-  if (auto written = detail::write_trace_record(*m_recording->out, record); !written)
+  detail::TraceRecord record{
+      static_cast<detail::TraceKind>(kind), phase,
+      elapsed > std::chrono::steady_clock::duration::zero()
+          ? static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed)
+                    .count())
+          : 0,
+      m_frame_index, std::move(payload)};
+  if (auto written = detail::write_trace_record(*m_recording->out, record);
+      !written)
     fail_recording(std::move(written.error()));
 }
 
-auto App::record_frame(std::chrono::steady_clock::time_point frame_start) -> void {
+auto App::record_frame(std::chrono::steady_clock::time_point frame_start)
+    -> void {
   if (!m_recording || !m_recording->header_written) return;
   const auto elapsed = frame_start - m_recording->started;
-  detail::TraceRecord record{detail::TraceKind::Frame,
-                             detail::TracePhase::FrameStart,
-                             elapsed > std::chrono::steady_clock::duration::zero()
-                                 ? static_cast<std::uint64_t>(
-                                       std::chrono::duration_cast<
-                                           std::chrono::nanoseconds>(elapsed)
-                                           .count())
-                                 : 0,
-                             m_frame_index,
-                             {}};
-  if (auto written = detail::write_trace_record(*m_recording->out, record); !written)
+  detail::TraceRecord record{
+      detail::TraceKind::Frame,
+      detail::TracePhase::FrameStart,
+      elapsed > std::chrono::steady_clock::duration::zero()
+          ? static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed)
+                    .count())
+          : 0,
+      m_frame_index,
+      {}};
+  if (auto written = detail::write_trace_record(*m_recording->out, record);
+      !written)
     fail_recording(std::move(written.error()));
 }
 
 auto App::record_input(std::string_view bytes) -> void {
-  record_payload(static_cast<std::uint8_t>(detail::TraceKind::Input), m_trace_point,
+  record_payload(static_cast<std::uint8_t>(detail::TraceKind::Input),
+                 m_trace_point,
                  std::vector<std::uint8_t>{bytes.begin(), bytes.end()});
 }
 
 auto App::record_resize(Size size) -> void {
-  record_payload(static_cast<std::uint8_t>(detail::TraceKind::Resize),
-                 TracePoint::FrameStart,
-                 detail::encode_size({size.cols, size.rows, size.px_w, size.px_h}));
+  record_payload(
+      static_cast<std::uint8_t>(detail::TraceKind::Resize),
+      TracePoint::FrameStart,
+      detail::encode_size({size.cols, size.rows, size.px_w, size.px_h}));
 }
 
 auto App::record_posted(const Event& event) -> void {
@@ -807,13 +831,16 @@ auto App::record_terminal_reply(const TerminalReplyRecord& reply) -> void {
 auto App::playback_begin_frame() -> void {
   if (!m_playback || m_playback->failure) return;
   if (m_playback->next >= m_playback->trace.records.size()) {
-    m_playback->failure = trace_warning("play: trace ended before a frame marker");
+    m_playback->failure =
+        trace_warning("play: trace ended before a frame marker");
     quit();
     return;
   }
   const auto& record = m_playback->trace.records[m_playback->next];
-  if (record.kind != detail::TraceKind::Frame || record.frame != m_frame_index) {
-    m_playback->failure = trace_warning("play: expected frame marker is missing");
+  if (record.kind != detail::TraceKind::Frame ||
+      record.frame != m_frame_index) {
+    m_playback->failure =
+        trace_warning("play: expected frame marker is missing");
     quit();
     return;
   }
@@ -850,8 +877,8 @@ auto App::playback_apply_frame_transitions() -> void {
         quit();
         return;
       }
-      m_pushed_size = Size{decoded->cols, decoded->rows, decoded->px_w,
-                           decoded->px_h};
+      m_pushed_size =
+          Size{decoded->cols, decoded->rows, decoded->px_w, decoded->px_h};
       m_resize_pending.store(true);
     } else {
       auto event = detail::decode_event(record);
@@ -969,7 +996,8 @@ auto App::playback_dispatch_posted() -> void {
 auto App::playback_finish_frame() -> void {
   if (!m_playback || m_playback->failure) return;
   if (m_playback->next >= m_playback->trace.records.size()) {
-    m_playback->failure = trace_warning("play: trace ended without an end record");
+    m_playback->failure =
+        trace_warning("play: trace ended without an end record");
     quit();
     return;
   }
@@ -1004,8 +1032,8 @@ auto App::post(Event event) -> void {
   signal_posted_locked();
 }
 
-auto App::stage_image_invalidation(
-    ImageInvalidationReason reason) noexcept -> bool {
+auto App::stage_image_invalidation(ImageInvalidationReason reason) noexcept
+    -> bool {
   if (!valid_image_invalidation_reason(reason)) return false;
   // There is one terminal state to clear.  If several notifications arrive
   // before the application can observe that transition, clearing/re-pinning
@@ -1018,8 +1046,8 @@ auto App::stage_image_invalidation(
 auto App::invalidate_images(ImageInvalidationReason reason)
     -> std::expected<void, ErrorEvent> {
   if (!stage_image_invalidation(reason)) {
-    return std::unexpected{ErrorEvent{
-        Severity::Warning, "app", "invalidate_images: reason is invalid"}};
+    return std::unexpected{ErrorEvent{Severity::Warning, "app",
+                                      "invalidate_images: reason is invalid"}};
   }
   return {};
 }
@@ -1130,10 +1158,10 @@ auto App::apply_source_capabilities(InputCapabilities next) -> void {
   if (prior.key_release && !next.key_release) release_source_keys();
   m_source_capabilities = next;
   record_input_capabilities(input_capabilities());
-  m_source_events.emplace_back(input_source_error(
-      lost ? "event-source capabilities degraded"
-           : "event-source capabilities restored",
-      lost ? Severity::Warning : Severity::Info));
+  m_source_events.emplace_back(
+      input_source_error(lost ? "event-source capabilities degraded"
+                              : "event-source capabilities restored",
+                         lost ? Severity::Warning : Severity::Info));
   record_source_event(m_source_events.back());
   if (m_in_screen) update_requirements(current_size());
 }
@@ -1162,8 +1190,7 @@ auto App::poll_event_source() -> int {
         std::format("event source threw while polling: {}", e.what())));
     return 1;
   } catch (...) {
-    fail_event_source(
-        input_source_error("event source threw while polling"));
+    fail_event_source(input_source_error("event source threw while polling"));
     return 1;
   }
   if (!batch) {
@@ -1174,8 +1201,8 @@ auto App::poll_event_source() -> int {
   std::string reason;
   auto held = m_source_held;
   if (!validate_source_batch(*batch, prior_caps, held, reason)) {
-    fail_event_source(input_source_error(
-        std::format("malformed event batch: {}", reason)));
+    fail_event_source(
+        input_source_error(std::format("malformed event batch: {}", reason)));
     return 1;
   }
   m_source_held = std::move(held);
@@ -1198,7 +1225,8 @@ auto App::poll_event_source() -> int {
 auto App::dispatch_source_events() -> void {
   std::deque<Event> ready;
   ready.swap(m_source_events);
-  for (const auto& event : ready) dispatch_event(event);
+  for (const auto& event : ready)
+    dispatch_event(event);
 }
 
 auto App::collect_terminal_replies(bool record_normalized) -> void {
@@ -1220,7 +1248,8 @@ auto App::dispatch_terminal_replies() -> void {
     }
   }
   if (!m_driver) return;
-  for (auto& error : m_driver->take_driver_events()) dispatch_event(error);
+  for (auto& error : m_driver->take_driver_events())
+    dispatch_event(error);
 }
 
 auto App::discard_terminal_input() -> int {
@@ -1247,9 +1276,9 @@ auto App::open_post_pipe() -> std::expected<void, ErrorEvent> {
   int fds[2]{-1, -1};
   if (::pipe(fds) != 0) {
     const int error = errno;
-    return std::unexpected{ErrorEvent{
-        Severity::Error, "app",
-        std::format("post wake pipe: {}", std::strerror(error))}};
+    return std::unexpected{
+        ErrorEvent{Severity::Error, "app",
+                   std::format("post wake pipe: {}", std::strerror(error))}};
   }
 
   auto fail = [&](const char* operation) -> std::expected<void, ErrorEvent> {
@@ -1309,7 +1338,7 @@ auto App::drain_post_pipe_locked() noexcept -> void {
     const ssize_t count = ::read(m_post_read, bytes, sizeof(bytes));
     if (count > 0) continue;
     if (count < 0 && errno == EINTR) continue;
-    return;  // dry, closed, or otherwise unusable
+    return; // dry, closed, or otherwise unusable
   }
 }
 
@@ -1424,7 +1453,8 @@ auto App::teardown() -> void {
   // outlive teardown on the one path (an exception escaping main) where ~App
   // is never going to run.
   App* expected = this;
-  g_active.compare_exchange_strong(expected, nullptr, std::memory_order_relaxed);
+  g_active.compare_exchange_strong(expected, nullptr,
+                                   std::memory_order_relaxed);
   m_resume_invalidation_pending.store(false, std::memory_order_relaxed);
   m_image_invalidation_pending.reset();
   close_post_pipe();
@@ -1456,7 +1486,8 @@ auto App::run() -> int {
       // idempotent, and the alternative is that a failure point added after
       // enter_screen() someday leaks the alt-screen with nothing to catch it.
       teardown();
-      std::fprintf(stderr, "termforge: setup failed: %s\n", r.error().message.c_str());
+      std::fprintf(stderr, "termforge: setup failed: %s\n",
+                   r.error().message.c_str());
       return 1;
     }
   } catch (...) {
@@ -1507,25 +1538,26 @@ auto App::run_loop() -> int {
     m_app_started = true;
     if (m_playback && m_playback->next < m_playback->trace.records.size()) {
       const auto& next = m_playback->trace.records[m_playback->next];
-      if (next.kind == detail::TraceKind::End &&
-          next.frame == m_frame_index) {
+      if (next.kind == detail::TraceKind::End && next.frame == m_frame_index) {
         playback_finish_frame();
       }
     }
-    while (m_running) frame_step();
+    while (m_running)
+      frame_step();
     finish_recording(true);
   } catch (...) {
     // No end record: an exception-aborted artifact is intentionally rejected
     // as truncated instead of being advertised as a complete replay.
     m_recording.reset();
     stop_app();
-    shutdown_driver();  // #148: sink still alive here; teardown's ~App path is not
+    shutdown_driver(); // #148: sink still alive here; teardown's ~App path is
+                       // not
     teardown();
     m_loop_active = false;
     throw;
   }
   stop_app();
-  shutdown_driver();  // #148: route driver teardown through the live sink
+  shutdown_driver(); // #148: route driver teardown through the live sink
   teardown();
   m_loop_active = false;
   return 0;
@@ -1538,8 +1570,7 @@ auto App::frame_step() -> void {
   // Playback is an isolated source, not a fourth custom virtual override. A
   // consumer may already override now_steady() for its ordinary tests; the
   // trace's clock must still be the production loop's timestamp during play.
-  const auto frame_start =
-      m_playback ? m_playback->clock.now() : now_steady();
+  const auto frame_start = m_playback ? m_playback->clock.now() : now_steady();
   record_frame(frame_start);
   playback_apply_frame_transitions();
   m_pixel_force_repaint = false;
@@ -1582,9 +1613,8 @@ auto App::frame_step() -> void {
   // just produced rather than one frame of stale state.
   const bool observing = static_cast<bool>(m_frame_observer);
   FrameObservation observation;
-  auto phase_started =
-      observing ? std::chrono::steady_clock::now()
-                : std::chrono::steady_clock::time_point{};
+  auto phase_started = observing ? std::chrono::steady_clock::now()
+                                 : std::chrono::steady_clock::time_point{};
   tick_step(frame_start);
   if (observing) {
     const auto now = std::chrono::steady_clock::now();
@@ -1592,8 +1622,7 @@ auto App::frame_step() -> void {
         now - phase_started);
   }
   const bool requested = std::exchange(m_render_requested, false);
-  const bool rendered =
-      m_render_mode == RenderMode::Continuous || requested;
+  const bool rendered = m_render_mode == RenderMode::Continuous || requested;
   if (rendered) {
     m_pixel_regions.clear();
     for (auto& fallback : m_pixel_placement_fallbacks)
@@ -1610,33 +1639,35 @@ auto App::frame_step() -> void {
     if (observing) {
       const auto now = std::chrono::steady_clock::now();
       observation.application_render =
-          std::chrono::duration_cast<std::chrono::nanoseconds>(
-              now - phase_started);
+          std::chrono::duration_cast<std::chrono::nanoseconds>(now -
+                                                               phase_started);
       phase_started = now;
     }
     render_overlays(*m_screen);
     m_renderer->present(*m_screen);
-    restore_backdrop(*m_screen);  // the overlay pass leaves no trace behind
+    restore_backdrop(*m_screen); // the overlay pass leaves no trace behind
     // #148: the frame's images queue AFTER its cell diff but in the SAME flush.
     // The order inside the buffer is the one the terminal composites: the cell
     // diff paints text and blanks first, and the image's placeholder/id grid is
-    // appended last so it is not overwritten by that diff -- collect_pixel_regions
-    // blanked the region's cells so present() emits spaces for them, and those
-    // spaces must precede, not follow, the image cells. queueing images last is
-    // also what makes "remove-then-write" single-buffer rather than a torn pair:
-    // a deletion/re-placement is emitted before the placeholder grid references it.
-    // flush_pixel_regions drives kitty's collection on EVERY RENDERED frame; a
-    // demand-idle frame deliberately does not touch driver state at all.
+    // appended last so it is not overwritten by that diff --
+    // collect_pixel_regions blanked the region's cells so present() emits
+    // spaces for them, and those spaces must precede, not follow, the image
+    // cells. queueing images last is also what makes "remove-then-write"
+    // single-buffer rather than a torn pair: a deletion/re-placement is emitted
+    // before the placeholder grid references it. flush_pixel_regions drives
+    // kitty's collection on EVERY RENDERED frame; a demand-idle frame
+    // deliberately does not touch driver state at all.
     flush_pixel_regions();
     if (observing) m_driver->measure_next_frame_write();
-    m_renderer->flush();  // #148: ONE write carries the whole rendered frame
+    m_renderer->flush(); // #148: ONE write carries the whole rendered frame
     // #178: a sink that refused this frame's bytes surfaces as an ErrorEvent
     // rather than a silently dropped frame. flush() is `-> void` and pure, so
     // the driver latches the refusal and this is where it is read -- after the
     // frame's SINGLE write above, so a frame carrying pixel regions is drained
     // exactly once rather than once per write it used to split into. Queued
     // through the same channel setup() uses for degradations, so it drains on
-    // the next frame's pump and dispatch_event routes it past the overlay stack.
+    // the next frame's pump and dispatch_event routes it past the overlay
+    // stack.
     auto output_error = m_driver->take_output_error();
     const bool output_accepted = !output_error.has_value();
     finish_pixel_frame(output_accepted);
@@ -1647,8 +1678,7 @@ auto App::frame_step() -> void {
       const auto submission =
           std::chrono::duration_cast<std::chrono::nanoseconds>(
               std::chrono::steady_clock::now() - phase_started);
-      observation.sink_write =
-          m_driver->finish_frame_write_measurement();
+      observation.sink_write = m_driver->finish_frame_write_measurement();
       observation.framework_submission =
           submission > observation.sink_write
               ? submission - observation.sink_write
@@ -1669,9 +1699,8 @@ auto App::frame_step() -> void {
 auto App::set_tick_hz(int hz) -> void {
   m_tick_hz = hz > 0 ? hz : 0;
   // 1.0, not 1: integer division here would silently pin every period to zero.
-  m_tick_dt = m_tick_hz > 0
-                  ? std::chrono::duration<double>{1.0 / m_tick_hz}
-                  : std::chrono::duration<double>::zero();
+  m_tick_dt = m_tick_hz > 0 ? std::chrono::duration<double>{1.0 / m_tick_hz}
+                            : std::chrono::duration<double>::zero();
   // The carried remainder is denominated in the old timestep — see set_tick_hz.
   m_tick_accum = std::chrono::duration<double>::zero();
 }
@@ -1688,15 +1717,17 @@ auto App::tick_step(std::chrono::steady_clock::time_point frame_start) -> void {
   Seconds dt = Seconds::zero();
   if (m_last_tick) {
     dt = frame_start - *m_last_tick;
-    if (dt < Seconds::zero()) dt = Seconds::zero();  // steady_clock says impossible
-    if (m_max_tick_dt > Seconds::zero() && dt > m_max_tick_dt) dt = m_max_tick_dt;
+    if (dt < Seconds::zero())
+      dt = Seconds::zero(); // steady_clock says impossible
+    if (m_max_tick_dt > Seconds::zero() && dt > m_max_tick_dt)
+      dt = m_max_tick_dt;
   }
   // Store the RAW stamp, never the clamped one: the clamp is a lie told to the
   // simulation about how much time passed, and folding it back into the clock
   // would compound that lie into permanent drift.
   m_last_tick = frame_start;
 
-  if (m_tick_dt <= Seconds::zero()) {  // variable timestep — the default
+  if (m_tick_dt <= Seconds::zero()) { // variable timestep — the default
     on_tick(dt);
     return;
   }
@@ -1767,8 +1798,8 @@ auto App::wait_for_sources(int timeout_ms) -> bool {
       fds[fd_count++] = {m_event_source->poll_fd(), POLLIN, 0};
     }
     if (fd_count == 0) return false;
-    const int result = ::poll(fds.data(), fd_count,
-                              indefinite ? -1 : timeout_ms);
+    const int result =
+        ::poll(fds.data(), fd_count, indefinite ? -1 : timeout_ms);
     if (result > 0) {
       const bool post_ready =
           post_index >= 0 &&
@@ -1887,8 +1918,8 @@ auto App::wait_frame(std::chrono::steady_clock::time_point frame_start,
     return;
   }
   while (true) {
-    const auto left =
-        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now_steady());
+    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - now_steady());
     if (left.count() <= 0) break;
     // A synthetic run preserves the source checks but never lends a real fd
     // its simulated timeout. If nothing is ready now, advancing the borrowed
@@ -1899,7 +1930,7 @@ auto App::wait_frame(std::chrono::steady_clock::time_point frame_start,
     const int timeout_ms = m_clock ? 0 : static_cast<int>(left.count());
     if (!wait_for_sources(timeout_ms)) {
       if (m_clock) m_clock->advance(left);
-      break;  // real or simulated budget spent
+      break; // real or simulated budget spent
     }
     // Readable but empty means EOF/hangup: stop, or we'd spin on a dead fd
     // for the rest of the budget.
@@ -1908,9 +1939,8 @@ auto App::wait_frame(std::chrono::steady_clock::time_point frame_start,
                 m_event_source_mode == EventSourceMode::ReplaceTerminal
             ? discard_terminal_input()
             : drain_input();
-    const int source_work = std::exchange(m_source_woke, false)
-                                ? poll_event_source()
-                                : 0;
+    const int source_work =
+        std::exchange(m_source_woke, false) ? poll_event_source() : 0;
     if (std::exchange(m_post_woke, false)) break;
     // Continuous mode absorbs input without shortening the authoritative frame
     // budget. Demand mode is latency-oriented once a source has work: end the
@@ -1954,7 +1984,8 @@ auto App::test_wire_headless(int cols, int rows, std::string* sink,
   m_renderer = std::make_unique<Renderer>(*m_driver);
 }
 
-auto App::test_run_frames(int frames, int cols, int rows, std::string* sink) -> void {
+auto App::test_run_frames(int frames, int cols, int rows, std::string* sink)
+    -> void {
   test_run_frames(frames, cols, rows, sink, std::make_unique<FallbackDriver>());
 }
 
@@ -1966,7 +1997,8 @@ auto App::test_run_frames(int frames, int cols, int rows, std::string* sink,
   m_running = true;
   m_loop_active = true;
   try {
-    for (int i = 0; i < frames && m_running; ++i) frame_step();
+    for (int i = 0; i < frames && m_running; ++i)
+      frame_step();
   } catch (...) {
     stop_event_source();
     m_loop_active = false;
@@ -2043,8 +2075,10 @@ auto App::pump_input() -> void {
   if (replacing_terminal) (void)m_input.poll();
   (void)poll_event_source();
   dispatch_terminal_replies();
-  for (auto& ev : preserved_events) dispatch_event(ev);
-  for (auto& ev : m_input.poll()) dispatch_event(ev);
+  for (auto& ev : preserved_events)
+    dispatch_event(ev);
+  for (auto& ev : m_input.poll())
+    dispatch_event(ev);
   dispatch_source_events();
 }
 
@@ -2055,7 +2089,8 @@ auto App::on_event(const Event& ev) -> void {
   // keystroke is at best confusing and at worst a double teardown.
   if (const auto* k = std::get_if<KeyEvent>(&ev)) {
     if (k->action != KeyAction::Press) return;
-    if (k->key == Key::Escape || (k->ctrl && (k->ch == 'c' || k->ch == 'C'))) quit();
+    if (k->key == Key::Escape || (k->ctrl && (k->ch == 'c' || k->ch == 'C')))
+      quit();
   }
 }
 
@@ -2084,7 +2119,7 @@ auto App::dispatch_event(const Event& ev) -> void {
   if (const auto* invalidated = std::get_if<ImageInvalidatedEvent>(&ev)) {
     if (!stage_image_invalidation(invalidated->reason)) {
       on_event(Event{ErrorEvent{Severity::Warning, "app",
-                               "ImageInvalidatedEvent reason is invalid"}});
+                                "ImageInvalidatedEvent reason is invalid"}});
     }
     return;
   }
@@ -2152,7 +2187,7 @@ auto App::dispatch_event(const Event& ev) -> void {
     return;
   }
 
-  top->on_event(ev);  // key / paste — result ignored, capture is total
+  top->on_event(ev); // key / paste — result ignored, capture is total
 }
 
 auto App::render_overlays(Screen& screen) -> void {
@@ -2177,8 +2212,7 @@ auto App::render_overlays(Screen& screen) -> void {
         save_backdrop(screen);
         dim_screen(screen);
         break;
-      case Backdrop::None:
-        break;
+      case Backdrop::None: break;
     }
     entry.widget->draw(screen);
   }
@@ -2213,7 +2247,7 @@ auto App::restore_backdrop(Screen& screen) -> void {
   std::size_t i = 0;
   for (int y = 0; y < screen.rows(); ++y) {
     for (int x = 0; x < screen.cols(); ++x) {
-      if (i >= m_backdrop_backup.size()) break;  // resized mid-frame
+      if (i >= m_backdrop_backup.size()) break; // resized mid-frame
       const BackdropCell& saved = m_backdrop_backup[i++];
       screen.restore_cell(x, y, saved.cell, saved.text);
     }
@@ -2338,8 +2372,7 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
       const auto it = std::find_if(
           m_persistent_pixels.begin(), m_persistent_pixels.end(),
           [&](const PersistentPixelRegion& candidate) {
-            return candidate.owner == &widget &&
-                   candidate.ordinal == ordinal;
+            return candidate.owner == &widget && candidate.ordinal == ordinal;
           });
       if (it == m_persistent_pixels.end()) {
         m_persistent_pixels.push_back(
@@ -2406,15 +2439,16 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
         needs_image ? widget.draw_encoded_pixels(region) : nullptr;
     const Image* image = nullptr;
     bool payload_encoded = encoded != nullptr;
-    if (needs_image && encoded == nullptr) image = widget.draw_pixels(region, px);
+    if (needs_image && encoded == nullptr)
+      image = widget.draw_pixels(region, px);
     if (!needs_image && retained != nullptr)
       payload_encoded = retained->encoded;
 
     if (payload_encoded) {
-      const ImageFormat format = encoded != nullptr ? encoded->format
-                                                    : retained->format;
-      const Extent extent = encoded != nullptr ? encoded->pixels
-                                               : retained->extent;
+      const ImageFormat format =
+          encoded != nullptr ? encoded->format : retained->format;
+      const Extent extent =
+          encoded != nullptr ? encoded->pixels : retained->extent;
       const std::size_t payload_bytes =
           encoded != nullptr ? encoded->bytes.size() : 0;
       const PixelFallbackSignature signature{
@@ -2453,9 +2487,8 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
       const Extent source_extent =
           payload_encoded
               ? (encoded != nullptr ? encoded->pixels : retained->extent)
-              : (image != nullptr
-                     ? Extent{image->width(), image->height()}
-                     : retained->extent);
+              : (image != nullptr ? Extent{image->width(), image->height()}
+                                  : retained->extent);
       if (auto valid = detail::validate_placement(
               placement, region, source_extent, *m_driver, m_driver->name(),
               "pixel region");
@@ -2469,22 +2502,22 @@ auto App::collect_pixel_regions(Widget& widget) -> void {
                                                     : retained->format)
                               : ImageFormat::Rgba32,
                 .extent = source_extent,
-                .payload_bytes = encoded != nullptr ? encoded->bytes.size()
-                                                     : 0},
+                .payload_bytes =
+                    encoded != nullptr ? encoded->bytes.size() : 0},
             std::move(valid.error()));
         if (retained != nullptr) retained->visible = false;
         continue;
       }
-      m_pixel_regions.push_back({.owner = &widget,
-                                 .ordinal = ordinal,
-                                 .rect = region,
-                                 .payload = payload_encoded
-                                                ? PixelRegion::Payload{encoded}
-                                                : PixelRegion::Payload{image},
-                                 .placement = placement,
-                                 .mode = state.mode,
-                                 .content_dirty = state.content_dirty && supplied,
-                                 .content_revision = state.content_revision});
+      m_pixel_regions.push_back(
+          {.owner = &widget,
+           .ordinal = ordinal,
+           .rect = region,
+           .payload = payload_encoded ? PixelRegion::Payload{encoded}
+                                      : PixelRegion::Payload{image},
+           .placement = placement,
+           .mode = state.mode,
+           .content_dirty = state.content_dirty && supplied,
+           .content_revision = state.content_revision});
 
       // An opaque Persistent root cannot be placed until its first terminal
       // OK. Keep the Baseline in that upload frame; the accepted cached arm
@@ -2542,26 +2575,24 @@ auto App::flush_pixel_regions() -> void {
     const auto state_it = std::find_if(
         m_persistent_pixels.begin(), m_persistent_pixels.end(),
         [&](const PersistentPixelRegion& candidate) {
-          return candidate.owner == pr.owner &&
-                 candidate.ordinal == pr.ordinal;
+          return candidate.owner == pr.owner && candidate.ordinal == pr.ordinal;
         });
     if (state_it == m_persistent_pixels.end()) continue;
     auto& state = *state_it;
 
     const auto* raw = std::get_if<const Image*>(&pr.payload);
     const auto* encoded = std::get_if<const EncodedImage*>(&pr.payload);
-    const bool has_payload =
-        (raw != nullptr && *raw != nullptr) ||
-        (encoded != nullptr && *encoded != nullptr);
+    const bool has_payload = (raw != nullptr && *raw != nullptr) ||
+                             (encoded != nullptr && *encoded != nullptr);
     const bool next_encoded = has_payload ? encoded != nullptr : state.encoded;
-    const ImageFormat next_format =
-        encoded != nullptr && *encoded != nullptr ? (*encoded)->format
-                                                  : state.format;
-    const Extent next_extent =
-        raw != nullptr && *raw != nullptr
-            ? Extent{(*raw)->width(), (*raw)->height()}
-            : encoded != nullptr && *encoded != nullptr ? (*encoded)->pixels
-                                                        : state.extent;
+    const ImageFormat next_format = encoded != nullptr && *encoded != nullptr
+                                        ? (*encoded)->format
+                                        : state.format;
+    const Extent next_extent = raw != nullptr && *raw != nullptr
+                                   ? Extent{(*raw)->width(), (*raw)->height()}
+                               : encoded != nullptr && *encoded != nullptr
+                                   ? (*encoded)->pixels
+                                   : state.extent;
     const bool identity_changed =
         state.content_ready && has_payload &&
         (state.extent != next_extent || state.encoded != next_encoded ||
@@ -2636,8 +2667,8 @@ auto App::flush_pixel_regions() -> void {
       state.touched_wire = true;
       const auto status = m_driver->pinned_image_status(state.pin);
       pending_terminal = status.update_pending;
-      expected_revision = status.content_revision +
-                          (status.update_pending ? 1u : 0u);
+      expected_revision =
+          status.content_revision + (status.update_pending ? 1u : 0u);
     } else if (submit_content && has_payload && !state.recreate &&
                !identity_changed) {
       const auto prior = m_driver->pinned_image_status(state.pin);
@@ -2654,8 +2685,8 @@ auto App::flush_pixel_regions() -> void {
         state.touched_wire = true;
         const auto status = m_driver->pinned_image_status(state.pin);
         pending_terminal = status.update_pending;
-        expected_revision = prior.content_revision +
-                            (status.update_pending ? 1u : 0u);
+        expected_revision =
+            prior.content_revision + (status.update_pending ? 1u : 0u);
       }
     }
     if (!content_ok) {
@@ -2680,9 +2711,9 @@ auto App::flush_pixel_regions() -> void {
       state.pending_encoded = next_encoded;
       state.pending_format = next_format;
       state.pending_terminal = pending_terminal || status.update_pending;
-      state.pending_expected_revision =
-          expected_revision != 0 ? expected_revision
-                                 : status.content_revision + 1;
+      state.pending_expected_revision = expected_revision != 0
+                                            ? expected_revision
+                                            : status.content_revision + 1;
       state.pending_content_revision = pr.content_revision;
       state.pending_rect = pr.rect;
       state.pending_visible = false;
@@ -2813,8 +2844,7 @@ auto App::finish_pixel_frame(bool output_accepted) -> void {
         state.awaiting_terminal = true;
         state.expected_revision = state.pending_expected_revision;
         state.acknowledgement_rect = state.pending_rect;
-        state.acknowledgement_content_revision =
-            state.pending_content_revision;
+        state.acknowledgement_content_revision = state.pending_content_revision;
       } else {
         state.content_ready = true;
         // The key may be stale only after an unseen region was erased, and
@@ -2836,10 +2866,10 @@ auto App::set_size(Size size) -> std::expected<void, ErrorEvent> {
   // caller forwarding a peer's window-change and dropping the result keeps the
   // size it had rather than half of the one it was sent.
   if (size.cols <= 0 || size.rows <= 0) {
-    return std::unexpected{ErrorEvent{
-        Severity::Warning, "app",
-        std::format("set_size: cols and rows must be > 0, got {}x{}", size.cols,
-                    size.rows)}};
+    return std::unexpected{
+        ErrorEvent{Severity::Warning, "app",
+                   std::format("set_size: cols and rows must be > 0, got {}x{}",
+                               size.cols, size.rows)}};
   }
   // Zero is legal on either axis and is not a degradation: it is what tmux and
   // the Linux console report, and push_cell_pixel_size already reads it as
@@ -2855,12 +2885,12 @@ auto App::set_size(Size size) -> std::expected<void, ErrorEvent> {
   // overflowing; what this refuses is a window no ioctl could have reported.
   //
   // All FOUR fields, not just the grid: ws_xpixel/ws_ypixel are unsigned shorts
-  // too, and the pixel pair is the half with teeth. push_cell_pixel_size divides
-  // it by the grid, so an unbounded pixel dimension over a 1x1 grid hands the
-  // driver a cell of INT_MAX -- which makes preferred_pixel_extent's room
-  // effectively infinite and stops PlacementFit::Exact refusing anything for the
-  // rest of the session. Bounding cols/rows alone would leave the #173 lesson
-  // half-applied on the very call that re-opened it.
+  // too, and the pixel pair is the half with teeth. push_cell_pixel_size
+  // divides it by the grid, so an unbounded pixel dimension over a 1x1 grid
+  // hands the driver a cell of INT_MAX -- which makes preferred_pixel_extent's
+  // room effectively infinite and stops PlacementFit::Exact refusing anything
+  // for the rest of the session. Bounding cols/rows alone would leave the #173
+  // lesson half-applied on the very call that re-opened it.
   if (size.cols > kMaxPushedDim || size.rows > kMaxPushedDim ||
       size.px_w > kMaxPushedDim || size.px_h > kMaxPushedDim) {
     return std::unexpected{ErrorEvent{
@@ -2905,13 +2935,14 @@ auto App::current_size() const -> Size {
   // A stream with no window (a socket, a pipe) answers ENOTTY and falls through
   // to the default below. That is correct-by-default rather than correct: the
   // real answer for a remote session arrives as a protocol message and has to
-  // be pushed in, which is what the branch above is (#180). The guard is for the
-  // -1 "no output stream" sentinel, and it buys a syscall rather than a
+  // be pushed in, which is what the branch above is (#180). The guard is for
+  // the -1 "no output stream" sentinel, and it buys a syscall rather than a
   // behaviour — ioctl(-1) fails into the same default.
   const int fd = m_term.io().out;
-  if (fd >= 0 && ioctl(fd, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0 && ws.ws_row > 0)
+  if (fd >= 0 && ioctl(fd, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0 &&
+      ws.ws_row > 0)
     return {ws.ws_col, ws.ws_row, ws.ws_xpixel, ws.ws_ypixel};
-  return {80, 24};  // sane default if ioctl fails
+  return {80, 24}; // sane default if ioctl fails
 }
 
 auto App::push_cell_pixel_size(Size size) -> void {
@@ -2933,10 +2964,10 @@ auto App::check_requirements_startup(Size size)
     -> std::expected<void, ErrorEvent> {
   const auto driver_caps = m_driver ? m_driver->capabilities() : Capabilities{};
   const auto facts = detail::make_requirement_facts(
-      m_caps, driver_caps, input_capabilities(), size.cols, size.rows, size.px_w,
-      size.px_h);
-  auto result = detail::evaluate_requirements(m_requirements, facts,
-                                               Severity::Error);
+      m_caps, driver_caps, input_capabilities(), size.cols, size.rows,
+      size.px_w, size.px_h);
+  auto result =
+      detail::evaluate_requirements(m_requirements, facts, Severity::Error);
   m_requirements_met = result.has_value();
   return result;
 }
@@ -2948,10 +2979,10 @@ auto App::update_requirements(Size size) -> void {
   }
   const auto driver_caps = m_driver ? m_driver->capabilities() : Capabilities{};
   const auto facts = detail::make_requirement_facts(
-      m_caps, driver_caps, input_capabilities(), size.cols, size.rows, size.px_w,
-      size.px_h);
-  auto result = detail::evaluate_requirements(m_requirements, facts,
-                                               Severity::Warning);
+      m_caps, driver_caps, input_capabilities(), size.cols, size.rows,
+      size.px_w, size.px_h);
+  auto result =
+      detail::evaluate_requirements(m_requirements, facts, Severity::Warning);
   const bool met = result.has_value();
   if (met == m_requirements_met) return;
   m_requirements_met = met;
@@ -2965,4 +2996,4 @@ auto App::update_requirements(Size size) -> void {
   }
 }
 
-}  // namespace termforge
+} // namespace termforge

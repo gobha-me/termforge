@@ -52,7 +52,8 @@ auto scalar_copy(std::span<const Pixel> src, std::span<Pixel> dst) noexcept
 auto scalar_blend(std::span<const Pixel> src, std::span<Pixel> dst) noexcept
     -> void {
   const std::size_t count = std::min(src.size(), dst.size());
-  for (std::size_t i = 0; i < count; ++i) dst[i] = blend_pixel(src[i], dst[i]);
+  for (std::size_t i = 0; i < count; ++i)
+    dst[i] = blend_pixel(src[i], dst[i]);
 }
 
 auto scalar_base64(std::span<const std::byte> input,
@@ -101,7 +102,9 @@ const Kernels kAvx2{KernelTier::Avx2, avx2_fill,   scalar_copy,
   return available;
 }
 #else
-[[nodiscard]] constexpr auto cpu_has_avx2() noexcept -> bool { return false; }
+[[nodiscard]] constexpr auto cpu_has_avx2() noexcept -> bool {
+  return false;
+}
 #endif
 
 [[nodiscard]] auto automatic_kernels() noexcept -> const Kernels* {
@@ -125,7 +128,7 @@ std::atomic<const Kernels*> g_kernels{nullptr};
   return *selected;
 }
 
-}  // namespace
+} // namespace
 
 auto kernel_tier_supported(KernelTier tier) noexcept -> bool {
   return tier == KernelTier::Scalar || cpu_has_avx2();
@@ -171,4 +174,4 @@ auto luminance_chars(std::span<const std::byte> rgba,
   active_kernels().luminance(rgba, output);
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

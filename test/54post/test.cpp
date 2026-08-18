@@ -128,7 +128,7 @@ auto parse_producer_event(std::string_view text) -> std::pair<int, int> {
           std::stoi(std::string{text.substr(split + 1)})};
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("terminal input precedes posted events and both precede the tick",
           "[post][order]") {
@@ -188,8 +188,9 @@ TEST_CASE("a post during render wakes the wait and dispatches next frame",
   REQUIRE(elapsed < 1500ms);
 }
 
-TEST_CASE("concurrent producers preserve each producer's FIFO without lost wake",
-          "[post][threads][wake]") {
+TEST_CASE(
+    "concurrent producers preserve each producer's FIFO without lost wake",
+    "[post][threads][wake]") {
   constexpr int kProducers = 6;
   constexpr int kPerProducer = 2000;
   constexpr std::size_t kTotal = kProducers * kPerProducer;
@@ -221,7 +222,8 @@ TEST_CASE("concurrent producers preserve each producer's FIFO without lost wake"
   const auto started = std::chrono::steady_clock::now();
   int result = -1;
   std::jthread loop{[&] { result = app.run(); }};
-  for (auto& producer : producers) producer.join();
+  for (auto& producer : producers)
+    producer.join();
   loop.join();
   const auto elapsed = std::chrono::steady_clock::now() - started;
 
@@ -234,13 +236,14 @@ TEST_CASE("concurrent producers preserve each producer's FIFO without lost wake"
     REQUIRE(producer < kProducers);
     REQUIRE(sequence == next[static_cast<std::size_t>(producer)]++);
   }
-  for (const int count : next) REQUIRE(count == kPerProducer);
-  REQUIRE(elapsed < 4000ms);  // a lost wake pays the five-second budget
+  for (const int count : next)
+    REQUIRE(count == kPerProducer);
+  REQUIRE(elapsed < 4000ms); // a lost wake pays the five-second budget
 }
 
 TEST_CASE("a burst larger than the wake pipe remains entirely queued",
           "[post][saturation]") {
-  constexpr int kBurst = 100000;  // above Linux/BSD default pipe capacities
+  constexpr int kBurst = 100000; // above Linux/BSD default pipe capacities
 
   SocketPair socket;
   REQUIRE(socket.ok());
@@ -250,7 +253,8 @@ TEST_CASE("a burst larger than the wake pipe remains entirely queued",
   app.expected_pastes = kBurst;
   app.quit_after_renders = 1;
 
-  for (int i = 0; i < kBurst; ++i) app.post(PasteEvent{std::to_string(i)});
+  for (int i = 0; i < kBurst; ++i)
+    app.post(PasteEvent{std::to_string(i)});
 
   std::string sink;
   app.test_run_frames(1, 20, 5, &sink);

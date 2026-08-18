@@ -26,7 +26,7 @@ auto TabBar::set_tabs(std::vector<std::string> titles) -> void {
   // columns from its glyphs. set_all also owns the -1-iff-empty invariant for
   // all four widgets that carry this state.
   m_list.set_all(std::move(titles));
-  m_first = 0;  // every sibling setter rewinds its viewport
+  m_first = 0; // every sibling setter rewinds its viewport
   mark_dirty();
 }
 
@@ -52,7 +52,7 @@ auto TabBar::content_total() const -> int {
   int total = 0;
   for (int i = 0; i < n; ++i) {
     total += detail::span_width(m_list.at(i));
-    if (i + 1 < n) ++total;  // gap column between titles, same as layout_spans
+    if (i + 1 < n) ++total; // gap column between titles, same as layout_spans
   }
   return total;
 }
@@ -73,7 +73,7 @@ auto TabBar::nearest_first_at(int content_col) const -> int {
   if (n <= 0) return 0;
   if (content_col < 0) content_col = 0;
   int best = 0;
-  int best_dist = std::abs(content_col);  // distance to tab 0 at column 0
+  int best_dist = std::abs(content_col); // distance to tab 0 at column 0
   int start = 0;
   for (int i = 1; i < n; ++i) {
     start += detail::span_width(m_list.at(i - 1)) + 1;
@@ -148,8 +148,7 @@ auto TabBar::layout_strip(int first) const -> StripLayout {
   // fit and how many fit depends on whether › took a column. Pass 2's range is
   // a strict subrange of pass 1's, so this settles in two and cannot oscillate.
   out.spans = fit(rect_right);
-  const bool all_shown =
-      !out.spans.empty() && out.spans.back().index == n - 1;
+  const bool all_shown = !out.spans.empty() && out.spans.back().index == n - 1;
   if (!all_shown && use_indicators) {
     // Below three columns the indicator would land on ‹'s column or leave no
     // content at all, so it is suppressed rather than drawn on top of it. Two
@@ -192,12 +191,12 @@ auto TabBar::max_first() const -> int {
   return n - 1;
 
   // COST, measured rather than assumed: this is a linear scan of layouts, so a
-  // draw is O(n^2) width measurements -- ~26us at 20 tabs, ~0.45ms at 400 (-O2).
-  // Fine for any tab bar a person reads; the fix if that ever changes is a
-  // BINARY search, since "all of [f, n) fit" is monotone in f. It is written
+  // draw is O(n^2) width measurements -- ~26us at 20 tabs, ~0.45ms at 400
+  // (-O2). Fine for any tab bar a person reads; the fix if that ever changes is
+  // a BINARY search, since "all of [f, n) fit" is monotone in f. It is written
   // linearly on purpose: monotonicity is a property of today's fit rule, not an
-  // invariant anything enforces, and a max_first() that is silently wrong by one
-  // is precisely the End-jump this function is shaped to prevent.
+  // invariant anything enforces, and a max_first() that is silently wrong by
+  // one is precisely the End-jump this function is shaped to prevent.
 }
 
 auto TabBar::first_visible() const -> int {
@@ -218,14 +217,15 @@ auto TabBar::reveal(int index) -> void {
   if (m_first > index) m_first = index;
   // Bounded by `index` itself: a tab wider than the whole strip is never shown
   // whole, and leftmost-and-truncated is the only sane place for it.
-  while (m_first < index && !shows(layout_strip(m_first), index)) ++m_first;
+  while (m_first < index && !shows(layout_strip(m_first), index))
+    ++m_first;
   m_first = std::clamp(m_first, 0, max_first());
 }
 
 auto TabBar::activate(int index) -> void {
   const int before = m_list.selected();
-  m_list.select(index);  // clamps; forces -1 on an empty bar
-  if (m_list.selected() == before) return;  // no-change: consumed, but silent
+  m_list.select(index);                    // clamps; forces -1 on an empty bar
+  if (m_list.selected() == before) return; // no-change: consumed, but silent
   reveal(m_list.selected());
   mark_dirty();
   // LAST, and nothing touches `this` after it: the callback may call set_tabs()
@@ -246,9 +246,9 @@ auto TabBar::scroll_by(int delta) -> bool {
   // The same degenerate-rect guard reveal() carries, and for a sharper reason:
   // with no strip, layout_strip shows nothing, so max_first() falls through to
   // its "cannot show the last tab whole" answer of n-1 and a single wheel notch
-  // would walk a never-laid-out widget off tab 0. Returning early also PRESERVES
-  // m_first rather than writing 0 over it, which is clamp_offset's rule for a
-  // collapse-then-re-expand (#48 item 4).
+  // would walk a never-laid-out widget off tab 0. Returning early also
+  // PRESERVES m_first rather than writing 0 over it, which is clamp_offset's
+  // rule for a collapse-then-re-expand (#48 item 4).
   if (const Rect r = rect(); r.w <= 0 || r.h <= 0) return false;
   // One max_first(), not the two that first_visible() plus a clamp would cost:
   // it is the expensive call here (a layout per candidate offset) and this runs
@@ -256,7 +256,7 @@ auto TabBar::scroll_by(int delta) -> bool {
   const int limit = max_first();
   const int before = std::clamp(m_first, 0, limit);
   const int target = std::clamp(before + delta, 0, limit);
-  m_first = target;  // also normalizes an offset stranded by a geometry change
+  m_first = target; // also normalizes an offset stranded by a geometry change
   return target != before;
 }
 
@@ -312,15 +312,14 @@ auto TabBar::draw(Screen& screen) -> void {
     // The left pad column carries the marker for the active tab -- the half of
     // the state that survives a driver dropping colour (#76). Inactive tabs
     // leave it blank; the fill above already put a space there.
-    if (is_active && !mark.empty()) screen.write_text(span.x, r.y, mark, fg, bg);
+    if (is_active && !mark.empty())
+      screen.write_text(span.x, r.y, mark, fg, bg);
     // Title starts one column in. The trailing pad is the first thing clipping
     // eats, which is why the budget is w - 1 and not w - 2.
     if (const int avail = span.w - 1; avail > 0)
-      screen.write_text(
-          span.x + 1, r.y,
-          detail::truncate_to_width(
-              m_list.at(span.index), avail),
-          fg, bg);
+      screen.write_text(span.x + 1, r.y,
+                        detail::truncate_to_width(m_list.at(span.index), avail),
+                        fg, bg);
   }
 
   // #131: second-row horizontal track when the rect can host it. Content units
@@ -370,8 +369,7 @@ auto TabBar::handle_mouse(const MouseEvent& m) -> bool {
     const int track_run = track_w - 1;
     const int content_run = total - 1;
     int content_col = static_cast<int>(
-        (static_cast<long long>(m.x - rect().x) * content_run +
-         track_run / 2) /
+        (static_cast<long long>(m.x - rect().x) * content_run + track_run / 2) /
         track_run);
     content_col = std::clamp(content_col, 0, content_run);
     const int target = nearest_first_at(content_col);
@@ -382,7 +380,7 @@ auto TabBar::handle_mouse(const MouseEvent& m) -> bool {
     return true;
   }
 
-  if (m.y != rect().y) return true;  // a row below the strip: consumed, inert
+  if (m.y != rect().y) return true; // a row below the strip: consumed, inert
 
   const StripLayout strip = layout_strip(first_visible());
   if (strip.left_arrow && m.x == strip.left_x) {
@@ -401,7 +399,7 @@ auto TabBar::handle_mouse(const MouseEvent& m) -> bool {
     activate(hit);
     return true;
   }
-  return true;  // gap or background inside the rect: consumed, inert
+  return true; // gap or background inside the rect: consumed, inert
 }
 
 auto TabBar::on_event(const Event& ev) -> bool {
@@ -438,4 +436,4 @@ auto TabBar::on_event(const Event& ev) -> bool {
   return false;
 }
 
-}  // namespace termforge
+} // namespace termforge

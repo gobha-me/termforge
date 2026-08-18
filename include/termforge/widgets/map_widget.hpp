@@ -35,7 +35,7 @@ namespace termforge {
 // ADDITIONAL optional field beside it, so a sprite can never be authored
 // without a glyph fallback next to it.
 struct TileDef {
-  std::string glyph;  // UTF-8 text written at the tile origin; REQUIRED
+  std::string glyph; // UTF-8 text written at the tile origin; REQUIRED
   Rgb fg{theme::kFg};
   Rgb bg{theme::kBg};
   // Source rectangle in TileSet's atlas. Optional so glyph-only applications
@@ -57,14 +57,16 @@ class TileSet {
   // kEmpty (blank glyph, theme colours) for any id never defined.
   [[nodiscard]] auto get(int id) const -> const TileDef&;
 
-  [[nodiscard]] auto size() const noexcept -> std::size_t { return m_defs.size(); }
+  [[nodiscard]] auto size() const noexcept -> std::size_t {
+    return m_defs.size();
+  }
   [[nodiscard]] auto atlas() const noexcept -> const Image& { return m_atlas; }
   [[nodiscard]] auto sprite_extent() const noexcept -> Extent {
     return m_sprite_extent;
   }
 
  private:
-  std::vector<TileDef> m_defs;  // indexed by id; sparse ids stay default
+  std::vector<TileDef> m_defs; // indexed by id; sparse ids stay default
   Image m_atlas;
   Extent m_sprite_extent{};
 
@@ -121,7 +123,7 @@ class MapWidget final : public Widget {
       -> std::optional<std::pair<int, int>>;
 
   // ── layers (layer 0 implicit; add_layer for more) ─────────────────────────
-  auto add_layer(std::string name) -> int;  // returns the new layer's index
+  auto add_layer(std::string name) -> int; // returns the new layer's index
   auto set_tile(int layer, int x, int y, int id) -> void;
   [[nodiscard]] auto tile(int layer, int x, int y) const -> int;
   auto clear_layer(int layer) -> void;
@@ -148,7 +150,7 @@ class MapWidget final : public Widget {
  private:
   struct Layer {
     std::string name;
-    std::vector<int> cells;  // row-major, w*h; empty id = falls through
+    std::vector<int> cells; // row-major, w*h; empty id = falls through
     bool visible{true};
   };
 
@@ -163,15 +165,15 @@ class MapWidget final : public Widget {
   auto clamp_camera() -> void;
 
   TileSet m_tileset;
-  std::vector<Layer> m_layers;   // [0] created on first use / by set_map_size
+  std::vector<Layer> m_layers; // [0] created on first use / by set_map_size
   // viewport_tiles()/clamp_camera() arithmetic lifted out so const tile_at
   // can evaluate the SAME clamped window draw() would use, without mutating.
   [[nodiscard]] auto clamped_camera() const noexcept -> std::pair<int, int>;
 
-  int m_map_w{0}, m_map_h{0};    // tiles
-  int m_tile_w{1}, m_tile_h{1};  // cells
-  int m_cam_x{0}, m_cam_y{0};    // top-left tile of the viewport
-  Rgb m_bg{theme::kBg};          // background fill for uncovered cells
+  int m_map_w{0}, m_map_h{0};   // tiles
+  int m_tile_w{1}, m_tile_h{1}; // cells
+  int m_cam_x{0}, m_cam_y{0};   // top-left tile of the viewport
+  Rgb m_bg{theme::kBg};         // background fill for uncovered cells
 
   // Pixel content has its own lifetime. draw() clears Widget::dirty(), while
   // this bit clears only after App reports an accepted enhanced-frame write.
@@ -190,4 +192,4 @@ class MapWidget final : public Widget {
   bool m_raster_valid{false};
 };
 
-}  // namespace termforge
+} // namespace termforge

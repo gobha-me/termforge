@@ -34,8 +34,7 @@ namespace {
 constexpr Pixel kInk{25, 100, 220, 255};
 
 auto geometry(PixelPoint offset, PixelRect crop,
-              PlacementFit fit = PlacementFit::Exact)
-    -> ImagePlacementOptions {
+              PlacementFit fit = PlacementFit::Exact) -> ImagePlacementOptions {
   return {.fit = fit,
           .layer = ImageLayer::below_text(),
           .pixel_offset = offset,
@@ -52,7 +51,7 @@ auto expect_layout(const tfsupport::Apc& placement, PixelPoint offset,
   CHECK(key_value(placement, "Y") == std::to_string(offset.y));
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("Classic Kitty emits crop and sub-cell placement keys") {
   const Image image = solid(32, 48, kInk);
@@ -75,8 +74,7 @@ TEST_CASE("Classic Kitty emits crop and sub-cell placement keys") {
   // Offset and crop are placement state. Replacing them retires and recreates
   // only the placement under the stable region image id.
   wire.clear();
-  const auto second =
-      geometry(PixelPoint{1, 2}, PixelRect{4, 5, 10, 18});
+  const auto second = geometry(PixelPoint{1, 2}, PixelRect{4, 5, 10, 18});
   REQUIRE(driver.draw_image(dest, image, second));
   driver.flush();
   REQUIRE(placements(wire).size() == 1);
@@ -194,18 +192,17 @@ TEST_CASE("Exact fit measures the visible crop and its offset") {
   KittyDriver fits;
   std::string fit_wire;
   fits.set_output(&fit_wire);
-  REQUIRE(fits.draw_image(
-      Rect{0, 0, 1, 1}, image,
-      geometry(PixelPoint{}, PixelRect{900, 900, 8, 16})));
+  REQUIRE(fits.draw_image(Rect{0, 0, 1, 1}, image,
+                          geometry(PixelPoint{}, PixelRect{900, 900, 8, 16})));
   fits.flush();
   CHECK(total_data_transmits(fit_wire) == 1);
 
   KittyDriver misses;
   std::string miss_wire;
   misses.set_output(&miss_wire);
-  const auto miss = misses.draw_image(
-      Rect{0, 0, 1, 1}, image,
-      geometry(PixelPoint{1, 0}, PixelRect{900, 900, 8, 16}));
+  const auto miss =
+      misses.draw_image(Rect{0, 0, 1, 1}, image,
+                        geometry(PixelPoint{1, 0}, PixelRect{900, 900, 8, 16}));
   REQUIRE_FALSE(miss);
   CHECK(miss.error().message.find("needs 9x16 pixels") != std::string::npos);
   misses.flush();
@@ -215,8 +212,7 @@ TEST_CASE("Exact fit measures the visible crop and its offset") {
 TEST_CASE("Unicode placeholders refuse geometry their renderer ignores") {
   const Image image = solid(32, 48, kInk);
   const Rect containing{1, 1, 4, 4};
-  const auto request = geometry(PixelPoint{3, 4},
-                                PixelRect{2, 3, 13, 17},
+  const auto request = geometry(PixelPoint{3, 4}, PixelRect{2, 3, 13, 17},
                                 PlacementFit::Stretch);
   std::string wire;
   KittyDriver driver;

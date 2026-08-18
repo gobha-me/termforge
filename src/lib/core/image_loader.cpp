@@ -2,8 +2,8 @@
 
 #include <cstdint>
 #include <cstring>
-#include <fstream>
 #include <format>
+#include <fstream>
 
 namespace termforge {
 
@@ -20,11 +20,11 @@ auto read_u32_le(const char* p) -> std::uint32_t {
 }
 
 auto err(std::string msg) -> std::expected<Image, ErrorEvent> {
-  return std::unexpected{ErrorEvent{Severity::Warning, "image_loader",
-                                    std::move(msg)}};
+  return std::unexpected{
+      ErrorEvent{Severity::Warning, "image_loader", std::move(msg)}};
 }
 
-}  // namespace
+} // namespace
 
 auto ImageLoader::load(const std::string& path)
     -> std::expected<Image, ErrorEvent> {
@@ -62,8 +62,9 @@ auto ImageLoader::load_from_memory(const std::string& data)
   const auto pixel_count = width * height;
   const auto expected = kHeaderSize + pixel_count * sizeof(Pixel);
   if (data.size() != expected)
-    return err(std::format("size mismatch: got {} bytes, expected {} ({}x{} RGBA)",
-                           data.size(), expected, w, h));
+    return err(
+        std::format("size mismatch: got {} bytes, expected {} ({}x{} RGBA)",
+                    data.size(), expected, w, h));
 
   // Copy pixel data directly — the format stores RGBA in the same layout
   // as our Pixel struct (r, g, b, a bytes in order).
@@ -74,4 +75,4 @@ auto ImageLoader::load_from_memory(const std::string& data)
   return Image{w, h, std::move(pixels)};
 }
 
-}  // namespace termforge
+} // namespace termforge

@@ -48,4 +48,4 @@ auto invoke_copy(const std::function<void(Args...)>& slot, CallArgs&&... args)
   if (cb) cb(std::forward<CallArgs>(args)...);
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

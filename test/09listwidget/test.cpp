@@ -46,7 +46,8 @@ TEST_CASE("ListWidget: items render with first selected", "[listwidget]") {
   REQUIRE(s.text_at(2, 2) == "g");
 }
 
-TEST_CASE("ListWidget: selection highlight uses inverted colors", "[listwidget]") {
+TEST_CASE("ListWidget: selection highlight uses inverted colors",
+          "[listwidget]") {
   Screen s{20, 5};
   ListWidget l;
   l.set_geometry({0, 0, 20, 5});
@@ -72,19 +73,20 @@ TEST_CASE("ListWidget: Down/Up navigates selection", "[listwidget]") {
   REQUIRE(l.selected() == 0);
 }
 
-TEST_CASE("ListWidget: selection clamps at boundaries", "[listwidget][failure]") {
+TEST_CASE("ListWidget: selection clamps at boundaries",
+          "[listwidget][failure]") {
   Screen s{20, 5};
   ListWidget l;
   l.set_geometry({0, 0, 20, 5});
   l.set_items({"a", "b"});
 
   Event up = KeyEvent{Key::Up};
-  l.on_event(up);  // already at 0
+  l.on_event(up); // already at 0
   REQUIRE(l.selected() == 0);
 
   Event down = KeyEvent{Key::Down};
   l.on_event(down);
-  l.on_event(down);  // past end
+  l.on_event(down); // past end
   REQUIRE(l.selected() == 1);
 }
 
@@ -92,7 +94,8 @@ TEST_CASE("ListWidget: Home/End jump to first/last", "[listwidget]") {
   Screen s{20, 3};
   ListWidget l;
   l.set_geometry({0, 0, 20, 3});
-  for (int i = 0; i < 10; ++i) l.add_item(std::format("item{}", i));
+  for (int i = 0; i < 10; ++i)
+    l.add_item(std::format("item{}", i));
 
   Event end = KeyEvent{Key::End};
   l.on_event(end);
@@ -104,10 +107,11 @@ TEST_CASE("ListWidget: Home/End jump to first/last", "[listwidget]") {
 }
 
 TEST_CASE("ListWidget: scroll follows selection", "[listwidget]") {
-  Screen s{20, 3};  // only 3 visible rows
+  Screen s{20, 3}; // only 3 visible rows
   ListWidget l;
   l.set_geometry({0, 0, 20, 3});
-  for (int i = 0; i < 10; ++i) l.add_item(std::format("item{}", i));
+  for (int i = 0; i < 10; ++i)
+    l.add_item(std::format("item{}", i));
 
   // Move selection to item 5 (past visible window).
   l.set_selected(5);
@@ -117,7 +121,7 @@ TEST_CASE("ListWidget: scroll follows selection", "[listwidget]") {
   l.draw(s);
   bool found = false;
   for (int y = 0; y < 3; ++y) {
-    if (s.text_at(2, y) == "i") found = true;  // past the marker gutter (#72)
+    if (s.text_at(2, y) == "i") found = true; // past the marker gutter (#72)
   }
   REQUIRE(found);
 }
@@ -139,27 +143,28 @@ TEST_CASE("ListWidget: a height shrink re-clamps the scroll at draw (#41)",
   ListWidget l;
   l.set_geometry({0, 0, 20, 3});
   l.set_items({"i0", "i1", "i2", "i3", "i4", "i5"});
-  l.set_selected(5);           // scroll = 3, rows 3-5 visible
-  l.set_geometry({0, 0, 20, 2});  // terminal resize: now only 2 rows
+  l.set_selected(5);             // scroll = 3, rows 3-5 visible
+  l.set_geometry({0, 0, 20, 2}); // terminal resize: now only 2 rows
 
   l.draw(s);
   // Bounds-only clamp: scroll stays 3 (already inside [0, 6-2]), rows 3-4 show.
-  REQUIRE(s.text_at(3, 0) == "3");  // row 3 (x=3: past the #72 marker gutter)
-  REQUIRE(s.text_at(3, 1) == "4");  // row 4
+  REQUIRE(s.text_at(3, 0) == "3"); // row 3 (x=3: past the #72 marker gutter)
+  REQUIRE(s.text_at(3, 1) == "4"); // row 4
   // The selected row 5 is scrolled off the bottom: no marker is visible.
   REQUIRE(s.text_at(0, 0).empty());
   REQUIRE(s.text_at(0, 1).empty());
-  REQUIRE(l.selected() == 5);  // ... but the selection itself is unmoved
+  REQUIRE(l.selected() == 5); // ... but the selection itself is unmoved
 
   // The NEXT selection change re-reveals it (reveal is on selection change,
   // not draw): nudging the selection pulls row 5 back into the window.
-  l.on_event(tfsupport::key(Key::Down));  // already at the last row; re-reveals
+  l.on_event(tfsupport::key(Key::Down)); // already at the last row; re-reveals
   l.draw(s);
-  REQUIRE(s.text_at(3, 1) == "5");  // row 5 visible again
-  REQUIRE(s.text_at(0, 1) == "▸");  // ... and marked as the selection
+  REQUIRE(s.text_at(3, 1) == "5"); // row 5 visible again
+  REQUIRE(s.text_at(0, 1) == "▸"); // ... and marked as the selection
 }
 
-TEST_CASE("ListWidget: wheel scrolls the selection out of view and it STAYS out (#35 Q2)",
+TEST_CASE("ListWidget: wheel scrolls the selection out of view and it STAYS "
+          "out (#35 Q2)",
           "[listwidget]") {
   // The Q2 regression guard. Before #35 the wheel MOVED the selection; after,
   // it scrolls the VIEW and the selection stays put -- and, crucially, draw()
@@ -169,21 +174,22 @@ TEST_CASE("ListWidget: wheel scrolls the selection out of view and it STAYS out 
   ListWidget l;
   l.set_geometry({0, 0, 20, 3});
   l.set_items({"i0", "i1", "i2", "i3", "i4", "i5", "i6", "i7"});
-  l.set_selected(0);           // selection at the top, scroll = 0
+  l.set_selected(0); // selection at the top, scroll = 0
   REQUIRE(l.scroll_offset() == 0);
 
   // Wheel down over the list: the VIEW scrolls, the selection does not move.
   l.on_event(tfsupport::wheel(2, 1, /*up=*/false));
-  REQUIRE(l.selected() == 0);        // selection unmoved
-  REQUIRE(l.scroll_offset() == 3);   // view scrolled by kWheelStep
+  REQUIRE(l.selected() == 0);      // selection unmoved
+  REQUIRE(l.scroll_offset() == 3); // view scrolled by kWheelStep
 
   l.draw(s);
   // Row 0 (the selection) is now off the top of the 3-row window (rows 3-5
   // shown) -- and draw() did NOT pull it back into view.
   REQUIRE(l.selected() == 0);
   REQUIRE(l.scroll_offset() == 3);
-  REQUIRE(s.text_at(3, 0) == "3");  // topmost visible row is i3, not i0
-  REQUIRE(s.text_at(0, 0).empty());  // no marker visible: the selection is off-screen
+  REQUIRE(s.text_at(3, 0) == "3"); // topmost visible row is i3, not i0
+  REQUIRE(s.text_at(0, 0)
+              .empty()); // no marker visible: the selection is off-screen
 
   // An arrow key STILL moves the selection and reveals it (the arrow direction
   // is unchanged): Down from 0 selects 1 and pulls the window back up.
@@ -228,7 +234,8 @@ TEST_CASE("ListWidget: mouse click selects item", "[listwidget]") {
   REQUIRE(l.selected() == 2);
 }
 
-TEST_CASE("ListWidget: right/middle click does not select or fire (#12)", "[listwidget][failure]") {
+TEST_CASE("ListWidget: right/middle click does not select or fire (#12)",
+          "[listwidget][failure]") {
   Screen s{20, 5};
   ListWidget l;
   l.set_geometry({0, 0, 20, 5});
@@ -242,7 +249,7 @@ TEST_CASE("ListWidget: right/middle click does not select or fire (#12)", "[list
   REQUIRE_FALSE(l.on_event(right));
   Event middle = MouseEvent{.x = 1, .y = 1, .button = 1, .pressed = true};
   REQUIRE_FALSE(l.on_event(middle));
-  REQUIRE(l.selected() == 0);  // untouched
+  REQUIRE(l.selected() == 0); // untouched
   REQUIRE(fired == 0);
 }
 
@@ -262,7 +269,7 @@ TEST_CASE("ListWidget: clear empties the list", "[listwidget]") {
   l.clear();
   REQUIRE(l.item_count() == 0);
   REQUIRE(l.selected() == -1);
-  l.draw(s);  // must not crash
+  l.draw(s); // must not crash
 }
 
 // ── Selection marker (#72) ──────────────────────────────────────────────────
@@ -271,7 +278,8 @@ TEST_CASE("ListWidget: clear empties the list", "[listwidget]") {
 // discards colour outright -- and that is the tier App::test_run_frames runs
 // every headless test on. These cases pin the affordance that survives it.
 
-TEST_CASE("ListWidget: the marker is on the selected row only", "[listwidget]") {
+TEST_CASE("ListWidget: the marker is on the selected row only",
+          "[listwidget]") {
   Screen s{20, 5};
   ListWidget l;
   l.set_geometry({0, 0, 20, 5});
@@ -279,8 +287,8 @@ TEST_CASE("ListWidget: the marker is on the selected row only", "[listwidget]") 
   l.draw(s);
 
   REQUIRE(s.text_at(0, 0) == "▸");  // selected
-  REQUIRE(s.text_at(1, 0).empty());      // the separator column
-  REQUIRE(s.text_at(0, 1).empty());      // unselected: gutter stays blank
+  REQUIRE(s.text_at(1, 0).empty()); // the separator column
+  REQUIRE(s.text_at(0, 1).empty()); // unselected: gutter stays blank
 }
 
 TEST_CASE("ListWidget: the marker follows the selection", "[listwidget]") {
@@ -306,9 +314,10 @@ TEST_CASE("ListWidget: BorderStyle::Ascii keeps the whole widget 7-bit",
   l.draw(s);
 
   REQUIRE(s.text_at(0, 0) == "*");
-  REQUIRE(l.gutter_cols() == 2);  // same geometry as the Unicode family
+  REQUIRE(l.gutter_cols() == 2); // same geometry as the Unicode family
   for (int y = 0; y < 3; ++y) {
-    for (int x = 0; x < 20; ++x) REQUIRE(all_seven_bit(s.text_at(x, y)));
+    for (int x = 0; x < 20; ++x)
+      REQUIRE(all_seven_bit(s.text_at(x, y)));
   }
 }
 
@@ -318,7 +327,7 @@ TEST_CASE("ListWidget: a custom marker resizes the gutter", "[listwidget]") {
   l.set_geometry({0, 0, 20, 3});
   l.set_items({"alpha"});
 
-  l.set_marker("»»");  // two columns + separator
+  l.set_marker("»»"); // two columns + separator
   REQUIRE(l.gutter_cols() == 3);
   l.draw(s);
   REQUIRE(s.text_at(0, 0) == "»");
@@ -341,14 +350,14 @@ TEST_CASE("ListWidget: the measured marker is the painted marker",
   l.set_geometry({0, 0, 20, 3});
   l.set_items({"alpha"});
 
-  l.set_marker("\033[7m>\033[0m");  // one visible column, seven raw ones
+  l.set_marker("\033[7m>\033[0m"); // one visible column, seven raw ones
   REQUIRE(l.marker() == ">");
   REQUIRE(l.gutter_cols() == 2);
   l.draw(s);
   REQUIRE(s.text_at(0, 0) == ">");
-  REQUIRE(s.text_at(2, 0) == "a");  // NOT indented by the stripped escape
+  REQUIRE(s.text_at(2, 0) == "a"); // NOT indented by the stripped escape
 
-  l.set_marker("\t>");  // tab becomes a space
+  l.set_marker("\t>"); // tab becomes a space
   REQUIRE(l.marker() == " >");
   REQUIRE(l.gutter_cols() == 3);
   l.draw(s);
@@ -356,7 +365,8 @@ TEST_CASE("ListWidget: the measured marker is the painted marker",
   REQUIRE(s.text_at(3, 0) == "a");
 }
 
-TEST_CASE("ListWidget: a zero-width marker reserves nothing", "[listwidget][failure]") {
+TEST_CASE("ListWidget: a zero-width marker reserves nothing",
+          "[listwidget][failure]") {
   // A lone combining mark has no base glyph to attach to, so write_text drops
   // it -- reserving a column for it would dent every row permanently.
   ListWidget l;
@@ -375,12 +385,13 @@ TEST_CASE("ListWidget: set_marker_enabled(false) restores the old geometry",
   l.draw(s);
 
   REQUIRE(l.gutter_cols() == 0);
-  REQUIRE(s.text_at(0, 0) == "a");  // flush left, exactly as before #72
+  REQUIRE(s.text_at(0, 0) == "a"); // flush left, exactly as before #72
   REQUIRE(s.text_at(0, 1) == "b");
 }
 
-TEST_CASE("ListWidget: a rect too narrow for both drops the marker, not the text",
-          "[listwidget][failure]") {
+TEST_CASE(
+    "ListWidget: a rect too narrow for both drops the marker, not the text",
+    "[listwidget][failure]") {
   Screen s{10, 3};
 
   // w == 4: gutter (2) + the reserved right margin (1) still leaves a column.
@@ -398,7 +409,7 @@ TEST_CASE("ListWidget: a rect too narrow for both drops the marker, not the text
     ListWidget l;
     l.set_geometry({0, 0, w, 1});
     l.set_items({"alpha"});
-    l.draw(n);  // must not crash
+    l.draw(n); // must not crash
     // And the accessor says so: gutter_cols() is what draw() used, not a
     // configured value a consumer would lay out against and be wrong by two.
     REQUIRE(l.gutter_cols() == 0);
@@ -406,18 +417,20 @@ TEST_CASE("ListWidget: a rect too narrow for both drops the marker, not the text
   }
 }
 
-TEST_CASE("ListWidget: gutter_cols reports the configured width before geometry",
-          "[listwidget]") {
+TEST_CASE(
+    "ListWidget: gutter_cols reports the configured width before geometry",
+    "[listwidget]") {
   // A consumer sizing the widget asks BEFORE set_geometry -- term-game shrinks
   // its frame's content rect by exactly this. With no rect yet there is no
   // narrow-rect rule to apply, so it reports what the marker wants.
   ListWidget l;
   REQUIRE(l.gutter_cols() == 2);
   l.set_geometry({0, 0, 40, 5});
-  REQUIRE(l.gutter_cols() == 2);  // and a roomy rect agrees
+  REQUIRE(l.gutter_cols() == 2); // and a roomy rect agrees
 }
 
-TEST_CASE("ListWidget: a click in the marker gutter selects (#72)", "[listwidget]") {
+TEST_CASE("ListWidget: a click in the marker gutter selects (#72)",
+          "[listwidget]") {
   // The gutter is inside rect(), unlike a marker an app draws beside the
   // widget -- so the column that shows the selection can also set it.
   Screen s{20, 5};
@@ -455,11 +468,12 @@ TEST_CASE("ListWidget: items are sanitized at the setter (#154)",
   // item back gets the painted form, never the caller's raw bytes.
   l.add_item("mo\tre");
   l.set_selected(2);
-  REQUIRE(l.selected_text() == "mo re");  // tab -> space, at the seam
+  REQUIRE(l.selected_text() == "mo re"); // tab -> space, at the seam
 }
 
-TEST_CASE("ListWidget: an item's tab paints the width the setter measured (#154)",
-          "[listwidget]") {
+TEST_CASE(
+    "ListWidget: an item's tab paints the width the setter measured (#154)",
+    "[listwidget]") {
   // The drift pin: pre-fix, "mo\tre" was STORED raw, so draw() handed
   // write_text a string in which \t is a zero-width C0 control and the row
   // painted "more" -- while any caller measuring the stored string via
@@ -473,11 +487,12 @@ TEST_CASE("ListWidget: an item's tab paints the width the setter measured (#154)
   l.draw(s);
   // Text starts past the marker gutter (mark + separator == 2).
   REQUIRE(row_text(s, 0, 2, 6) == "mo re ");
-  REQUIRE(s.text_at(4, 0) == " ");  // the tab's column is a painted space
-  REQUIRE(s.text_at(5, 0) == "r");  // not pulled left onto column 4
+  REQUIRE(s.text_at(4, 0) == " "); // the tab's column is a painted space
+  REQUIRE(s.text_at(5, 0) == "r"); // not pulled left onto column 4
 }
 
-TEST_CASE("ListWidget: a click in an escape-carrying item resolves to the row painted",
+TEST_CASE("ListWidget: a click in an escape-carrying item resolves to the row "
+          "painted",
           "[listwidget][mouse]") {
   // #10's shape: the click resolves to an INDEX from (x,y), so it can only
   // drift if the row's GEOMETRY moved. A multi-column escape in the item
@@ -489,7 +504,7 @@ TEST_CASE("ListWidget: a click in an escape-carrying item resolves to the row pa
   l.set_geometry({0, 0, 20, 3});
   l.set_items({"one", "t\033[31mwo", "three"});
   l.draw(s);
-  REQUIRE(row_text(s, 1, 2, 6) == "two   ");  // escape stripped pre-paint
+  REQUIRE(row_text(s, 1, 2, 6) == "two   "); // escape stripped pre-paint
 
   int got_index = -1;
   std::string got_text;
@@ -513,15 +528,17 @@ TEST_CASE("ListWidget: every sanitation arm applied at the seam (#154)",
   // not eaten as a hex digit, and BEL is spelled \a (\b is backspace).
   ListWidget l;
   l.set_items({
-      "a\033[1mb",              // CSI styling: stripped whole sequence -> "ab"
-      "c\033]8;;http://x\ad",   // OSC with BEL terminator -> "cd"
-      "e\xC2\x9B",              // two-byte C1 CSI pair -> "e". #149: the pair
-                                // IS CSI, so any text after it would be its
-                                // parameters/final and go with it (43text pins
-                                // that); ending the item here isolates the pair.
-      std::string{"g\0h", 3},   // NUL, a C0, dropped -> "gh" (literal needs a length)
-      "i\b" "j",                // backspace, a C0, dropped -> "ij"
-      "k\xE4\xB8\x96",      // well-formed multibyte: kept -> "k\xE4\xB8\x96"
+      "a\033[1mb",            // CSI styling: stripped whole sequence -> "ab"
+      "c\033]8;;http://x\ad", // OSC with BEL terminator -> "cd"
+      "e\xC2\x9B",            // two-byte C1 CSI pair -> "e". #149: the pair
+                              // IS CSI, so any text after it would be its
+                              // parameters/final and go with it (43text pins
+                              // that); ending the item here isolates the pair.
+      std::string{"g\0h",
+                  3}, // NUL, a C0, dropped -> "gh" (literal needs a length)
+      "i\b"
+      "j",             // backspace, a C0, dropped -> "ij"
+      "k\xE4\xB8\x96", // well-formed multibyte: kept -> "k\xE4\xB8\x96"
   });
   REQUIRE(l.item_count() == 6);
   REQUIRE(l.selected() == 0);
@@ -560,14 +577,14 @@ TEST_CASE("ListWidget: selection survives a driver that drops colour (#72)",
 
   const std::string row0 = row_text(s, 0);
   const std::string row1 = row_text(s, 1);
-  REQUIRE(row0 != row1);  // in CELL TEXT, not only in colour
+  REQUIRE(row0 != row1); // in CELL TEXT, not only in colour
 
   FallbackDriver d;
   std::string out;
   d.set_output(&out);
   Renderer r(d);
   r.present(s);
-  r.flush();  // first frame: the renderer diffs, so assert on this one
+  r.flush(); // first frame: the renderer diffs, so assert on this one
   REQUIRE(out.find("▸") != std::string::npos);
 }
 
@@ -582,7 +599,7 @@ TEST_CASE("ListWidget: scrollbar appears only when content overflows (#21)",
   l.set_items({"a", "b", "c"});
   l.draw(s);
   REQUIRE_FALSE(l.scrollbar_visible());
-  REQUIRE(s.text_at(9, 0) != "█");  // no thumb on a list that fits
+  REQUIRE(s.text_at(9, 0) != "█"); // no thumb on a list that fits
   l.add_item("d");
   l.draw(s);
   REQUIRE(l.scrollbar_visible());
@@ -605,7 +622,7 @@ TEST_CASE("ListWidget: scrollbar thumb tracks the view offset (#21)",
   l.on_event(tfsupport::wheel(1, 1, /*up=*/false));
   l.on_event(tfsupport::wheel(1, 1, /*up=*/false));
   l.draw(s);
-  REQUIRE(s.text_at(9, 2) == "█");  // thumb pinned at the bottom
+  REQUIRE(s.text_at(9, 2) == "█"); // thumb pinned at the bottom
   REQUIRE(s.text_at(9, 0) == "│");
 }
 
@@ -642,7 +659,7 @@ TEST_CASE("ListWidget: click on the scrollbar track page-jumps the view (#21)",
   ListWidget l;
   l.set_geometry({0, 0, 10, 3});
   l.set_items({"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"});
-  l.draw(s);  // establish the bar (offset 0, thumb at the top)
+  l.draw(s); // establish the bar (offset 0, thumb at the top)
   // Click the bottom row of the track (below the thumb): page down.
   REQUIRE(l.on_event(tfsupport::press(9, 2)));
   REQUIRE(l.scroll_offset() == 3);

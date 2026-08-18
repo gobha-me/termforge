@@ -43,25 +43,24 @@ TEST_CASE("probe_kitty_ok: a graphics reply after DA1 does not count",
 
 TEST_CASE("probe_kitty_ok: an unterminated APC response is not support",
           "[probe][kitty]") {
-  REQUIRE_FALSE(detail::probe_kitty_ok("\033_Gi=31;OK"));  // no ST yet
+  REQUIRE_FALSE(detail::probe_kitty_ok("\033_Gi=31;OK")); // no ST yet
 }
 
 TEST_CASE("probe_kitty_animation: only the dedicated action reply is support",
           "[probe][kitty][animation]") {
   constexpr std::string_view basic = "\033_Gi=31;OK\033\\";
-  constexpr std::string_view animation =
-      "\033_Gi=4294967295;OK\033\\";
+  constexpr std::string_view animation = "\033_Gi=4294967295;OK\033\\";
   REQUIRE(detail::probe_kitty_animation(
       std::string{basic} + std::string{animation} + "\033[?62;4;22c"));
   REQUIRE_FALSE(detail::probe_kitty_animation(
       std::string{basic} + "\033_Gi=4294967295;ENOTSUPPORTED\033\\" +
       "\033[?62c"));
+  REQUIRE_FALSE(
+      detail::probe_kitty_animation(std::string{basic} + "\033[?62c"));
+  REQUIRE_FALSE(detail::probe_kitty_animation(std::string{basic} + "\033[?62c" +
+                                              std::string{animation}));
   REQUIRE_FALSE(detail::probe_kitty_animation(
-      std::string{basic} + "\033[?62c"));
-  REQUIRE_FALSE(detail::probe_kitty_animation(
-      std::string{basic} + "\033[?62c" + std::string{animation}));
-  REQUIRE_FALSE(detail::probe_kitty_animation(
-      "\033_Gi=429496729;OK\033\\\033[?62c"));  // truncated id
+      "\033_Gi=429496729;OK\033\\\033[?62c")); // truncated id
 }
 
 TEST_CASE("probe_da1_complete: false until the DA1 terminator arrives",
@@ -69,7 +68,7 @@ TEST_CASE("probe_da1_complete: false until the DA1 terminator arrives",
   // Drives read_available's early exit — the reader stops the moment this
   // flips true instead of burning the whole 150ms window.
   REQUIRE_FALSE(detail::probe_da1_complete(""));
-  REQUIRE_FALSE(detail::probe_da1_complete("\033[?62;4"));  // mid-report
+  REQUIRE_FALSE(detail::probe_da1_complete("\033[?62;4")); // mid-report
   REQUIRE(detail::probe_da1_complete("\033[?62;4;22c"));
   REQUIRE(detail::probe_da1_complete("\033_Gi=31;OK\033\\\033[?62c"));
 }
@@ -78,8 +77,7 @@ TEST_CASE("probe_sync_updates: only a settable 2026 DECRPM is support",
           "[probe][sync]") {
   REQUIRE(detail::probe_sync_updates("\033[?2026;1$y"));
   REQUIRE(detail::probe_sync_updates("\033[?2026;2$y"));
-  REQUIRE(detail::probe_sync_updates(
-      "\033[?2026;2$y\033[?62;4;22c"));
+  REQUIRE(detail::probe_sync_updates("\033[?2026;2$y\033[?62;4;22c"));
   REQUIRE_FALSE(detail::probe_sync_updates(""));
   REQUIRE_FALSE(detail::probe_sync_updates("\033[?2026;0$y"));
   REQUIRE_FALSE(detail::probe_sync_updates("\033[?2026;3$y"));
@@ -101,13 +99,13 @@ TEST_CASE("find_da1: a CSI ? report with another final byte is not DA1",
   REQUIRE(detail::probe_da1_complete("\033[?1u\033[?62;22c"));
 }
 
-TEST_CASE("probe_kitty_ok: a keyboard reply before the graphics reply is not DA1",
-          "[probe][kitty][keyboard][regression]") {
+TEST_CASE(
+    "probe_kitty_ok: a keyboard reply before the graphics reply is not DA1",
+    "[probe][kitty][keyboard][regression]") {
   // Adding the keyboard query (#60) must not cost us the KittyDriver. With a
   // bare find("\033[?") as the DA1 locator, the keyboard reply lands first,
   // g < da1 fails, and kitty_graphics silently degrades to false.
-  REQUIRE(detail::probe_kitty_ok(
-      "\033[?1u\033_Gi=31;OK\033\\\033[?62;4;22c"));
+  REQUIRE(detail::probe_kitty_ok("\033[?1u\033_Gi=31;OK\033\\\033[?62;4;22c"));
   // The genuine late-graphics case still does not count.
   REQUIRE_FALSE(detail::probe_kitty_ok("\033[?1u\033[?62c\033_Gi=31;OK\033\\"));
 }
@@ -115,14 +113,14 @@ TEST_CASE("probe_kitty_ok: a keyboard reply before the graphics reply is not DA1
 TEST_CASE("probe_kitty_keyboard: any flags report means the protocol is there",
           "[probe][keyboard]") {
   REQUIRE(detail::probe_kitty_keyboard("\033[?1u"));
-  REQUIRE(detail::probe_kitty_keyboard("\033[?0u"));  // 0 flags: still an answer
+  REQUIRE(detail::probe_kitty_keyboard("\033[?0u")); // 0 flags: still an answer
   REQUIRE(detail::probe_kitty_keyboard("\033[?27u\033[?62;22c"));
   REQUIRE(detail::probe_kitty_keyboard("\033_Gi=31;OK\033\\\033[?1u\033[?62c"));
   // Silence is the "no" — a terminal without the protocol ignores the query.
   REQUIRE_FALSE(detail::probe_kitty_keyboard(""));
   REQUIRE_FALSE(detail::probe_kitty_keyboard("\033[?62;4;22c"));
-  REQUIRE_FALSE(detail::probe_kitty_keyboard("\033[?1"));   // unterminated
-  REQUIRE_FALSE(detail::probe_kitty_keyboard("\033[?u"));   // no flag digits
+  REQUIRE_FALSE(detail::probe_kitty_keyboard("\033[?1")); // unterminated
+  REQUIRE_FALSE(detail::probe_kitty_keyboard("\033[?u")); // no flag digits
 }
 
 TEST_CASE("probe_sixel: DA1 advertises attribute 4", "[probe][sixel]") {
@@ -166,8 +164,7 @@ TEST_CASE("select_driver_for: a concrete built-in choice overrides precedence",
   kitty_caps.kitty_graphics = true;
   kitty_caps.truecolor = true;
 
-  CHECK(select_driver_for(kitty_caps, BuiltinDriver::Kitty)->name() ==
-        "kitty");
+  CHECK(select_driver_for(kitty_caps, BuiltinDriver::Kitty)->name() == "kitty");
   CHECK(select_driver_for(kitty_caps, BuiltinDriver::AnsiRgb)->name() ==
         "ansi-rgb");
   CHECK(select_driver_for(kitty_caps, BuiltinDriver::Fallback)->name() ==
@@ -214,7 +211,7 @@ auto count_events(std::string_view bytes) -> Counts {
   return c;
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("Input: a late DA1 report is swallowed, not exploded into chars",
           "[probe][input][regression]") {
@@ -223,13 +220,13 @@ TEST_CASE("Input: a late DA1 report is swallowed, not exploded into chars",
   const auto c = count_events("\033[?62;4;22c");
   REQUIRE(c.chars == 0);
   REQUIRE(c.unknown == 0);
-  REQUIRE(c.total == 0);  // a device report is not user input
+  REQUIRE(c.total == 0); // a device report is not user input
 }
 
 TEST_CASE("Input: DA2 and DECRPM private-marker reports are also dropped",
           "[probe][input]") {
-  REQUIRE(count_events("\033[>0;276;0c").total == 0);   // DA2
-  REQUIRE(count_events("\033[?2026;2$y").total == 0);    // DECRPM
+  REQUIRE(count_events("\033[>0;276;0c").total == 0); // DA2
+  REQUIRE(count_events("\033[?2026;2$y").total == 0); // DECRPM
 }
 
 TEST_CASE("Input: the keyboard-flags reply is a report, not a keypress",

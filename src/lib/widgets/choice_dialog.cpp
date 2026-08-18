@@ -37,9 +37,11 @@ auto place_buttons(Rect area, std::initializer_list<Button*> buttons) -> void {
   }
 }
 
-auto empty_rect_at(Rect area) -> Rect { return {area.x, area.y, 0, 0}; }
+auto empty_rect_at(Rect area) -> Rect {
+  return {area.x, area.y, 0, 0};
+}
 
-}  // namespace
+} // namespace
 
 ChoiceDialog::ChoiceDialog(std::string title, std::string text, ChoiceMode mode)
     : Dialog(std::move(title)), m_mode(mode) {
@@ -132,8 +134,9 @@ auto ChoiceDialog::selected_indices() const -> std::vector<std::size_t> {
   return selected;
 }
 
-auto ChoiceDialog::set_selection_limits(
-    std::size_t minimum, std::optional<std::size_t> maximum) -> bool {
+auto ChoiceDialog::set_selection_limits(std::size_t minimum,
+                                        std::optional<std::size_t> maximum)
+    -> bool {
   if (maximum && *maximum < minimum) return false;
   m_minimum = minimum;
   m_maximum = maximum;
@@ -206,9 +209,8 @@ auto ChoiceDialog::set_labels(std::string submit, std::string cancel) -> void {
   mark_dirty();
 }
 
-auto ChoiceDialog::rebuild_controls(
-    const std::vector<std::size_t>& selected, bool other_selected_value)
-    -> void {
+auto ChoiceDialog::rebuild_controls(const std::vector<std::size_t>& selected,
+                                    bool other_selected_value) -> void {
   // Unregister heap-owned checkboxes before destroying them. The order is the
   // whole safety contract of Dialog::clear_children(): clearing afterwards
   // would dereference the stale Widget* entries while trying to blur them.
@@ -219,7 +221,8 @@ auto ChoiceDialog::rebuild_controls(
 
   std::vector<std::string> labels;
   labels.reserve(m_choices.size() + (m_other_enabled ? 1U : 0U));
-  for (const auto& choice : m_choices) labels.push_back(choice.label);
+  for (const auto& choice : m_choices)
+    labels.push_back(choice.label);
   if (m_other_enabled) labels.push_back(m_other_check.label());
   m_single.set_options(std::move(labels));
 
@@ -264,7 +267,8 @@ auto ChoiceDialog::rebuild_children() -> void {
   if (m_mode == ChoiceMode::Single) {
     add_child(&m_single);
   } else {
-    for (auto& checkbox : m_multiple) add_child(checkbox.get());
+    for (auto& checkbox : m_multiple)
+      add_child(checkbox.get());
     if (m_other_enabled) add_child(&m_other_check);
   }
   if (m_other_enabled && other_selected()) add_child(&m_other_input);
@@ -309,8 +313,8 @@ auto ChoiceDialog::activates_result_control(const Event& event) const -> bool {
   if (const auto* key = std::get_if<KeyEvent>(&event)) {
     if (key->action == KeyAction::Release) return false;
     if (key->key == Key::Escape && !key->ctrl && !key->alt) return true;
-    const bool activation = key->key == Key::Enter ||
-                            (key->key == Key::Char && key->ch == U' ');
+    const bool activation =
+        key->key == Key::Enter || (key->key == Key::Char && key->ch == U' ');
     return activation &&
            (ring().current() == &m_submit || ring().current() == &m_cancel);
   }
@@ -344,12 +348,12 @@ auto ChoiceDialog::has_descriptions() const -> bool {
 }
 
 auto ChoiceDialog::content_rows() const -> int {
-  const int count = static_cast<int>(m_choices.size()) +
-                    (m_other_enabled ? 1 : 0);
+  const int count =
+      static_cast<int>(m_choices.size()) + (m_other_enabled ? 1 : 0);
   const int choices = std::clamp(count, 1, kMaxChoiceRows);
   return choices + (has_descriptions() ? 1 : 0) +
          (m_other_enabled && other_selected() ? 1 : 0) +
-         2;  // validation row + button row
+         2; // validation row + button row
 }
 
 auto ChoiceDialog::content_cols() const -> int {
@@ -360,8 +364,8 @@ auto ChoiceDialog::content_cols() const -> int {
     width = std::max(width, detail::display_width(choice.description));
   }
   if (m_other_enabled)
-    width = std::max(
-        width, Checkbox::width_for(detail::display_width(m_other_check.label())));
+    width = std::max(width, Checkbox::width_for(
+                                detail::display_width(m_other_check.label())));
   return width;
 }
 
@@ -406,11 +410,11 @@ auto ChoiceDialog::layout_content(Rect area) -> void {
     return;
   }
 
-  const int total = static_cast<int>(m_multiple.size()) +
-                    (m_other_enabled ? 1 : 0);
+  const int total =
+      static_cast<int>(m_multiple.size()) + (m_other_enabled ? 1 : 0);
   const int visible = m_choice_area.h;
-  m_multiple_scroll = std::clamp(
-      m_multiple_scroll, 0, std::max(0, total - std::max(0, visible)));
+  m_multiple_scroll = std::clamp(m_multiple_scroll, 0,
+                                 std::max(0, total - std::max(0, visible)));
   for (int row = 0; row < visible; ++row) {
     const int index = m_multiple_scroll + row;
     if (index < static_cast<int>(m_multiple.size())) {
@@ -469,16 +473,16 @@ auto ChoiceDialog::draw_content(Screen& screen) -> void {
 
   if (m_description_area.h > 0) {
     const auto& description = current_description();
-    screen.write_text(m_description_area.x, m_description_area.y,
-                      detail::truncate_to_width(description,
-                                                m_description_area.w),
-                      Rgb{0x90, 0x98, 0xA8}, bg());
+    screen.write_text(
+        m_description_area.x, m_description_area.y,
+        detail::truncate_to_width(description, m_description_area.w),
+        Rgb{0x90, 0x98, 0xA8}, bg());
   }
   if (m_validation_area.h > 0 && !m_validation.empty()) {
-    screen.write_text(m_validation_area.x, m_validation_area.y,
-                      detail::truncate_to_width(m_validation,
-                                                m_validation_area.w),
-                      Rgb{0xFF, 0xA0, 0x60}, bg());
+    screen.write_text(
+        m_validation_area.x, m_validation_area.y,
+        detail::truncate_to_width(m_validation, m_validation_area.w),
+        Rgb{0xFF, 0xA0, 0x60}, bg());
   }
   m_submit.draw(screen);
   m_cancel.draw(screen);
@@ -523,8 +527,7 @@ auto ChoiceDialog::finish_submit() -> void {
   if (other_selected()) result.other = m_other_input.text();
   auto callback = m_on_result;
   close();
-  detail::invoke_copy(callback,
-                      std::optional<ChoiceResult>{std::move(result)});
+  detail::invoke_copy(callback, std::optional<ChoiceResult>{std::move(result)});
 }
 
 auto ChoiceDialog::finish_cancel() -> void {
@@ -534,4 +537,4 @@ auto ChoiceDialog::finish_cancel() -> void {
   detail::invoke_copy(callback, std::optional<ChoiceResult>{});
 }
 
-}  // namespace termforge
+} // namespace termforge

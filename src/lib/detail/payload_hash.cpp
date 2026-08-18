@@ -46,11 +46,11 @@ auto payload_hash(std::span<const std::byte> payload, Extent px,
     hash ^= std::rotl(avalanche(lanes[lane]), static_cast<int>(lane * 7));
     hash *= kPrime;
   }
-  for (const std::uint64_t field : {
-           static_cast<std::uint64_t>(static_cast<std::uint32_t>(px.w)),
-           static_cast<std::uint64_t>(static_cast<std::uint32_t>(px.h)),
-           static_cast<std::uint64_t>(format),
-           static_cast<std::uint64_t>(payload.size())}) {
+  for (const std::uint64_t field :
+       {static_cast<std::uint64_t>(static_cast<std::uint32_t>(px.w)),
+        static_cast<std::uint64_t>(static_cast<std::uint32_t>(px.h)),
+        static_cast<std::uint64_t>(format),
+        static_cast<std::uint64_t>(payload.size())}) {
     hash ^= avalanche(field + 0x9E3779B97F4A7C15ULL);
     hash *= kPrime;
   }
@@ -58,4 +58,4 @@ auto payload_hash(std::span<const std::byte> payload, Extent px,
   return hash == 0 ? 1 : hash;
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

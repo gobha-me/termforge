@@ -26,8 +26,8 @@
 #include "support/terminal_grid.hpp"
 #include "termforge/drivers/kitty_driver.hpp"
 
-using termforge::FrameBytes;
 using termforge::Attr;
+using termforge::FrameBytes;
 using termforge::Image;
 using termforge::KittyDriver;
 using termforge::Pixel;
@@ -44,12 +44,12 @@ namespace {
 
 auto art(int seed) -> Image {
   const auto v = static_cast<std::uint8_t>(seed);
-  return tfsupport::checker(2, 2, Pixel{v, 0, 0, 255},
-                            Pixel{0, static_cast<std::uint8_t>(255 - v), 0,
-                                  255});
+  return tfsupport::checker(
+      2, 2, Pixel{v, 0, 0, 255},
+      Pixel{0, static_cast<std::uint8_t>(255 - v), 0, 255});
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("frame shape: an unchanged region transmits once across frames",
           "[frameshape][kitty]") {
@@ -99,7 +99,7 @@ TEST_CASE("frame shape: a pinned placement is stable across frames",
   d.set_output(&out);
   const auto pinned = d.pin_image(art(3));
   REQUIRE(pinned.has_value());
-  d.flush();  // resident-image upload
+  d.flush(); // resident-image upload
 
   out.clear();
   for (int frame = 0; frame < 8; ++frame) {
@@ -149,14 +149,14 @@ TEST_CASE("frame shape: a drawless frame retires a missing region",
   d.flush();
 
   out.clear();
-  d.flush();  // one complete frame with no image draw
+  d.flush(); // one complete frame with no image draw
   CHECK(data_deletes_of(out, 1) == 1);
   CHECK(d.last_frame_bytes().image_transmit == 0);
   CHECK(d.last_frame_bytes().image_edit == out.size());
 
   out.clear();
   d.flush();
-  CHECK(out.empty());  // erased, so no duplicate deletion
+  CHECK(out.empty()); // erased, so no duplicate deletion
 }
 
 TEST_CASE("frame shape: a drawless frame retires only a pinned placement",
@@ -282,7 +282,7 @@ TEST_CASE("frame shape: a direct caller that splits a frame loses dedup",
   const Image wave = art(24);
   for (int frame = 0; frame < 10; ++frame) {
     REQUIRE(d.draw_pinned(Rect{1, 1, 3, 2}, *pinned).has_value());
-    d.flush();  // forbidden mid-frame boundary
+    d.flush(); // forbidden mid-frame boundary
     REQUIRE(d.draw_image(Rect{0, 10, 8, 4}, wave).has_value());
     d.flush();
   }
@@ -321,7 +321,7 @@ TEST_CASE("frame shape: a region missing one frame is re-uploaded",
   d.flush();
 
   out.clear();
-  d.flush();  // missing frame owns the delete
+  d.flush(); // missing frame owns the delete
   CHECK(data_deletes_of(out, 1) == 1);
   REQUIRE(d.draw_image(Rect{0, 0, 4, 2}, img).has_value());
   d.flush();

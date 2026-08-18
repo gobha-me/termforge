@@ -21,16 +21,16 @@ auto TableWidget::add_row(std::vector<std::string> cells) -> void {
   mark_dirty();
 }
 
-auto TableWidget::set_cell(std::size_t row, std::size_t col,
-                           std::string value) -> void {
+auto TableWidget::set_cell(std::size_t row, std::size_t col, std::string value)
+    -> void {
   if (row >= m_rows.size()) return;
   if (col >= m_rows[row].size()) return;
   m_rows[row][col] = std::move(value);
   mark_dirty();
 }
 
-auto TableWidget::set_row(std::size_t row,
-                          std::vector<std::string> cells) -> void {
+auto TableWidget::set_row(std::size_t row, std::vector<std::string> cells)
+    -> void {
   if (row >= m_rows.size()) return;
   m_rows[row] = std::move(cells);
   mark_dirty();
@@ -39,21 +39,21 @@ auto TableWidget::set_row(std::size_t row,
 auto TableWidget::clear_rows() -> void {
   m_rows.clear();
   m_scroll = 0;
-  m_selected = -1;  // no rows => no selection; a repopulated table must not
-                    // highlight a row the user never chose (#12)
+  m_selected = -1; // no rows => no selection; a repopulated table must not
+                   // highlight a row the user never chose (#12)
   mark_dirty();
 }
 
 auto TableWidget::set_selected(int row) -> void {
   const int max_row = static_cast<int>(m_rows.size()) - 1;
   m_selected = std::clamp(row, -1, max_row);
-  ensure_visible();  // reveal a programmatic selection (#35 Q2)
+  ensure_visible(); // reveal a programmatic selection (#35 Q2)
   mark_dirty();
 }
 
 auto TableWidget::ensure_visible() -> void {
-  m_scroll = detail::clamp_scroll(m_scroll, m_selected,
-                                  static_cast<int>(m_rows.size()), rect().h - 1);
+  m_scroll = detail::clamp_scroll(
+      m_scroll, m_selected, static_cast<int>(m_rows.size()), rect().h - 1);
 }
 
 auto TableWidget::scroll(int delta) -> void {
@@ -72,8 +72,7 @@ auto TableWidget::compute_widths() const -> std::vector<int> {
       // Auto-size: max of header + all cell display widths (columns).
       int w = detail::display_width(m_columns[c].header);
       for (const auto& row : m_rows) {
-        if (c < row.size())
-          w = std::max(w, detail::display_width(row[c]));
+        if (c < row.size()) w = std::max(w, detail::display_width(row[c]));
       }
       widths[c] = w;
     }
@@ -100,8 +99,7 @@ auto TableWidget::render_cell(Screen& screen, int x, int y, int w,
     screen.write_text(x + i, y, " ", fg, bg);
 
   // Write text (already clipped to column width).
-  if (!shown.empty())
-    screen.write_text(x + start, y, shown, fg, bg);
+  if (!shown.empty()) screen.write_text(x + start, y, shown, fg, bg);
 }
 
 auto TableWidget::draw(Screen& screen) -> void {
@@ -121,8 +119,8 @@ auto TableWidget::draw(Screen& screen) -> void {
   // silently snapped back on the next draw -- "wheel scrolls until the
   // selection disagrees". The wheel must be able to scroll the selection out
   // of view; revealing it is ensure_visible()'s job, run on selection change.
-  m_scroll = detail::clamp_offset(m_scroll, static_cast<int>(m_rows.size()),
-                                  r.h - 1);
+  m_scroll =
+      detail::clamp_offset(m_scroll, static_cast<int>(m_rows.size()), r.h - 1);
 
   // Own the whole rect: blank it every frame so the 1-col gaps between columns
   // and rows vacated by clear_rows()/scroll can't leave stale content behind
@@ -151,7 +149,7 @@ auto TableWidget::draw(Screen& screen) -> void {
     const int w = std::min(widths[c], r.x + r.w - cx);
     render_cell(screen, cx, r.y, w, m_columns[c].header, m_columns[c].align,
                 m_columns[c].header_fg, m_columns[c].header_bg);
-    cx += w + 1;  // 1-space gap between columns
+    cx += w + 1; // 1-space gap between columns
   }
 
   // Draw data rows (scrollable area: rows 1..h-1).
@@ -163,15 +161,14 @@ auto TableWidget::draw(Screen& screen) -> void {
     const auto& row = m_rows[static_cast<std::size_t>(row_idx)];
     const bool is_sel = (row_idx == m_selected);
     const Rgb fg = is_sel ? m_selected_fg : m_row_fg;
-    const Rgb bg = is_sel ? m_selected_bg
-                          : (row_idx % 2 == 0 ? m_row_bg : m_alt_bg);
+    const Rgb bg =
+        is_sel ? m_selected_bg : (row_idx % 2 == 0 ? m_row_bg : m_alt_bg);
     cx = r.x + gutter;
     for (std::size_t c = 0; c < m_columns.size() && cx < r.x + r.w; ++c) {
       const int w = std::min(widths[c], r.x + r.w - cx);
-      const std::string& cell =
-          c < row.size() ? row[c] : std::string{};
-      render_cell(screen, cx, r.y + 1 + vr, w, cell, m_columns[c].align,
-                  fg, bg);
+      const std::string& cell = c < row.size() ? row[c] : std::string{};
+      render_cell(screen, cx, r.y + 1 + vr, w, cell, m_columns[c].align, fg,
+                  bg);
       cx += w + 1;
     }
     // The marker in the selected row's gutter, with the row's own colours so
@@ -218,7 +215,8 @@ auto TableWidget::on_event(const Event& ev) -> bool {
       // rather than acting on a row the user never chose.
       const int page = std::max(1, rect().h - 2);
       int next = m_selected;
-      if (k->key == Key::Up) next = (m_selected < 0 ? count - 1 : m_selected - 1);
+      if (k->key == Key::Up)
+        next = (m_selected < 0 ? count - 1 : m_selected - 1);
       if (k->key == Key::Down) next = (m_selected < 0 ? 0 : m_selected + 1);
       if (k->key == Key::PageUp)
         next = (m_selected < 0 ? count - 1 : m_selected - page);
@@ -226,7 +224,7 @@ auto TableWidget::on_event(const Event& ev) -> bool {
         next = (m_selected < 0 ? 0 : m_selected + page);
       if (k->key == Key::Home) next = 0;
       if (k->key == Key::End) next = count - 1;
-      set_selected(next);  // clamps into [0, count) and reveals
+      set_selected(next); // clamps into [0, count) and reveals
       return true;
     }
   }
@@ -249,9 +247,8 @@ auto TableWidget::on_event(const Event& ev) -> bool {
       if (m->x == rect().x + rect().w - 1 && scrollbar_visible()) {
         const int data_rows = rect().h - kHeaderRows;
         const int page = std::max(1, data_rows);
-        const auto [top, thumb_h] =
-            detail::thumb_window(data_rows, static_cast<int>(m_rows.size()),
-                                 m_scroll, data_rows);
+        const auto [top, thumb_h] = detail::thumb_window(
+            data_rows, static_cast<int>(m_rows.size()), m_scroll, data_rows);
         const int row = m->y - rect().y - kHeaderRows;
         if (row < top) {
           m_scroll = detail::clamp_offset(
@@ -260,14 +257,13 @@ auto TableWidget::on_event(const Event& ev) -> bool {
           m_scroll = detail::clamp_offset(
               m_scroll + page, static_cast<int>(m_rows.size()), data_rows);
         } else {
-          return true;  // on the thumb: consumed, no movement
+          return true; // on the thumb: consumed, no movement
         }
         mark_dirty();
         return true;
       }
       const int clicked = detail::row_item_at(
-          rect(), kHeaderRows, m_scroll, static_cast<int>(m_rows.size()),
-          m->y);
+          rect(), kHeaderRows, m_scroll, static_cast<int>(m_rows.size()), m->y);
       if (clicked >= 0) {
         m_selected = clicked;
         mark_dirty();
@@ -282,10 +278,10 @@ auto TableWidget::on_event(const Event& ev) -> bool {
                                   m_rows[static_cast<std::size_t>(clicked)]));
         }
       }
-      return true;  // any click inside the table is consumed
+      return true; // any click inside the table is consumed
     }
   }
   return false;
 }
 
-}  // namespace termforge
+} // namespace termforge

@@ -2,8 +2,8 @@
 
 #include <algorithm>
 #include <array>
-#include <cstddef>
 #include <concepts>
+#include <cstddef>
 #include <ios>
 #include <istream>
 #include <limits>
@@ -42,21 +42,19 @@ constexpr std::size_t kMaxTraceBytes{256U * 1024U * 1024U};
 constexpr std::size_t kMaxRecords{4U * 1024U * 1024U};
 
 auto trace_error(std::string message) -> std::unexpected<ErrorEvent> {
-  return std::unexpected{ErrorEvent{Severity::Warning, "trace", std::move(message)}};
+  return std::unexpected{
+      ErrorEvent{Severity::Warning, "trace", std::move(message)}};
 }
 
-template <typename T, bool = std::is_enum_v<T>>
-struct RawType {
+template <typename T, bool = std::is_enum_v<T>> struct RawType {
   using type = T;
 };
 
-template <typename T>
-struct RawType<T, true> {
+template <typename T> struct RawType<T, true> {
   using type = std::underlying_type_t<T>;
 };
 
-template <typename T>
-using RawTypeT = typename RawType<T>::type;
+template <typename T> using RawTypeT = typename RawType<T>::type;
 
 template <typename T>
   requires(std::is_integral_v<T> || std::is_enum_v<T>)
@@ -85,7 +83,8 @@ auto take_le(std::span<const std::uint8_t>& bytes) -> std::optional<T> {
   return static_cast<T>(static_cast<Raw>(static_cast<Unsigned>(bits)));
 }
 
-auto append_string(std::vector<std::uint8_t>& out, std::string_view text) -> void {
+auto append_string(std::vector<std::uint8_t>& out, std::string_view text)
+    -> void {
   append_le(out, static_cast<std::uint32_t>(text.size()));
   out.insert(out.end(), text.begin(), text.end());
 }
@@ -183,10 +182,9 @@ auto input_capabilities_bits(InputCapabilities capabilities) -> std::uint32_t {
 auto input_capabilities_from_bits(std::uint32_t bits)
     -> std::optional<InputCapabilities> {
   if ((bits & ~kInputMask) != 0) return std::nullopt;
-  InputCapabilities capabilities{(bits & kInputPress) != 0,
-                                 (bits & kInputRepeat) != 0,
-                                 (bits & kInputRelease) != 0,
-                                 (bits & kInputModifiers) != 0};
+  InputCapabilities capabilities{
+      (bits & kInputPress) != 0, (bits & kInputRepeat) != 0,
+      (bits & kInputRelease) != 0, (bits & kInputModifiers) != 0};
   if ((capabilities.key_repeat || capabilities.key_release ||
        capabilities.modifier_transitions) &&
       !capabilities.key_press)
@@ -196,7 +194,7 @@ auto input_capabilities_from_bits(std::uint32_t bits)
   return capabilities;
 }
 
-}  // namespace
+} // namespace
 
 auto write_trace_header(std::ostream& out, const TraceHeader& header)
     -> std::expected<void, ErrorEvent> {
@@ -238,7 +236,8 @@ auto write_trace_record(std::ostream& out, const TraceRecord& record)
 
 auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent> {
   std::array<std::uint8_t, 12> raw_prefix{};
-  if (!read_exact(in, raw_prefix)) return trace_error("trace header is truncated");
+  if (!read_exact(in, raw_prefix))
+    return trace_error("trace header is truncated");
   if (!std::equal(kMagic.begin(), kMagic.end(), raw_prefix.begin())) {
     return trace_error("trace magic is not recognized");
   }
@@ -250,10 +249,12 @@ auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent> {
   if (!schema || *schema < 1 || *schema > kTraceSchemaVersion) {
     return trace_error("trace schema version is not supported");
   }
-  if (!reserved || *reserved != 0) return trace_error("trace header is malformed");
+  if (!reserved || *reserved != 0)
+    return trace_error("trace header is malformed");
 
   std::vector<std::uint8_t> raw_header(*schema == 1 ? 40U : 44U);
-  if (!read_exact(in, raw_header)) return trace_error("trace header is truncated");
+  if (!read_exact(in, raw_header))
+    return trace_error("trace header is truncated");
   std::span<const std::uint8_t> header{raw_header};
 
   Trace trace;
@@ -271,8 +272,7 @@ auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent> {
   const auto px_w = take_le<std::int32_t>(header);
   const auto px_h = take_le<std::int32_t>(header);
   if (!major || !minor || !patch || !tweak || !caps_bits || !levels ||
-      !input_bits || !cols ||
-      !rows || !px_w || !px_h || !header.empty()) {
+      !input_bits || !cols || !rows || !px_w || !px_h || !header.empty()) {
     return trace_error("trace header is malformed");
   }
   if ((*caps_bits & ~kCapabilityMask) != 0) {
@@ -315,7 +315,8 @@ auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent> {
       return trace_error("trace contains too many records");
     }
     std::array<std::uint8_t, 24> raw_record{};
-    if (!read_exact(in, raw_record)) return trace_error("trace record is truncated");
+    if (!read_exact(in, raw_record))
+      return trace_error("trace record is truncated");
     std::span<const std::uint8_t> fields{raw_record};
     const auto kind = take_le<TraceKind>(fields);
     const auto phase = take_le<TracePhase>(fields);
@@ -323,12 +324,12 @@ auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent> {
     const auto payload_size = take_le<std::uint32_t>(fields);
     const auto offset = take_le<std::uint64_t>(fields);
     const auto frame = take_le<std::uint64_t>(fields);
-    if (!kind || !phase || !record_reserved || !payload_size || !offset || !frame ||
-        !fields.empty() || *record_reserved != 0 || !valid_kind(*kind) ||
-        !valid_phase(*phase) ||
-        (*schema == 1 && (*kind == TraceKind::Source ||
-                          *kind == TraceKind::InputCapabilities ||
-                          *kind == TraceKind::ImageInvalidation)) ||
+    if (!kind || !phase || !record_reserved || !payload_size || !offset ||
+        !frame || !fields.empty() || *record_reserved != 0 ||
+        !valid_kind(*kind) || !valid_phase(*phase) ||
+        (*schema == 1 &&
+         (*kind == TraceKind::Source || *kind == TraceKind::InputCapabilities ||
+          *kind == TraceKind::ImageInvalidation)) ||
         (*schema == 2 && *kind == TraceKind::ImageInvalidation) ||
         (*schema < 4 && *kind == TraceKind::TerminalReply)) {
       return trace_error("trace record header is malformed");
@@ -339,11 +340,13 @@ auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent> {
     }
     TraceRecord record{*kind, *phase, *offset, *frame, {}};
     record.payload.resize(*payload_size);
-    if (!read_exact(in, record.payload)) return trace_error("trace payload is truncated");
+    if (!read_exact(in, record.payload))
+      return trace_error("trace payload is truncated");
     total_bytes += raw_record.size() + record.payload.size();
     if (!trace.records.empty()) {
       const auto& previous = trace.records.back();
-      if (record.frame < previous.frame || record.offset_ns < previous.offset_ns) {
+      if (record.frame < previous.frame ||
+          record.offset_ns < previous.offset_ns) {
         return trace_error("trace records are not monotonic");
       }
     }
@@ -357,7 +360,8 @@ auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent> {
       return trace_error("trace has data after its end record");
     }
   } catch (...) {
-    if (!in.eof()) return trace_error("trace stream failed after its end record");
+    if (!in.eof())
+      return trace_error("trace stream failed after its end record");
   }
   return trace;
 }
@@ -372,7 +376,8 @@ auto encode_size(TraceSize size) -> std::vector<std::uint8_t> {
   return bytes;
 }
 
-auto decode_size(const TraceRecord& record) -> std::expected<TraceSize, ErrorEvent> {
+auto decode_size(const TraceRecord& record)
+    -> std::expected<TraceSize, ErrorEvent> {
   std::span<const std::uint8_t> bytes{record.payload};
   const auto cols = take_le<std::int32_t>(bytes);
   const auto rows = take_le<std::int32_t>(bytes);
@@ -439,7 +444,8 @@ auto encode_event(const Event& event) -> std::vector<std::uint8_t> {
   return bytes;
 }
 
-auto decode_event(const TraceRecord& record) -> std::expected<Event, ErrorEvent> {
+auto decode_event(const TraceRecord& record)
+    -> std::expected<Event, ErrorEvent> {
   std::span<const std::uint8_t> bytes{record.payload};
   const auto type = take_le<std::uint8_t>(bytes);
   if (!type) return trace_error("posted-event record is empty");
@@ -448,8 +454,9 @@ auto decode_event(const TraceRecord& record) -> std::expected<Event, ErrorEvent>
     const auto ch = take_le<std::uint32_t>(bytes);
     const auto flags = take_le<std::uint8_t>(bytes);
     const auto action = take_le<std::uint8_t>(bytes);
-    if (!key || !ch || !flags || !action || !bytes.empty() || !valid_key(*key) ||
-        !valid_action(*action) || (*flags & ~std::uint8_t{0x07}) != 0) {
+    if (!key || !ch || !flags || !action || !bytes.empty() ||
+        !valid_key(*key) || !valid_action(*action) ||
+        (*flags & ~std::uint8_t{0x07}) != 0) {
       return trace_error("posted key event is invalid");
     }
     return Event{KeyEvent{static_cast<Key>(*key), static_cast<char32_t>(*ch),
@@ -472,7 +479,8 @@ auto decode_event(const TraceRecord& record) -> std::expected<Event, ErrorEvent>
   }
   if (*type == 2) {
     auto text = take_string(bytes);
-    if (!text || !bytes.empty()) return trace_error("posted paste event is invalid");
+    if (!text || !bytes.empty())
+      return trace_error("posted paste event is invalid");
     return Event{PasteEvent{std::move(*text)}};
   }
   if (*type == 3) {
@@ -491,8 +499,8 @@ auto decode_event(const TraceRecord& record) -> std::expected<Event, ErrorEvent>
         !valid_severity(*severity)) {
       return trace_error("posted error event is invalid");
     }
-    return Event{ErrorEvent{static_cast<Severity>(*severity), std::move(*source),
-                            std::move(*message)}};
+    return Event{ErrorEvent{static_cast<Severity>(*severity),
+                            std::move(*source), std::move(*message)}};
   }
   if (*type == 5) {
     const auto reason = take_le<std::uint8_t>(bytes);
@@ -500,8 +508,8 @@ auto decode_event(const TraceRecord& record) -> std::expected<Event, ErrorEvent>
         !valid_image_invalidation_reason(*reason)) {
       return trace_error("posted image-invalidation event is invalid");
     }
-    return Event{ImageInvalidatedEvent{
-        static_cast<ImageInvalidationReason>(*reason)}};
+    return Event{
+        ImageInvalidatedEvent{static_cast<ImageInvalidationReason>(*reason)}};
   }
   return trace_error("posted-event record has an unknown event type");
 }
@@ -588,8 +596,8 @@ auto decode_terminal_reply(const TraceRecord& record)
       return trace_error("terminal-reply error record is invalid");
     }
     return TerminalReplyRecord{ErrorEvent{static_cast<Severity>(*severity),
-                                           std::move(*source),
-                                           std::move(*message)}};
+                                          std::move(*source),
+                                          std::move(*message)}};
   }
   return trace_error("terminal-reply record has an unknown type");
 }
@@ -598,7 +606,8 @@ auto encode_end(TraceEnd end) -> std::vector<std::uint8_t> {
   return {static_cast<std::uint8_t>(end)};
 }
 
-auto decode_end(const TraceRecord& record) -> std::expected<TraceEnd, ErrorEvent> {
+auto decode_end(const TraceRecord& record)
+    -> std::expected<TraceEnd, ErrorEvent> {
   if (record.payload.size() != 1 ||
       (record.payload[0] != static_cast<std::uint8_t>(TraceEnd::Clean) &&
        record.payload[0] != static_cast<std::uint8_t>(TraceEnd::Prefix))) {
@@ -607,4 +616,4 @@ auto decode_end(const TraceRecord& record) -> std::expected<TraceEnd, ErrorEvent
   return static_cast<TraceEnd>(record.payload[0]);
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

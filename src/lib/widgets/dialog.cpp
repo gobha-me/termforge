@@ -6,8 +6,8 @@
 
 #include "detail/width.hpp"
 #include "detail/wrap.hpp"
-#include "termforge/widgets/select.hpp"
 #include "termforge/widgets/detail/callback.hpp"
+#include "termforge/widgets/select.hpp"
 
 namespace termforge {
 
@@ -297,7 +297,7 @@ auto Dialog::on_event(const Event& ev) -> bool {
     return true;
   }
 
-  return m_ring.handle_key(ev);  // paste and anything else: the focused child
+  return m_ring.handle_key(ev); // paste and anything else: the focused child
 }
 
-}  // namespace termforge
+} // namespace termforge

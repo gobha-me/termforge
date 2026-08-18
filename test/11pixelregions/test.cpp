@@ -56,7 +56,8 @@ TEST_CASE("Widget: default pixel submission remains immediate mode",
 
 // ── WaveformWidget pixel path ───────────────────────────────────────────────
 
-TEST_CASE("WaveformWidget: declares its rect as a pixel region", "[pixelregions]") {
+TEST_CASE("WaveformWidget: declares its rect as a pixel region",
+          "[pixelregions]") {
   WaveformWidget w{16};
   w.set_geometry({5, 10, 40, 8});
   auto regions = w.pixel_regions();
@@ -67,13 +68,16 @@ TEST_CASE("WaveformWidget: declares its rect as a pixel region", "[pixelregions]
   REQUIRE(regions[0].h == 8);
 }
 
-TEST_CASE("WaveformWidget: draw_pixels returns nullptr when empty", "[pixelregions][failure]") {
+TEST_CASE("WaveformWidget: draw_pixels returns nullptr when empty",
+          "[pixelregions][failure]") {
   WaveformWidget w{16};
   w.set_geometry({0, 0, 20, 5});
   REQUIRE(w.draw_pixels(w.rect(), Extent{20, 5}) == nullptr);
 }
 
-TEST_CASE("WaveformWidget: draw_pixels returns nullptr for a degenerate request", "[pixelregions][failure]") {
+TEST_CASE(
+    "WaveformWidget: draw_pixels returns nullptr for a degenerate request",
+    "[pixelregions][failure]") {
   WaveformWidget w{16};
   w.push(0.5f);
   REQUIRE(w.draw_pixels({0, 0, 0, 0}, Extent{0, 0}) == nullptr);
@@ -82,7 +86,8 @@ TEST_CASE("WaveformWidget: draw_pixels returns nullptr for a degenerate request"
   REQUIRE(w.draw_pixels({0, 0, 8, 4}, Extent{}) == nullptr);
 }
 
-TEST_CASE("WaveformWidget: draw_pixels produces correct dimensions", "[pixelregions]") {
+TEST_CASE("WaveformWidget: draw_pixels produces correct dimensions",
+          "[pixelregions]") {
   WaveformWidget w{64};
   w.set_geometry({0, 0, 32, 8});
   w.push(0.5f);
@@ -95,11 +100,12 @@ TEST_CASE("WaveformWidget: draw_pixels produces correct dimensions", "[pixelregi
   REQUIRE(result->height() == 8);
 }
 
-TEST_CASE("WaveformWidget: draw_pixels has background and foreground pixels", "[pixelregions]") {
+TEST_CASE("WaveformWidget: draw_pixels has background and foreground pixels",
+          "[pixelregions]") {
   WaveformWidget w{64};
   w.set_geometry({0, 0, 16, 4});
   w.set_range(0.0f, 1.0f);
-  w.push(1.0f);  // full scale → should have fg pixels at top
+  w.push(1.0f); // full scale → should have fg pixels at top
   const Image* result = w.draw_pixels({0, 0, 16, 4}, Extent{16, 4});
   REQUIRE(result != nullptr);
 
@@ -114,24 +120,26 @@ TEST_CASE("WaveformWidget: draw_pixels has background and foreground pixels", "[
   REQUIRE_FALSE(is_bg);
 }
 
-TEST_CASE("WaveformWidget: draw_pixels with zero value has no fill", "[pixelregions]") {
+TEST_CASE("WaveformWidget: draw_pixels with zero value has no fill",
+          "[pixelregions]") {
   WaveformWidget w{64};
   w.set_geometry({0, 0, 8, 4});
   w.set_range(0.0f, 1.0f);
-  w.push(0.0f);  // min value → line at bottom, no fill below
+  w.push(0.0f); // min value → line at bottom, no fill below
   const Image* result = w.draw_pixels({0, 0, 8, 4}, Extent{8, 4});
   REQUIRE(result != nullptr);
 
   // norm=0.0 → y_pos = h-1 - 0 = h-1 (bottom row).
   // The line pixel should be at the bottom.
-  const auto& bottom = result->at(0, 3);  // last row
+  const auto& bottom = result->at(0, 3); // last row
   const Rgb fg_expected{0x00, 0xFF, 0x80};
   REQUIRE(bottom.r == fg_expected.r);
   REQUIRE(bottom.g == fg_expected.g);
   REQUIRE(bottom.b == fg_expected.b);
 }
 
-TEST_CASE("WaveformWidget: cell fallback still works when pixel path exists", "[pixelregions]") {
+TEST_CASE("WaveformWidget: cell fallback still works when pixel path exists",
+          "[pixelregions]") {
   Screen s{10, 4};
   WaveformWidget w{16};
   w.set_geometry({0, 0, 10, 4});
@@ -165,7 +173,7 @@ struct CachingWidget final : Widget {
   }
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("Widget: a cached image survives 60 frames without being copied",
           "[pixelregions]") {

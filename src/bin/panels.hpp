@@ -20,14 +20,14 @@
 namespace termforge::forge_top {
 
 class OverviewPanel final : public Widget {
-public:
+ public:
   OverviewPanel();
   auto set_style(BorderStyle style) -> void;
-  auto set_snapshot(double uptime, std::array<double, 3> load,
-                    TaskCounts tasks) -> void;
-  auto draw(Screen &screen) -> void override;
+  auto set_snapshot(double uptime, std::array<double, 3> load, TaskCounts tasks)
+      -> void;
+  auto draw(Screen& screen) -> void override;
 
-private:
+ private:
   Frame m_frame{"System"};
   double m_uptime{};
   std::array<double, 3> m_load{};
@@ -35,22 +35,22 @@ private:
 };
 
 class CpuPanel final : public Widget {
-public:
+ public:
   CpuPanel();
   auto set_style(BorderStyle style) -> void;
   auto set_samples(std::span<const CpuSample> samples) -> void;
-  auto set_aggregate_sample(const CpuSample &sample) -> void;
+  auto set_aggregate_sample(const CpuSample& sample) -> void;
   auto set_per_cpu(bool per_cpu) -> void;
   [[nodiscard]] auto per_cpu() const noexcept -> bool { return m_per_cpu; }
-  auto draw(Screen &screen) -> void override;
+  auto draw(Screen& screen) -> void override;
   auto pixel_regions() -> std::vector<Rect> override;
-  auto draw_pixels(Rect region, Extent preferred) -> const Image * override;
+  auto draw_pixels(Rect region, Extent preferred) -> const Image* override;
   [[nodiscard]] auto pixel_region_state(Rect region) const noexcept
       -> PixelRegionState override;
   auto pixel_region_submitted(Rect region) noexcept -> void override;
 
-private:
-  [[nodiscard]] auto active_waves() const -> std::vector<WaveformWidget *>;
+ private:
+  [[nodiscard]] auto active_waves() const -> std::vector<WaveformWidget*>;
 
   Frame m_frame{"CPU cores"};
   std::vector<std::string> m_names;
@@ -64,13 +64,13 @@ private:
 };
 
 class MemoryPanel final : public Widget {
-public:
+ public:
   MemoryPanel();
   auto set_style(BorderStyle style) -> void;
-  auto set_memory(const MemoryInfo &memory) -> void;
-  auto draw(Screen &screen) -> void override;
+  auto set_memory(const MemoryInfo& memory) -> void;
+  auto draw(Screen& screen) -> void override;
 
-private:
+ private:
   Frame m_frame{"Memory"};
   ProgressBar m_memory;
   ProgressBar m_swap;
@@ -81,7 +81,7 @@ enum class ProcessSort { Cpu, Memory, Pid, Time, User, State, Command };
 auto format_cpu_time(double seconds) -> std::string;
 
 class ProcessPanel final : public Widget {
-public:
+ public:
   ProcessPanel();
 
   auto set_processes(std::vector<ProcessRow> processes) -> void;
@@ -98,22 +98,22 @@ public:
     return m_descending;
   }
 
-  auto on_activate(std::function<void(const ProcessRow &)> callback) -> void;
+  auto on_activate(std::function<void(const ProcessRow&)> callback) -> void;
   auto activate_selected() -> bool;
-  auto handle_header_click(const MouseEvent &mouse) -> bool;
+  auto handle_header_click(const MouseEvent& mouse) -> bool;
 
-  [[nodiscard]] auto filter() -> TextInput & { return m_filter; }
-  [[nodiscard]] auto filter() const -> const TextInput & { return m_filter; }
-  [[nodiscard]] auto table() -> TableWidget & { return m_table; }
-  [[nodiscard]] auto table() const -> const TableWidget & { return m_table; }
+  [[nodiscard]] auto filter() -> TextInput& { return m_filter; }
+  [[nodiscard]] auto filter() const -> const TextInput& { return m_filter; }
+  [[nodiscard]] auto table() -> TableWidget& { return m_table; }
+  [[nodiscard]] auto table() const -> const TableWidget& { return m_table; }
   [[nodiscard]] auto visible_rows() const noexcept
-      -> const std::vector<ProcessRow> & {
+      -> const std::vector<ProcessRow>& {
     return m_visible;
   }
 
-  auto draw(Screen &screen) -> void override;
+  auto draw(Screen& screen) -> void override;
 
-private:
+ private:
   enum class ProcessColumn {
     Pid,
     User,
@@ -140,33 +140,33 @@ private:
   int m_table_width{-1};
   std::vector<ProcessColumn> m_columns;
   BorderStyle m_style{BorderStyle::Rounded};
-  std::function<void(const ProcessRow &)> m_on_activate;
+  std::function<void(const ProcessRow&)> m_on_activate;
 };
 
 class DetailPopup final : public Dialog {
-public:
+ public:
   DetailPopup();
   auto set_style(BorderStyle style) -> void { set_border_style(style); }
-  auto set_process(const ProcessRow &process, std::span<const float> history)
+  auto set_process(const ProcessRow& process, std::span<const float> history)
       -> void;
   [[nodiscard]] auto pid() const noexcept -> int { return m_pid; }
 
   auto pixel_regions() -> std::vector<Rect> override;
-  auto draw_pixels(Rect region, Extent preferred) -> const Image * override;
+  auto draw_pixels(Rect region, Extent preferred) -> const Image* override;
   [[nodiscard]] auto pixel_region_state(Rect region) const noexcept
       -> PixelRegionState override;
   auto pixel_region_submitted(Rect region) noexcept -> void override;
   [[nodiscard]] auto pixel_fit(Rect region) const noexcept
       -> PlacementFit override;
-  auto on_event(const Event &event) -> bool override;
+  auto on_event(const Event& event) -> bool override;
 
-protected:
+ protected:
   [[nodiscard]] auto content_rows() const -> int override { return 10; }
   [[nodiscard]] auto content_cols() const -> int override { return 48; }
   auto layout_content(Rect area) -> void override;
-  auto draw_content(Screen &screen) -> void override;
+  auto draw_content(Screen& screen) -> void override;
 
-private:
+ private:
   auto rasterize(std::span<const float> history) -> void;
 
   PixelSurface m_graph{{160, 64}};

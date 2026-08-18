@@ -87,8 +87,8 @@ class ChoiceDialog final : public Dialog {
   auto set_labels(std::string submit, std::string cancel) -> void;
 
   // Called once per showing: ChoiceResult on submit, nullopt on cancellation.
-  auto on_result(
-      std::function<void(std::optional<ChoiceResult>)> callback) -> void {
+  auto on_result(std::function<void(std::optional<ChoiceResult>)> callback)
+      -> void {
     m_on_result = std::move(callback);
   }
 
@@ -144,4 +144,4 @@ class ChoiceDialog final : public Dialog {
   std::string m_validation;
 };
 
-}  // namespace termforge
+} // namespace termforge

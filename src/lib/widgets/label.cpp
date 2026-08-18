@@ -35,4 +35,4 @@ auto Label::draw(Screen& screen) -> void {
   clear_dirty();
 }
 
-}  // namespace termforge
+} // namespace termforge

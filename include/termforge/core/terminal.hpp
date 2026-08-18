@@ -7,28 +7,28 @@
 // first — the destructor is the guarantee, an explicit leave_raw() is for exit
 // paths where no destructor is guaranteed).
 //
-// By default the two streams are *discovered* from stdin/stdout. set_io() (#179)
-// hands them over instead, which is what lets one process serve a session whose
-// bytes arrive from somewhere other than its own terminal. That distinction
-// runs through the rest of this header, because two things a terminal makes
-// true are not true of a socket: it has termios, and writing an escape sequence
-// at it is a restore rather than a protocol violation.
+// By default the two streams are *discovered* from stdin/stdout. set_io()
+// (#179) hands them over instead, which is what lets one process serve a
+// session whose bytes arrive from somewhere other than its own terminal. That
+// distinction runs through the rest of this header, because two things a
+// terminal makes true are not true of a socket: it has termios, and writing an
+// escape sequence at it is a restore rather than a protocol violation.
 //
 // **The crash guarantee is about the user's terminal, and it holds exactly when
-// there is one.** When enter_raw() captures a real tty's termios it also arms an
-// async-signal-safe restore path (see detail/tty_restore.hpp): SIGTERM/SIGHUP
-// and hard crashes (SIGSEGV, …) that bypass destructors still leave the
-// alt-screen and restore cooked mode, then re-raise. An injected fd that is not
-// a tty arms nothing and installs no handler — there is no termios to put back,
-// and a signal handler writing the 48-byte leave sequence into an
-// application-level stream is not a restore, it is a blob in someone's protocol.
-// Normal teardown restores the complete signal dispositions it replaced
-// (handler, mask and flags), but does not overwrite a newer handler installed by
-// another component while TermForge was active.
+// there is one.** When enter_raw() captures a real tty's termios it also arms
+// an async-signal-safe restore path (see detail/tty_restore.hpp):
+// SIGTERM/SIGHUP and hard crashes (SIGSEGV, …) that bypass destructors still
+// leave the alt-screen and restore cooked mode, then re-raise. An injected fd
+// that is not a tty arms nothing and installs no handler — there is no termios
+// to put back, and a signal handler writing the 48-byte leave sequence into an
+// application-level stream is not a restore, it is a blob in someone's
+// protocol. Normal teardown restores the complete signal dispositions it
+// replaced (handler, mask and flags), but does not overwrite a newer handler
+// installed by another component while TermForge was active.
 //
-// Capability detection queries the *terminal* (escape-sequence responses), never
-// the display server — $WAYLAND_DISPLAY/$DISPLAY say nothing about what the
-// attached emulator can render.
+// Capability detection queries the *terminal* (escape-sequence responses),
+// never the display server — $WAYLAND_DISPLAY/$DISPLAY say nothing about what
+// the attached emulator can render.
 
 #include <expected>
 #include <memory>
@@ -57,15 +57,16 @@ struct TerminalIo {
 // environment holds the daemon's identity -- never the client's. set_env()
 // hands the pair over instead (#181).
 struct TerminalEnv {
-  std::string term;       // "" = the client sent no TERM
-  std::string colorterm;  // "" = the client sent no COLORTERM
-  friend auto operator==(const TerminalEnv&, const TerminalEnv&) -> bool = default;
+  std::string term;      // "" = the client sent no TERM
+  std::string colorterm; // "" = the client sent no COLORTERM
+  friend auto operator==(const TerminalEnv&, const TerminalEnv&)
+      -> bool = default;
 };
 
 class Terminal {
  public:
   Terminal();
-  ~Terminal();  // undoes whatever enter_raw() did, if it ran
+  ~Terminal(); // undoes whatever enter_raw() did, if it ran
 
   Terminal(const Terminal&) = delete;
   auto operator=(const Terminal&) = delete;
@@ -94,7 +95,8 @@ class Terminal {
   // thing, and -1 is already the sentinel for it.
   //
   // INJECTION IS A STATEMENT OF INTENT, and that is the whole difference from
-  // discovery. enter_raw()'s "stdin/stdout is not a tty" refusal exists to catch
+  // discovery. enter_raw()'s "stdin/stdout is not a tty" refusal exists to
+  // catch
   // `./app < file`, an accident; a caller that named its fds has made no such
   // mistake, so an injected non-tty enters raw mode successfully. See
   // enter_raw().
@@ -234,8 +236,8 @@ class Terminal {
   // has no equivalent there and emulating one would mean changing what
   // read_input() means. Nothing is lost: wait_readable() already expresses the
   // same wait with better granularity, which is why the event loop uses it.
-  auto set_read_timeout(int deciseconds) -> void;  // VMIN=0, VTIME=n (poll)
-  auto set_read_blocking() -> void;                // VMIN=1, VTIME=0 (block)
+  auto set_read_timeout(int deciseconds) -> void; // VMIN=0, VTIME=n (poll)
+  auto set_read_blocking() -> void;               // VMIN=1, VTIME=0 (block)
 
   // Wait up to `timeout_ms` for input to become readable. True if bytes are
   // waiting (or the fd hung up — read() then reports the EOF), false on
@@ -326,9 +328,9 @@ class Terminal {
   struct Impl;
   std::unique_ptr<Impl> m_impl;
   bool m_raw{false};
-  MouseMode m_mouse_mode{MouseMode::Drag};  // #75: pre-v0.1.15 behaviour
-  KeyboardMode m_keyboard_mode{KeyboardMode::Legacy};  // #60: opt-in
-  bool m_kb_pushed{false};  // an entry of ours is on the terminal's stack
+  MouseMode m_mouse_mode{MouseMode::Drag}; // #75: pre-v0.1.15 behaviour
+  KeyboardMode m_keyboard_mode{KeyboardMode::Legacy}; // #60: opt-in
+  bool m_kb_pushed{false}; // an entry of ours is on the terminal's stack
 };
 
-}  // namespace termforge
+} // namespace termforge

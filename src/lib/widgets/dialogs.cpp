@@ -24,7 +24,7 @@ auto place_buttons(Rect area, std::initializer_list<Button*> buttons) -> void {
   int total = 0;
   for (auto* b : buttons)
     total += detail::display_width(b->label()) + 1;
-  if (total > 0) total -= 1;  // no gap after the last
+  if (total > 0) total -= 1; // no gap after the last
 
   const int right = area.x + area.w;
   int x = area.x + std::max(0, area.w - total);
@@ -38,11 +38,12 @@ auto place_buttons(Rect area, std::initializer_list<Button*> buttons) -> void {
 
 auto buttons_width(std::initializer_list<const Button*> buttons) -> int {
   int total = 0;
-  for (const auto* b : buttons) total += detail::display_width(b->label()) + 1;
+  for (const auto* b : buttons)
+    total += detail::display_width(b->label()) + 1;
   return total > 0 ? total - 1 : 0;
 }
 
-}  // namespace
+} // namespace
 
 // ── MessageDialog ──────────────────────────────────────────────────────
 
@@ -84,7 +85,9 @@ auto MessageDialog::layout_content(Rect area) -> void {
   place_buttons(area, {&m_ok});
 }
 
-auto MessageDialog::draw_content(Screen& screen) -> void { m_ok.draw(screen); }
+auto MessageDialog::draw_content(Screen& screen) -> void {
+  m_ok.draw(screen);
+}
 
 // ── ConfirmDialog ──────────────────────────────────────────────────────
 
@@ -98,7 +101,7 @@ ConfirmDialog::ConfirmDialog(std::string title, std::string text,
 auto ConfirmDialog::build() -> void {
   m_yes.on_activate([this] { finish(true); });
   m_no.on_activate([this] { finish(false); });
-  add_child(&m_yes);  // first added starts focused: Enter confirms
+  add_child(&m_yes); // first added starts focused: Enter confirms
   add_child(&m_no);
 }
 
@@ -115,7 +118,7 @@ auto ConfirmDialog::set_default(bool confirm) -> void {
 
 auto ConfirmDialog::finish(bool result) -> void {
   if (!begin_result()) return;
-  auto cb = m_on_result;  // snapshot before close() -- see MessageDialog (#51)
+  auto cb = m_on_result; // snapshot before close() -- see MessageDialog (#51)
   close();
   detail::invoke_copy(cb, result);
 }
@@ -164,7 +167,7 @@ PromptDialog::PromptDialog(std::string title, std::string label,
 auto PromptDialog::build() -> void {
   m_ok.on_activate([this] { finish_submit(); });
   m_cancel.on_activate([this] { finish_cancel(); });
-  add_child(&m_input);  // first added starts focused: type immediately
+  add_child(&m_input); // first added starts focused: type immediately
   add_child(&m_ok);
   add_child(&m_cancel);
 }
@@ -188,14 +191,14 @@ auto PromptDialog::set_labels(std::string ok, std::string cancel) -> void {
 auto PromptDialog::finish_submit() -> void {
   if (!begin_result()) return;
   auto text = m_input.text();
-  auto cb = m_on_submit;  // snapshot before close() -- see MessageDialog (#51)
+  auto cb = m_on_submit; // snapshot before close() -- see MessageDialog (#51)
   close();
   detail::invoke_copy(cb, std::move(text));
 }
 
 auto PromptDialog::finish_cancel() -> void {
   if (!begin_result()) return;
-  auto cb = m_on_cancel;  // snapshot before close() -- see MessageDialog (#51)
+  auto cb = m_on_cancel; // snapshot before close() -- see MessageDialog (#51)
   close();
   detail::invoke_copy(cb);
 }
@@ -238,4 +241,4 @@ auto PromptDialog::draw_content(Screen& screen) -> void {
   m_cancel.draw(screen);
 }
 
-}  // namespace termforge
+} // namespace termforge

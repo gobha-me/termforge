@@ -25,7 +25,7 @@ struct TerminalCell {
   bool bold{false};
 
   [[nodiscard]] auto placeholder() const noexcept -> bool {
-    return text == "\xF4\x8E\xBB\xAE";  // U+10EEEE
+    return text == "\xF4\x8E\xBB\xAE"; // U+10EEEE
   }
 };
 
@@ -68,7 +68,8 @@ class TerminalGrid {
 
   [[nodiscard]] auto row_text(int y) const -> std::string {
     std::string out;
-    for (int x = 0; x < m_cols; ++x) out += at(x, y).text;
+    for (int x = 0; x < m_cols; ++x)
+      out += at(x, y).text;
     return out;
   }
 
@@ -154,4 +155,4 @@ class TerminalGrid {
   bool m_bold{false};
 };
 
-}  // namespace tfsupport
+} // namespace tfsupport

@@ -18,7 +18,8 @@ class ColorsApp final : public App {
     const int W = screen.cols();
     int y = 1;
 
-    screen.write_text(2, y++, "TermForge Color Demo", Rgb{0xFF, 0xFF, 0xFF}, {});
+    screen.write_text(2, y++, "TermForge Color Demo", Rgb{0xFF, 0xFF, 0xFF},
+                      {});
     y++;
 
     // Primary colors
@@ -37,8 +38,10 @@ class ColorsApp final : public App {
 
     // Background colors
     screen.write_text(2, y++, "With background:", Rgb{0xC0, 0xC0, 0xC0}, {});
-    screen.write_text(18, y - 1, "White on Red", Rgb{0xFF, 0xFF, 0xFF}, Rgb{0xFF, 0x00, 0x00});
-    screen.write_text(32, y - 1, "Black on Yellow", Rgb{0x00, 0x00, 0x00}, Rgb{0xFF, 0xFF, 0x00});
+    screen.write_text(18, y - 1, "White on Red", Rgb{0xFF, 0xFF, 0xFF},
+                      Rgb{0xFF, 0x00, 0x00});
+    screen.write_text(32, y - 1, "Black on Yellow", Rgb{0x00, 0x00, 0x00},
+                      Rgb{0xFF, 0xFF, 0x00});
     y += 2;
 
     // Gradient
@@ -50,7 +53,8 @@ class ColorsApp final : public App {
     }
     y += 2;
 
-    screen.write_text(0, screen.rows() - 1, "Press ESC to quit", Rgb{0x80, 0x80, 0x80}, {});
+    screen.write_text(0, screen.rows() - 1, "Press ESC to quit",
+                      Rgb{0x80, 0x80, 0x80}, {});
   }
 };
 

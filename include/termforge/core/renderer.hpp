@@ -41,15 +41,16 @@ class Renderer {
   // driver change that invalidates the cached frame).
   auto invalidate() -> void;
 
-  [[nodiscard]] auto last_presented() const noexcept -> const std::vector<Cell>& {
+  [[nodiscard]] auto last_presented() const noexcept
+      -> const std::vector<Cell>& {
     return m_prev;
   }
 
  private:
   TerminalDriver& m_driver;
-  std::vector<Cell> m_prev;  // previously presented grid
+  std::vector<Cell> m_prev; // previously presented grid
   int m_prev_cols{-1};
   int m_prev_rows{-1};
 };
 
-}  // namespace termforge
+} // namespace termforge

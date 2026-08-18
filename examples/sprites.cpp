@@ -37,9 +37,9 @@ using namespace termforge;
 
 namespace {
 
-constexpr int kSprite = 8;   // each atlas slot is 8x8
-constexpr int kSlots = 4;    // ... and there are four of them
-constexpr int kSceneW = 48;  // the composed scene, in image pixels
+constexpr int kSprite = 8;  // each atlas slot is 8x8
+constexpr int kSlots = 4;   // ... and there are four of them
+constexpr int kSceneW = 48; // the composed scene, in image pixels
 constexpr int kSceneH = 16;
 
 // Slot indices, in atlas order.
@@ -54,9 +54,9 @@ enum Slot { kBlock = 0, kDisc = 1, kHalf = 2, kClear = 3 };
 // One 32x8 atlas holding four sprites, each exercising a different alpha
 // regime so that a compositing bug has somewhere to show itself.
 [[nodiscard]] auto build_atlas() -> Image {
-  Image atlas{kSlots * kSprite, kSprite,
-              std::vector<Pixel>(static_cast<std::size_t>(kSlots) * kSprite *
-                                 kSprite)};
+  Image atlas{
+      kSlots * kSprite, kSprite,
+      std::vector<Pixel>(static_cast<std::size_t>(kSlots) * kSprite * kSprite)};
 
   // 0: fully opaque — the a=255 replace path.
   atlas.fill(slot_rect(kBlock), Pixel{0xFF, 0xC0, 0x20, 255});
@@ -114,7 +114,7 @@ enum Slot { kBlock = 0, kDisc = 1, kHalf = 2, kClear = 3 };
   return scene;
 }
 
-}  // namespace
+} // namespace
 
 auto main() -> int {
   const Image atlas = build_atlas();
@@ -124,7 +124,8 @@ auto main() -> int {
   // nothing at all; one placement below does exactly that, to show both.
   std::vector<Image> sprites;
   sprites.reserve(kSlots);
-  for (int s = 0; s < kSlots; ++s) sprites.push_back(atlas.sub(slot_rect(s)));
+  for (int s = 0; s < kSlots; ++s)
+    sprites.push_back(atlas.sub(slot_rect(s)));
 
   Image scene = build_scene();
 
@@ -136,19 +137,20 @@ auto main() -> int {
 
   // Clipping at all four edges. Each of these is mostly outside the scene; the
   // library clips rather than throwing or wrapping.
-  scene.blend(sprites[kDisc], -4, 10);       // off the left
-  scene.blend(sprites[kDisc], kSceneW - 4, 10);  // off the right
-  scene.blend(sprites[kDisc], 40, -4);       // off the top
-  scene.blend(sprites[kDisc], 12, kSceneH - 4);  // off the bottom
+  scene.blend(sprites[kDisc], -4, 10);          // off the left
+  scene.blend(sprites[kDisc], kSceneW - 4, 10); // off the right
+  scene.blend(sprites[kDisc], 40, -4);          // off the top
+  scene.blend(sprites[kDisc], 12, kSceneH - 4); // off the bottom
 
   // Straight from the atlas, no intermediate Image — the allocation-free path.
   scene.blend(atlas, slot_rect(kDisc), 26, 10);
 
   Terminal term;
   if (auto res = term.enter_raw(); !res) {
-    std::fprintf(stderr, "%s\n",
-                 std::format("Failed to enter raw mode: {}", res.error().message)
-                     .c_str());
+    std::fprintf(
+        stderr, "%s\n",
+        std::format("Failed to enter raw mode: {}", res.error().message)
+            .c_str());
     return 1;
   }
   term.enter_screen();
@@ -157,7 +159,8 @@ auto main() -> int {
   if (!caps) {
     std::fprintf(
         stderr, "%s\n",
-        std::format("Capability probe failed: {}", caps.error().message).c_str());
+        std::format("Capability probe failed: {}", caps.error().message)
+            .c_str());
     return 1;
   }
 

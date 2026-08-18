@@ -13,9 +13,9 @@ struct Options {
   DriverChoice driver{DriverChoice::Automatic};
 };
 
-auto parse_options(int argc, char **argv)
+auto parse_options(int argc, char** argv)
     -> std::expected<Options, std::string>;
-auto usage() -> const char *;
-auto run_cli(int argc, char **argv) -> int;
+auto usage() -> const char*;
+auto run_cli(int argc, char** argv) -> int;
 
 } // namespace termforge::forge_top

@@ -31,9 +31,9 @@ using termforge::Pixel;
 // accident.
 inline auto solid(int w, int h, Pixel p) -> Image {
   return Image{w, h,
-               std::vector<Pixel>(
-                   static_cast<std::size_t>(w) * static_cast<std::size_t>(h),
-                   p)};
+               std::vector<Pixel>(static_cast<std::size_t>(w) *
+                                      static_cast<std::size_t>(h),
+                                  p)};
 }
 
 // Alternating pixels. A solid source cannot detect a row-stride bug — every
@@ -48,8 +48,9 @@ inline auto checker(int w, int h, Pixel a, Pixel b) -> Image {
   std::vector<Pixel> px;
   px.reserve(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
   for (int y = 0; y < h; ++y)
-    for (int x = 0; x < w; ++x) px.push_back((x + y) % 2 == 0 ? a : b);
+    for (int x = 0; x < w; ++x)
+      px.push_back((x + y) % 2 == 0 ? a : b);
   return Image{w, h, std::move(px)};
 }
 
-}  // namespace tfsupport
+} // namespace tfsupport

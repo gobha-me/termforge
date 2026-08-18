@@ -5,7 +5,8 @@
 
 namespace termforge {
 
-Renderer::Renderer(TerminalDriver& driver) : m_driver(driver) {}
+Renderer::Renderer(TerminalDriver& driver) : m_driver(driver) {
+}
 
 auto Renderer::invalidate() -> void {
   m_prev.clear();
@@ -16,7 +17,8 @@ auto Renderer::invalidate() -> void {
 auto Renderer::present(const Screen& screen) -> void {
   const int cols = screen.cols();
   const int rows = screen.rows();
-  const bool full = m_prev_cols != cols || m_prev_rows != rows || m_prev.empty();
+  const bool full =
+      m_prev_cols != cols || m_prev_rows != rows || m_prev.empty();
 
   for (int y = 0; y < rows; ++y) {
     const std::size_t row_offset =
@@ -29,11 +31,10 @@ auto Renderer::present(const Screen& screen) -> void {
     for (int x = 0; x < cols; ++x) {
       const Cell& cur = screen.at(x, y);
       if (!full) {
-        const Cell& prev =
-            m_prev[static_cast<std::size_t>(y) *
-                       static_cast<std::size_t>(cols) +
-                   static_cast<std::size_t>(x)];
-        if (cur == prev) continue;  // unchanged — skip emission
+        const Cell& prev = m_prev[static_cast<std::size_t>(y) *
+                                      static_cast<std::size_t>(cols) +
+                                  static_cast<std::size_t>(x)];
+        if (cur == prev) continue; // unchanged — skip emission
       }
       if (cur.blank()) {
         // Emit a space to clear the cell with its background.
@@ -70,4 +71,4 @@ auto Renderer::flush() -> void {
   m_driver.flush();
 }
 
-}  // namespace termforge
+} // namespace termforge

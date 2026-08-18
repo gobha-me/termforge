@@ -39,4 +39,4 @@ inline constexpr Rgb kDropdownBg{0x15, 0x15, 0x25};
 // "[more]" scroll hint, the demo status line. Same role, one name.
 inline constexpr Rgb kDim{0x7A, 0x7A, 0x9A};
 
-}  // namespace termforge::theme
+} // namespace termforge::theme

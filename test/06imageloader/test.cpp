@@ -28,14 +28,15 @@ auto make_asset(std::uint32_t w, std::uint32_t h,
   return out;
 }
 
-}  // namespace
+} // namespace
 
 // ── happy path ──────────────────────────────────────────────────────────────
 
-TEST_CASE("ImageLoader: valid 2x1 image loads with correct pixels", "[imageloader]") {
+TEST_CASE("ImageLoader: valid 2x1 image loads with correct pixels",
+          "[imageloader]") {
   const std::vector<Pixel> px = {
-      Pixel{255, 0, 0, 255},  // red
-      Pixel{0, 255, 0, 128},  // green, half-alpha
+      Pixel{255, 0, 0, 255}, // red
+      Pixel{0, 255, 0, 128}, // green, half-alpha
   };
   const auto data = make_asset(2, 1, px);
   auto r = ImageLoader::load_from_memory(data);
@@ -55,7 +56,8 @@ TEST_CASE("ImageLoader: 1x1 single pixel round-trip", "[imageloader]") {
 
 // ── failure modes ───────────────────────────────────────────────────────────
 
-TEST_CASE("ImageLoader: empty input is a warning, not a crash", "[imageloader][failure]") {
+TEST_CASE("ImageLoader: empty input is a warning, not a crash",
+          "[imageloader][failure]") {
   auto r = ImageLoader::load_from_memory("");
   REQUIRE_FALSE(r.has_value());
   REQUIRE(r.error().severity == Severity::Warning);
@@ -63,7 +65,7 @@ TEST_CASE("ImageLoader: empty input is a warning, not a crash", "[imageloader][f
 }
 
 TEST_CASE("ImageLoader: header too short", "[imageloader][failure]") {
-  auto r = ImageLoader::load_from_memory("\x01\x00\x00");  // 3 bytes
+  auto r = ImageLoader::load_from_memory("\x01\x00\x00"); // 3 bytes
   REQUIRE_FALSE(r.has_value());
   REQUIRE(r.error().message.find("header too short") != std::string::npos);
 }
@@ -82,7 +84,8 @@ TEST_CASE("ImageLoader: zero height rejected", "[imageloader][failure]") {
   REQUIRE(r.error().message.find("invalid dimensions") != std::string::npos);
 }
 
-TEST_CASE("ImageLoader: oversized dimensions rejected", "[imageloader][failure]") {
+TEST_CASE("ImageLoader: oversized dimensions rejected",
+          "[imageloader][failure]") {
   // Craft a header claiming 4097×1 — one over the max.
   std::string data(8, '\0');
   const std::uint32_t w = ImageLoader::kMaxDimension + 1, h = 1;
@@ -95,10 +98,11 @@ TEST_CASE("ImageLoader: oversized dimensions rejected", "[imageloader][failure]"
   REQUIRE(r.error().message.find("too large") != std::string::npos);
 }
 
-TEST_CASE("ImageLoader: truncated pixel data detected", "[imageloader][failure]") {
+TEST_CASE("ImageLoader: truncated pixel data detected",
+          "[imageloader][failure]") {
   // Header says 2x2 but only 3 pixels of data follow.
   const auto full = make_asset(2, 2, std::vector<Pixel>(4));
-  const auto truncated = full.substr(0, full.size() - 4);  // drop one pixel
+  const auto truncated = full.substr(0, full.size() - 4); // drop one pixel
   auto r = ImageLoader::load_from_memory(truncated);
   REQUIRE_FALSE(r.has_value());
   REQUIRE(r.error().message.find("size mismatch") != std::string::npos);
@@ -106,13 +110,14 @@ TEST_CASE("ImageLoader: truncated pixel data detected", "[imageloader][failure]"
 
 TEST_CASE("ImageLoader: trailing garbage detected", "[imageloader][failure]") {
   auto data = make_asset(1, 1, {Pixel{}});
-  data += "EXTRA";  // 5 extra bytes
+  data += "EXTRA"; // 5 extra bytes
   auto r = ImageLoader::load_from_memory(data);
   REQUIRE_FALSE(r.has_value());
   REQUIRE(r.error().message.find("size mismatch") != std::string::npos);
 }
 
-TEST_CASE("ImageLoader: nonexistent file returns error", "[imageloader][failure]") {
+TEST_CASE("ImageLoader: nonexistent file returns error",
+          "[imageloader][failure]") {
   auto r = ImageLoader::load("/nonexistent/path/to/image.rgba");
   REQUIRE_FALSE(r.has_value());
   REQUIRE(r.error().severity == Severity::Warning);
@@ -121,7 +126,8 @@ TEST_CASE("ImageLoader: nonexistent file returns error", "[imageloader][failure]
 
 // ── pixel data integrity ────────────────────────────────────────────────────
 
-TEST_CASE("ImageLoader: all 256 byte values survive in each channel", "[imageloader]") {
+TEST_CASE("ImageLoader: all 256 byte values survive in each channel",
+          "[imageloader]") {
   // 256 pixels: pixel i has r=g=b=a=i. Verifies no byte is mangled.
   std::vector<Pixel> px(256);
   for (int i = 0; i < 256; ++i) {

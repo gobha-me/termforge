@@ -1,14 +1,14 @@
-#include <catch2/catch_test_macros.hpp>
 #include "detail/wrap.hpp"
 #include "support/events.hpp"
-#include "termforge/widgets/text_box.hpp"
-#include "termforge/widgets/theme.hpp"
 #include "termforge/core/screen.hpp"
 #include "termforge/core/styled_text.hpp"
+#include "termforge/widgets/text_box.hpp"
+#include "termforge/widgets/theme.hpp"
+#include <catch2/catch_test_macros.hpp>
 
 using termforge::Event;
-using termforge::KeyEvent;
 using termforge::Key;
+using termforge::KeyEvent;
 using termforge::Rect;
 using termforge::Rgb;
 using termforge::Screen;
@@ -21,7 +21,8 @@ auto render_row(TextBox& box, int width, int height, int y) -> std::string {
   box.set_geometry({0, 0, width, height});
   box.draw(s);
   std::string row;
-  for (int x = 0; x < width; ++x) row += s.text_at(x, y);
+  for (int x = 0; x < width; ++x)
+    row += s.text_at(x, y);
   return row;
 }
 
@@ -34,12 +35,14 @@ auto plain_rows(const std::string& text, int width)
 
 auto styled_text(const termforge::StyledText& row) -> std::string {
   std::string text;
-  for (const termforge::TextSpan& span : row) text += span.text;
+  for (const termforge::TextSpan& span : row)
+    text += span.text;
   return text;
 }
-}
+} // namespace
 
-TEST_CASE("TextBox: appends and shows the latest lines pinned to the bottom", "[textbox]") {
+TEST_CASE("TextBox: appends and shows the latest lines pinned to the bottom",
+          "[textbox]") {
   TextBox box;
   box.append("one");
   box.append("two");
@@ -53,7 +56,7 @@ TEST_CASE("TextBox: appends and shows the latest lines pinned to the bottom", "[
 
 TEST_CASE("TextBox: long lines wrap to the widget width", "[textbox]") {
   TextBox box;
-  box.append("abcdefghij");  // 10 chars into width 4 -> 3 rows: abcd efgh ij
+  box.append("abcdefghij"); // 10 chars into width 4 -> 3 rows: abcd efgh ij
   REQUIRE(render_row(box, 4, 5, 0) == "abcd");
   REQUIRE(render_row(box, 4, 5, 1) == "efgh");
   REQUIRE(render_row(box, 4, 5, 2) == "ij");
@@ -91,27 +94,27 @@ TEST_CASE("TextBox: word wrapping preserves whitespace exactly (#24)",
   const auto rows = plain_rows(repeated, 4);
   REQUIRE(rows == std::vector<std::string>{"aa  ", " bb"});
   std::string rebuilt;
-  for (const auto& row : rows) rebuilt += row;
+  for (const auto& row : rows)
+    rebuilt += row;
   REQUIRE(rebuilt == repeated);
 }
 
-TEST_CASE("TextBox: overlong words retain display-width-safe hard wrapping (#24)",
-          "[textbox][wrap][failure]") {
-  REQUIRE(plain_rows("abcde", 2) ==
-          std::vector<std::string>{"ab", "cd", "e"});
+TEST_CASE(
+    "TextBox: overlong words retain display-width-safe hard wrapping (#24)",
+    "[textbox][wrap][failure]") {
+  REQUIRE(plain_rows("abcde", 2) == std::vector<std::string>{"ab", "cd", "e"});
   REQUIRE(plain_rows("word", 4) == std::vector<std::string>{"word"});
   REQUIRE(plain_rows("ab cd", 1) ==
           std::vector<std::string>{"a", "b", " ", "c", "d"});
   REQUIRE(plain_rows("", 4) == std::vector<std::string>{""});
-  REQUIRE(plain_rows("no wrap", 0) ==
-          std::vector<std::string>{"no wrap"});
+  REQUIRE(plain_rows("no wrap", 0) == std::vector<std::string>{"no wrap"});
 
-  const std::string wide = "\xE7\x95\x8C hello";  // 界 is two columns.
+  const std::string wide = "\xE7\x95\x8C hello"; // 界 is two columns.
   const auto rows = plain_rows(wide, 4);
-  REQUIRE(rows ==
-          std::vector<std::string>{"\xE7\x95\x8C ", "hell", "o"});
+  REQUIRE(rows == std::vector<std::string>{"\xE7\x95\x8C ", "hell", "o"});
   std::string rebuilt;
-  for (const auto& row : rows) rebuilt += row;
+  for (const auto& row : rows)
+    rebuilt += row;
   REQUIRE(rebuilt == wide);
 }
 
@@ -159,21 +162,25 @@ TEST_CASE("TextBox: a word split across spans is still one word (#24)",
   CHECK(styled_text(rows[1]) == " ef");
 }
 
-TEST_CASE("TextBox: scrolling up pauses follow; new content does not yank view", "[textbox]") {
+TEST_CASE("TextBox: scrolling up pauses follow; new content does not yank view",
+          "[textbox]") {
   TextBox box;
-  for (int i = 0; i < 20; ++i) box.append("line " + std::to_string(i));
-  box.scroll(-5);  // scroll up 5
+  for (int i = 0; i < 20; ++i)
+    box.append("line " + std::to_string(i));
+  box.scroll(-5); // scroll up 5
   REQUIRE_FALSE(box.at_bottom());
   const auto before = box.line_count();
   box.append("new line");
   REQUIRE(box.line_count() == before + 1u);
-  REQUIRE_FALSE(box.at_bottom());  // still scrolled up, follow paused
+  REQUIRE_FALSE(box.at_bottom()); // still scrolled up, follow paused
 }
 
-TEST_CASE("TextBox: PageUp/PageDown scroll a page and are consumed", "[textbox]") {
+TEST_CASE("TextBox: PageUp/PageDown scroll a page and are consumed",
+          "[textbox]") {
   TextBox box;
   box.set_geometry({0, 0, 20, 5});
-  for (int i = 0; i < 20; ++i) box.append("line " + std::to_string(i));
+  for (int i = 0; i < 20; ++i)
+    box.append("line " + std::to_string(i));
   KeyEvent pgup{Key::PageUp};
   REQUIRE(box.on_event(Event{pgup}));
   REQUIRE_FALSE(box.at_bottom());
@@ -184,7 +191,8 @@ TEST_CASE("TextBox: PageUp/PageDown scroll a page and are consumed", "[textbox]"
 
 TEST_CASE("TextBox: scroll_to_bottom restores follow", "[textbox]") {
   TextBox box;
-  for (int i = 0; i < 10; ++i) box.append("x");
+  for (int i = 0; i < 10; ++i)
+    box.append("x");
   box.scroll(-3);
   REQUIRE_FALSE(box.at_bottom());
   box.scroll_to_bottom();
@@ -196,20 +204,22 @@ TEST_CASE("TextBox: empty and zero-size rects are safe", "[textbox][failure]") {
   box.append("data");
   Screen tiny{0, 0};
   box.set_geometry({0, 0, 0, 0});
-  box.draw(tiny);  // must not crash
+  box.draw(tiny); // must not crash
   REQUIRE(true);
 }
 
 TEST_CASE("TextBox: scroll indicator appears when scrolled up", "[textbox]") {
   TextBox box;
   box.set_geometry({0, 0, 20, 3});
-  for (int i = 0; i < 20; ++i) box.append("line " + std::to_string(i));
+  for (int i = 0; i < 20; ++i)
+    box.append("line " + std::to_string(i));
   box.scroll(-5);
   Screen s{20, 3};
   box.draw(s);
   // the "[more]" indicator should be somewhere on row 0
   std::string row0;
-  for (int x = 0; x < 20; ++x) row0 += s.text_at(x, 0);
+  for (int x = 0; x < 20; ++x)
+    row0 += s.text_at(x, 0);
   REQUIRE(row0.find("[more]") != std::string::npos);
 }
 
@@ -220,16 +230,18 @@ TEST_CASE("TextBox: over-scrolling up clamps instead of blanking",
   // rendered.
   TextBox box;
   box.set_geometry({0, 0, 20, 10});
-  for (int i = 0; i < 5; ++i) box.append("line " + std::to_string(i));
+  for (int i = 0; i < 5; ++i)
+    box.append("line " + std::to_string(i));
 
-  box.scroll(-9);  // PageUp with everything already visible
+  box.scroll(-9); // PageUp with everything already visible
   box.scroll(-9);
   Screen s{20, 10};
   box.draw(s);
 
   std::string all;
   for (int y = 0; y < 10; ++y)
-    for (int x = 0; x < 20; ++x) all += s.text_at(x, y);
+    for (int x = 0; x < 20; ++x)
+      all += s.text_at(x, y);
   REQUIRE(all.find("line 0") != std::string::npos);
   REQUIRE(all.find("line 4") != std::string::npos);
   // Content fits entirely → the clamp lands back at the bottom.
@@ -246,7 +258,8 @@ TEST_CASE("TextBox: wheel scrolls the view, sign convention unchanged (#35)",
   // byte-for-byte unchanged.
   TextBox box;
   box.set_geometry({0, 0, 20, 4});
-  for (int i = 0; i < 20; ++i) box.append("line " + std::to_string(i));
+  for (int i = 0; i < 20; ++i)
+    box.append("line " + std::to_string(i));
   REQUIRE(box.at_bottom());
 
   // Wheel UP over the box scrolls toward older lines: no longer at the bottom.
@@ -267,20 +280,23 @@ TEST_CASE("TextBox: wheel scrolls the view, sign convention unchanged (#35)",
   REQUIRE(box.at_bottom());
 }
 
-TEST_CASE("TextBox: scrollbar appears when content overflows, thumb at bottom (#21)",
-          "[textbox]") {
+TEST_CASE(
+    "TextBox: scrollbar appears when content overflows, thumb at bottom (#21)",
+    "[textbox]") {
   // A TextBox pins to the bottom, so the bar's first honest state is a thumb
   // AT THE BOTTOM -- the opposite end from a fresh list. m_scroll counts up
   // from the bottom; the strip gets the converted offset at the boundary.
   TextBox box;
   box.set_geometry({0, 0, 20, 4});
-  for (int i = 0; i < 3; ++i) box.append("line " + std::to_string(i));
+  for (int i = 0; i < 3; ++i)
+    box.append("line " + std::to_string(i));
   Screen s{20, 4};
   box.draw(s);
-  REQUIRE(s.text_at(19, 0) != "█");  // everything fits: no bar
-  for (int i = 3; i < 12; ++i) box.append("line " + std::to_string(i));
+  REQUIRE(s.text_at(19, 0) != "█"); // everything fits: no bar
+  for (int i = 3; i < 12; ++i)
+    box.append("line " + std::to_string(i));
   box.draw(s);
-  REQUIRE(s.text_at(19, 3) == "█");  // pinned to the bottom
+  REQUIRE(s.text_at(19, 3) == "█"); // pinned to the bottom
   REQUIRE(s.text_at(19, 0) == "│");
 }
 
@@ -288,10 +304,11 @@ TEST_CASE("TextBox: scrollbar thumb moves as the view scrolls up (#21)",
           "[textbox]") {
   TextBox box;
   box.set_geometry({0, 0, 20, 4});
-  for (int i = 0; i < 12; ++i) box.append("line " + std::to_string(i));
+  for (int i = 0; i < 12; ++i)
+    box.append("line " + std::to_string(i));
   Screen s{20, 4};
   box.draw(s);
-  box.scroll_to_bottom();  // no-op state-wise, pins intent
+  box.scroll_to_bottom(); // no-op state-wise, pins intent
   box.on_event(tfsupport::wheel(2, 1, /*up=*/true));
   box.on_event(tfsupport::wheel(2, 1, /*up=*/true));
   box.on_event(tfsupport::wheel(2, 1, /*up=*/true));
@@ -307,25 +324,27 @@ TEST_CASE("TextBox: scrollbar glyphs follow the ascii style (#21)",
   TextBox box;
   box.set_geometry({0, 0, 20, 4});
   box.set_style(termforge::BorderStyle::Ascii);
-  for (int i = 0; i < 12; ++i) box.append("line " + std::to_string(i));
+  for (int i = 0; i < 12; ++i)
+    box.append("line " + std::to_string(i));
   Screen s{20, 4};
   box.draw(s);
   REQUIRE(s.text_at(19, 3) == "#");
   REQUIRE(s.text_at(19, 0) == "|");
 }
 
-TEST_CASE("TextBox: [more] chip and scrollbar coexist (#21)",
-          "[textbox]") {
+TEST_CASE("TextBox: [more] chip and scrollbar coexist (#21)", "[textbox]") {
   // Orthogonal indicators: the chip marks the follow LATCH (auto-scroll
   // paused), the bar marks the viewport POSITION. Scrolled up, both show.
   TextBox box;
   box.set_geometry({0, 0, 20, 4});
-  for (int i = 0; i < 12; ++i) box.append("line " + std::to_string(i));
+  for (int i = 0; i < 12; ++i)
+    box.append("line " + std::to_string(i));
   box.scroll(-6);
   Screen s{20, 4};
   box.draw(s);
   std::string row0;
-  for (int x = 0; x < 20; ++x) row0 += s.text_at(x, 0);
+  for (int x = 0; x < 20; ++x)
+    row0 += s.text_at(x, 0);
   REQUIRE(row0.find("[more]") != std::string::npos);
   // 12 rows, 4 visible: the thumb covers a third of the track (rounds to 1
   // row), and scrolled up 6 of the 8 max it sits one row down from the top.
@@ -335,7 +354,8 @@ TEST_CASE("TextBox: [more] chip and scrollbar coexist (#21)",
   box.scroll_to_bottom();
   box.draw(s);
   row0.clear();
-  for (int x = 0; x < 20; ++x) row0 += s.text_at(x, 0);
+  for (int x = 0; x < 20; ++x)
+    row0 += s.text_at(x, 0);
   REQUIRE(row0.find("[more]") == std::string::npos);
   REQUIRE(s.text_at(19, 3) == "█");
 }
@@ -346,7 +366,8 @@ TEST_CASE("TextBox: wrapping leaves the scrollbar column free (#21)",
   // paints under the strip and the strip never overpaints text.
   TextBox box;
   box.set_geometry({0, 0, 10, 3});
-  for (int i = 0; i < 6; ++i) box.append("0123456789");  // 10 chars, wraps
+  for (int i = 0; i < 6; ++i)
+    box.append("0123456789"); // 10 chars, wraps
   Screen s{10, 3};
   box.draw(s);
   // 10-char lines wrap at 9 columns with the bar possible: no row's text
@@ -361,9 +382,10 @@ TEST_CASE("TextBox: click on the scrollbar column page-jumps the view (#21)",
           "[textbox]") {
   TextBox box;
   box.set_geometry({0, 0, 20, 4});
-  for (int i = 0; i < 20; ++i) box.append("line " + std::to_string(i));
+  for (int i = 0; i < 20; ++i)
+    box.append("line " + std::to_string(i));
   Screen s{20, 4};
-  box.draw(s);  // bar up
+  box.draw(s); // bar up
   // Upper half of the strip -> toward older (up a page).
   REQUIRE(box.on_event(tfsupport::press(19, 0)));
   REQUIRE_FALSE(box.at_bottom());
@@ -376,9 +398,10 @@ TEST_CASE("TextBox: a one-column rect keeps the text, drops the bar (#21)",
           "[textbox][failure]") {
   TextBox box;
   box.set_geometry({0, 0, 1, 3});
-  for (int i = 0; i < 9; ++i) box.append("x");
+  for (int i = 0; i < 9; ++i)
+    box.append("x");
   Screen s{1, 3};
-  box.draw(s);  // must not crash
+  box.draw(s); // must not crash
   // The narrow exception, resolving the OTHER way from ListWidget's w == 2
   // (which gives the strip the last column): a 1-wide TextBox shows one
   // clipped text column and no bar -- position-only is the worse trade for
@@ -509,7 +532,8 @@ TEST_CASE("TextBox: sanitizes each span at append (#25)",
   box.set_geometry({0, 0, 20, 2});
   box.draw(s);
   std::string row;
-  for (int x = 0; x < 10; ++x) row += s.text_at(x, 0);
+  for (int x = 0; x < 10; ++x)
+    row += s.text_at(x, 0);
   REQUIRE(row.substr(0, 7) == "hithere");
 }
 
@@ -517,7 +541,7 @@ TEST_CASE("TextBox: plain append is a single-span wrapper (#25)",
           "[textbox][styled]") {
   // Same glyphs as the historical plain path; colours match theme defaults.
   TextBox plain;
-  plain.append("wrapme!!");  // 8 chars -> two rows at width 4
+  plain.append("wrapme!!"); // 8 chars -> two rows at width 4
   REQUIRE(render_row(plain, 4, 5, 0) == "wrap");
   REQUIRE(render_row(plain, 4, 5, 1) == "me!!");
 
@@ -583,8 +607,8 @@ TEST_CASE("TextBox: streaming UTF-8 survives chunk boundaries (#217)",
   CHECK(render_row(box, 10, 2, 0) ==
         std::string{"\xE7\x95\x8C", 3} + std::string(1, '\0'));
 
-  REQUIRE(box.append_to_entry(entry, termforge::StyledText{
-                                         {"!", {Rgb{1, 2, 3}, {}}}}));
+  REQUIRE(box.append_to_entry(
+      entry, termforge::StyledText{{"!", {Rgb{1, 2, 3}, {}}}}));
   Screen styled{10, 2};
   box.set_geometry({0, 0, 10, 2});
   box.draw(styled);
@@ -594,9 +618,9 @@ TEST_CASE("TextBox: streaming UTF-8 survives chunk boundaries (#217)",
   CHECK(styled.at(2, 0).fg == Rgb{1, 2, 3});
 
   const auto incomplete = box.begin_entry(b1);
-  CHECK(box.retained_bytes() == 5);  // completed glyph + ! + held lead
+  CHECK(box.retained_bytes() == 5); // completed glyph + ! + held lead
   REQUIRE(box.finalize_entry(incomplete));
-  CHECK(box.retained_bytes() == 4);  // finalization drops the held lead
+  CHECK(box.retained_bytes() == 4); // finalization drops the held lead
 
   TextBox malformed;
   const auto malformed_entry = malformed.begin_entry(b1);
@@ -604,8 +628,9 @@ TEST_CASE("TextBox: streaming UTF-8 survives chunk boundaries (#217)",
   CHECK(render_row(malformed, 10, 2, 0) == "A");
 }
 
-TEST_CASE("TextBox: empty stream deltas are successful cache-stable no-ops (#217)",
-          "[textbox][stream][cache]") {
+TEST_CASE(
+    "TextBox: empty stream deltas are successful cache-stable no-ops (#217)",
+    "[textbox][stream][cache]") {
   TextBox box;
   const auto entry = box.begin_entry("stable");
   Screen screen{20, 3};
@@ -620,8 +645,9 @@ TEST_CASE("TextBox: empty stream deltas are successful cache-stable no-ops (#217
   CHECK(box.retained_bytes() == 6);
 }
 
-TEST_CASE("TextBox: wrap caches rebuild only for changed entries and widths (#217)",
-          "[textbox][stream][cache]") {
+TEST_CASE(
+    "TextBox: wrap caches rebuild only for changed entries and widths (#217)",
+    "[textbox][stream][cache]") {
   TextBox box;
   box.append("alpha beta");
   box.append("gamma delta");
@@ -650,7 +676,8 @@ TEST_CASE("TextBox: wrap caches rebuild only for changed entries and widths (#21
   CHECK(box.wrap_build_count() == 8);
 }
 
-TEST_CASE("TextBox: retention evicts finalized entries but exempts the live tail (#217)",
+TEST_CASE("TextBox: retention evicts finalized entries but exempts the live "
+          "tail (#217)",
           "[textbox][stream][retention][failure]") {
   using termforge::TextBoxRetention;
 
@@ -659,7 +686,7 @@ TEST_CASE("TextBox: retention evicts finalized entries but exempts the live tail
   box.append("old");
   const auto live = box.begin_entry("12345");
 
-  CHECK(box.line_count() == 1);  // old was the oldest finalized victim
+  CHECK(box.line_count() == 1); // old was the oldest finalized victim
   CHECK(box.retained_bytes() == 5);
   CHECK(box.retention_over_budget());
   REQUIRE(box.append_to_entry(live, "6"));
@@ -667,13 +694,14 @@ TEST_CASE("TextBox: retention evicts finalized entries but exempts the live tail
   CHECK(box.retention_over_budget());
 
   REQUIRE(box.finalize_entry(live));
-  CHECK(box.line_count() == 0);  // now eligible, the oversized tail is evicted
+  CHECK(box.line_count() == 0); // now eligible, the oversized tail is evicted
   CHECK(box.retained_bytes() == 0);
   CHECK_FALSE(box.retention_over_budget());
 }
 
-TEST_CASE("TextBox: an evicted handle stays stale after its slot is reused (#217)",
-          "[textbox][stream][retention][failure]") {
+TEST_CASE(
+    "TextBox: an evicted handle stays stale after its slot is reused (#217)",
+    "[textbox][stream][retention][failure]") {
   using termforge::TextBoxRetention;
 
   TextBox box;
@@ -681,10 +709,10 @@ TEST_CASE("TextBox: an evicted handle stays stale after its slot is reused (#217
       TextBoxRetention{.max_entries = 1, .max_bytes = std::nullopt});
   const auto old = box.begin_entry("old");
   REQUIRE(box.finalize_entry(old));
-  const auto middle = box.begin_entry("middle");  // evicts old
+  const auto middle = box.begin_entry("middle"); // evicts old
   const auto replacement = box.begin_entry("replacement");
 
-  CHECK(old.index == replacement.index);  // the physical slot was recycled
+  CHECK(old.index == replacement.index); // the physical slot was recycled
   CHECK(old.generation != replacement.generation);
   CHECK_FALSE(box.append_to_entry(old, " corrupt"));
   REQUIRE(box.append_to_entry(replacement, " safe"));
@@ -695,13 +723,15 @@ TEST_CASE("TextBox: an evicted handle stays stale after its slot is reused (#217
   CHECK_FALSE(box.append_to_entry(replacement, " after clear"));
 }
 
-TEST_CASE("TextBox: streaming growth preserves a scrolled viewport anchor (#217)",
-          "[textbox][stream][scroll]") {
+TEST_CASE(
+    "TextBox: streaming growth preserves a scrolled viewport anchor (#217)",
+    "[textbox][stream][scroll]") {
   using termforge::TextBoxRetention;
 
   TextBox box;
   box.set_geometry({0, 0, 20, 3});
-  for (int i = 0; i < 10; ++i) box.append("line " + std::to_string(i));
+  for (int i = 0; i < 10; ++i)
+    box.append("line " + std::to_string(i));
   Screen screen{20, 3};
   box.draw(screen);
   box.scroll(-3);
@@ -743,6 +773,5 @@ TEST_CASE("TextBox: a bounded chunked tail matches one-shot wrapping (#217)",
   one_shot.append(accumulated);
   CHECK(chunked.retained_bytes() == accumulated.size());
   for (int row = 0; row < 8; ++row)
-    CHECK(render_row(chunked, 24, 8, row) ==
-          render_row(one_shot, 24, 8, row));
+    CHECK(render_row(chunked, 24, 8, row) == render_row(one_shot, 24, 8, row));
 }

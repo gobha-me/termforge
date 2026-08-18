@@ -82,8 +82,8 @@ namespace termforge::detail {
 
   // Each early-out is likewise an exact specialization: substitute into the
   // general form and the divide cancels.
-  if (as == 0U) return d;                 // a_o = a_d, C_o = C_d
-  if (as == 255U || d.a == 0U) return s;  // a_o = a_s, C_o = C_s
+  if (as == 0U) return d;                // a_o = a_d, C_o = C_d
+  if (as == 255U || d.a == 0U) return s; // a_o = a_s, C_o = C_s
 
   // Both weights are kept at 255x scale through the ratio. Rounding a_d*(1-a_s)
   // to 8 bits FIRST and then dividing by it costs up to 4/255 per channel,
@@ -91,10 +91,10 @@ namespace termforge::detail {
   // 1 is a 50% error in the ratio. Exhaustively: the 8-bit-weight form differs
   // from correctly-rounded Porter-Duff on 8.13% of the 256^4 inputs, max 4;
   // this form is exact on all of them. a_o is unaffected either way.
-  const std::uint32_t inv = 255U - as;       // (1 - a_s) at 255x
-  const std::uint32_t asw = as * 255U;       // a_s at 65025x
-  const std::uint32_t dcw = d.a * inv;       // a_d*(1 - a_s) at 65025x
-  const std::uint32_t aos = asw + dcw;       // a_o at 65025x, 255 <= aos <= 65025
+  const std::uint32_t inv = 255U - as; // (1 - a_s) at 255x
+  const std::uint32_t asw = as * 255U; // a_s at 65025x
+  const std::uint32_t dcw = d.a * inv; // a_d*(1 - a_s) at 65025x
+  const std::uint32_t aos = asw + dcw; // a_o at 65025x, 255 <= aos <= 65025
 
   // Same multiply count per channel as weighting by an 8-bit dc; the scale-up
   // hoists out. aos >= asw >= 255, so the divide is always defined. Written as
@@ -118,4 +118,4 @@ namespace termforge::detail {
   return d.a == 255U ? source_over_opaque_dst(s, d) : source_over(s, d);
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

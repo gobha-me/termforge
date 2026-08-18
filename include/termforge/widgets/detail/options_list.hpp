@@ -56,11 +56,12 @@ namespace termforge::detail {
 
 class OptionsList {
  public:
-  OptionsList() = default;  // converting ctor removed: zero callers (#56/6)
+  OptionsList() = default; // converting ctor removed: zero callers (#56/6)
 
   // Replace the whole list; selection resets to the first entry (or -1).
   auto set_all(std::vector<std::string> options) -> void {
-    for (auto& option : options) option = Screen::sanitize(option);
+    for (auto& option : options)
+      option = Screen::sanitize(option);
     m_options = std::move(options);
     m_selected = m_options.empty() ? -1 : 0;
   }
@@ -89,7 +90,9 @@ class OptionsList {
   [[nodiscard]] auto count() const noexcept -> int {
     return static_cast<int>(m_options.size());
   }
-  [[nodiscard]] auto empty() const noexcept -> bool { return m_options.empty(); }
+  [[nodiscard]] auto empty() const noexcept -> bool {
+    return m_options.empty();
+  }
   [[nodiscard]] auto at(int index) const -> const std::string& {
     return m_options[static_cast<std::size_t>(index)];
   }
@@ -97,7 +100,8 @@ class OptionsList {
     if (m_selected < 0 || m_selected >= count()) return {};
     return m_options[static_cast<std::size_t>(m_selected)];
   }
-  [[nodiscard]] auto options() const noexcept -> const std::vector<std::string>& {
+  [[nodiscard]] auto options() const noexcept
+      -> const std::vector<std::string>& {
     return m_options;
   }
 
@@ -106,4 +110,4 @@ class OptionsList {
   int m_selected{-1};
 };
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

@@ -118,8 +118,7 @@ class KittyDriver final : public TerminalDriver {
   // The flagship tier is the only one that can hold an image the terminal
   // keeps: a pinned payload is transmitted once under an id outside the
   // region pool, and neither the LRU cap nor gc_regions can see it.
-  [[nodiscard]] auto max_pinned_images() const noexcept
-      -> std::size_t override;
+  [[nodiscard]] auto max_pinned_images() const noexcept -> std::size_t override;
   [[nodiscard]] auto residency() const noexcept -> ImageResidency override;
   [[nodiscard]] auto pinned_image_status(PinnedImage image) const noexcept
       -> PinnedImageStatus override;
@@ -134,10 +133,9 @@ class KittyDriver final : public TerminalDriver {
       -> std::expected<void, ErrorEvent> override;
   auto stop_animation(AnimationHandle animation, AnimationStopMode mode)
       -> std::expected<void, ErrorEvent> override;
-  [[nodiscard]] auto animation_status(
-      AnimationHandle animation,
-      std::chrono::steady_clock::time_point now) const
-      -> std::expected<AnimationStatus, ErrorEvent> override;
+  [[nodiscard]] auto animation_status(AnimationHandle animation,
+                                      std::chrono::steady_clock::time_point now)
+      const -> std::expected<AnimationStatus, ErrorEvent> override;
   auto unregister_animation(AnimationHandle animation)
       -> std::expected<void, ErrorEvent> override;
   auto pin_image(const Image& image)
@@ -198,9 +196,8 @@ class KittyDriver final : public TerminalDriver {
   // set_placement_mode is called.
   [[nodiscard]] auto supports_placement_fit(PlacementFit f) const noexcept
       -> bool override;
-  [[nodiscard]] auto
-  supports_image_placement(ImagePlacementOptions options) const noexcept
-      -> bool override;
+  [[nodiscard]] auto supports_image_placement(
+      ImagePlacementOptions options) const noexcept -> bool override;
   // The terminal's real cell geometry (see set_cell_pixels), so a widget can
   // rasterize at native resolution instead of guessing.
   [[nodiscard]] auto preferred_pixel_extent(Rect cells) const noexcept
@@ -256,7 +253,7 @@ class KittyDriver final : public TerminalDriver {
   // One tracked screen region drawn via draw_image. The image id is stable
   // for the region's lifetime: new content retransmits under the same id.
   struct RegionSlot {
-    Rect rect{};  // cells occupied by the placeholder grid (#201)
+    Rect rect{}; // cells occupied by the placeholder grid (#201)
     std::uint32_t image_id{0};
     std::uint64_t content_hash{0}; // 0 = nothing transmitted yet
     std::uint64_t last_used{0};    // per-draw LRU clock (strictly increasing)
@@ -275,7 +272,7 @@ class KittyDriver final : public TerminalDriver {
   // them in separate maps is what makes "the LRU cannot reach a pinned image"
   // structural rather than a condition someone can delete.
   struct PinnedEntry {
-    Extent px{};  // the declared extent -- what Exact is enforced against
+    Extent px{}; // the declared extent -- what Exact is enforced against
     ImageFormat format{ImageFormat::Rgba32};
     std::uint64_t content_hash{0};
     std::uint64_t content_revision{0};
@@ -328,10 +325,10 @@ class KittyDriver final : public TerminalDriver {
   // left behind floats above the text grid whether or not its data is
   // resident.
   struct PinPlacement {
-    Rect rect{};  // cells occupied by the placeholder grid (#201)
+    Rect rect{}; // cells occupied by the placeholder grid (#201)
     std::uint32_t image_id{0};
     std::uint32_t placement_id{0};
-    std::uint64_t last_used{0};  // same per-draw clock as RegionSlot
+    std::uint64_t last_used{0}; // same per-draw clock as RegionSlot
     bool placed{false};
     ImagePlacementOptions placement{};
   };
@@ -453,9 +450,8 @@ class KittyDriver final : public TerminalDriver {
       -> std::expected<void, ErrorEvent>;
 
   auto edit_payload(std::uint32_t id, PinnedEntry& entry,
-                    PixelPoint destination,
-                    std::span<const std::byte> payload, ImageFormat format,
-                    Extent px, ImageComposition composition,
+                    PixelPoint destination, std::span<const std::byte> payload,
+                    ImageFormat format, Extent px, ImageComposition composition,
                     bool request_reply) -> std::expected<void, ErrorEvent>;
 
   // The pinned entry `image` names, or a Warning saying which way it is
@@ -474,8 +470,8 @@ class KittyDriver final : public TerminalDriver {
       -> std::chrono::steady_clock::time_point;
   auto stage_animation_control(std::uint32_t image_id) -> void;
   auto finish_animation_controls(bool accepted) -> void;
-  auto emit_animation_control(std::uint32_t image_id,
-                              std::string_view fields) -> void;
+  auto emit_animation_control(std::uint32_t image_id, std::string_view fields)
+      -> void;
 
   // The smallest positive p= no tracked placement of this image holds.
   // Placement ids are scoped by image id on the kitty wire, so consulting
@@ -489,8 +485,7 @@ class KittyDriver final : public TerminalDriver {
   // extent, emitted as s=/v=. Retransmit with an existing id replaces that
   // image's data on the terminal.
   auto transmit(std::span<const std::byte> payload, ImageFormat format,
-                Extent px,
-                std::uint32_t id, bool request_reply) -> void;
+                Extent px, std::uint32_t id, bool request_reply) -> void;
 
   // Edit the existing root frame in place. This is data transmission, not an
   // image delete/recreate and not a placement edit.
@@ -500,18 +495,17 @@ class KittyDriver final : public TerminalDriver {
 
   auto edit_root_frame(std::span<const std::byte> payload, ImageFormat format,
                        Extent px, std::uint32_t id, PixelPoint destination,
-                       ImageComposition composition,
-                       bool request_reply) -> void;
+                       ImageComposition composition, bool request_reply)
+      -> void;
 
   // Add a NEW animation frame. Unlike root-frame edits, this intentionally
   // omits r=; continuations repeat only a=f,m= as the protocol requires.
   auto transmit_animation_frame(std::span<const std::byte> payload,
-                                ImageFormat format, Extent px,
-                                std::uint32_t id,
+                                ImageFormat format, Extent px, std::uint32_t id,
                                 std::chrono::milliseconds gap,
                                 bool request_reply) -> void;
-  auto set_root_animation_gap(std::uint32_t id,
-                              std::chrono::milliseconds gap) -> void;
+  auto set_root_animation_gap(std::uint32_t id, std::chrono::milliseconds gap)
+      -> void;
 
   // Everything both public draw_image overloads share once the payload is in
   // hand: the placeholder clamp, byte attribution, slot keying and LRU, the
@@ -562,8 +556,8 @@ class KittyDriver final : public TerminalDriver {
   auto region_slot(Rect dest) -> std::expected<RegionSlot*, ErrorEvent>;
 
   auto finish_pending(std::uint32_t image_id, const PendingReply& pending,
-                      bool success, std::string_view status,
-                      bool timed_out) -> void;
+                      bool success, std::string_view status, bool timed_out)
+      -> void;
   auto discard_unwritten_edits() -> void;
   auto expire_pending_replies() -> void;
   [[nodiscard]] auto pending_warning(std::string_view operation,
@@ -571,8 +565,8 @@ class KittyDriver final : public TerminalDriver {
       -> ErrorEvent;
 
   auto stage_residency_set(std::uint32_t image_id, std::uint32_t serial,
-                           ResidencyKind kind,
-                           std::size_t source_payload_bytes) -> void;
+                           ResidencyKind kind, std::size_t source_payload_bytes)
+      -> void;
   auto stage_residency_add(std::uint32_t image_id, std::uint32_t serial,
                            std::size_t source_payload_bytes) -> void;
   auto stage_residency_erase(std::uint32_t image_id, std::uint32_t serial)
@@ -588,9 +582,9 @@ class KittyDriver final : public TerminalDriver {
   auto stage_content_hash(std::uint32_t image_id, std::uint32_t serial,
                           std::uint64_t content_hash,
                           bool advance_revision = false) -> void;
-  [[nodiscard]] auto projected_content_hash(std::uint32_t image_id,
-                                            const PinnedEntry& entry) const
-      noexcept -> std::uint64_t;
+  [[nodiscard]] auto projected_content_hash(
+      std::uint32_t image_id, const PinnedEntry& entry) const noexcept
+      -> std::uint64_t;
   auto finish_content_frame(bool accepted) -> void;
   auto finish_animation_frame(bool accepted) -> void;
 
@@ -728,4 +722,4 @@ class KittyDriver final : public TerminalDriver {
   Extent m_cell_px{kNominalCellPixels};
 };
 
-}  // namespace termforge
+} // namespace termforge

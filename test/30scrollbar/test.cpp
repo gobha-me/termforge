@@ -14,22 +14,24 @@ using termforge::BorderStyle;
 using termforge::Rect;
 using termforge::Rgb;
 using termforge::Screen;
+using termforge::scrollbar_glyphs;
 using termforge::detail::draw_scrollbar;
 using termforge::detail::thumb_window;
-using termforge::scrollbar_glyphs;
 
 namespace {
 
 // Read back the strip column as a string, one glyph per row.
 auto strip_text(const Screen& s, int x, int y, int h) -> std::string {
   std::string out;
-  for (int row = 0; row < h; ++row) out += s.text_at(x, y + row);
+  for (int row = 0; row < h; ++row)
+    out += s.text_at(x, y + row);
   return out;
 }
 
-}  // namespace
+} // namespace
 
-TEST_CASE("thumb_window: content that fits fills the whole track", "[scrollbar]") {
+TEST_CASE("thumb_window: content that fits fills the whole track",
+          "[scrollbar]") {
   // total <= visible has no hidden content, so a partial thumb would lie.
   REQUIRE(thumb_window(10, 5, 0, 10) == std::pair{0, 10});
   REQUIRE(thumb_window(10, 10, 0, 10) == std::pair{0, 10});
@@ -44,11 +46,12 @@ TEST_CASE("thumb_window: degenerate geometry is safe", "[scrollbar][failure]") {
   REQUIRE(thumb_window(5, 0, 0, 3) == std::pair{0, 5});
 }
 
-TEST_CASE("thumb_window: thumb is proportional, pinned at both ends", "[scrollbar]") {
+TEST_CASE("thumb_window: thumb is proportional, pinned at both ends",
+          "[scrollbar]") {
   // 100 rows, 10 visible in a 10-row track: thumb = 1 row, run = 9.
-  REQUIRE(thumb_window(10, 100, 0, 10) == std::pair{0, 1});      // top
-  REQUIRE(thumb_window(10, 100, 90, 10) == std::pair{9, 1});     // bottom
-  REQUIRE(thumb_window(10, 100, 45, 10) == std::pair{5, 1});     // ~middle
+  REQUIRE(thumb_window(10, 100, 0, 10) == std::pair{0, 1});  // top
+  REQUIRE(thumb_window(10, 100, 90, 10) == std::pair{9, 1}); // bottom
+  REQUIRE(thumb_window(10, 100, 45, 10) == std::pair{5, 1}); // ~middle
   // 20 rows, 10 visible in a 10-row track: half the content -> thumb 5 rows.
   REQUIRE(thumb_window(10, 20, 0, 10) == std::pair{0, 5});
   REQUIRE(thumb_window(10, 20, 10, 10) == std::pair{5, 5});
@@ -65,29 +68,29 @@ TEST_CASE("thumb_window: thumb never shrinks below one row", "[scrollbar]") {
   REQUIRE(thumb_window(10, 10000, 9990, 10) == std::pair{9, 1});
 }
 
-TEST_CASE("thumb_window: a one-row track always shows the full thumb", "[scrollbar]") {
+TEST_CASE("thumb_window: a one-row track always shows the full thumb",
+          "[scrollbar]") {
   // track_h 1 leaves no room for position information; the only honest
   // answer is "you are somewhere in scrollable content" = full strip.
   REQUIRE(thumb_window(1, 100, 0, 10) == std::pair{0, 1});
   REQUIRE(thumb_window(1, 100, 90, 10) == std::pair{0, 1});
 }
 
-TEST_CASE("draw_scrollbar: track and thumb paint, thumb positioned", "[scrollbar]") {
+TEST_CASE("draw_scrollbar: track and thumb paint, thumb positioned",
+          "[scrollbar]") {
   Screen s{4, 10};
   s.fill_rect(0, 0, 4, 10, termforge::theme::kFg, termforge::theme::kBg);
   const auto g = scrollbar_glyphs(BorderStyle::Single);
   // 100 rows, 10 visible, offset 0 -> thumb at the top row only.
   draw_scrollbar(s, {3, 0, 1, 10}, 100, 0, 10, g, termforge::theme::kDim,
                  termforge::theme::kFocusBg, termforge::theme::kBg);
-  REQUIRE(strip_text(s, 3, 0, 10) ==
-          std::string{"█│││││││││"});
+  REQUIRE(strip_text(s, 3, 0, 10) == std::string{"█│││││││││"});
   // Bottom offset pins the thumb to the last row.
   Screen s2{4, 10};
   s2.fill_rect(0, 0, 4, 10, termforge::theme::kFg, termforge::theme::kBg);
   draw_scrollbar(s2, {3, 0, 1, 10}, 100, 90, 10, g, termforge::theme::kDim,
                  termforge::theme::kFocusBg, termforge::theme::kBg);
-  REQUIRE(strip_text(s2, 3, 0, 10) ==
-          std::string{"│││││││││█"});
+  REQUIRE(strip_text(s2, 3, 0, 10) == std::string{"│││││││││█"});
 }
 
 TEST_CASE("draw_scrollbar: re-painting a shorter thumb erases the old one",
@@ -97,9 +100,9 @@ TEST_CASE("draw_scrollbar: re-painting a shorter thumb erases the old one",
   // as stale cells (immediate mode: nobody else owns this column).
   Screen s{1, 5};
   const auto g = scrollbar_glyphs(BorderStyle::Single);
-  draw_scrollbar(s, {0, 0, 1, 5}, 10, 0, 5, g, {}, {}, {});  // thumb = 3 rows
+  draw_scrollbar(s, {0, 0, 1, 5}, 10, 0, 5, g, {}, {}, {}); // thumb = 3 rows
   REQUIRE(strip_text(s, 0, 0, 5) == "███││");
-  draw_scrollbar(s, {0, 0, 1, 5}, 100, 0, 5, g, {}, {}, {});  // thumb = 1 row
+  draw_scrollbar(s, {0, 0, 1, 5}, 100, 0, 5, g, {}, {}, {}); // thumb = 1 row
   REQUIRE(strip_text(s, 0, 0, 5) == "█││││");
 }
 
@@ -130,10 +133,10 @@ TEST_CASE("draw_scrollbar: empty rect and empty strip are no-ops",
           "[scrollbar][failure]") {
   Screen s{2, 2};
   const auto g = scrollbar_glyphs(BorderStyle::Single);
-  draw_scrollbar(s, {0, 0, 0, 5}, 100, 0, 10, g, {}, {}, {});   // no width
-  draw_scrollbar(s, {0, 0, 1, 0}, 100, 0, 10, g, {}, {}, {});   // no height
-  draw_scrollbar(s, {9, 9, 1, 4}, 100, 0, 10, g, {}, {}, {});   // off-screen
-  REQUIRE(s.text_at(0, 0).empty());  // untouched (a fresh cell has no glyph)
+  draw_scrollbar(s, {0, 0, 0, 5}, 100, 0, 10, g, {}, {}, {}); // no width
+  draw_scrollbar(s, {0, 0, 1, 0}, 100, 0, 10, g, {}, {}, {}); // no height
+  draw_scrollbar(s, {9, 9, 1, 4}, 100, 0, 10, g, {}, {}, {}); // off-screen
+  REQUIRE(s.text_at(0, 0).empty()); // untouched (a fresh cell has no glyph)
 }
 
 TEST_CASE("scrollbar_glyphs: every style resolves, ascii is the 7-bit one",
@@ -157,11 +160,12 @@ namespace {
 // Read back a horizontal strip row as a string, one glyph per column.
 auto row_strip_text(const Screen& s, int x, int y, int w) -> std::string {
   std::string out;
-  for (int col = 0; col < w; ++col) out += s.text_at(x + col, y);
+  for (int col = 0; col < w; ++col)
+    out += s.text_at(x + col, y);
   return out;
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("thumb_window: content units are axis-free (#131)", "[scrollbar]") {
   // The same arithmetic feeds rows or columns (or TabBar title-column totals):
@@ -208,15 +212,14 @@ TEST_CASE("draw_scrollbar: horizontal re-paint erases a shorter thumb (#131)",
   const auto g =
       scrollbar_glyphs(BorderStyle::Single, ScrollOrientation::Horizontal);
   draw_scrollbar(s, {0, 0, 5, 1}, 10, 0, 5, g, {}, {}, {},
-                 ScrollOrientation::Horizontal);  // thumb = 3 cols
+                 ScrollOrientation::Horizontal); // thumb = 3 cols
   REQUIRE(row_strip_text(s, 0, 0, 5) == "███──");
   draw_scrollbar(s, {0, 0, 5, 1}, 100, 0, 5, g, {}, {}, {},
-                 ScrollOrientation::Horizontal);  // thumb = 1 col
+                 ScrollOrientation::Horizontal); // thumb = 1 col
   REQUIRE(row_strip_text(s, 0, 0, 5) == "█────");
 }
 
-TEST_CASE("scrollbar_glyphs: horizontal track is ─ / - (#131)",
-          "[scrollbar]") {
+TEST_CASE("scrollbar_glyphs: horizontal track is ─ / - (#131)", "[scrollbar]") {
   using termforge::ScrollOrientation;
   REQUIRE(scrollbar_glyphs(BorderStyle::Ascii, ScrollOrientation::Horizontal)
               .track == "-");

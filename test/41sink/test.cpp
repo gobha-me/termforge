@@ -118,7 +118,9 @@ class FailingSink final : public ByteSink {
   int m_calls{0};
 };
 
-auto red_pixel() -> Image { return tfsupport::solid(2, 2, Pixel{255, 0, 0, 255}); }
+auto red_pixel() -> Image {
+  return tfsupport::solid(2, 2, Pixel{255, 0, 0, 255});
+}
 
 // Run `body` with fd 1 pointed at a temporary file and return what landed
 // there.
@@ -151,13 +153,12 @@ auto capture_stdout(const std::function<void()>& body) -> std::string {
 
   std::FILE* tmp = std::tmpfile();
   const int saved = tmp != nullptr ? ::dup(STDOUT_FILENO) : -1;
-  const int redirected =
-      saved >= 0 ? ::dup2(::fileno(tmp), STDOUT_FILENO) : -1;
+  const int redirected = saved >= 0 ? ::dup2(::fileno(tmp), STDOUT_FILENO) : -1;
 
   if (redirected >= 0) body();
 
   if (saved >= 0) {
-    ::dup2(saved, STDOUT_FILENO);  // no fflush of our own -- see above
+    ::dup2(saved, STDOUT_FILENO); // no fflush of our own -- see above
     ::close(saved);
   }
 
@@ -170,12 +171,13 @@ auto capture_stdout(const std::function<void()>& body) -> std::string {
   std::rewind(tmp);
   char buf[512];
   std::size_t n = 0;
-  while ((n = std::fread(buf, 1, sizeof buf, tmp)) > 0) out.append(buf, n);
+  while ((n = std::fread(buf, 1, sizeof buf, tmp)) > 0)
+    out.append(buf, n);
   std::fclose(tmp);
   return out;
 }
 
-}  // namespace
+} // namespace
 
 // ── 1. the gap this exists to close ─────────────────────────────────────────
 
@@ -192,7 +194,7 @@ TEST_CASE("sink: a kitty driver renders through unique_ptr<TerminalDriver>",
   REQUIRE(d != nullptr);
 
   std::string out;
-  d->set_output(&out);  // <- the call that was impossible before #178
+  d->set_output(&out); // <- the call that was impossible before #178
   REQUIRE(d->draw_image(Rect{0, 0, 2, 2}, red_pixel()).has_value());
   d->flush();
 
@@ -253,7 +255,8 @@ TEST_CASE("sink: one flush is exactly one sink write", "[sink]") {
 
   CHECK(sink.calls() == 3);
   CHECK(sink.sizes().size() == 3);
-  for (const auto n : sink.sizes()) CHECK(n > 0);
+  for (const auto n : sink.sizes())
+    CHECK(n > 0);
 }
 
 TEST_CASE("sink: a flush with nothing to say still calls the sink once",
@@ -328,7 +331,7 @@ TEST_CASE("sink: the FIRST refusal survives, not the last", "[sink]") {
   auto e = d.take_output_error();
   REQUIRE(e.has_value());
   CHECK(e->message == "first: connection reset");
-  CHECK(later.calls() == 1);  // it was still offered the frame
+  CHECK(later.calls() == 1); // it was still offered the frame
 }
 
 TEST_CASE("sink: a refused frame does not leak its tallies into the next",
@@ -360,7 +363,7 @@ TEST_CASE("sink: a refused frame does not leak its tallies into the next",
     draw(ok);
     accepted_total = out.size();
     REQUIRE(accepted_total > 0);
-    REQUIRE(ok.last_frame_bytes().cells > 0);  // the mixed traffic is real
+    REQUIRE(ok.last_frame_bytes().cells > 0); // the mixed traffic is real
   }
 
   KittyDriver d;
@@ -368,7 +371,7 @@ TEST_CASE("sink: a refused frame does not leak its tallies into the next",
   d.set_output(&dead);
   draw(d);
   const auto refused = d.last_frame_bytes();
-  CHECK(refused.image_transmit > 0);  // it was assembled, just not accepted
+  CHECK(refused.image_transmit > 0); // it was assembled, just not accepted
   // Without these the "tally_frame runs on both branches" claim is only
   // half-pinned: tally_frame(0) on the failure path still preserves the image
   // buckets and still resets m_pending, so the next-frame check below stays
@@ -499,7 +502,7 @@ namespace {
 template <typename D>
 concept AcceptsNullptrLiteral = requires(D& d) { d.set_output(nullptr); };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("sink: copy, move and the nullptr literal are all ill-formed",
           "[sink][drivers]") {
@@ -528,9 +531,8 @@ TEST_CASE("sink: copy, move and the nullptr literal are all ill-formed",
   static_assert(!AcceptsNullptrLiteral<TerminalDriver>);
   static_assert(!AcceptsNullptrLiteral<KittyDriver>);
   // ...while a typed null still resolves, which the case above exercises.
-  static_assert(requires(TerminalDriver& d, std::string* p) {
-    d.set_output(p);
-  });
+  static_assert(
+      requires(TerminalDriver& d, std::string* p) { d.set_output(p); });
   static_assert(requires(TerminalDriver& d, ByteSink* p) { d.set_output(p); });
 
   SUCCEED("compile-time only");
@@ -576,9 +578,9 @@ TEST_CASE("sink: a driver that bypasses emit_frame ignores the sink",
   d.draw_text(0, 0, "bypassed", kFg, kBg, Attr::None);
   d.flush();
 
-  CHECK(out.empty());          // the sink never saw it
-  CHECK(d.written() == 8);     // but the bytes were real
-  CHECK(d.last_frame_bytes().total() == 8);  // and honestly metered
+  CHECK(out.empty());                       // the sink never saw it
+  CHECK(d.written() == 8);                  // but the bytes were real
+  CHECK(d.last_frame_bytes().total() == 8); // and honestly metered
 }
 
 // ── 7. the consumer path: a refusal reaches the application ─────────────────
@@ -597,7 +599,7 @@ class FailingSinkProbe : public termforge::App {
 
   auto on_render(termforge::Screen& s) -> void override {
     s.write_text(0, 0, "frame", kFg, kBg);
-    if (m_frame == 0) driver().set_output(&m_dead);  // frame 0 is refused
+    if (m_frame == 0) driver().set_output(&m_dead); // frame 0 is refused
     if (m_frame == 1 && m_recover) driver().set_output(&m_sink);
     ++m_frame;
   }
@@ -617,7 +619,7 @@ class FailingSinkProbe : public termforge::App {
   std::vector<ErrorEvent> m_seen;
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("sink: a refused frame reaches the application as an ErrorEvent",
           "[sink][app]") {

@@ -33,8 +33,12 @@ auto FocusRing::focus(Widget* w) -> bool {
   return false;
 }
 
-auto FocusRing::focus_next() -> void { advance(+1); }
-auto FocusRing::focus_prev() -> void { advance(-1); }
+auto FocusRing::focus_next() -> void {
+  advance(+1);
+}
+auto FocusRing::focus_prev() -> void {
+  advance(-1);
+}
 
 auto FocusRing::handle_key(const Event& ev) -> bool {
   // Mouse is routed separately (focus_at + App::route_mouse); ignore it here so
@@ -101,4 +105,4 @@ auto FocusRing::advance(int dir) -> void {
   // No focusable member — leave focus unchanged.
 }
 
-}  // namespace termforge
+} // namespace termforge

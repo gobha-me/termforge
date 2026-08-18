@@ -45,7 +45,8 @@ static_assert(DriverImpl<AnsiRgbDriver>);
 static_assert(DriverImpl<FallbackDriver>);
 static_assert(DriverImpl<KittyDriver>);
 
-TEST_CASE("AnsiRgbDriver: empty image is a warning event, not silent", "[drivers][failure]") {
+TEST_CASE("AnsiRgbDriver: empty image is a warning event, not silent",
+          "[drivers][failure]") {
   AnsiRgbDriver d;
   std::string out;
   d.set_output(&out);
@@ -55,7 +56,8 @@ TEST_CASE("AnsiRgbDriver: empty image is a warning event, not silent", "[drivers
   REQUIRE(r.error().source == "ansi_rgb");
 }
 
-TEST_CASE("AnsiRgbDriver: half-block render emits upper-half block + colors", "[drivers]") {
+TEST_CASE("AnsiRgbDriver: half-block render emits upper-half block + colors",
+          "[drivers]") {
   AnsiRgbDriver d;
   std::string out;
   d.set_output(&out);
@@ -64,13 +66,14 @@ TEST_CASE("AnsiRgbDriver: half-block render emits upper-half block + colors", "[
   // One cell tall: this tier packs two pixel rows into it.
   REQUIRE(d.draw_image(Rect{0, 0, 1, 1}, img).has_value());
   d.flush();
-  REQUIRE(out.find("\xE2\x96\x80") != std::string::npos);      // ▀
-  REQUIRE(out.find("38;2;255;0;0") != std::string::npos);       // fg red
-  REQUIRE(out.find("48;2;0;0;255") != std::string::npos);       // bg blue
-  REQUIRE(out.find("\033[0m") != std::string::npos);            // reset
+  REQUIRE(out.find("\xE2\x96\x80") != std::string::npos); // ▀
+  REQUIRE(out.find("38;2;255;0;0") != std::string::npos); // fg red
+  REQUIRE(out.find("48;2;0;0;255") != std::string::npos); // bg blue
+  REQUIRE(out.find("\033[0m") != std::string::npos);      // reset
 }
 
-TEST_CASE("AnsiRgbDriver: identical color runs coalesce SGR sequences", "[drivers]") {
+TEST_CASE("AnsiRgbDriver: identical color runs coalesce SGR sequences",
+          "[drivers]") {
   AnsiRgbDriver d;
   std::string out;
   d.set_output(&out);
@@ -79,31 +82,39 @@ TEST_CASE("AnsiRgbDriver: identical color runs coalesce SGR sequences", "[driver
   REQUIRE(d.draw_image(Rect{0, 0, 2, 1}, img).has_value());
   d.flush();
   // solid color: fg SGR issued once, not per-cell
-  REQUIRE(out.find("38;2;255;0;0") == out.rfind("38;2;255;0;0"));  // fg appears once
+  REQUIRE(out.find("38;2;255;0;0") ==
+          out.rfind("38;2;255;0;0")); // fg appears once
 }
 
-
-TEST_CASE("AnsiRgbDriver: odd-height image renders its last row (no dropped row)", "[drivers][failure]") {
+TEST_CASE(
+    "AnsiRgbDriver: odd-height image renders its last row (no dropped row)",
+    "[drivers][failure]") {
   AnsiRgbDriver d;
   std::string out;
   d.set_output(&out);
   // 1x3 image: three rows must all render — the bug dropped row 3.
-  Image img{1, 3, {Pixel{255, 0, 0, 255}, Pixel{0, 255, 0, 255}, Pixel{0, 0, 255, 255}}};
+  Image img{
+      1,
+      3,
+      {Pixel{255, 0, 0, 255}, Pixel{0, 255, 0, 255}, Pixel{0, 0, 255, 255}}};
   REQUIRE(d.draw_image(Rect{0, 0, 1, 2}, img).has_value());
   d.flush();
   // two half-block cells rendered
   int blocks = 0;
   size_t pos = 0;
-  while ((pos = out.find("\xE2\x96\x80", pos)) != std::string::npos) { ++blocks; pos += 3; }
+  while ((pos = out.find("\xE2\x96\x80", pos)) != std::string::npos) {
+    ++blocks;
+    pos += 3;
+  }
   REQUIRE(blocks == 2);
   // Restated for #83. The destination is 2 cells = 4 sample rows, always
   // even, so the odd final row is no longer paired with a transparent lower
   // half — it is *sampled* like every other row. Blue therefore lands in a
   // background rather than a foreground. What the case actually guards is
   // unchanged: no source row disappears.
-  REQUIRE(out.find("38;2;255;0;0") != std::string::npos);  // red survives
-  REQUIRE(out.find("38;2;0;255;0") != std::string::npos);  // green survives
-  REQUIRE(out.find("48;2;0;0;255") != std::string::npos);  // blue survives
+  REQUIRE(out.find("38;2;255;0;0") != std::string::npos); // red survives
+  REQUIRE(out.find("38;2;0;255;0") != std::string::npos); // green survives
+  REQUIRE(out.find("48;2;0;0;255") != std::string::npos); // blue survives
 }
 
 TEST_CASE("FallbackDriver: image degrades to ASCII luminance", "[drivers]") {
@@ -114,7 +125,7 @@ TEST_CASE("FallbackDriver: image degrades to ASCII luminance", "[drivers]") {
   Image img{2, 1, {Pixel{255, 255, 255, 255}, Pixel{0, 0, 0, 255}}};
   REQUIRE(d.draw_image(Rect{0, 0, 2, 1}, img).has_value());
   d.flush();
-  REQUIRE(out.find('@') != std::string::npos);  // white -> '@'
+  REQUIRE(out.find('@') != std::string::npos); // white -> '@'
 }
 
 TEST_CASE("FallbackDriver: empty image warns", "[drivers][failure]") {
@@ -141,7 +152,8 @@ TEST_CASE("Drivers: capabilities reflect their tier", "[drivers]") {
 
 // ── KittyDriver ─────────────────────────────────────────────────────────────
 
-TEST_CASE("KittyDriver: empty image is a warning event", "[drivers][kitty][failure]") {
+TEST_CASE("KittyDriver: empty image is a warning event",
+          "[drivers][kitty][failure]") {
   KittyDriver d;
   std::string out;
   d.set_output(&out);
@@ -151,7 +163,9 @@ TEST_CASE("KittyDriver: empty image is a warning event", "[drivers][kitty][failu
   REQUIRE(r.error().source == "kitty");
 }
 
-TEST_CASE("KittyDriver: draw_image emits APC transmit + virtual placement + placeholders", "[drivers][kitty]") {
+TEST_CASE("KittyDriver: draw_image emits APC transmit + virtual placement + "
+          "placeholders",
+          "[drivers][kitty]") {
   KittyDriver d;
   d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
   std::string out;
@@ -160,23 +174,24 @@ TEST_CASE("KittyDriver: draw_image emits APC transmit + virtual placement + plac
   REQUIRE(d.draw_image(Rect{0, 0, 1, 1}, img).has_value());
   d.flush();
   // Should contain an APC transmit sequence with our image data.
-  REQUIRE(out.find("\033_G") != std::string::npos);      // APC opener
-  REQUIRE(out.find("a=t") != std::string::npos);          // transmit only
-  REQUIRE(out.find("t=d") != std::string::npos);          // direct medium
-  REQUIRE(out.find("f=32") != std::string::npos);         // RGBA format
-  REQUIRE(out.find("s=1") != std::string::npos);          // width
-  REQUIRE(out.find("v=1") != std::string::npos);          // height
-  REQUIRE(out.find("q=2") != std::string::npos);          // quiet (no ack)
-  REQUIRE(out.find("\033\\") != std::string::npos);       // ST terminator
+  REQUIRE(out.find("\033_G") != std::string::npos); // APC opener
+  REQUIRE(out.find("a=t") != std::string::npos);    // transmit only
+  REQUIRE(out.find("t=d") != std::string::npos);    // direct medium
+  REQUIRE(out.find("f=32") != std::string::npos);   // RGBA format
+  REQUIRE(out.find("s=1") != std::string::npos);    // width
+  REQUIRE(out.find("v=1") != std::string::npos);    // height
+  REQUIRE(out.find("q=2") != std::string::npos);    // quiet (no ack)
+  REQUIRE(out.find("\033\\") != std::string::npos); // ST terminator
   // Should contain a virtual placement command.
-  REQUIRE(out.find("a=p") != std::string::npos);          // place
-  REQUIRE(out.find("U=1") != std::string::npos);          // virtual placement
+  REQUIRE(out.find("a=p") != std::string::npos); // place
+  REQUIRE(out.find("U=1") != std::string::npos); // virtual placement
   // Should contain the Unicode placeholder character (U+10EEEE).
   REQUIRE(out.find("\xF4\x8E\xBB\xAE") != std::string::npos);
   REQUIRE(out.find("\xF4\x8F\xBB\xAE") == std::string::npos);
 }
 
-TEST_CASE("KittyDriver: unchanged region does not re-upload", "[drivers][kitty]") {
+TEST_CASE("KittyDriver: unchanged region does not re-upload",
+          "[drivers][kitty]") {
   KittyDriver d;
   d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
   std::string out;
@@ -200,13 +215,16 @@ TEST_CASE("KittyDriver: classic placement is the default", "[drivers][kitty]") {
   std::string out;
   d.set_output(&out);
   REQUIRE(d.placement_mode() == KittyDriver::PlacementMode::Classic);
-  Image img{2, 2, {Pixel{255, 0, 0, 255}, Pixel{0, 255, 0, 255},
-                   Pixel{0, 0, 255, 255}, Pixel{255, 255, 0, 255}}};
+  Image img{2,
+            2,
+            {Pixel{255, 0, 0, 255}, Pixel{0, 255, 0, 255},
+             Pixel{0, 0, 255, 255}, Pixel{255, 255, 0, 255}}};
   REQUIRE(d.draw_image(Rect{3, 4, 2, 2}, img).has_value());
   d.flush();
   // Transmit + cursor-positioned placement scaled to the cell grid.
   REQUIRE(out.find("a=t") != std::string::npos);
-  REQUIRE(out.find("\033[5;4H") != std::string::npos);  // cursor to (3,4) 1-based
+  REQUIRE(out.find("\033[5;4H") !=
+          std::string::npos); // cursor to (3,4) 1-based
   REQUIRE(out.find("a=p") != std::string::npos);
   REQUIRE(out.find("C=1") != std::string::npos);
   // Restated for #83: c= and r= are the DESTINATION RECT's 2x2, not the
@@ -283,8 +301,9 @@ TEST_CASE("KittyDriver: stale regions are LRU-evicted terminal-side",
   }
 }
 
-TEST_CASE("KittyDriver: oversized destination is clamped to the placeholder limit",
-          "[drivers][kitty][failure]") {
+TEST_CASE(
+    "KittyDriver: oversized destination is clamped to the placeholder limit",
+    "[drivers][kitty][failure]") {
   // Restated for #83, and the axis is the whole point. This used to crop the
   // IMAGE to 297x297 pixels, which was the same thing when a pixel was a
   // cell. The limit belongs to the diacritic table that indexes *cells*, so
@@ -326,7 +345,7 @@ TEST_CASE("KittyDriver: an image wider than 297px into a small rect is legal",
   Image img{300, 1, std::vector<Pixel>(300, Pixel{255, 0, 0, 255})};
   REQUIRE(d.draw_image(Rect{0, 0, 4, 2}, img).has_value());
   d.flush();
-  REQUIRE(out.find("s=300") != std::string::npos);  // transmitted whole
+  REQUIRE(out.find("s=300") != std::string::npos); // transmitted whole
   REQUIRE(out.find("c=4") != std::string::npos);
   REQUIRE(out.find("r=2") != std::string::npos);
   int ph_count = 0;
@@ -355,7 +374,7 @@ TEST_CASE("KittyDriver: large image chunks at 4096 bytes", "[drivers][kitty]") {
     ++apc_count;
     pos += 4;
   }
-  REQUIRE(apc_count > 1);  // multiple chunks
+  REQUIRE(apc_count > 1); // multiple chunks
 }
 
 TEST_CASE("KittyDriver: draw_text emits SGR colors", "[drivers][kitty]") {
@@ -365,8 +384,8 @@ TEST_CASE("KittyDriver: draw_text emits SGR colors", "[drivers][kitty]") {
   d.draw_text(0, 0, "Hi", Rgb{0xFF, 0x00, 0x00}, Rgb{0x00, 0x00, 0xFF},
               Attr::None);
   d.flush();
-  REQUIRE(out.find("38;2;255;0;0") != std::string::npos);   // fg red
-  REQUIRE(out.find("48;2;0;0;255") != std::string::npos);   // bg blue
+  REQUIRE(out.find("38;2;255;0;0") != std::string::npos); // fg red
+  REQUIRE(out.find("48;2;0;0;255") != std::string::npos); // bg blue
   REQUIRE(out.find("Hi") != std::string::npos);
 }
 
@@ -376,8 +395,10 @@ TEST_CASE("KittyDriver: placeholder grid for 2x2 image", "[drivers][kitty]") {
   std::string out;
   d.set_output(&out);
   // 2x2 image → 2 rows × 2 cols of placeholder cells.
-  Image img{2, 2, {Pixel{255, 0, 0, 255}, Pixel{0, 255, 0, 255},
-                   Pixel{0, 0, 255, 255}, Pixel{255, 255, 0, 255}}};
+  Image img{2,
+            2,
+            {Pixel{255, 0, 0, 255}, Pixel{0, 255, 0, 255},
+             Pixel{0, 0, 255, 255}, Pixel{255, 255, 0, 255}}};
   REQUIRE(d.draw_image(Rect{0, 0, 2, 2}, img).has_value());
   d.flush();
 
@@ -388,7 +409,7 @@ TEST_CASE("KittyDriver: placeholder grid for 2x2 image", "[drivers][kitty]") {
     ++ph_count;
     pos += 4;
   }
-  REQUIRE(ph_count == 4);  // 2×2 grid
+  REQUIRE(ph_count == 4); // 2×2 grid
 
   // Virtual placement should specify c=2, r=2.
   REQUIRE(out.find("c=2") != std::string::npos);
@@ -403,29 +424,33 @@ TEST_CASE("KittyDriver: placeholder grid for 2x2 image", "[drivers][kitty]") {
   REQUIRE(out.find("\033[0m") != std::string::npos);
 }
 
-TEST_CASE("KittyDriver: diacritics present for non-zero row/col", "[drivers][kitty]") {
+TEST_CASE("KittyDriver: diacritics present for non-zero row/col",
+          "[drivers][kitty]") {
   KittyDriver d;
   d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
   std::string out;
   d.set_output(&out);
   // 3x1 image: 1 row, 3 cols. Per the kitty rowcolumn-diacritics table:
   // index 0 → U+0305, index 1 → U+030D, index 2 → U+030E.
-  Image img{3, 1, {Pixel{255, 0, 0, 255}, Pixel{0, 255, 0, 255},
-                   Pixel{0, 0, 255, 255}}};
+  Image img{
+      3,
+      1,
+      {Pixel{255, 0, 0, 255}, Pixel{0, 255, 0, 255}, Pixel{0, 0, 255, 255}}};
   REQUIRE(d.draw_image(Rect{0, 0, 3, 1}, img).has_value());
   d.flush();
 
   // Row 0 is explicit on every cell: U+0305 (CC 85).
-  REQUIRE(out.find("\xCC\x85") != std::string::npos);  // row/col 0 diacritic
+  REQUIRE(out.find("\xCC\x85") != std::string::npos); // row/col 0 diacritic
   // U+030D in UTF-8: CC 8D. U+030E in UTF-8: CC 8E.
-  REQUIRE(out.find("\xCC\x8D") != std::string::npos);  // col 1 diacritic
-  REQUIRE(out.find("\xCC\x8E") != std::string::npos);  // col 2 diacritic
+  REQUIRE(out.find("\xCC\x8D") != std::string::npos); // col 1 diacritic
+  REQUIRE(out.find("\xCC\x8E") != std::string::npos); // col 2 diacritic
   // The old (wrong) contiguous mapping U+0301/U+0302 must be gone.
   REQUIRE(out.find("\xCC\x81") == std::string::npos);
   REQUIRE(out.find("\xCC\x82") == std::string::npos);
 }
 
-TEST_CASE("KittyDriver: extended diacritic range for wide images", "[drivers][kitty]") {
+TEST_CASE("KittyDriver: extended diacritic range for wide images",
+          "[drivers][kitty]") {
   KittyDriver d;
   d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
   std::string out;
@@ -465,14 +490,14 @@ TEST_CASE("KittyDriver: a region that disappears is GC'd terminal-side (#6)",
   Image a{1, 1, {Pixel{255, 0, 0, 255}}};
   Image b{1, 1, {Pixel{0, 255, 0, 255}}};
 
-  d.draw_image(Rect{0, 0, 1, 1}, a);   // region 1 (persists)
-  d.draw_image(Rect{5, 0, 1, 1}, b);   // region 2 (will disappear)
+  d.draw_image(Rect{0, 0, 1, 1}, a); // region 1 (persists)
+  d.draw_image(Rect{5, 0, 1, 1}, b); // region 2 (will disappear)
   d.flush();
   // Two transmits happened; region 2 got image id 2.
   REQUIRE(out.find("i=2") != std::string::npos);
 
   out.clear();
-  d.draw_image(Rect{0, 0, 1, 1}, a);   // only region 1 redrawn this frame
+  d.draw_image(Rect{0, 0, 1, 1}, a); // only region 1 redrawn this frame
   d.flush();
   // Region 2 was not drawn this frame → GC deletes its image terminal-side.
   REQUIRE(out.find("a=d,d=I,i=2") != std::string::npos);
@@ -480,7 +505,8 @@ TEST_CASE("KittyDriver: a region that disappears is GC'd terminal-side (#6)",
   REQUIRE(out.find("a=d,d=I,i=1") == std::string::npos);
 }
 
-TEST_CASE("KittyDriver: >16 regions in one frame all place (no same-frame thrash) (#7)",
+TEST_CASE("KittyDriver: >16 regions in one frame all place (no same-frame "
+          "thrash) (#7)",
           "[drivers][kitty]") {
   // Draw 20 distinct regions in a SINGLE frame (one flush). The per-draw LRU
   // clock must order them, so the 17th evicts region 1 (oldest draw), not a
@@ -489,7 +515,8 @@ TEST_CASE("KittyDriver: >16 regions in one frame all place (no same-frame thrash
   std::string out;
   d.set_output(&out);
   Image img{1, 1, {Pixel{255, 0, 0, 255}}};
-  for (int i = 0; i < 20; ++i) d.draw_image(Rect{i, 0, 1, 1}, img);
+  for (int i = 0; i < 20; ++i)
+    d.draw_image(Rect{i, 0, 1, 1}, img);
   d.flush();
   // The oldest four regions (ids 1..4) are evicted; the newest 16 survive.
   // Crucially, a region placed in this same flush is not among the evicted.
@@ -501,7 +528,7 @@ TEST_CASE("KittyDriver: >16 regions in one frame all place (no same-frame thrash
   for (std::size_t p = out.find("a=d,d=I"); p != std::string::npos;
        p = out.find("a=d,d=I", p + 1))
     ++deletions;
-  REQUIRE(deletions == 4);  // 20 drawn - 16 slots = 4 evicted, no more
+  REQUIRE(deletions == 4); // 20 drawn - 16 slots = 4 evicted, no more
 }
 
 TEST_CASE("KittyDriver: set_placement_mode resets placement state (#7)",
@@ -515,9 +542,10 @@ TEST_CASE("KittyDriver: set_placement_mode resets placement state (#7)",
   d.set_output(&out);
   Image img{2, 2, std::vector<Pixel>(4, Pixel{255, 0, 0, 255})};
 
-  d.draw_image(Rect{0, 0, 2, 2}, img);   // classic placement (default mode)
+  d.draw_image(Rect{0, 0, 2, 2}, img); // classic placement (default mode)
   d.flush();
-  REQUIRE(out.find("U=1") == std::string::npos);  // classic: no virtual placement
+  REQUIRE(out.find("U=1") ==
+          std::string::npos); // classic: no virtual placement
 
   out.clear();
   d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
@@ -527,10 +555,12 @@ TEST_CASE("KittyDriver: set_placement_mode resets placement state (#7)",
   REQUIRE(out.find("a=d,d=I,i=1") != std::string::npos);
 
   out.clear();
-  d.draw_image(Rect{0, 0, 2, 2}, img);   // now must emit a virtual placement + cells
+  d.draw_image(Rect{0, 0, 2, 2},
+               img); // now must emit a virtual placement + cells
   d.flush();
-  REQUIRE(out.find("U=1") != std::string::npos);        // virtual placement created
-  REQUIRE(out.find("\xF4\x8E\xBB\xAE") != std::string::npos);  // placeholder cells
+  REQUIRE(out.find("U=1") != std::string::npos); // virtual placement created
+  REQUIRE(out.find("\xF4\x8E\xBB\xAE") !=
+          std::string::npos); // placeholder cells
 }
 
 // ── #83: the destination is a cell rect ─────────────────────────────────────
@@ -548,9 +578,9 @@ TEST_CASE("KittyDriver: c=/r= follow the destination rect, not the image",
     auto img = solid(4, 4, Pixel{255, 0, 0, 255});
     REQUIRE(d.draw_image(Rect{0, 0, 2, 2}, img).has_value());
     d.flush();
-    REQUIRE(out.find("s=4") != std::string::npos);   // transmitted at 4x4
+    REQUIRE(out.find("s=4") != std::string::npos); // transmitted at 4x4
     REQUIRE(out.find("v=4") != std::string::npos);
-    REQUIRE(out.find("c=2") != std::string::npos);   // placed across 2x2 cells
+    REQUIRE(out.find("c=2") != std::string::npos); // placed across 2x2 cells
     REQUIRE(out.find("r=2") != std::string::npos);
   }
 
@@ -579,7 +609,8 @@ TEST_CASE("FallbackDriver: samples the image into the destination rect",
   std::string out;
   d.set_output(&out);
   // Left half white, right half black, 4 px wide.
-  Image img{4, 1,
+  Image img{4,
+            1,
             {Pixel{255, 255, 255, 255}, Pixel{255, 255, 255, 255},
              Pixel{0, 0, 0, 255}, Pixel{0, 0, 0, 255}}};
 
@@ -608,7 +639,7 @@ TEST_CASE("FallbackDriver: samples the image into the destination rect",
       ++rows;
     REQUIRE(rows == 3);
     REQUIRE(out.find("@@@@@@@") != std::string::npos);
-    REQUIRE(out.find("@@@@@@@@") == std::string::npos);  // not 8 wide
+    REQUIRE(out.find("@@@@@@@@") == std::string::npos); // not 8 wide
   }
 }
 
@@ -618,7 +649,8 @@ TEST_CASE("AnsiRgbDriver: samples the image into the destination rect",
   std::string out;
   d.set_output(&out);
   // Top half red, bottom half blue, 4 px tall.
-  Image img{1, 4,
+  Image img{1,
+            4,
             {Pixel{255, 0, 0, 255}, Pixel{255, 0, 0, 255},
              Pixel{0, 0, 255, 255}, Pixel{0, 0, 255, 255}}};
 
@@ -642,7 +674,7 @@ TEST_CASE("AnsiRgbDriver: samples the image into the destination rect",
     for (std::size_t p = out.find("\xE2\x96\x80"); p != std::string::npos;
          p = out.find("\xE2\x96\x80", p + 3))
       ++blocks;
-    REQUIRE(blocks == 12);  // 3 cols x 4 rows
+    REQUIRE(blocks == 12); // 3 cols x 4 rows
   }
 }
 
@@ -690,8 +722,9 @@ TEST_CASE("FallbackDriver: a checkerboard comes out in the right order",
   REQUIRE(out == "\033[1;1H@ @ \033[2;1H @ @");
 }
 
-TEST_CASE("AnsiRgbDriver: a checkerboard pairs upper->fg, lower->bg, row by row",
-          "[drivers][image][order]") {
+TEST_CASE(
+    "AnsiRgbDriver: a checkerboard pairs upper->fg, lower->bg, row by row",
+    "[drivers][image][order]") {
   AnsiRgbDriver d;
   std::string out;
   d.set_output(&out);
@@ -710,11 +743,11 @@ TEST_CASE("AnsiRgbDriver: a checkerboard pairs upper->fg, lower->bg, row by row"
   const std::string kBlueFg = "\033[38;2;0;0;255m";
   const std::string kRedBg = "\033[48;2;255;0;0m";
   const std::string kBlue = "\033[48;2;0;0;255m";
-  const std::string kBlock = "\xE2\x96\x80";  // ▀
+  const std::string kBlock = "\xE2\x96\x80"; // ▀
   // Both SGRs change at every cell, so the run-coalescer in the driver hides
   // nothing here — every colour it computes appears in the output.
-  const std::string kUpper = kRed + kBlue + kBlock;      // red over blue
-  const std::string kLower = kBlueFg + kRedBg + kBlock;  // blue over red
+  const std::string kUpper = kRed + kBlue + kBlock;     // red over blue
+  const std::string kLower = kBlueFg + kRedBg + kBlock; // blue over red
   // Row 1's FIRST cell carries no SGR at all: the coalescer's state survives
   // the cursor move, and row 0 ended on the same pair row 1 opens with. That
   // bare block is not noise to be papered over — it is only in that position
@@ -827,7 +860,7 @@ TEST_CASE("Drivers: image_cell_extent matches the rows actually emitted",
     std::string out;
     d.set_output(&out);
     const Extent e = d.image_cell_extent(img);
-    REQUIRE(e == Extent{8, 5});  // 9 pixel rows -> 5 cells
+    REQUIRE(e == Extent{8, 5}); // 9 pixel rows -> 5 cells
     REQUIRE(d.draw_image(Rect{0, 0, e.w, e.h}, img).has_value());
     d.flush();
     int blocks = 0;
@@ -842,7 +875,7 @@ TEST_CASE("Drivers: image_cell_extent matches the rows actually emitted",
     std::string out;
     d.set_output(&out);
     const Extent e = d.image_cell_extent(img);
-    REQUIRE(e == Extent{1, 1});  // 8x9 px in a nominal 8x16 cell
+    REQUIRE(e == Extent{1, 1}); // 8x9 px in a nominal 8x16 cell
     REQUIRE(d.draw_image(Rect{0, 0, e.w, e.h}, img).has_value());
     d.flush();
     REQUIRE(out.find("c=1") != std::string::npos);
@@ -873,8 +906,7 @@ TEST_CASE("Drivers: an empty destination rect is a warning, not a crash",
   REQUIRE_FALSE(kitty.draw_image(Rect{}, img).has_value());
 }
 
-TEST_CASE("AnsiRgbDriver: opaque RGBA still draws (#99)",
-          "[drivers][alpha]") {
+TEST_CASE("AnsiRgbDriver: opaque RGBA still draws (#99)", "[drivers][alpha]") {
   AnsiRgbDriver d;
   std::string out;
   d.set_output(&out);
@@ -899,8 +931,7 @@ TEST_CASE("AnsiRgbDriver: translucent RGBA is Warning with no bytes (#99)",
   REQUIRE(out.empty());
 }
 
-TEST_CASE("FallbackDriver: opaque RGBA still draws (#99)",
-          "[drivers][alpha]") {
+TEST_CASE("FallbackDriver: opaque RGBA still draws (#99)", "[drivers][alpha]") {
   FallbackDriver d;
   std::string out;
   d.set_output(&out);
@@ -925,8 +956,9 @@ TEST_CASE("FallbackDriver: translucent RGBA is Warning with no bytes (#99)",
   REQUIRE(out.empty());
 }
 
-TEST_CASE("KittyDriver: translucent pixels preserve alpha without an event (#99)",
-          "[drivers][kitty][alpha]") {
+TEST_CASE(
+    "KittyDriver: translucent pixels preserve alpha without an event (#99)",
+    "[drivers][kitty][alpha]") {
   // Kitty transmits f=32 RGBA; alpha is the terminal's job. Assert the payload
   // as well as success so a driver that silently forces opacity cannot pass.
   KittyDriver d;

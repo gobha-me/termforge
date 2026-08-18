@@ -18,4 +18,4 @@ namespace termforge::detail {
 [[nodiscard]] auto payload_hash(std::span<const std::byte> payload, Extent px,
                                 ImageFormat format) noexcept -> std::uint64_t;
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

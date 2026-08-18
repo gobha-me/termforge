@@ -87,7 +87,7 @@ class PtyCapture {
       const ssize_t n = ::read(m_master, buf, sizeof(buf));
       if (n > 0) {
         got.append(buf, static_cast<std::size_t>(n));
-        attempt = 0;  // still draining
+        attempt = 0; // still draining
       } else {
         ::usleep(1000);
       }
@@ -121,11 +121,10 @@ TEST_CASE("Terminal: enter_screen emits the configured mode's tracking",
       t.leave_screen();
     }
     pty.disarm();
-    REQUIRE(pty.take() ==
-            "\033[?1049h\033[?25l\033[2J\033[H"
-            "\033[?1006h\033[?1002h"
-            "\033[?2004h"
-            + std::string{termforge::detail::kLeaveSequence});
+    REQUIRE(pty.take() == "\033[?1049h\033[?25l\033[2J\033[H"
+                          "\033[?1006h\033[?1002h"
+                          "\033[?2004h" +
+                              std::string{termforge::detail::kLeaveSequence});
   }
   SECTION("Click — ?1000h with the SGR encoding, no ?1002h") {
     pty.arm();
@@ -181,7 +180,7 @@ TEST_CASE("Terminal: setting the mode before a screen only records it",
   pty.arm();
   {
     Terminal t;
-    t.set_mouse_mode(MouseMode::Motion);  // no screen up — must emit nothing
+    t.set_mouse_mode(MouseMode::Motion); // no screen up — must emit nothing
     t.set_mouse_mode(MouseMode::None);
   }
   pty.disarm();
@@ -197,7 +196,7 @@ TEST_CASE("Terminal: a mid-screen switch disables the old mode first",
   Terminal t;
   t.enter_screen();
   pty.disarm();
-  (void)pty.take();  // discard enter bytes
+  (void)pty.take(); // discard enter bytes
 
   std::string got;
   pty.arm();
@@ -208,19 +207,19 @@ TEST_CASE("Terminal: a mid-screen switch disables the old mode first",
                  "\033[?1006h\033[?1003h");
 
   pty.arm();
-  t.set_mouse_mode(MouseMode::None);  // release the mouse entirely
+  t.set_mouse_mode(MouseMode::None); // release the mouse entirely
   pty.disarm();
   got = pty.take();
   REQUIRE(got == "\033[?1003l\033[?1006l");
 
   pty.arm();
-  t.set_mouse_mode(MouseMode::Drag);  // back from None: enable only
+  t.set_mouse_mode(MouseMode::Drag); // back from None: enable only
   pty.disarm();
   got = pty.take();
   REQUIRE(got == "\033[?1006h\033[?1002h");
 
   pty.arm();
-  t.set_mouse_mode(MouseMode::Drag);  // no-op: not emitted again
+  t.set_mouse_mode(MouseMode::Drag); // no-op: not emitted again
   pty.disarm();
   REQUIRE(pty.take().empty());
 
@@ -250,7 +249,7 @@ class MouseModeProbe final : public App {
   auto on_render(Screen&) -> void override {}
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("App: set_mouse_mode forwards to the terminal", "[mousemode]") {
   MouseModeProbe app;
@@ -261,4 +260,4 @@ TEST_CASE("App: set_mouse_mode forwards to the terminal", "[mousemode]") {
   REQUIRE(app.mouse_mode() == MouseMode::None);
 }
 
-}  // namespace
+} // namespace

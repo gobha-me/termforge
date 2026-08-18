@@ -9,9 +9,9 @@
 
 #include <fcntl.h>
 #include <poll.h>
+#include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
-#include <sys/ioctl.h>
 
 #include "detail/keyboard.hpp"
 #include "detail/probe.hpp"
@@ -36,15 +36,17 @@ struct Terminal::Impl {
   // redirected to a file/pipe, fall back to a tty stdin (a tty is read/write,
   // so probe queries and screen escapes still reach the emulator); -1 means
   // neither stream is a tty and we must not write control bytes anywhere.
-  int out_fd{isatty(STDOUT_FILENO) != 0 ? STDOUT_FILENO
-                                        : (isatty(STDIN_FILENO) != 0 ? STDIN_FILENO : -1)};
+  int out_fd{isatty(STDOUT_FILENO) != 0
+                 ? STDOUT_FILENO
+                 : (isatty(STDIN_FILENO) != 0 ? STDIN_FILENO : -1)};
   // #179: the fds above were discovered; set_io() replaces them and latches
   // this. enter_raw() branches on it — see the header's "statement of intent".
   bool injected{false};
-  // #181: the identity pair the probe corroborates colour depth from. Discovered
-  // from the process environment; set_env() replaces it and latches env_injected,
-  // after which the environment is consulted for NEITHER field — an empty string
-  // means "the client sent nothing", not "ask the daemon" (see set_env).
+  // #181: the identity pair the probe corroborates colour depth from.
+  // Discovered from the process environment; set_env() replaces it and latches
+  // env_injected, after which the environment is consulted for NEITHER field —
+  // an empty string means "the client sent nothing", not "ask the daemon" (see
+  // set_env).
   TerminalEnv env;
   bool env_injected{false};
   // #181: capabilities handed over instead of probed. query_capabilities()
@@ -68,9 +70,10 @@ struct Terminal::Impl {
   bool handler_lease{false};
 };
 
-Terminal::Terminal() : m_impl(std::make_unique<Impl>()) {}
+Terminal::Terminal() : m_impl(std::make_unique<Impl>()) {
+}
 Terminal::~Terminal() {
-  leave_raw();  // no-op if teardown() or an earlier call already did it
+  leave_raw(); // no-op if teardown() or an earlier call already did it
   // Disarm the signal-restore path *if it was ours*. This Terminal's saved
   // state is gone, so a later fatal signal must not tcsetattr() with it — but a
   // Terminal that never armed has nothing to disarm, and clearing the shared
@@ -79,9 +82,9 @@ Terminal::~Terminal() {
   auto& rs = detail::restore_state();
   // The screen half is ours to clear exactly when we are the one that put a
   // screen up — which is not the same condition as having armed the termios
-  // half, since enter_screen() does not require enter_raw(). The state describes
-  // *this* Terminal's alt-screen on *this* Terminal's fd; leaving it behind
-  // points a later crash at a stream that is gone.
+  // half, since enter_screen() does not require enter_raw(). The state
+  // describes *this* Terminal's alt-screen on *this* Terminal's fd; leaving it
+  // behind points a later crash at a stream that is gone.
   if (m_impl->in_screen) {
     rs.in_screen = 0;
     m_impl->in_screen = false;
@@ -99,19 +102,19 @@ auto Terminal::set_io(TerminalIo io) -> std::expected<void, ErrorEvent> {
   // pair whole. Half-applying would be the worst outcome available here — a
   // session reading its own channel and writing the daemon's terminal.
   if (m_raw) {
-    return std::unexpected{ErrorEvent{Severity::Error, "terminal",
-                                      "set_io: already in raw mode"}};
+    return std::unexpected{
+        ErrorEvent{Severity::Error, "terminal", "set_io: already in raw mode"}};
   }
   if (m_impl->in_screen) {
-    return std::unexpected{ErrorEvent{Severity::Error, "terminal",
-                                      "set_io: a screen is up"}};
+    return std::unexpected{
+        ErrorEvent{Severity::Error, "terminal", "set_io: a screen is up"}};
   }
   if (io.in < 0) {
     return std::unexpected{ErrorEvent{Severity::Error, "terminal",
                                       "set_io: input fd must be >= 0"}};
   }
   m_impl->tty_fd = io.in;
-  m_impl->out_fd = io.out;  // < 0 is the documented "emit nothing" sentinel
+  m_impl->out_fd = io.out; // < 0 is the documented "emit nothing" sentinel
   m_impl->injected = true;
   m_impl->kitty_keyboard_support.reset();
   return {};
@@ -121,35 +124,42 @@ auto Terminal::io() const noexcept -> TerminalIo {
   return TerminalIo{m_impl->tty_fd, m_impl->out_fd};
 }
 
-auto Terminal::io_injected() const noexcept -> bool { return m_impl->injected; }
+auto Terminal::io_injected() const noexcept -> bool {
+  return m_impl->injected;
+}
 
 // ── whose terminal this session believes it is talking to (#181) ────────────
 
 auto Terminal::set_env(TerminalEnv env) -> std::expected<void, ErrorEvent> {
   // Same guard shape as set_io: identity is fixed for the session once the loop
-  // starts. A probe running against one identity while the screen speaks another
-  // is exactly the daemon/client mix this exists to close. Refusal is total: the
-  // previous pair stays in force untouched.
+  // starts. A probe running against one identity while the screen speaks
+  // another is exactly the daemon/client mix this exists to close. Refusal is
+  // total: the previous pair stays in force untouched.
   if (m_raw) {
     return std::unexpected{ErrorEvent{Severity::Error, "terminal",
                                       "set_env: already in raw mode"}};
   }
   if (m_impl->in_screen) {
-    return std::unexpected{ErrorEvent{Severity::Error, "terminal",
-                                      "set_env: a screen is up"}};
+    return std::unexpected{
+        ErrorEvent{Severity::Error, "terminal", "set_env: a screen is up"}};
   }
   m_impl->env = std::move(env);
   m_impl->env_injected = true;
   return {};
 }
 
-auto Terminal::env() const noexcept -> const TerminalEnv& { return m_impl->env; }
+auto Terminal::env() const noexcept -> const TerminalEnv& {
+  return m_impl->env;
+}
 
-auto Terminal::env_injected() const noexcept -> bool { return m_impl->env_injected; }
+auto Terminal::env_injected() const noexcept -> bool {
+  return m_impl->env_injected;
+}
 
 // ── pushed capabilities (#181) ──────────────────────────────────────────────
 
-auto Terminal::set_capabilities(Capabilities caps) -> std::expected<void, ErrorEvent> {
+auto Terminal::set_capabilities(Capabilities caps)
+    -> std::expected<void, ErrorEvent> {
   // Driver selection happens in setup(), before the screen: a push landing
   // after that would change nothing it claims to change. Same guards as
   // set_io/set_env, same total refusal.
@@ -166,7 +176,8 @@ auto Terminal::set_capabilities(Capabilities caps) -> std::expected<void, ErrorE
   return {};
 }
 
-auto Terminal::pushed_capabilities() const noexcept -> std::optional<Capabilities> {
+auto Terminal::pushed_capabilities() const noexcept
+    -> std::optional<Capabilities> {
   return m_impl->pushed_caps;
 }
 
@@ -180,8 +191,8 @@ auto Terminal::clear_capabilities() noexcept -> void {
 }
 
 auto Terminal::owns_termios() const noexcept -> bool {
-  // Both halves: saved_valid alone outlives leave_raw() (the captured termios is
-  // kept so a later enter_raw() has something to compare against), and the
+  // Both halves: saved_valid alone outlives leave_raw() (the captured termios
+  // is kept so a later enter_raw() has something to compare against), and the
   // question this answers is about the mode in force right now.
   return m_raw && m_impl->saved_valid;
 }
@@ -196,8 +207,8 @@ auto Terminal::enter_raw() -> std::expected<void, ErrorEvent> {
   // so it falls through to the non-termios path below rather than being refused
   // on behalf of a terminal nobody claimed to have. (#179)
   if (!m_impl->injected && !isatty(m_impl->tty_fd)) {
-    return std::unexpected{ErrorEvent{Severity::Error, "terminal",
-                                      "stdin/stdout is not a tty"}};
+    return std::unexpected{
+        ErrorEvent{Severity::Error, "terminal", "stdin/stdout is not a tty"}};
   }
   if (!isatty(m_impl->tty_fd)) {
     if (auto r = enter_nonblocking(); !r) return r;
@@ -211,21 +222,24 @@ auto Terminal::enter_raw() -> std::expected<void, ErrorEvent> {
   }
   termios raw{};
   if (tcgetattr(m_impl->tty_fd, &m_impl->saved) != 0) {
-    return std::unexpected{ErrorEvent{Severity::Error, "terminal",
-                                      std::string{"tcgetattr: "} + std::strerror(errno)}};
+    return std::unexpected{
+        ErrorEvent{Severity::Error, "terminal",
+                   std::string{"tcgetattr: "} + std::strerror(errno)}};
   }
   m_impl->saved_valid = true;
   raw = m_impl->saved;
   // cfmakeraw without the non-portable call: input/output/control/local flags.
-  raw.c_iflag &= static_cast<tcflag_t>(~(BRKINT | ICRNL | INPCK | ISTRIP | IXON));
+  raw.c_iflag &=
+      static_cast<tcflag_t>(~(BRKINT | ICRNL | INPCK | ISTRIP | IXON));
   raw.c_oflag &= static_cast<tcflag_t>(~(OPOST));
   raw.c_cflag |= CS8;
   raw.c_lflag &= static_cast<tcflag_t>(~(ECHO | ICANON | IEXTEN | ISIG));
   raw.c_cc[VMIN] = 0;
-  raw.c_cc[VTIME] = 1;  // 100ms read timeout, lets us poll probe responses
+  raw.c_cc[VTIME] = 1; // 100ms read timeout, lets us poll probe responses
   if (tcsetattr(m_impl->tty_fd, TCSAFLUSH, &raw) != 0) {
-    return std::unexpected{ErrorEvent{Severity::Error, "terminal",
-                                      std::string{"tcsetattr: "} + std::strerror(errno)}};
+    return std::unexpected{
+        ErrorEvent{Severity::Error, "terminal",
+                   std::string{"tcsetattr: "} + std::strerror(errno)}};
   }
   m_raw = true;
 
@@ -241,12 +255,14 @@ auto Terminal::enter_raw() -> std::expected<void, ErrorEvent> {
 auto Terminal::enter_nonblocking() -> std::expected<void, ErrorEvent> {
   const int flags = ::fcntl(m_impl->tty_fd, F_GETFL);
   if (flags < 0) {
-    return std::unexpected{ErrorEvent{Severity::Error, "terminal",
-                                      std::string{"fcntl(F_GETFL): "} + std::strerror(errno)}};
+    return std::unexpected{
+        ErrorEvent{Severity::Error, "terminal",
+                   std::string{"fcntl(F_GETFL): "} + std::strerror(errno)}};
   }
   if (::fcntl(m_impl->tty_fd, F_SETFL, flags | O_NONBLOCK) != 0) {
-    return std::unexpected{ErrorEvent{Severity::Error, "terminal",
-                                      std::string{"fcntl(F_SETFL): "} + std::strerror(errno)}};
+    return std::unexpected{
+        ErrorEvent{Severity::Error, "terminal",
+                   std::string{"fcntl(F_SETFL): "} + std::strerror(errno)}};
   }
   // Saved, not assumed: a caller may well hand us a stream that was already
   // non-blocking, and leave_raw() must put back what was there rather than
@@ -355,7 +371,7 @@ auto read_available(int fd, int timeout_ms) -> std::string {
       const ssize_t n = ::read(fd, buf, sizeof(buf));
       if (n > 0) out.append(buf, static_cast<std::size_t>(n));
     }
-    if (detail::probe_da1_complete(out)) break;  // reply is complete
+    if (detail::probe_da1_complete(out)) break; // reply is complete
   }
   return out;
 }
@@ -364,7 +380,8 @@ auto read_available(int fd, int timeout_ms) -> std::string {
 // The probe resolves each field to one source — the injected pair or the
 // process environment, never one of each — and checks the result here (#181).
 auto contains(const char* value, const char* needle) -> bool {
-  return value != nullptr && std::string{value}.find(needle) != std::string::npos;
+  return value != nullptr &&
+         std::string{value}.find(needle) != std::string::npos;
 }
 
 // Escape emission to the terminal's output fd. No-op when `fd` is < 0 (neither
@@ -374,12 +391,12 @@ auto contains(const char* value, const char* needle) -> bool {
 //
 // EAGAIN used to break out here, on the reasoning that there is nothing
 // actionable at this layer. That was true while the destination was always a
-// tty, where a full output buffer is close to unheard of. #179 made it reachable
-// on purpose: a caller may inject one socketpair fd as both `in` and `out`, and
-// enter_raw() then sets O_NONBLOCK on it — so a slow peer turns "unheard of"
-// into routine, and half an escape sequence is worse than none. Wait for the
-// stream to drain instead. Bounded, because a peer that never reads must not
-// wedge a frame.
+// tty, where a full output buffer is close to unheard of. #179 made it
+// reachable on purpose: a caller may inject one socketpair fd as both `in` and
+// `out`, and enter_raw() then sets O_NONBLOCK on it — so a slow peer turns
+// "unheard of" into routine, and half an escape sequence is worse than none.
+// Wait for the stream to drain instead. Bounded, because a peer that never
+// reads must not wedge a frame.
 void emit(int fd, std::string_view seq) {
   if (fd < 0) return;
   const char* p = seq.data();
@@ -393,9 +410,9 @@ void emit(int fd, std::string_view seq) {
       continue;
     } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
       pollfd pfd{fd, POLLOUT, 0};
-      if (::poll(&pfd, 1, 100) <= 0) break;  // gave it a chance; move on
+      if (::poll(&pfd, 1, 100) <= 0) break; // gave it a chance; move on
     } else {
-      break;  // closed fd: nothing actionable at this layer
+      break; // closed fd: nothing actionable at this layer
     }
   }
 }
@@ -453,29 +470,29 @@ class KeyboardFlagsReplyScanner {
 // #75: the enable/disable pair for a tracking mode. SGR (?1006h) is the
 // coordinate *encoding*, not a mode — it goes with any non-None mode and is
 // absent only for None (nothing to encode when nothing is reported).
-[[nodiscard]] constexpr auto mouse_mode_enable_seq(MouseMode mode)
-    -> const char* {
+[[nodiscard]] constexpr auto mouse_mode_enable_seq(MouseMode mode) -> const
+    char* {
   switch (mode) {
-    case MouseMode::None:   return "";
-    case MouseMode::Click:  return "\033[?1006h\033[?1000h";
-    case MouseMode::Drag:   return "\033[?1006h\033[?1002h";
+    case MouseMode::None: return "";
+    case MouseMode::Click: return "\033[?1006h\033[?1000h";
+    case MouseMode::Drag: return "\033[?1006h\033[?1002h";
     case MouseMode::Motion: return "\033[?1006h\033[?1003h";
   }
-  return "";  // unreachable: -Wswitch covers every enumerator
+  return ""; // unreachable: -Wswitch covers every enumerator
 }
 
-[[nodiscard]] constexpr auto mouse_mode_disable_seq(MouseMode mode)
-    -> const char* {
+[[nodiscard]] constexpr auto mouse_mode_disable_seq(MouseMode mode) -> const
+    char* {
   switch (mode) {
-    case MouseMode::None:   return "";
-    case MouseMode::Click:  return "\033[?1000l\033[?1006l";
-    case MouseMode::Drag:   return "\033[?1002l\033[?1006l";
+    case MouseMode::None: return "";
+    case MouseMode::Click: return "\033[?1000l\033[?1006l";
+    case MouseMode::Drag: return "\033[?1002l\033[?1006l";
     case MouseMode::Motion: return "\033[?1003l\033[?1006l";
   }
-  return "";  // unreachable: -Wswitch covers every enumerator
+  return ""; // unreachable: -Wswitch covers every enumerator
 }
 
-}  // namespace
+} // namespace
 
 // Emit the current mode's enable sequences. enter_screen() and a live
 // set_mouse_mode() both go through here so the two paths cannot drift.
@@ -559,8 +576,9 @@ auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
   // intent.
   const char* term_id =
       m_impl->env_injected ? m_impl->env.term.c_str() : std::getenv("TERM");
-  const char* colorterm_id =
-      m_impl->env_injected ? m_impl->env.colorterm.c_str() : std::getenv("COLORTERM");
+  const char* colorterm_id = m_impl->env_injected
+                                 ? m_impl->env.colorterm.c_str()
+                                 : std::getenv("COLORTERM");
   if (contains(colorterm_id, "truecolor") || contains(colorterm_id, "24bit")) {
     caps.truecolor = true;
     caps.color_levels = 24;
@@ -572,7 +590,6 @@ auto Terminal::query_capabilities() -> std::expected<Capabilities, ErrorEvent> {
   // FallbackDriver. Return what we found (possibly all-false) — not an error.
   return caps;
 }
-
 
 // ── read modes ──────────────────────────────────────────────────────────────
 
@@ -595,7 +612,8 @@ auto Terminal::set_read_timeout(int deciseconds) -> void {
   termios t{};
   if (tcgetattr(m_impl->tty_fd, &t) != 0) return;
   t.c_cc[VMIN] = 0;
-  t.c_cc[VTIME] = static_cast<cc_t>(deciseconds < 0 ? 0 : (deciseconds > 255 ? 255 : deciseconds));
+  t.c_cc[VTIME] = static_cast<cc_t>(
+      deciseconds < 0 ? 0 : (deciseconds > 255 ? 255 : deciseconds));
   tcsetattr(m_impl->tty_fd, TCSANOW, &t);
 }
 
@@ -611,10 +629,10 @@ auto Terminal::wait_readable(int timeout_ms) -> bool {
     pollfd pfd{m_impl->tty_fd, POLLIN, 0};
     const int r = ::poll(&pfd, 1, timeout_ms);
     if (r > 0) return (pfd.revents & (POLLIN | POLLHUP | POLLERR)) != 0;
-    if (r == 0) return false;  // timed out
+    if (r == 0) return false; // timed out
     if (errno != EINTR) return false;
-    const auto left =
-        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - clock::now());
+    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - clock::now());
     if (left.count() <= 0) return false;
     timeout_ms = static_cast<int>(left.count());
   }
@@ -633,7 +651,8 @@ auto Terminal::set_read_blocking() -> void {
 auto Terminal::read_input(char* out, int max) -> int {
   if (max <= 0) return 0;
   // Read the fd termios was applied to — hardcoding STDIN would block forever
-  // when stdin is a pipe and the tty is stdout (VMIN/VTIME set on the wrong fd).
+  // when stdin is a pipe and the tty is stdout (VMIN/VTIME set on the wrong
+  // fd).
   const ssize_t n = ::read(m_impl->tty_fd, out, static_cast<std::size_t>(max));
   return n > 0 ? static_cast<int>(n) : 0;
 }
@@ -648,10 +667,11 @@ auto Terminal::enter_screen() -> void {
   emit(m_impl->out_fd, "\033[?1049h\033[?25l\033[2J\033[H");
   emit_mouse_mode();
   emit(m_impl->out_fd, "\033[?2004h");
-  emit_keyboard_mode();  // #60: no-op under the default KeyboardMode::Legacy
+  emit_keyboard_mode(); // #60: no-op under the default KeyboardMode::Legacy
   m_impl->in_screen = true;
   // Arm the escape half of the signal-restore path (termios half is armed in
-  // enter_raw). Now a fatal signal will also leave the alt-screen + mouse/paste.
+  // enter_raw). Now a fatal signal will also leave the alt-screen +
+  // mouse/paste.
   //
   // Only when out_fd is a terminal, though (#179). The bytes above went out
   // regardless — a session's alt-screen is its own business and the emit is not
@@ -678,7 +698,7 @@ auto Terminal::set_mouse_mode(MouseMode mode) -> void {
     emit_mouse_mode();
     return;
   }
-  m_mouse_mode = mode;  // no screen up: recorded, applied by enter_screen()
+  m_mouse_mode = mode; // no screen up: recorded, applied by enter_screen()
 }
 
 // Push the configured tier onto the terminal's keyboard stack. Called once,
@@ -686,7 +706,7 @@ auto Terminal::set_mouse_mode(MouseMode mode) -> void {
 // set_keyboard_mode), so the stack depth is 0 or 1 and leave_screen()'s single
 // pop always balances.
 auto Terminal::emit_keyboard_mode() -> void {
-  if (m_keyboard_mode == KeyboardMode::Legacy) return;  // nothing to push
+  if (m_keyboard_mode == KeyboardMode::Legacy) return; // nothing to push
   emit(m_impl->out_fd, detail::keyboard_push_seq(m_keyboard_mode));
   m_kb_pushed = true;
 }
@@ -694,9 +714,9 @@ auto Terminal::emit_keyboard_mode() -> void {
 auto Terminal::set_keyboard_mode(KeyboardMode mode) -> void {
   if (mode == m_keyboard_mode) return;
   m_keyboard_mode = mode;
-  if (!m_impl->in_screen) return;  // recorded, applied by enter_screen()
+  if (!m_impl->in_screen) return; // recorded, applied by enter_screen()
   if (!m_kb_pushed) {
-    emit_keyboard_mode();  // first non-Legacy tier of this screen: push it
+    emit_keyboard_mode(); // first non-Legacy tier of this screen: push it
     return;
   }
   // We already own an entry: overwrite it rather than pushing a second one.
@@ -715,14 +735,14 @@ auto Terminal::quiesce_keyboard_input() noexcept -> void {
 
   while (true) {
     const auto remaining =
-        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - clock::now());
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline -
+                                                              clock::now());
     if (remaining.count() <= 0) return;
     const int timeout_ms = static_cast<int>(remaining.count());
     if (!wait_readable(timeout_ms > 0 ? timeout_ms : 1)) return;
     const int count = read_input(bytes, static_cast<int>(sizeof(bytes)));
     if (count <= 0) return;
-    if (scanner.feed(
-            std::string_view{bytes, static_cast<std::size_t>(count)}))
+    if (scanner.feed(std::string_view{bytes, static_cast<std::size_t>(count)}))
       return;
   }
 }
@@ -736,9 +756,8 @@ auto Terminal::leave_screen() -> void {
   // leave_raw() gives cooked input back to the shell (#282).
   constexpr auto kVisualRestore = detail::kLeaveSequence.find("\033[0m");
   static_assert(kVisualRestore != std::string_view::npos);
-  const bool barrier_needed =
-      m_kb_pushed && m_raw && m_impl->out_fd >= 0 &&
-      m_impl->kitty_keyboard_support.value_or(true);
+  const bool barrier_needed = m_kb_pushed && m_raw && m_impl->out_fd >= 0 &&
+                              m_impl->kitty_keyboard_support.value_or(true);
   if (barrier_needed) {
     emit(m_impl->out_fd, detail::kLeaveSequence.substr(0, kVisualRestore));
     quiesce_keyboard_input();
@@ -759,8 +778,8 @@ auto Terminal::is_console_vt() const noexcept -> bool {
   // looks like /dev/ttyN. Heuristic only; framebuffer is always opt-in.
   // Reads the session's TERM when one was handed over, the daemon's otherwise
   // (#181).
-  const char* term = m_impl->env_injected ? m_impl->env.term.c_str()
-                                          : std::getenv("TERM");
+  const char* term =
+      m_impl->env_injected ? m_impl->env.term.c_str() : std::getenv("TERM");
   if (term != nullptr && std::string{term} == "linux") return true;
   return false;
 }
@@ -778,9 +797,9 @@ auto Terminal::select_driver(const Capabilities& caps, BuiltinDriver choice)
   // choice changes only the rendering tier, never these session facts (#257).
   auto driver = select_driver_for(caps, choice);
   driver->set_sync_updates(caps.sync_updates);
-  driver->set_image_animation_support(
-      caps.kitty_animation && driver->capabilities().kitty_graphics);
+  driver->set_image_animation_support(caps.kitty_animation &&
+                                      driver->capabilities().kitty_graphics);
   return driver;
 }
 
-}  // namespace termforge
+} // namespace termforge

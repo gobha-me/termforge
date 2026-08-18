@@ -123,10 +123,9 @@ auto ListWidget::draw(Screen& screen) -> void {
   // highlight colour would give the thumb a blue-tinted cell exactly where it
   // matters least. One strip, one bg, after the per-row colours are done.
   if (scrollbar_visible()) {
-    detail::draw_scrollbar(screen, {r.x + r.w - 1, r.y, 1, r.h},
-                           m_list.count(), m_scroll, r.h,
-                           scrollbar_glyphs(m_style), m_track_fg, m_thumb_fg,
-                           m_bg);
+    detail::draw_scrollbar(screen, {r.x + r.w - 1, r.y, 1, r.h}, m_list.count(),
+                           m_scroll, r.h, scrollbar_glyphs(m_style), m_track_fg,
+                           m_thumb_fg, m_bg);
   }
 
   clear_dirty();
@@ -178,9 +177,9 @@ auto ListWidget::on_event(const Event& ev) -> bool {
     // #35 Q1: the wheel scrolls the VIEW, not the selection. The selection
     // stays put and may scroll out of view (Q2); arrows still move it.
     if (m->scroll_up || m->scroll_down) {
-      m_scroll = detail::clamp_offset(
-          m_scroll + detail::wheel_delta(m->scroll_up), m_list.count(),
-          rect().h);
+      m_scroll =
+          detail::clamp_offset(m_scroll + detail::wheel_delta(m->scroll_up),
+                               m_list.count(), rect().h);
       mark_dirty();
       return true;
     }
@@ -197,20 +196,19 @@ auto ListWidget::on_event(const Event& ev) -> bool {
             detail::thumb_window(rect().h, m_list.count(), m_scroll, rect().h);
         const int row = m->y - rect().y;
         if (row < top) {
-          m_scroll = detail::clamp_offset(m_scroll - page, m_list.count(),
-                                          rect().h);
+          m_scroll =
+              detail::clamp_offset(m_scroll - page, m_list.count(), rect().h);
         } else if (row >= top + thumb_h) {
-          m_scroll = detail::clamp_offset(m_scroll + page, m_list.count(),
-                                          rect().h);
+          m_scroll =
+              detail::clamp_offset(m_scroll + page, m_list.count(), rect().h);
         } else {
-          return true;  // on the thumb: consumed, no movement
+          return true; // on the thumb: consumed, no movement
         }
         mark_dirty();
         return true;
       }
-      const int clicked =
-          detail::row_item_at(rect(), /*header_rows=*/0, m_scroll,
-                              m_list.count(), m->y);
+      const int clicked = detail::row_item_at(rect(), /*header_rows=*/0,
+                                              m_scroll, m_list.count(), m->y);
       if (clicked >= 0) {
         set_selected(clicked);
         if (m_on_select) {
@@ -226,4 +224,4 @@ auto ListWidget::on_event(const Event& ev) -> bool {
   return false;
 }
 
-}  // namespace termforge
+} // namespace termforge

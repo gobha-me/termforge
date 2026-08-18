@@ -10,7 +10,7 @@ namespace termforge {
 auto Checkbox::set_checked(bool checked) -> void {
   if (m_checked == checked) return;
   m_checked = checked;
-  m_line.clear();  // the mark changed: invalidate the composed line
+  m_line.clear(); // the mark changed: invalidate the composed line
   mark_dirty();
 }
 
@@ -85,4 +85,4 @@ auto Checkbox::on_event(const Event& ev) -> bool {
   return false;
 }
 
-}  // namespace termforge
+} // namespace termforge

@@ -225,9 +225,8 @@ class TerminalDriver {
   // The base accepts only the protocol's implicit z=0, zero pixel offset and
   // complete source image, then delegates the fit question to the existing
   // runtime query.
-  [[nodiscard]] virtual auto
-  supports_image_placement(ImagePlacementOptions options) const noexcept
-      -> bool {
+  [[nodiscard]] virtual auto supports_image_placement(
+      ImagePlacementOptions options) const noexcept -> bool {
     const auto z = options.layer.z_index();
     return z && *z == 0 && options.pixel_offset == PixelPoint{} &&
            !options.source && supports_placement_fit(options.fit);
@@ -257,9 +256,9 @@ class TerminalDriver {
   // override, so a driver written against #163 needs no change on upgrade.
   virtual auto draw_image(Rect /*cells*/, const EncodedImage& /*image*/)
       -> std::expected<void, ErrorEvent> {
-    return std::unexpected{
-        ErrorEvent{Severity::Warning, "driver",
-                   "draw_image: this tier cannot transmit a pre-encoded image"}};
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "draw_image: this tier cannot transmit a pre-encoded image"}};
   }
 
   // As above, but with the placement policy named (#169) -- the overload that
@@ -366,8 +365,8 @@ class TerminalDriver {
   // The default is correct for every tier that has no out-of-band channel,
   // which is every tier but kitty and every third-party driver that has not
   // thought about it.
-  [[nodiscard]] virtual auto supports_image_format(
-      ImageFormat f) const noexcept -> bool {
+  [[nodiscard]] virtual auto supports_image_format(ImageFormat f) const noexcept
+      -> bool {
     return f == ImageFormat::Rgba32;
   }
 
@@ -453,19 +452,19 @@ class TerminalDriver {
   //
   // NON-PURE, with no default arguments: adding playback must not break an
   // out-of-tree driver or make a virtual's defaults bind by static type.
-  virtual auto play_animation(
-      AnimationHandle /*animation*/, AnimationPlayMode /*mode*/,
-      AnimationReplay /*replay*/,
-      std::chrono::steady_clock::time_point /*now*/)
+  virtual auto play_animation(AnimationHandle /*animation*/,
+                              AnimationPlayMode /*mode*/,
+                              AnimationReplay /*replay*/,
+                              std::chrono::steady_clock::time_point /*now*/)
       -> std::expected<void, ErrorEvent> {
     return std::unexpected{ErrorEvent{
         Severity::Warning, "driver",
         "play_animation: this tier cannot control terminal-driven image "
         "animations"}};
   }
-  virtual auto seek_animation(
-      AnimationHandle /*animation*/, std::size_t /*frame_index*/,
-      std::chrono::steady_clock::time_point /*now*/)
+  virtual auto seek_animation(AnimationHandle /*animation*/,
+                              std::size_t /*frame_index*/,
+                              std::chrono::steady_clock::time_point /*now*/)
       -> std::expected<void, ErrorEvent> {
     return std::unexpected{ErrorEvent{
         Severity::Warning, "driver",
@@ -507,9 +506,9 @@ class TerminalDriver {
   // rejection at a time.
   virtual auto pin_image(const Image& /*image*/)
       -> std::expected<PinnedImage, ErrorEvent> {
-    return std::unexpected{ErrorEvent{
-        Severity::Warning, "driver",
-        "pin_image: this tier cannot hold an image resident"}};
+    return std::unexpected{
+        ErrorEvent{Severity::Warning, "driver",
+                   "pin_image: this tier cannot hold an image resident"}};
   }
 
   // As above for a pre-encoded payload (#163), shipped verbatim like every
@@ -528,9 +527,9 @@ class TerminalDriver {
   // direction -- so spell the type (`Image{}` / `EncodedImage{}`).
   virtual auto pin_image(const EncodedImage& /*image*/)
       -> std::expected<PinnedImage, ErrorEvent> {
-    return std::unexpected{ErrorEvent{
-        Severity::Warning, "driver",
-        "pin_image: this tier cannot hold an image resident"}};
+    return std::unexpected{
+        ErrorEvent{Severity::Warning, "driver",
+                   "pin_image: this tier cannot hold an image resident"}};
   }
 
   // Replace the pixels attached to a resident handle without changing its
@@ -601,9 +600,9 @@ class TerminalDriver {
   // session's driver) is one whose silent form deletes a stranger's image.
   virtual auto unpin_image(PinnedImage /*image*/)
       -> std::expected<void, ErrorEvent> {
-    return std::unexpected{ErrorEvent{
-        Severity::Warning, "driver",
-        "unpin_image: this tier cannot hold an image resident"}};
+    return std::unexpected{
+        ErrorEvent{Severity::Warning, "driver",
+                   "unpin_image: this tier cannot hold an image resident"}};
   }
 
   // Place a pinned image into `cells`. No payload crosses the wire: that is the
@@ -623,9 +622,9 @@ class TerminalDriver {
   virtual auto draw_pinned(Rect /*cells*/, PinnedImage /*image*/,
                            PlacementFit /*fit*/)
       -> std::expected<void, ErrorEvent> {
-    return std::unexpected{ErrorEvent{
-        Severity::Warning, "driver",
-        "draw_pinned: this tier cannot hold an image resident"}};
+    return std::unexpected{
+        ErrorEvent{Severity::Warning, "driver",
+                   "draw_pinned: this tier cannot hold an image resident"}};
   }
 
   virtual auto draw_pinned(Rect cells, PinnedImage image,
@@ -977,8 +976,12 @@ class TerminalDriver {
   // but without the begin/end pair, and the driver reports that lesser route
   // once through take_driver_events(). The decision is per-frame: a later
   // small frame is synchronized normally.
-  auto set_sync_updates(bool enabled) noexcept -> void { m_sync_updates = enabled; }
-  [[nodiscard]] auto sync_updates() const noexcept -> bool { return m_sync_updates; }
+  auto set_sync_updates(bool enabled) noexcept -> void {
+    m_sync_updates = enabled;
+  }
+  [[nodiscard]] auto sync_updates() const noexcept -> bool {
+    return m_sync_updates;
+  }
 
  protected:
   auto push_driver_event(ErrorEvent event) -> void;
@@ -1091,7 +1094,7 @@ class TerminalDriver {
   // replace kitty's stderr flood with an application-event flood.
   bool m_warned_sync_limit{false};
 
-  FrameBytes m_pending{};  // this frame, so far
+  FrameBytes m_pending{}; // this frame, so far
   FrameBytes m_last_frame_bytes{};
   FrameBytes m_total_bytes{};
   std::chrono::nanoseconds m_last_frame_sink_write{};
@@ -1127,4 +1130,4 @@ class TerminalDriver {
 template <typename T>
 concept DriverImpl = std::derived_from<T, TerminalDriver> && std::is_final_v<T>;
 
-}  // namespace termforge
+} // namespace termforge

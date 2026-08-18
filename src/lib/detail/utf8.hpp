@@ -26,11 +26,11 @@ namespace termforge::detail {
 [[nodiscard]] constexpr auto utf8_seq_len(unsigned char lead) noexcept
     -> std::size_t {
   if (lead < 0x80) return 1;
-  if (lead < 0xC2) return 0;  // 0x80–0xBF continuation, 0xC0/0xC1 overlong
+  if (lead < 0xC2) return 0; // 0x80–0xBF continuation, 0xC0/0xC1 overlong
   if (lead < 0xE0) return 2;
   if (lead < 0xF0) return 3;
   if (lead < 0xF5) return 4;
-  return 0;  // 0xF5–0xFF
+  return 0; // 0xF5–0xFF
 }
 
 // The legal inclusive range for the byte immediately following `lead`
@@ -43,14 +43,14 @@ struct ByteRange {
 };
 [[nodiscard]] constexpr auto utf8_second_byte_range(unsigned char lead) noexcept
     -> ByteRange {
-  if (lead >= 0xC2 && lead <= 0xDF) return {0x80, 0xBF};  // U+0080–U+07FF
-  if (lead == 0xE0) return {0xA0, 0xBF};                  // not overlong
+  if (lead >= 0xC2 && lead <= 0xDF) return {0x80, 0xBF}; // U+0080–U+07FF
+  if (lead == 0xE0) return {0xA0, 0xBF};                 // not overlong
   if (lead >= 0xE1 && lead <= 0xEC) return {0x80, 0xBF};
-  if (lead == 0xED) return {0x80, 0x9F};                  // exclude surrogates
+  if (lead == 0xED) return {0x80, 0x9F}; // exclude surrogates
   if (lead >= 0xEE && lead <= 0xEF) return {0x80, 0xBF};
-  if (lead == 0xF0) return {0x90, 0xBF};                  // not overlong
+  if (lead == 0xF0) return {0x90, 0xBF}; // not overlong
   if (lead >= 0xF1 && lead <= 0xF3) return {0x80, 0xBF};
-  if (lead == 0xF4) return {0x80, 0x8F};                  // cap at U+10FFFF
+  if (lead == 0xF4) return {0x80, 0x8F}; // cap at U+10FFFF
   return {0, 0};
 }
 
@@ -72,7 +72,7 @@ struct ByteRange {
   if (second < lo || second > hi) return false;
   for (std::size_t k = 2; k < n; ++k) {
     const auto b = static_cast<unsigned char>(in[k]);
-    if ((b & 0xC0) != 0x80) return false;  // not a continuation byte
+    if ((b & 0xC0) != 0x80) return false; // not a continuation byte
   }
   len = n;
   return true;
@@ -112,4 +112,4 @@ struct ByteRange {
   return true;
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

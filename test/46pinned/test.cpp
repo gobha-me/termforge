@@ -51,9 +51,9 @@ using termforge::Image;
 using termforge::ImageComposition;
 using termforge::ImageFormat;
 using termforge::KittyDriver;
+using termforge::PinnedImage;
 using termforge::Pixel;
 using termforge::PixelPoint;
-using termforge::PinnedImage;
 using termforge::PlacementFit;
 using termforge::Rect;
 using termforge::Severity;
@@ -65,26 +65,26 @@ namespace {
 // Distinct art per image, so nothing here can pass on the content hash.
 auto art(int seed) -> Image {
   const auto v = static_cast<std::uint8_t>(seed);
-  return tfsupport::checker(2, 2, Pixel{v, 0, 0, 255},
-                            Pixel{0, static_cast<std::uint8_t>(255 - v), 0,
-                                  255});
+  return tfsupport::checker(
+      2, 2, Pixel{v, 0, 0, 255},
+      Pixel{0, static_cast<std::uint8_t>(255 - v), 0, 255});
 }
 
 // The four per-id counters and the id-set collector live in support/apc.hpp
-// since #187 -- test/47frameshape needed the same four and test/01drivers two of
-// them, and three copies of one predicate under two names had already started to
-// drift. The convention they share is documented at the new definition: `a`/`d`
-// are matched as exact key values so `i=1` cannot be satisfied by `i=16`, and
-// d=I (data) is a different counter from d=i (one placement) because telling
-// those apart is the whole of this suite's subject.
+// since #187 -- test/47frameshape needed the same four and test/01drivers two
+// of them, and three copies of one predicate under two names had already
+// started to drift. The convention they share is documented at the new
+// definition: `a`/`d` are matched as exact key values so `i=1` cannot be
+// satisfied by `i=16`, and d=I (data) is a different counter from d=i (one
+// placement) because telling those apart is the whole of this suite's subject.
 using tfsupport::data_deletes_of;
 using tfsupport::frame_updates_of;
 using tfsupport::ids_named;
 using tfsupport::placement_deletes_of;
 using tfsupport::placement_ids_of;
 using tfsupport::placements_of;
-using tfsupport::total_transmits;
 using tfsupport::total_data_transmits;
+using tfsupport::total_transmits;
 using tfsupport::transmits_of;
 
 // Every cursor-positioning CSI in emission order, as (col, row) ONE-BASED --
@@ -109,7 +109,7 @@ auto cursor_moves(std::string_view out) -> std::vector<std::pair<int, int>> {
   return found;
 }
 
-}  // namespace
+} // namespace
 
 // ── mutable resident frames (#196) ─────────────────────────────────────────
 
@@ -122,11 +122,14 @@ TEST_CASE("pinned: 1800 changed frames replace one root without re-placement",
   constexpr Extent pixels{320, 180};
   constexpr Rect cells{2, 1, 40, 18};
   auto bytes_for = [](int frame) {
-    return std::array<std::byte, 8>{
-        std::byte{0x89}, std::byte{'P'}, std::byte{'N'}, std::byte{'G'},
-        static_cast<std::byte>(frame & 0xFF),
-        static_cast<std::byte>((frame >> 8) & 0xFF), std::byte{0x0D},
-        std::byte{0x0A}};
+    return std::array<std::byte, 8>{std::byte{0x89},
+                                    std::byte{'P'},
+                                    std::byte{'N'},
+                                    std::byte{'G'},
+                                    static_cast<std::byte>(frame & 0xFF),
+                                    static_cast<std::byte>((frame >> 8) & 0xFF),
+                                    std::byte{0x0D},
+                                    std::byte{0x0A}};
   };
 
   auto bytes = bytes_for(0);
@@ -144,8 +147,8 @@ TEST_CASE("pinned: 1800 changed frames replace one root without re-placement",
   for (int frame = 1; frame < 1800; ++frame) {
     bytes = bytes_for(frame);
     expected.insert(expected.end(), bytes.begin(), bytes.end());
-    if (!d.replace_pinned(
-            *pinned, EncodedImage{ImageFormat::Png, bytes, pixels})) {
+    if (!d.replace_pinned(*pinned,
+                          EncodedImage{ImageFormat::Png, bytes, pixels})) {
       failed_frame = frame;
       break;
     }
@@ -194,21 +197,20 @@ TEST_CASE("pinned: every chunk keeps a root replacement on frame one",
 
   std::vector<std::byte> first(5000, std::byte{0x11});
   std::vector<std::byte> second(5000, std::byte{0xE7});
-  const auto pinned = d.pin_image(
-      EncodedImage{ImageFormat::Png, first, Extent{320, 180}});
+  const auto pinned =
+      d.pin_image(EncodedImage{ImageFormat::Png, first, Extent{320, 180}});
   REQUIRE(pinned.has_value());
   d.flush();
   d.consume_reply(TerminalReply{pinned->id, std::nullopt, "OK"});
   out.clear();
 
-  REQUIRE(d.replace_pinned(
-               *pinned,
-               EncodedImage{ImageFormat::Png, second, Extent{320, 180}})
+  REQUIRE(d.replace_pinned(*pinned, EncodedImage{ImageFormat::Png, second,
+                                                 Extent{320, 180}})
               .has_value());
   d.flush();
 
   const auto chunks = tfsupport::transmit_chunks(tfsupport::apcs(out));
-  REQUIRE(chunks.size() >= 2);  // 5,000 raw bytes exceed 4,096 encoded bytes.
+  REQUIRE(chunks.size() >= 2); // 5,000 raw bytes exceed 4,096 encoded bytes.
   for (const auto& chunk : chunks) {
     CHECK(tfsupport::key_value(chunk, "a") == "f");
     // Kitty chooses new-vs-existing frame from each continuation before it
@@ -245,8 +247,8 @@ TEST_CASE("pinned: replacement refusal preserves the last queued frame",
   CHECK(d.last_frame_bytes().image_transmit > 0);
   CHECK(d.last_frame_bytes().image_edit == 0);
 
-  const auto wrong_extent = d.replace_pinned(
-      *pinned, tfsupport::solid(3, 2, Pixel{1, 2, 3, 255}));
+  const auto wrong_extent =
+      d.replace_pinned(*pinned, tfsupport::solid(3, 2, Pixel{1, 2, 3, 255}));
   REQUIRE_FALSE(wrong_extent.has_value());
   CHECK(wrong_extent.error().severity == Severity::Warning);
   CHECK(wrong_extent.error().message ==
@@ -261,18 +263,17 @@ TEST_CASE("pinned: replacement refusal preserves the last queued frame",
         "replace_pinned: image format must remain f=32 (got f=100)");
 
   const auto wrong_compression = d.replace_pinned(
-      *pinned,
-      EncodedImage{ImageFormat::Rgba32Zlib, png, Extent{2, 2}});
+      *pinned, EncodedImage{ImageFormat::Rgba32Zlib, png, Extent{2, 2}});
   REQUIRE_FALSE(wrong_compression.has_value());
   CHECK(wrong_compression.error().message ==
         "replace_pinned: image format must remain f=32 (got f=32,o=z)");
 
   d.flush();
-  CHECK(frame_updates_of(out, pinned->id) == 1);  // refusals emitted nothing
+  CHECK(frame_updates_of(out, pinned->id) == 1); // refusals emitted nothing
   REQUIRE(d.replace_pinned(*pinned, changed).has_value());
   d.flush();
-  CHECK(frame_updates_of(out, pinned->id) == 1);  // last good hash survived
-  CHECK(d.last_frame_bytes().total() == 0);       // identical frame is a no-op
+  CHECK(frame_updates_of(out, pinned->id) == 1); // last good hash survived
+  CHECK(d.last_frame_bytes().total() == 0);      // identical frame is a no-op
 }
 
 TEST_CASE("pinned: replacement rejects empty, foreign, and stale handles",
@@ -288,8 +289,9 @@ TEST_CASE("pinned: replacement rejects empty, foreign, and stale handles",
 
   const auto empty = b.replace_pinned(PinnedImage{}, art(5));
   REQUIRE_FALSE(empty.has_value());
-  CHECK(empty.error().message ==
-        "replace_pinned: handle is empty -- it was never returned by pin_image");
+  CHECK(
+      empty.error().message ==
+      "replace_pinned: handle is empty -- it was never returned by pin_image");
   const auto foreign = b.replace_pinned(*pinned, art(5));
   REQUIRE_FALSE(foreign.has_value());
   CHECK(foreign.error().message.find(
@@ -310,16 +312,14 @@ TEST_CASE("pinned: a 32x32 block edits one root without a full transmit",
   std::string out;
   d.set_output(&out);
 
-  const Image root =
-      tfsupport::solid(240, 160, Pixel{12, 24, 48, 255});
+  const Image root = tfsupport::solid(240, 160, Pixel{12, 24, 48, 255});
   const auto pinned = d.pin_image(root);
   REQUIRE(pinned);
   REQUIRE(d.draw_pinned(Rect{0, 0, 30, 10}, *pinned));
   d.flush();
   out.clear();
 
-  const Image block =
-      tfsupport::solid(32, 32, Pixel{220, 40, 80, 128});
+  const Image block = tfsupport::solid(32, 32, Pixel{220, 40, 80, 128});
   REQUIRE(d.retain_pinned(Rect{0, 0, 30, 10}, *pinned));
   REQUIRE(d.edit_pinned(*pinned, PixelPoint{17, 23}, block,
                         ImageComposition::Overwrite));
@@ -349,7 +349,7 @@ TEST_CASE("pinned: a 32x32 block edits one root without a full transmit",
   CHECK(tfsupport::reassemble(out) ==
         std::vector<std::byte>{raw.begin(), raw.end()});
   CHECK(tfsupport::reassemble(out).size() == 32U * 32U * 4U);
-  CHECK(out.size() < 8U * 1024U);  // not the 240x160 root's ~205 KB wire
+  CHECK(out.size() < 8U * 1024U); // not the 240x160 root's ~205 KB wire
   CHECK(d.last_frame_bytes().image_transmit == 0);
   CHECK(d.last_frame_bytes().image_edit == out.size());
   CHECK(d.last_frame_bytes().cells == 0);
@@ -360,21 +360,20 @@ TEST_CASE("pinned: encoded alpha edits stay on root across every chunk",
   KittyDriver d;
   std::string out;
   d.set_output(&out);
-  const auto pinned = d.pin_image(
-      tfsupport::solid(64, 64, Pixel{10, 20, 30, 255}));
+  const auto pinned =
+      d.pin_image(tfsupport::solid(64, 64, Pixel{10, 20, 30, 255}));
   REQUIRE(pinned);
   d.flush();
   out.clear();
 
   const std::vector<std::byte> png(5000, std::byte{0x89});
-  REQUIRE(d.edit_pinned(
-      *pinned, PixelPoint{3, 5},
-      EncodedImage{ImageFormat::Png, png, Extent{32, 32}},
-      ImageComposition::AlphaBlend));
+  REQUIRE(d.edit_pinned(*pinned, PixelPoint{3, 5},
+                        EncodedImage{ImageFormat::Png, png, Extent{32, 32}},
+                        ImageComposition::AlphaBlend));
 
-  const auto competing = d.edit_pinned(
-      *pinned, PixelPoint{0, 0}, Image{1, 1, {Pixel{}}},
-      ImageComposition::Overwrite);
+  const auto competing =
+      d.edit_pinned(*pinned, PixelPoint{0, 0}, Image{1, 1, {Pixel{}}},
+                    ImageComposition::Overwrite);
   REQUIRE_FALSE(competing);
   CHECK(competing.error().message.find("awaiting a terminal acknowledgement") !=
         std::string::npos);
@@ -398,8 +397,7 @@ TEST_CASE("pinned: encoded alpha edits stay on root across every chunk",
 
   d.consume_reply(TerminalReply{pinned->id, std::nullopt, "OK"});
   CHECK(d.take_driver_events().empty());
-  REQUIRE(d.edit_pinned(*pinned, PixelPoint{0, 0},
-                        Image{1, 1, {Pixel{}}},
+  REQUIRE(d.edit_pinned(*pinned, PixelPoint{0, 0}, Image{1, 1, {Pixel{}}},
                         ImageComposition::Overwrite));
 }
 
@@ -408,42 +406,40 @@ TEST_CASE("pinned: edit guards refuse before wire or accepted identity changes",
   KittyDriver d;
   std::string out;
   d.set_output(&out);
-  const Image original =
-      tfsupport::solid(4, 4, Pixel{1, 2, 3, 255});
+  const Image original = tfsupport::solid(4, 4, Pixel{1, 2, 3, 255});
   const auto pinned = d.pin_image(original);
   REQUIRE(pinned);
   d.flush();
   out.clear();
 
   const Image block = tfsupport::solid(2, 2, Pixel{9, 8, 7, 128});
-  const auto negative = d.edit_pinned(
-      *pinned, PixelPoint{-1, 0}, block, ImageComposition::Overwrite);
+  const auto negative = d.edit_pinned(*pinned, PixelPoint{-1, 0}, block,
+                                      ImageComposition::Overwrite);
   REQUIRE_FALSE(negative);
   CHECK(negative.error().message.find("outside") != std::string::npos);
 
-  const auto outside = d.edit_pinned(
-      *pinned, PixelPoint{3, 3}, block, ImageComposition::Overwrite);
+  const auto outside = d.edit_pinned(*pinned, PixelPoint{3, 3}, block,
+                                     ImageComposition::Overwrite);
   REQUIRE_FALSE(outside);
   CHECK(outside.error().message ==
         "edit_pinned: 2x2 block at 3,3 is outside the pinned 4x4 image");
 
-  const auto empty = d.edit_pinned(
-      *pinned, PixelPoint{}, Image{}, ImageComposition::Overwrite);
+  const auto empty = d.edit_pinned(*pinned, PixelPoint{}, Image{},
+                                   ImageComposition::Overwrite);
   REQUIRE_FALSE(empty);
   CHECK(empty.error().message == "edit_pinned: empty image");
 
-  const auto invalid = d.edit_pinned(
-      *pinned, PixelPoint{}, block,
-      static_cast<ImageComposition>(99));
+  const auto invalid = d.edit_pinned(*pinned, PixelPoint{}, block,
+                                     static_cast<ImageComposition>(99));
   REQUIRE_FALSE(invalid);
   CHECK(invalid.error().message ==
         "edit_pinned: invalid image composition mode");
 
   const std::array<std::byte, 15> short_rgba{};
-  const auto malformed = d.edit_pinned(
-      *pinned, PixelPoint{},
-      EncodedImage{ImageFormat::Rgba32, short_rgba, Extent{2, 2}},
-      ImageComposition::Overwrite);
+  const auto malformed =
+      d.edit_pinned(*pinned, PixelPoint{},
+                    EncodedImage{ImageFormat::Rgba32, short_rgba, Extent{2, 2}},
+                    ImageComposition::Overwrite);
   REQUIRE_FALSE(malformed);
   CHECK(malformed.error().message.find("edit_pinned: Rgba32 payload") == 0);
 
@@ -478,14 +474,14 @@ TEST_CASE("pinned: partial edits reject empty, foreign, and stale handles",
 
   const auto pinned = a.pin_image(art(77));
   REQUIRE(pinned);
-  const auto foreign = b.edit_pinned(*pinned, PixelPoint{}, block,
-                                     ImageComposition::Overwrite);
+  const auto foreign =
+      b.edit_pinned(*pinned, PixelPoint{}, block, ImageComposition::Overwrite);
   REQUIRE_FALSE(foreign);
   CHECK(foreign.error().message.find("different driver") != std::string::npos);
 
   REQUIRE(a.unpin_image(*pinned));
-  const auto stale = a.edit_pinned(*pinned, PixelPoint{}, block,
-                                   ImageComposition::Overwrite);
+  const auto stale =
+      a.edit_pinned(*pinned, PixelPoint{}, block, ImageComposition::Overwrite);
   REQUIRE_FALSE(stale);
   CHECK(stale.error().message.find("handle is stale") != std::string::npos);
 }
@@ -619,7 +615,7 @@ TEST_CASE("pinned: a frame that does not draw it collects only the placement",
   d.flush();
 
   out.clear();
-  REQUIRE(d.draw_image(Rect{8, 8, 2, 2}, art(9)).has_value());  // pin not drawn
+  REQUIRE(d.draw_image(Rect{8, 8, 2, 2}, art(9)).has_value()); // pin not drawn
   d.flush();
   CHECK(placement_deletes_of(out, pinned->id) == 1);
   CHECK(data_deletes_of(out, pinned->id) == 0);
@@ -633,7 +629,8 @@ TEST_CASE("pinned: a frame that does not draw it collects only the placement",
 }
 
 TEST_CASE("pinned: a rect that changes which image it shows retires the old "
-          "placement", "[pinned][kitty]") {
+          "placement",
+          "[pinned][kitty]") {
   // Two live placements at one rect is the state the unpinned path already
   // refuses to reach on a content change. Pinning has to reach the same end by
   // a different route: the rect is the key, but the image behind it is now the
@@ -723,7 +720,7 @@ TEST_CASE("pinned: unpin frees the data and kills the handle",
   CHECK(again.error().message ==
         "draw_pinned: handle is stale -- the image was already unpinned");
   d.flush();
-  CHECK(out.empty());  // a refusal emits nothing at all
+  CHECK(out.empty()); // a refusal emits nothing at all
 
   const auto twice = d.unpin_image(*pinned);
   REQUIRE_FALSE(twice.has_value());
@@ -781,8 +778,8 @@ TEST_CASE("pinned: the budget is public, enforced, and returned on unpin",
     // Every id stays inside the configured public budget and above the region
     // pool. #199 proved that placeholder encoding itself is not the ceiling.
     CHECK(p->id >= KittyDriver::kFirstPinnedImageId);
-    CHECK(p->id <= KittyDriver::kFirstPinnedImageId +
-                       KittyDriver::kMaxPinnedImages - 1);
+    CHECK(p->id <=
+          KittyDriver::kFirstPinnedImageId + KittyDriver::kMaxPinnedImages - 1);
     held.push_back(*p);
   }
   CHECK(KittyDriver::kMaxPinnedImages == 256);
@@ -795,7 +792,7 @@ TEST_CASE("pinned: the budget is public, enforced, and returned on unpin",
   CHECK(over.error().severity == Severity::Warning);
   CHECK(over.error().message.find("max_pinned_images") != std::string::npos);
   d.flush();
-  CHECK(out.empty());  // a refused pin does not pay for an upload
+  CHECK(out.empty()); // a refused pin does not pay for an upload
 
   // An id comes back, so a pin/unpin cycle does not walk the budget off its
   // end. Without the free list this pin fails and m_next_pin_id has already
@@ -827,8 +824,8 @@ TEST_CASE("pinned: the 256-image policy carries GLOAM's 246-image inventory",
     // make every authored payload distinct without smuggling a decoder into
     // the test or the library.
     const std::array payload{static_cast<std::byte>(i)};
-    const auto pin = d.pin_image(
-        EncodedImage{ImageFormat::Png, payload, Extent{1, 1}});
+    const auto pin =
+        d.pin_image(EncodedImage{ImageFormat::Png, payload, Extent{1, 1}});
     REQUIRE(pin.has_value());
     CHECK(ids.insert(pin->id).second);
     held.push_back(*pin);
@@ -895,8 +892,8 @@ TEST_CASE("pinned: empty and malformed payloads refuse before any upload",
   // Rgba32's length is derivable, so a caller's extent/buffer disagreement is
   // visible — and is refused with pin_image in the message, not draw_image.
   const std::vector<std::byte> short_buf(4);
-  const auto e3 = d.pin_image(
-      EncodedImage{ImageFormat::Rgba32, short_buf, Extent{4, 4}});
+  const auto e3 =
+      d.pin_image(EncodedImage{ImageFormat::Rgba32, short_buf, Extent{4, 4}});
   REQUIRE_FALSE(e3.has_value());
   CHECK(e3.error().message.find("pin_image: Rgba32 payload") == 0);
 
@@ -950,9 +947,8 @@ TEST_CASE("pinned: zlib format survives pin, replace, and partial edit",
 
   out.clear();
   const std::vector<std::byte> replacement(41, std::byte{0x42});
-  REQUIRE(d.replace_pinned(
-      *pin,
-      EncodedImage{ImageFormat::Rgba32Zlib, replacement, Extent{32, 32}}));
+  REQUIRE(d.replace_pinned(*pin, EncodedImage{ImageFormat::Rgba32Zlib,
+                                              replacement, Extent{32, 32}}));
   d.flush();
   chunks = tfsupport::transmit_chunks(tfsupport::apcs(out));
   REQUIRE(chunks.size() == 1);
@@ -964,10 +960,10 @@ TEST_CASE("pinned: zlib format survives pin, replace, and partial edit",
 
   out.clear();
   const std::vector<std::byte> block(23, std::byte{0x53});
-  REQUIRE(d.edit_pinned(
-      *pin, PixelPoint{3, 5},
-      EncodedImage{ImageFormat::Rgba32Zlib, block, Extent{2, 2}},
-      ImageComposition::Overwrite));
+  REQUIRE(
+      d.edit_pinned(*pin, PixelPoint{3, 5},
+                    EncodedImage{ImageFormat::Rgba32Zlib, block, Extent{2, 2}},
+                    ImageComposition::Overwrite));
   d.flush();
   chunks = tfsupport::transmit_chunks(tfsupport::apcs(out));
   REQUIRE(chunks.size() == 1);
@@ -999,8 +995,8 @@ TEST_CASE("pinned: an opaque pin becomes usable only after OK",
   REQUIRE(d.draw_pinned(Rect{0, 0, 1, 1}, *p));
   CHECK(d.take_driver_events().empty());
 
-  const auto failed = d.pin_image(
-      EncodedImage{ImageFormat::Png, png, Extent{4, 4}});
+  const auto failed =
+      d.pin_image(EncodedImage{ImageFormat::Png, png, Extent{4, 4}});
   REQUIRE(failed.has_value());
   d.flush();
   d.consume_reply(TerminalReply{failed->id, std::nullopt, "EBADPNG"});
@@ -1019,8 +1015,8 @@ TEST_CASE("pinned: a rejected opaque replacement keeps the accepted root",
   d.set_output(&out);
   const std::vector<std::byte> first(32, std::byte{0x11});
   const std::vector<std::byte> second(32, std::byte{0x22});
-  const auto p = d.pin_image(
-      EncodedImage{ImageFormat::Png, first, Extent{4, 4}});
+  const auto p =
+      d.pin_image(EncodedImage{ImageFormat::Png, first, Extent{4, 4}});
   REQUIRE(p.has_value());
   d.flush();
   d.consume_reply(TerminalReply{p->id, std::nullopt, "OK"});
@@ -1028,8 +1024,8 @@ TEST_CASE("pinned: a rejected opaque replacement keeps the accepted root",
 
   REQUIRE(d.replace_pinned(
       *p, EncodedImage{ImageFormat::Png, second, Extent{4, 4}}));
-  const auto competing = d.replace_pinned(
-      *p, EncodedImage{ImageFormat::Png, first, Extent{4, 4}});
+  const auto competing =
+      d.replace_pinned(*p, EncodedImage{ImageFormat::Png, first, Extent{4, 4}});
   REQUIRE_FALSE(competing);
   d.flush();
   d.consume_reply(TerminalReply{p->id, std::nullopt, "EINVAL"});
@@ -1048,8 +1044,8 @@ TEST_CASE("pinned: Exact is enforced against the extent declared at pin time",
   std::string out;
   d.set_output(&out);
 
-  const auto p = d.pin_image(tfsupport::checker(16, 32, Pixel{9, 0, 0, 255},
-                                                Pixel{0, 9, 0, 255}));
+  const auto p = d.pin_image(
+      tfsupport::checker(16, 32, Pixel{9, 0, 0, 255}, Pixel{0, 9, 0, 255}));
   REQUIRE(p.has_value());
   d.flush();
   out.clear();
@@ -1082,10 +1078,10 @@ TEST_CASE("pinned: changing the fit at one rect re-places it",
   std::string out;
   d.set_output(&out);
 
-  const auto p = d.pin_image(tfsupport::checker(16, 32, Pixel{3, 0, 0, 255},
-                                                Pixel{0, 3, 0, 255}));
+  const auto p = d.pin_image(
+      tfsupport::checker(16, 32, Pixel{3, 0, 0, 255}, Pixel{0, 3, 0, 255}));
   REQUIRE(p.has_value());
-  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *p).has_value());  // Stretch
+  REQUIRE(d.draw_pinned(Rect{0, 0, 2, 2}, *p).has_value()); // Stretch
   d.flush();
 
   out.clear();
@@ -1128,7 +1124,8 @@ TEST_CASE("pinned: placeholders allow only one live placement per image",
 }
 
 TEST_CASE("pinned: switching placement mode retires the placement, not the "
-          "image", "[pinned][kitty]") {
+          "image",
+          "[pinned][kitty]") {
   KittyDriver d;
   std::string out;
   d.set_output(&out);
@@ -1152,7 +1149,8 @@ TEST_CASE("pinned: switching placement mode retires the placement, not the "
 }
 
 TEST_CASE("pinned: region ids never enter the pinned range, however hard the "
-          "churn (#190)", "[pinned][kitty]") {
+          "churn (#190)",
+          "[pinned][kitty]") {
   // Region ids used to walk upward without bound, so "the two ranges cannot
   // meet" was not a property this code had, and this case covered the
   // `while (m_pinned.contains(...)) ++m_next_image_id` skip that stood in for
@@ -1188,7 +1186,7 @@ TEST_CASE("pinned: region ids never enter the pinned range, however hard the "
   // The precondition, asserted rather than assumed: 300 rects really were drawn
   // and really did upload. Without it a driver that refused every draw after
   // the first would satisfy everything below.
-  REQUIRE(total_transmits(out) == 301);  // 300 regions, plus the pin once
+  REQUIRE(total_transmits(out) == 301); // 300 regions, plus the pin once
 
   // Two region ids for 300 rects, and the pin untouched at the top of its own
   // pool. One assertion carrying three properties: the ids recycle, they stay
@@ -1240,8 +1238,7 @@ TEST_CASE("pinned: a driver that never heard of pinning refuses honestly",
 
   CHECK(base.max_pinned_images() == 0);
   CHECK_FALSE(base.pinned_image_status(PinnedImage{}).valid);
-  const auto legacy_status =
-      base.pinned_image_status(PinnedImage{1, 1, 1});
+  const auto legacy_status = base.pinned_image_status(PinnedImage{1, 1, 1});
   CHECK(legacy_status.valid);
   CHECK(legacy_status.content_ready);
   CHECK_FALSE(legacy_status.update_pending);
@@ -1268,24 +1265,24 @@ TEST_CASE("pinned: a driver that never heard of pinning refuses honestly",
   REQUIRE_FALSE(r1.has_value());
   CHECK(r1.error().message ==
         "replace_pinned: this tier cannot replace a resident image");
-  const auto r2 = base.replace_pinned(
-      PinnedImage{1, 1},
-      EncodedImage{ImageFormat::Rgba32, bytes, Extent{1, 1}});
+  const auto r2 =
+      base.replace_pinned(PinnedImage{1, 1}, EncodedImage{ImageFormat::Rgba32,
+                                                          bytes, Extent{1, 1}});
   REQUIRE_FALSE(r2.has_value());
   CHECK(r2.error().message ==
         "replace_pinned: this tier cannot replace a resident image");
 
-  const auto e1 = base.edit_pinned(PinnedImage{1, 1}, PixelPoint{},
-                                   Image{1, 1, {Pixel{}}},
-                                   ImageComposition::Overwrite);
+  const auto e1 =
+      base.edit_pinned(PinnedImage{1, 1}, PixelPoint{}, Image{1, 1, {Pixel{}}},
+                       ImageComposition::Overwrite);
   REQUIRE_FALSE(e1);
   CHECK(e1.error().severity == Severity::Warning);
   CHECK(e1.error().message ==
         "edit_pinned: this tier cannot edit a resident image in place");
-  const auto e2 = base.edit_pinned(
-      PinnedImage{1, 1}, PixelPoint{},
-      EncodedImage{ImageFormat::Rgba32, bytes, Extent{1, 1}},
-      ImageComposition::AlphaBlend);
+  const auto e2 =
+      base.edit_pinned(PinnedImage{1, 1}, PixelPoint{},
+                       EncodedImage{ImageFormat::Rgba32, bytes, Extent{1, 1}},
+                       ImageComposition::AlphaBlend);
   REQUIRE_FALSE(e2);
   CHECK(e2.error().message ==
         "edit_pinned: this tier cannot edit a resident image in place");
@@ -1296,9 +1293,8 @@ TEST_CASE("pinned: a driver that never heard of pinning refuses honestly",
   REQUIRE_FALSE(d2.has_value());
   CHECK(d2.error().message ==
         "draw_pinned: this tier cannot hold an image resident");
-  const auto d3 =
-      base.draw_pinned(Rect{0, 0, 1, 1}, PinnedImage{1, 1},
-                       PlacementFit::Exact);
+  const auto d3 = base.draw_pinned(Rect{0, 0, 1, 1}, PinnedImage{1, 1},
+                                   PlacementFit::Exact);
   REQUIRE_FALSE(d3.has_value());
   CHECK(d3.error().message ==
         "draw_pinned: this tier cannot hold an image resident");
@@ -1321,21 +1317,22 @@ TEST_CASE("pinned: a driver that never heard of pinning refuses honestly",
   CHECK(u.error().message ==
         "unpin_image: this tier cannot hold an image resident");
 
-  CHECK_FALSE(legacy.drew_image());  // none of it reached the draw path
+  CHECK_FALSE(legacy.drew_image()); // none of it reached the draw path
 }
 
-TEST_CASE("pinned: status separates pending opaque content from its accepted root",
-          "[pinned][encoded][reply][issue167]") {
+TEST_CASE(
+    "pinned: status separates pending opaque content from its accepted root",
+    "[pinned][encoded][reply][issue167]") {
   KittyDriver d;
   std::string out;
   d.set_output(&out);
-  const std::array<std::byte, 4> first{
-      std::byte{0x89}, std::byte{'P'}, std::byte{'N'}, std::byte{'G'}};
-  const std::array<std::byte, 4> second{
-      std::byte{0x89}, std::byte{'P'}, std::byte{'N'}, std::byte{1}};
+  const std::array<std::byte, 4> first{std::byte{0x89}, std::byte{'P'},
+                                       std::byte{'N'}, std::byte{'G'}};
+  const std::array<std::byte, 4> second{std::byte{0x89}, std::byte{'P'},
+                                        std::byte{'N'}, std::byte{1}};
 
-  const auto pin = d.pin_image(
-      EncodedImage{ImageFormat::Png, first, Extent{4, 4}});
+  const auto pin =
+      d.pin_image(EncodedImage{ImageFormat::Png, first, Extent{4, 4}});
   REQUIRE(pin.has_value());
   auto status = d.pinned_image_status(*pin);
   CHECK(status.valid);
@@ -1364,10 +1361,9 @@ TEST_CASE("pinned: status separates pending opaque content from its accepted roo
   CHECK_FALSE(status.update_pending);
   CHECK(status.content_revision == 1);
 
-  REQUIRE(d.edit_pinned(
-      *pin, PixelPoint{},
-      EncodedImage{ImageFormat::Png, second, Extent{1, 1}},
-      ImageComposition::AlphaBlend));
+  REQUIRE(d.edit_pinned(*pin, PixelPoint{},
+                        EncodedImage{ImageFormat::Png, second, Extent{1, 1}},
+                        ImageComposition::AlphaBlend));
   status = d.pinned_image_status(*pin);
   CHECK(status.update_pending);
   CHECK(status.content_revision == 1);
@@ -1416,7 +1412,7 @@ TEST_CASE("pinned: the Stretch convenience is reachable through KittyDriver",
 
   const auto ps = tfsupport::placements(out);
   REQUIRE(ps.size() == 1);
-  CHECK(tfsupport::has_key(ps[0], "c"));  // Stretch keeps c=/r=
+  CHECK(tfsupport::has_key(ps[0], "c")); // Stretch keeps c=/r=
   CHECK(tfsupport::has_key(ps[0], "r"));
 }
 
@@ -1473,8 +1469,10 @@ TEST_CASE("pinned: a moving sprite is not refused under placeholders",
   // Only the final rect may retain placeholders after five moves.
   tfsupport::TerminalGrid grid{10, 4};
   grid.feed(out);
-  for (int x = 0; x < 4; ++x) CHECK_FALSE(grid.at(x, 1).placeholder());
-  for (int x = 4; x < 7; ++x) CHECK(grid.at(x, 1).placeholder());
+  for (int x = 0; x < 4; ++x)
+    CHECK_FALSE(grid.at(x, 1).placeholder());
+  for (int x = 4; x < 7; ++x)
+    CHECK(grid.at(x, 1).placeholder());
 }
 
 TEST_CASE("pinned: an unpinned draw to the same rect refuses under "
@@ -1539,7 +1537,7 @@ TEST_CASE("pinned: a recycled id does not resurrect a stale handle",
   REQUIRE(d.unpin_image(*first).has_value());
   const auto second = d.pin_image(art(36));
   REQUIRE(second.has_value());
-  REQUIRE(first->id == second->id);   // the id really was recycled
+  REQUIRE(first->id == second->id); // the id really was recycled
   CHECK(first->serial != second->serial);
 
   d.flush();
@@ -1550,8 +1548,8 @@ TEST_CASE("pinned: a recycled id does not resurrect a stale handle",
   const auto stale_unpin = d.unpin_image(*first);
   REQUIRE_FALSE(stale_unpin.has_value());
   d.flush();
-  CHECK(out.empty());  // the live image was not deleted on the stale handle's
-                       // behalf
+  CHECK(out.empty()); // the live image was not deleted on the stale handle's
+                      // behalf
 
   // ...and the live handle still works.
   REQUIRE(d.draw_pinned(Rect{1, 2, 3, 2}, *second).has_value());
@@ -1674,7 +1672,7 @@ TEST_CASE("pinned: switching back to classic retires the virtual placement",
 
   out.clear();
   d.set_placement_mode(KittyDriver::PlacementMode::Classic);
-  d.flush();  // set_placement_mode queues its deletes like everything else
+  d.flush(); // set_placement_mode queues its deletes like everything else
   grid.feed(out);
   CHECK(placement_deletes_of(out, p->id) == 1);
   CHECK(data_deletes_of(out, p->id) == 0);
@@ -1697,8 +1695,8 @@ TEST_CASE("pinned: an Exact refusal names draw_pinned, not draw_image",
   std::string out;
   d.set_output(&out);
 
-  const auto p = d.pin_image(tfsupport::checker(16, 32, Pixel{4, 0, 0, 255},
-                                                Pixel{0, 4, 0, 255}));
+  const auto p = d.pin_image(
+      tfsupport::checker(16, 32, Pixel{4, 0, 0, 255}, Pixel{0, 4, 0, 255}));
   REQUIRE(p.has_value());
   const auto small = d.draw_pinned(Rect{0, 0, 1, 1}, *p, PlacementFit::Exact);
   REQUIRE_FALSE(small.has_value());
@@ -1718,7 +1716,8 @@ namespace {
 // A pin-only driver has no region map entry. This helper proves shutdown's
 // decision is driven by the transmit path, including after unpin empties the
 // pinned map while its queued delete has not yet been flushed.
-auto shutdown_wire_of_pin_only_driver(bool unpin_before_shutdown) -> std::string {
+auto shutdown_wire_of_pin_only_driver(bool unpin_before_shutdown)
+    -> std::string {
   KittyDriver d;
   std::string out;
   d.set_output(&out);
@@ -1729,7 +1728,7 @@ auto shutdown_wire_of_pin_only_driver(bool unpin_before_shutdown) -> std::string
   return out;
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("pinned: shutdown cleans up a driver that only ever pinned",
           "[pinned][kitty][failure]") {
@@ -1751,7 +1750,8 @@ TEST_CASE("pinned: shutdown cleans up a driver that only ever pinned",
 // ── nothing moved for callers who do not pin ────────────────────────────────
 
 TEST_CASE("pinned: the unpinned path is untouched by PINNING, and bounded by "
-          "#190", "[pinned][kitty]") {
+          "#190",
+          "[pinned][kitty]") {
   // If the COUNTS below need an edit, a pinning change moved bytes it promised
   // not to. Mirrors test/01drivers' eviction case with no pins in play.
   //

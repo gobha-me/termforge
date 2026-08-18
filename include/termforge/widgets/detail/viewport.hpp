@@ -69,4 +69,4 @@ inline constexpr int kWheelStep = 3;
   return up ? -kWheelStep : kWheelStep;
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

@@ -62,13 +62,17 @@ struct ContainerTickProbe : App {
   std::string log;
   TickRecorder a, b, c;
   ContainerTickProbe() {
-    a.log = &log; a.id = 'a';
-    b.log = &log; b.id = 'b';
-    c.log = &log; c.id = 'c';
+    a.log = &log;
+    a.id = 'a';
+    b.log = &log;
+    b.id = 'b';
+    c.log = &log;
+    c.id = 'c';
   }
   auto on_render(Screen&) -> void override {}
-  template <class R>
-  auto tick(Seconds dt, const R& ws) -> void { tick_widgets(dt, ws); }
+  template <class R> auto tick(Seconds dt, const R& ws) -> void {
+    tick_widgets(dt, ws);
+  }
 };
 
 // A widget written before on_tick existed. That this compiles and runs is the
@@ -100,8 +104,7 @@ class ChildDialog final : public Dialog {
 // can be asserted against the rendered screen rather than internal state (#45:
 // a green suite is not a working screen). report() ends the showing without
 // closing anything, which is what a dialog button's activation does to it.
-template <typename ChildT>
-class ShowingDialog final : public Dialog {
+template <typename ChildT> class ShowingDialog final : public Dialog {
  public:
   ShowingDialog() : Dialog("T") { add_child(&child); }
   ChildT child;
@@ -127,7 +130,7 @@ class WidgetTickProbe : public App {
  public:
   ProgressBar bar;
   Button button{"[ OK ]"};
-  bool forward{true};  // set false to model an app that forgot
+  bool forward{true}; // set false to model an app that forgot
 
   WidgetTickProbe() {
     bar.set_geometry({0, 0, 20, 1});
@@ -145,7 +148,8 @@ class WidgetTickProbe : public App {
   }
 
   auto run_frames(int n) -> void {
-    for (int i = 0; i < n; ++i) test_run_frames(1, 20, 5, &m_sink);
+    for (int i = 0; i < n; ++i)
+      test_run_frames(1, 20, 5, &m_sink);
   }
 
   [[nodiscard]] auto elapsed() const -> Seconds {
@@ -176,20 +180,24 @@ auto any_pressed_cell(const Screen& s) -> bool {
   return false;
 }
 
-}  // namespace
+} // namespace
 
 // ── App::tick_widgets ───────────────────────────────────────────────────────
 
-TEST_CASE("tick_widgets reaches every widget, in the order given", "[widgettick]") {
+TEST_CASE("tick_widgets reaches every widget, in the order given",
+          "[widgettick]") {
   // Forward order and no early exit, unlike route_mouse: z-order decides who
   // receives an event, but time reaches all of them.
   struct Probe : App {
     std::string log;
     TickRecorder a, b, c;
     Probe() {
-      a.log = &log; a.id = 'a';
-      b.log = &log; b.id = 'b';
-      c.log = &log; c.id = 'c';
+      a.log = &log;
+      a.id = 'a';
+      b.log = &log;
+      b.id = 'b';
+      c.log = &log;
+      c.id = 'c';
     }
     auto on_render(Screen&) -> void override {}
     auto tick(Seconds dt) -> void { tick_widgets(dt, {&a, &b, &c}); }
@@ -228,7 +236,7 @@ TEST_CASE("tick_widgets forwards from a container (#123)", "[widgettick]") {
 
   const std::vector<Widget*> ws{&app.a, &app.b, &app.c};
   app.tick(Seconds{100ms}, ws);
-  REQUIRE(app.log == "abc");  // same forward order as the braced form
+  REQUIRE(app.log == "abc"); // same forward order as the braced form
   REQUIRE(app.a.dts.size() == 1);
   REQUIRE(app.a.dts[0] == Seconds{100ms});
   REQUIRE(app.c.dts[0] == Seconds{100ms});
@@ -258,8 +266,8 @@ TEST_CASE("an indeterminate bar sweeps at the same rate at every frame budget",
     WidgetTickProbe app;
     app.set_frame_ms(budget_ms);
     app.run_frames(frames);
-    REQUIRE(app.elapsed() == Seconds{std::chrono::milliseconds{
-                                 budget_ms * frames}});
+    REQUIRE(app.elapsed() ==
+            Seconds{std::chrono::milliseconds{budget_ms * frames}});
     Screen s{20, 2};
     app.bar.draw(s);
     return row_text(s, 0, 0, 20);
@@ -276,10 +284,11 @@ TEST_CASE("an indeterminate bar sweeps at the same rate at every frame budget",
 
   REQUIRE(at_10 == at_15);
   REQUIRE(at_15 == at_30);
-  REQUIRE(at_10.find("█") != std::string::npos);  // it really did move
+  REQUIRE(at_10.find("█") != std::string::npos); // it really did move
 }
 
-TEST_CASE("a widget the app never ticks does not animate", "[widgettick][progress]") {
+TEST_CASE("a widget the app never ticks does not animate",
+          "[widgettick][progress]") {
   // The accepted cost of forwarding-by-hand, pinned so it stays a documented
   // behaviour rather than a surprise: the bar stands still, which is loud.
   WidgetTickProbe app;
@@ -321,7 +330,7 @@ TEST_CASE("a button nobody ticks keeps its flash lit", "[widgettick][button]") {
   app.forward = false;
   app.set_frame_ms(20);
   REQUIRE(app.button.on_event(key(Key::Enter)));
-  app.run_frames(21);  // 400ms, far past the flash
+  app.run_frames(21); // 400ms, far past the flash
 
   Screen s{20, 2};
   app.button.draw(s);
@@ -372,14 +381,14 @@ TEST_CASE("a re-shown dialog opens with no flash left over",
 
   Screen s{40, 12};
   dlg.layout(s.cols(), s.rows());
-  dlg.draw(s);  // consume the first showing, so the next one is the claim
+  dlg.draw(s); // consume the first showing, so the next one is the claim
   REQUIRE_FALSE(any_pressed_cell(s));
 
-  REQUIRE(dlg.on_event(key(Key::Enter)));  // arms, reports, closes: one dispatch
+  REQUIRE(dlg.on_event(key(Key::Enter))); // arms, reports, closes: one dispatch
   REQUIRE(closed);
 
   s.clear();
-  dlg.draw(s);  // the re-showing
+  dlg.draw(s); // the re-showing
   REQUIRE_FALSE(any_pressed_cell(s));
 }
 
@@ -394,15 +403,15 @@ TEST_CASE("a flash inside a dialog still renders on an ordinary frame",
 
   Screen s{40, 12};
   dlg.layout(s.cols(), s.rows());
-  dlg.draw(s);  // consume the first showing
+  dlg.draw(s); // consume the first showing
   REQUIRE_FALSE(any_pressed_cell(s));
 
   REQUIRE(dlg.child.on_event(key(Key::Enter)));
   s.clear();
   dlg.draw(s);
-  REQUIRE(any_pressed_cell(s));  // an ordinary frame: the flash is on screen
+  REQUIRE(any_pressed_cell(s)); // an ordinary frame: the flash is on screen
 
-  dlg.report();  // now end the showing, the way an activation would
+  dlg.report(); // now end the showing, the way an activation would
   s.clear();
   dlg.draw(s);
   REQUIRE_FALSE(any_pressed_cell(s));
@@ -418,7 +427,7 @@ TEST_CASE("a re-shown dialog rewinds its bar's pulse",
 
   Screen s{40, 12};
   dlg.layout(s.cols(), s.rows());
-  dlg.draw(s);  // consume the first showing; also places the bar
+  dlg.draw(s); // consume the first showing; also places the bar
 
   const Rect r = dlg.child.rect();
   ProgressBar twin;
@@ -456,15 +465,15 @@ TEST_CASE("FilePickerDialog's error dialog heals itself on its next showing",
 
   Screen s{60, 20};
   picker.layout(s.cols(), s.rows());
-  picker.draw(s);  // the first frame of a showing runs on_show -> report_error
+  picker.draw(s); // the first frame of a showing runs on_show -> report_error
   REQUIRE(raised != nullptr);
 
   raised->layout(s.cols(), s.rows());
   s.clear();
-  raised->draw(s);  // the error dialog's own first showing
+  raised->draw(s); // the error dialog's own first showing
   REQUIRE_FALSE(any_pressed_cell(s));
 
-  REQUIRE(raised->on_event(key(Key::Enter)));  // OK: arms the flash, closes
+  REQUIRE(raised->on_event(key(Key::Enter))); // OK: arms the flash, closes
 
   // Cancel the picker, which latches ITS result, so its next draw is a new
   // showing -> on_show -> refresh -> report_error raises the same dialog again.
@@ -487,8 +496,8 @@ TEST_CASE("a Widget that never heard of on_tick still builds and draws",
   w.set_geometry({0, 0, 1, 1});
   Screen s{4, 1};
   w.draw(s);
-  w.on_tick(Seconds{100ms});   // reaches Widget's default, does nothing
-  w.reset_transient();         // ditto (#122)
+  w.on_tick(Seconds{100ms}); // reaches Widget's default, does nothing
+  w.reset_transient();       // ditto (#122)
   w.draw(s);
 
   REQUIRE(w.draws == 2);

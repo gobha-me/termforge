@@ -89,4 +89,4 @@ class PixelSurface final : public Widget {
   std::uint64_t m_submission_count{0};
 };
 
-}  // namespace termforge
+} // namespace termforge

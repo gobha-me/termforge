@@ -19,7 +19,8 @@ auto is_utf8_continuation(char c) -> bool {
 auto utf8_prev(const std::string& s, int i) -> int {
   if (i <= 0) return 0;
   --i;
-  while (i > 0 && is_utf8_continuation(s[static_cast<std::size_t>(i)])) --i;
+  while (i > 0 && is_utf8_continuation(s[static_cast<std::size_t>(i)]))
+    --i;
   return i;
 }
 
@@ -28,11 +29,12 @@ auto utf8_next(const std::string& s, int i) -> int {
   const int len = static_cast<int>(s.size());
   if (i >= len) return len;
   ++i;
-  while (i < len && is_utf8_continuation(s[static_cast<std::size_t>(i)])) ++i;
+  while (i < len && is_utf8_continuation(s[static_cast<std::size_t>(i)]))
+    ++i;
   return i;
 }
 
-}  // namespace
+} // namespace
 
 auto TextInput::ensure_cursor_visible() -> void {
   const int visible = rect().w;
@@ -95,7 +97,8 @@ auto TextInput::draw(Screen& screen) -> void {
 
   // Draw cursor (inverted cell) when focused.
   if (focused()) {
-    // Cursor screen column = display width of the text between scroll and cursor.
+    // Cursor screen column = display width of the text between scroll and
+    // cursor.
     const int cx = detail::display_width(std::string_view{m_text}.substr(
         static_cast<std::size_t>(m_scroll),
         static_cast<std::size_t>(m_cursor - m_scroll)));
@@ -173,9 +176,9 @@ auto TextInput::on_event(const Event& ev) -> bool {
     }
   } else if (k->key == Key::Delete) {
     if (m_cursor < len) {
-      m_text.erase(static_cast<std::size_t>(m_cursor),
-                   static_cast<std::size_t>(utf8_next(m_text, m_cursor) -
-                                            m_cursor));
+      m_text.erase(
+          static_cast<std::size_t>(m_cursor),
+          static_cast<std::size_t>(utf8_next(m_text, m_cursor) - m_cursor));
       changed = true;
     }
   } else if (k->key == Key::Char && k->ch >= 0x20 && k->ch != 0x7F &&
@@ -209,7 +212,7 @@ auto TextInput::on_event(const Event& ev) -> bool {
     }
     changed = true;
   } else {
-    return false;  // not consumed (Enter, Escape, Tab, etc.)
+    return false; // not consumed (Enter, Escape, Tab, etc.)
   }
 
   ensure_cursor_visible();
@@ -224,4 +227,4 @@ auto TextInput::on_event(const Event& ev) -> bool {
   return true;
 }
 
-}  // namespace termforge
+} // namespace termforge

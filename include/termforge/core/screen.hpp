@@ -39,7 +39,7 @@ struct Cell {
   std::uint64_t m_text_token{0};
 
  public:
-  std::int32_t image_id{-1};  // >=0 references an image placement
+  std::int32_t image_id{-1}; // >=0 references an image placement
 
  private:
   std::array<char, kInlineTextBytes> m_inline_text{};
@@ -47,7 +47,7 @@ struct Cell {
  public:
   Rgb fg{0xE0, 0xE0, 0xF0};
   Rgb bg{0x0A, 0x0A, 0x14};
-  Attr attrs{Attr::None};  // per-cell display attributes (#62)
+  Attr attrs{Attr::None}; // per-cell display attributes (#62)
 
  private:
   std::uint8_t m_text_size{0};
@@ -97,10 +97,11 @@ class Screen {
   auto clear() -> void;
   auto clear(Rgb fg, Rgb bg, Attr attrs = Attr::None) -> void;
 
-  // Blank a sub-rectangle to a colored blank cell (empty text, fg/bg, no image),
-  // clamped to the grid. This is how a widget repaints its whole rect() each
-  // frame (see widget.hpp): it clears any prior glyph, wide-glyph continuation
-  // cell, or stale image_id in the region. Negative/oversized rects are clipped.
+  // Blank a sub-rectangle to a colored blank cell (empty text, fg/bg, no
+  // image), clamped to the grid. This is how a widget repaints its whole rect()
+  // each frame (see widget.hpp): it clears any prior glyph, wide-glyph
+  // continuation cell, or stale image_id in the region. Negative/oversized
+  // rects are clipped.
   auto fill_rect(int x, int y, int w, int h, Rgb fg, Rgb bg,
                  Attr attrs = Attr::None) -> void;
 
@@ -170,7 +171,7 @@ class Screen {
   int m_rows{0};
   std::vector<Cell> m_cells;
   std::unordered_map<std::uint64_t, SpillEntry> m_spills;
-  Cell m_out_of_bounds;  // returned (const) for OOB reads; writes are dropped
+  Cell m_out_of_bounds; // returned (const) for OOB reads; writes are dropped
 };
 
-}  // namespace termforge
+} // namespace termforge

@@ -39,16 +39,15 @@ struct Position {
 
 inline auto normalize(const StyledText& line, Position pos) noexcept
     -> Position {
-  while (pos.span < line.size() &&
-         pos.byte >= line[pos.span].text.size()) {
+  while (pos.span < line.size() && pos.byte >= line[pos.span].text.size()) {
     ++pos.span;
     pos.byte = 0;
   }
   return pos;
 }
 
-[[nodiscard]] inline auto at_end(const StyledText& line,
-                                 Position pos) noexcept -> bool {
+[[nodiscard]] inline auto at_end(const StyledText& line, Position pos) noexcept
+    -> bool {
   return normalize(line, pos).span >= line.size();
 }
 
@@ -62,8 +61,8 @@ struct Unit {
 // zero-column recovery) without crossing a source span. TextBox sanitizes its
 // document before it reaches this helper; the malformed-byte arm keeps the
 // private plain adapter total over its existing input domain.
-[[nodiscard]] inline auto next_unit(const StyledText& line, Position pos)
-    noexcept -> Unit {
+[[nodiscard]] inline auto next_unit(const StyledText& line,
+                                    Position pos) noexcept -> Unit {
   pos = normalize(line, pos);
   const std::string_view remaining{line[pos.span].text.data() + pos.byte,
                                    line[pos.span].text.size() - pos.byte};
@@ -87,8 +86,8 @@ inline auto append_range(StyledText& row, const StyledText& line,
     const std::size_t first = i == begin.span ? begin.byte : 0;
     const std::size_t last = i == end.span ? end.byte : line[i].text.size();
     if (last > first) {
-      row.push_back(TextSpan{line[i].text.substr(first, last - first),
-                             line[i].style});
+      row.push_back(
+          TextSpan{line[i].text.substr(first, last - first), line[i].style});
     }
     if (i == end.span) break;
   }
@@ -157,7 +156,7 @@ inline auto wrap_styled(std::vector<StyledText>& out, const StyledText& line,
   }
 }
 
-}  // namespace wrap_detail
+} // namespace wrap_detail
 
 // Append wrapped styled rows. Span boundaries may fall mid-row or at the word
 // boundary; fragments keep their source style on either side. Spaces are
@@ -175,11 +174,12 @@ inline auto wrap_styled_into(std::vector<StyledText>& out,
 inline auto wrap_into(std::vector<std::string>& out, const std::string& line,
                       int width) -> void {
   std::vector<StyledText> rows;
-  wrap_detail::wrap_styled(rows,
-                           StyledText{TextSpan{line, TextStyle{}}}, width);
+  wrap_detail::wrap_styled(rows, StyledText{TextSpan{line, TextStyle{}}},
+                           width);
   for (const StyledText& spans : rows) {
     std::string row;
-    for (const TextSpan& span : spans) row += span.text;
+    for (const TextSpan& span : spans)
+      row += span.text;
     out.push_back(std::move(row));
   }
 }
@@ -201,4 +201,4 @@ inline auto wrap_to_width(std::string_view text, int width)
   return out;
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail

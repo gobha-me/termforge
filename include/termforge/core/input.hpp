@@ -49,7 +49,9 @@ class Input {
   // split sequence's remainder a chance to arrive) before committing the
   // Escape interpretation — when no ESC is held there is nothing to grace,
   // and the loop can return without any timed read at all.
-  [[nodiscard]] auto esc_pending() const noexcept -> bool { return m_esc_pending; }
+  [[nodiscard]] auto esc_pending() const noexcept -> bool {
+    return m_esc_pending;
+  }
 
   // Drop only the incomplete byte-stream state, preserving events already
   // decoded into the queue. App uses this when a live structured source starts
@@ -73,21 +75,21 @@ class Input {
   std::deque<Event> m_events;
   std::deque<TerminalReplyRecord> m_replies;
   std::string m_pending;     // incomplete sequence carried across feed() calls
-  bool m_esc_pending{false};  // held lone ESC awaiting the flush() boundary
-  bool m_in_paste{false};     // inside a bracketed paste (ESC[200~ .. ESC[201~)
-  bool m_discard_apc{false};  // oversized APC: discard through its ST
-  std::string m_paste_buf;    // paste body accumulated until the close bracket
+  bool m_esc_pending{false}; // held lone ESC awaiting the flush() boundary
+  bool m_in_paste{false};    // inside a bracketed paste (ESC[200~ .. ESC[201~)
+  bool m_discard_apc{false}; // oversized APC: discard through its ST
+  std::string m_paste_buf;   // paste body accumulated until the close bracket
 
   // Decode one unit from the front of `buf`; returns bytes consumed (0 =
   // need more data). Appends any resulting event(s) to m_events.
   auto decode_one(std::string_view buf) -> std::size_t;
 
-  auto parse_csi(std::string_view buf) -> std::size_t;  // after ESC [
-  auto parse_ss3(std::string_view buf) -> std::size_t;  // after ESC O
-  auto parse_apc(std::string_view buf) -> std::size_t;  // after ESC _
+  auto parse_csi(std::string_view buf) -> std::size_t; // after ESC [
+  auto parse_ss3(std::string_view buf) -> std::size_t; // after ESC O
+  auto parse_apc(std::string_view buf) -> std::size_t; // after ESC _
   auto discard_apc(std::string_view buf) -> std::size_t;
-  auto consume_paste(std::string_view buf) -> std::size_t;  // inside a paste
-  auto flush_esc() -> void;  // held lone ESC -> Escape keypress
+  auto consume_paste(std::string_view buf) -> std::size_t; // inside a paste
+  auto flush_esc() -> void; // held lone ESC -> Escape keypress
 };
 
-}  // namespace termforge
+} // namespace termforge

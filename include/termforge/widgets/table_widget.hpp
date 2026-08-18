@@ -35,8 +35,8 @@
 
 #include "termforge/widgets/detail/width.hpp"
 #include "termforge/widgets/glyphs.hpp"
-#include "termforge/widgets/widget.hpp"
 #include "termforge/widgets/theme.hpp"
+#include "termforge/widgets/widget.hpp"
 
 namespace termforge {
 
@@ -45,7 +45,7 @@ enum class Align { Left, Right, Center };
 struct Column {
   std::string header;
   Align align{Align::Left};
-  int width{0};  // 0 = auto-size to content
+  int width{0}; // 0 = auto-size to content
   Rgb header_fg{0xFF, 0xFF, 0xFF};
   Rgb header_bg{0x30, 0x30, 0x50};
 };
@@ -107,8 +107,8 @@ class TableWidget final : public Widget {
   [[nodiscard]] auto selected() const noexcept -> int { return m_selected; }
 
   // Callback when a row is selected by click: (row index, row cells).
-  auto on_select(
-      std::function<void(int, const std::vector<std::string>&)> cb) -> void {
+  auto on_select(std::function<void(int, const std::vector<std::string>&)> cb)
+      -> void {
     m_on_select = std::move(cb);
   }
 
@@ -205,8 +205,8 @@ class TableWidget final : public Widget {
 
   // Render a single cell with alignment.
   static auto render_cell(Screen& screen, int x, int y, int w,
-                          const std::string& text, Align align, Rgb fg,
-                          Rgb bg) -> void;
+                          const std::string& text, Align align, Rgb fg, Rgb bg)
+      -> void;
 
   std::vector<Column> m_columns;
   std::vector<std::vector<std::string>> m_rows;
@@ -215,14 +215,14 @@ class TableWidget final : public Widget {
 
   Rgb m_row_fg{theme::kFg};
   Rgb m_row_bg{theme::kBg};
-  Rgb m_alt_bg{0x10, 0x10, 0x1C};  // alternating row background
+  Rgb m_alt_bg{0x10, 0x10, 0x1C}; // alternating row background
   Rgb m_selected_fg{theme::kFocusFg};
   Rgb m_selected_bg{theme::kFocusBg};
 
   // #76: the affordance that survives a driver which drops colour.
   BorderStyle m_style{BorderStyle::Single};
   bool m_marker_enabled{true};
-  std::string m_marker;  // empty == use the style's glyph
+  std::string m_marker; // empty == use the style's glyph
 
   // #21: the scrollbar strip's colours (see set_scrollbar_colors).
   Rgb m_track_fg{theme::kDim};
@@ -231,4 +231,4 @@ class TableWidget final : public Widget {
   std::function<void(int, const std::vector<std::string>&)> m_on_select;
 };
 
-}  // namespace termforge
+} // namespace termforge

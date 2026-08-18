@@ -24,7 +24,8 @@
 // WHICH tab is active, always. The focus colours say WHERE THE ARROW KEYS GO,
 // and are painted only while focused(); a bar that inverted unfocused would
 // claim a focus it does not have, which matters the moment a sibling widget
-// also binds Left/Right (examples/widgets.cpp has exactly that, with TextInput).
+// also binds Left/Right (examples/widgets.cpp has exactly that, with
+// TextInput).
 //
 // The glyph half is not optional. Colour alone is what MenuBar does, and on
 // FallbackDriver its title row is byte-identical whichever menu is active — the
@@ -106,7 +107,9 @@ class TabBar final : public Widget {
   [[nodiscard]] auto title(int index) const -> std::string;
 
   // -1 only when the bar is empty; otherwise always a valid index.
-  [[nodiscard]] auto active() const noexcept -> int { return m_list.selected(); }
+  [[nodiscard]] auto active() const noexcept -> int {
+    return m_list.selected();
+  }
 
   // Clamps into range. Silent, like set_tabs. Reveals the tab if the strip is
   // scrolled away from it.
@@ -118,7 +121,8 @@ class TabBar final : public Widget {
   // nothing has drawn through yet. Reporting the effective value is what keeps
   // a test (or an app) from reading a number the strip will never honour.
   // Everything that paints or hit-tests goes through this; nothing writes
-  // m_first back from draw(), which would make dirty() lie (draw must not mark).
+  // m_first back from draw(), which would make dirty() lie (draw must not
+  // mark).
   [[nodiscard]] auto first_visible() const -> int;
 
   auto set_style(BorderStyle style) -> void {
@@ -172,8 +176,9 @@ class TabBar final : public Widget {
     int left_x{0};
     int right_x{0};
   };
-  // Takes the offset explicitly rather than reading m_first, because max_first()
-  // has to ask it about candidate offsets. Clamps only into [0, count).
+  // Takes the offset explicitly rather than reading m_first, because
+  // max_first() has to ask it about candidate offsets. Clamps only into [0,
+  // count).
   [[nodiscard]] auto layout_strip(int first) const -> StripLayout;
 
   // Is `index` on this strip AT FULL WIDTH? Truncated does not count — this is
@@ -187,8 +192,8 @@ class TabBar final : public Widget {
   // The largest offset worth having: the smallest `f` whose strip still shows
   // the last tab whole. Defined in terms of layout_strip, not as a second walk
   // over the widths — a hand-rolled walk has to decide for itself whether the ›
-  // indicator is up (it is not, by definition, when nothing is past the window),
-  // and one column of disagreement is the jump described above.
+  // indicator is up (it is not, by definition, when nothing is past the
+  // window), and one column of disagreement is the jump described above.
   [[nodiscard]] auto max_first() const -> int;
 
   // Pull the window onto the active tab (the arrow-key direction). No-op when
@@ -226,7 +231,7 @@ class TabBar final : public Widget {
   // auto-select-first had already diverged once across three widgets, which is
   // why this type exists. m_first is the widget's own, like every viewport.
   detail::OptionsList m_list;
-  int m_first{0};  // leftmost visible tab; see first_visible()
+  int m_first{0}; // leftmost visible tab; see first_visible()
   // The geometry the last draw() painted, so the next one can tell a RESIZE
   // from a scroll. The wheel is allowed to push the active tab off the strip
   // (#35 Q1/Q2) because the user asked for it; a resize is not, and without
@@ -244,4 +249,4 @@ class TabBar final : public Widget {
   std::function<void(int)> m_on_change;
 };
 
-}  // namespace termforge
+} // namespace termforge

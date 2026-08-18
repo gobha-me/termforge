@@ -64,4 +64,4 @@ class BypassDriver final : public termforge::TerminalDriver {
   std::size_t m_written{0};
 };
 
-}  // namespace tfsupport
+} // namespace tfsupport

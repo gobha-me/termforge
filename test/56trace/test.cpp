@@ -132,16 +132,16 @@ class TraceProbe final : public App {
 
   auto on_render(Screen& screen) -> void override {
     screen.clear();
-    screen.write_text(0, 0,
-                      std::format("f={} t={} p={} w={}", renders, ticks,
-                                  position, last_cols),
-                      Rgb{255, 255, 255}, Rgb{});
+    screen.write_text(
+        0, 0,
+        std::format("f={} t={} p={} w={}", renders, ticks, position, last_cols),
+        Rgb{255, 255, 255}, Rgb{});
     ++renders;
     if (stop_prefix_on_first_render && renders == 1) {
       stop_recording();
       quit();
     }
-    if (renders > 20) quit();  // a broken end record fails, never hangs CTest
+    if (renders > 20) quit(); // a broken end record fails, never hangs CTest
   }
 
   std::string wire;
@@ -227,13 +227,12 @@ auto make_artifact(bool prefix = false) -> Artifact {
 
   SyntheticClock clock;
   if (!prefix) {
-    app.use_script(clock,
-                   {{50ms, "\033[<0;3;2M"},
-                    {150ms, "\033["},
-                    {150ms, "C"},
-                    {250ms, "\033[999"},
-                    {250ms, "x"},
-                    {350ms, "q"}});
+    app.use_script(clock, {{50ms, "\033[<0;3;2M"},
+                           {150ms, "\033["},
+                           {150ms, "C"},
+                           {250ms, "\033[999"},
+                           {250ms, "x"},
+                           {350ms, "q"}});
     app.post(PasteEvent{"posted"});
   } else {
     app.use_script(clock, {});
@@ -256,7 +255,7 @@ auto play_bytes(std::string bytes) -> std::pair<std::string, ErrorEvent> {
   return {app.wire, std::move(result.error())};
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("raw chunks, external pushes and timing replay byte-identically",
           "[trace][order][timing]") {
@@ -298,15 +297,17 @@ TEST_CASE("raw chunks, external pushes and timing replay byte-identically",
   // Timing is load-bearing: the first mouse arrives after frame zero, rather
   // than being dispatched before its first tick/render. Replaying every chunk
   // immediately changes the already-pinned byte stream above.
-  const auto first_input = std::ranges::find_if(
-      decoded->records,
-      [](const detail::TraceRecord& r) { return r.kind == detail::TraceKind::Input; });
+  const auto first_input =
+      std::ranges::find_if(decoded->records, [](const detail::TraceRecord& r) {
+        return r.kind == detail::TraceKind::Input;
+      });
   REQUIRE(first_input != decoded->records.end());
   REQUIRE(first_input->frame > 0);
   REQUIRE(first_input->offset_ns > 0);
 }
 
-TEST_CASE("a stopped recording is a playable one-frame prefix", "[trace][lifecycle]") {
+TEST_CASE("a stopped recording is a playable one-frame prefix",
+          "[trace][lifecycle]") {
   const Artifact artifact = make_artifact(true);
   QuietPipe pipe;
   REQUIRE(pipe.ok());
@@ -318,8 +319,9 @@ TEST_CASE("a stopped recording is a playable one-frame prefix", "[trace][lifecyc
   REQUIRE(played.wire == artifact.wire);
 }
 
-TEST_CASE("a prefix stopped during on_start replays without fabricating a frame",
-          "[trace][lifecycle]") {
+TEST_CASE(
+    "a prefix stopped during on_start replays without fabricating a frame",
+    "[trace][lifecycle]") {
   QuietPipe recording_pipe;
   REQUIRE(recording_pipe.ok());
   TraceProbe recorded;
@@ -342,7 +344,8 @@ TEST_CASE("a prefix stopped during on_start replays without fabricating a frame"
   REQUIRE(played.wire.empty());
 }
 
-TEST_CASE("clean playback reports control-flow divergence", "[trace][failure][timing]") {
+TEST_CASE("clean playback reports control-flow divergence",
+          "[trace][failure][timing]") {
   const Artifact artifact = make_artifact();
   QuietPipe pipe;
   REQUIRE(pipe.ok());
@@ -390,13 +393,14 @@ TEST_CASE("playback restores the caller's pushed size and compatible caps",
   REQUIRE(played.current_size() == App::Size{31, 9, 310, 180});
 }
 
-TEST_CASE("posted modifier keys round-trip through the current trace schema (#209)",
-          "[trace][keyboard][modifier]") {
-  const Event original{KeyEvent{Key::RightAlt, 0, false, true, false,
-                                 KeyAction::Release}};
-  detail::TraceRecord record{
-      detail::TraceKind::Posted, detail::TracePhase::Posted, 0, 0,
-      detail::encode_event(original)};
+TEST_CASE(
+    "posted modifier keys round-trip through the current trace schema (#209)",
+    "[trace][keyboard][modifier]") {
+  const Event original{
+      KeyEvent{Key::RightAlt, 0, false, true, false, KeyAction::Release}};
+  detail::TraceRecord record{detail::TraceKind::Posted,
+                             detail::TracePhase::Posted, 0, 0,
+                             detail::encode_event(original)};
 
   const auto decoded = detail::decode_event(record);
   REQUIRE(decoded.has_value());
@@ -410,7 +414,8 @@ TEST_CASE("posted modifier keys round-trip through the current trace schema (#20
   record.payload = detail::encode_event(Event{invalid});
   const auto refused = detail::decode_event(record);
   REQUIRE_FALSE(refused.has_value());
-  REQUIRE(refused.error().message.find("posted key event") != std::string::npos);
+  REQUIRE(refused.error().message.find("posted key event") !=
+          std::string::npos);
 }
 
 TEST_CASE("posted mouse actions round-trip through trace schema 5 (#267)",
@@ -419,9 +424,9 @@ TEST_CASE("posted mouse actions round-trip through trace schema 5 (#267)",
            MouseEvent{.x = 3, .y = 4, .button = 0, .motion = true},
            MouseEvent{.x = 5, .y = 6, .button = 3, .motion = true},
        }) {
-    detail::TraceRecord record{
-        detail::TraceKind::Posted, detail::TracePhase::Posted, 0, 0,
-        detail::encode_event(Event{original})};
+    detail::TraceRecord record{detail::TraceKind::Posted,
+                               detail::TracePhase::Posted, 0, 0,
+                               detail::encode_event(Event{original})};
     const auto decoded = detail::decode_event(record);
     REQUIRE(decoded.has_value());
     const auto& mouse = std::get<MouseEvent>(*decoded);
@@ -446,9 +451,9 @@ TEST_CASE("pre-schema-5 mouse payloads retain their representable actions",
            MouseEvent{.x = 1, .y = 2, .button = 0, .pressed = false},
            MouseEvent{.x = 3, .y = 4, .button = 3, .pressed = false},
        }) {
-    detail::TraceRecord record{
-        detail::TraceKind::Posted, detail::TracePhase::Posted, 0, 0,
-        detail::encode_event(Event{original})};
+    detail::TraceRecord record{detail::TraceKind::Posted,
+                               detail::TracePhase::Posted, 0, 0,
+                               detail::encode_event(Event{original})};
     const auto decoded = detail::decode_event(record);
     REQUIRE(decoded.has_value());
     const auto& mouse = std::get<MouseEvent>(*decoded);
@@ -459,10 +464,10 @@ TEST_CASE("pre-schema-5 mouse payloads retain their representable actions",
 
 TEST_CASE("terminal reply records round-trip without becoming Events",
           "[trace][kitty-reply]") {
-  for (const TerminalReplyRecord& original : {
-           TerminalReplyRecord{TerminalReply{42, 7, "OK"}},
-           TerminalReplyRecord{ErrorEvent{Severity::Warning, "input",
-                                          "malformed kitty reply"}}}) {
+  for (const TerminalReplyRecord& original :
+       {TerminalReplyRecord{TerminalReply{42, 7, "OK"}},
+        TerminalReplyRecord{
+            ErrorEvent{Severity::Warning, "input", "malformed kitty reply"}}}) {
     detail::TraceRecord record{detail::TraceKind::TerminalReply,
                                detail::TracePhase::InputPump, 0, 0,
                                detail::encode_terminal_reply(original)};
@@ -488,9 +493,9 @@ TEST_CASE("trace codec preserves signed and high-bit integer fields",
       .y = std::numeric_limits<std::int32_t>::max(),
       .button = -1,
   };
-  detail::TraceRecord posted{
-      detail::TraceKind::Posted, detail::TracePhase::Posted, 0, 0,
-      detail::encode_event(Event{original})};
+  detail::TraceRecord posted{detail::TraceKind::Posted,
+                             detail::TracePhase::Posted, 0, 0,
+                             detail::encode_event(Event{original})};
   const auto decoded_event = detail::decode_event(posted);
   REQUIRE(decoded_event.has_value());
   const auto& decoded_mouse = std::get<MouseEvent>(*decoded_event);
@@ -504,17 +509,17 @@ TEST_CASE("trace codec preserves signed and high-bit integer fields",
   REQUIRE(detail::write_trace_header(output, header).has_value());
   constexpr auto kHigh = std::uint64_t{1} << 63U;
   REQUIRE(detail::write_trace_record(
-              output,
-              detail::TraceRecord{detail::TraceKind::Frame,
-                                  detail::TracePhase::FrameStart, kHigh,
-                                  kHigh + 1U, {}})
+              output, detail::TraceRecord{detail::TraceKind::Frame,
+                                          detail::TracePhase::FrameStart,
+                                          kHigh,
+                                          kHigh + 1U,
+                                          {}})
               .has_value());
   REQUIRE(detail::write_trace_record(
               output,
-              detail::TraceRecord{detail::TraceKind::End,
-                                  detail::TracePhase::End, kHigh + 2U,
-                                  kHigh + 3U,
-                                  detail::encode_end(detail::TraceEnd::Clean)})
+              detail::TraceRecord{
+                  detail::TraceKind::End, detail::TracePhase::End, kHigh + 2U,
+                  kHigh + 3U, detail::encode_end(detail::TraceEnd::Clean)})
               .has_value());
 
   std::istringstream input{output.str(), std::ios::binary};
@@ -531,10 +536,10 @@ TEST_CASE("trace codec rejects high-bit terminal reply status",
           "[trace][kitty-reply][failure]") {
   std::string status;
   status.push_back(static_cast<char>(0x80));
-  detail::TraceRecord record{
-      detail::TraceKind::TerminalReply, detail::TracePhase::InputPump, 0, 0,
-      detail::encode_terminal_reply(
-          TerminalReplyRecord{TerminalReply{42, std::nullopt, status}})};
+  detail::TraceRecord record{detail::TraceKind::TerminalReply,
+                             detail::TracePhase::InputPump, 0, 0,
+                             detail::encode_terminal_reply(TerminalReplyRecord{
+                                 TerminalReply{42, std::nullopt, status}})};
   const auto decoded = detail::decode_terminal_reply(record);
   REQUIRE_FALSE(decoded.has_value());
   CHECK(decoded.error().message.find("terminal-reply record is invalid") !=
@@ -553,8 +558,8 @@ TEST_CASE("image invalidation records and replays at its frame boundary (#113)",
   recorded.use_script(clock, {{250ms, "q"}});
   std::ostringstream output{std::ios::binary};
   recorded.start_recording(output);
-  recorded.post(Event{ImageInvalidatedEvent{
-      ImageInvalidationReason::Reattach}});
+  recorded.post(
+      Event{ImageInvalidatedEvent{ImageInvalidationReason::Reattach}});
   REQUIRE(recorded.run() == 0);
   REQUIRE(recorded.events.find('I') != std::string::npos);
 
@@ -567,13 +572,10 @@ TEST_CASE("image invalidation records and replays at its frame boundary (#113)",
   REQUIRE(played.play(input).has_value());
   CHECK(played.events == recorded.events);
 
-  detail::TraceRecord record{
-      detail::TraceKind::ImageInvalidation,
-      detail::TracePhase::FrameStart,
-      0,
-      0,
-      detail::encode_event(Event{ImageInvalidatedEvent{
-          ImageInvalidationReason::SuspendResume}})};
+  detail::TraceRecord record{detail::TraceKind::ImageInvalidation,
+                             detail::TracePhase::FrameStart, 0, 0,
+                             detail::encode_event(Event{ImageInvalidatedEvent{
+                                 ImageInvalidationReason::SuspendResume}})};
   auto invalid_payload = record.payload;
   REQUIRE(invalid_payload.size() == 2);
   invalid_payload[1] = 99;
@@ -584,7 +586,8 @@ TEST_CASE("image invalidation records and replays at its frame boundary (#113)",
         std::string::npos);
 }
 
-TEST_CASE("malformed traces are rejected before the App starts", "[trace][failure]") {
+TEST_CASE("malformed traces are rejected before the App starts",
+          "[trace][failure]") {
   const Artifact artifact = make_artifact();
 
   SECTION("truncated payload") {
@@ -680,8 +683,8 @@ TEST_CASE("schema 6 records action-level image-animation capability",
   std::string current = artifact.trace;
   REQUIRE(current.size() > 31);
   // Capability bits begin at byte 28; bit 5 is kitty_animation.
-  current[28] = static_cast<char>(
-      static_cast<unsigned char>(current[28]) | 0x20U);
+  current[28] =
+      static_cast<char>(static_cast<unsigned char>(current[28]) | 0x20U);
   std::istringstream input{current, std::ios::binary};
   const auto decoded = detail::read_trace(input);
   REQUIRE(decoded.has_value());
@@ -708,8 +711,8 @@ TEST_CASE("schema 5 refuses an image-animation capability bit",
   REQUIRE(invalid.size() > 56);
   invalid[8] = 5;
   invalid[9] = 0;
-  invalid[28] = static_cast<char>(
-      static_cast<unsigned char>(invalid[28]) | 0x20U);
+  invalid[28] =
+      static_cast<char>(static_cast<unsigned char>(invalid[28]) | 0x20U);
   std::istringstream input{invalid, std::ios::binary};
   const auto decoded = detail::read_trace(input);
   REQUIRE_FALSE(decoded.has_value());
@@ -759,7 +762,8 @@ TEST_CASE("schema 1 refuses record kinds introduced by schema 2",
   REQUIRE(decoded.error().message.find("record") != std::string::npos);
 }
 
-TEST_CASE("a refused recording stream becomes a Warning event", "[trace][failure]") {
+TEST_CASE("a refused recording stream becomes a Warning event",
+          "[trace][failure]") {
   QuietPipe pipe;
   REQUIRE(pipe.ok());
   TraceProbe app;
@@ -785,7 +789,7 @@ TEST_CASE("a mid-run recording write refusal is delivered in-band",
   REQUIRE(app.set_size(App::Size{20, 5}).has_value());
   SyntheticClock clock;
   app.use_script(clock, {{0ns, "q"}});
-  RefusingBuffer buffer{60};  // header succeeds; the first record is partial
+  RefusingBuffer buffer{60}; // header succeeds; the first record is partial
   std::ostream refused{&buffer};
   app.start_recording(refused);
   REQUIRE(app.run() == 0);

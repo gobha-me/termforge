@@ -71,7 +71,7 @@ class ObservationProbe : public App {
   std::vector<ErrorEvent> errors;
 
   auto run_frames(int count) -> void {
-    test_run_frames(count, 12, 4, static_cast<std::string *>(nullptr));
+    test_run_frames(count, 12, 4, static_cast<std::string*>(nullptr));
   }
 
   auto on_event(const Event& event) -> void override {
@@ -132,7 +132,7 @@ class ThrowingObserverProbe final : public App {
   std::string m_wire;
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("frame observer: every rendered write reports its exact meter",
           "[frameobserver]") {

@@ -52,13 +52,19 @@ namespace width_detail {
   char32_t v = 0;
   char32_t min = 0;
   if (b0 >= 0xC2 && b0 <= 0xDF) {
-    need = 1; v = b0 & 0x1F; min = 0x80;
+    need = 1;
+    v = b0 & 0x1F;
+    min = 0x80;
   } else if (b0 >= 0xE0 && b0 <= 0xEF) {
-    need = 2; v = b0 & 0x0F; min = 0x800;
+    need = 2;
+    v = b0 & 0x0F;
+    min = 0x800;
   } else if (b0 >= 0xF0 && b0 <= 0xF4) {
-    need = 3; v = b0 & 0x07; min = 0x10000;
+    need = 3;
+    v = b0 & 0x07;
+    min = 0x10000;
   } else {
-    return false;  // 0x80-0xC1, 0xF5-0xFF: continuation or overlong lead
+    return false; // 0x80-0xC1, 0xF5-0xFF: continuation or overlong lead
   }
   if (in.size() < static_cast<std::size_t>(need) + 1) return false;
   for (int i = 1; i <= need; ++i) {
@@ -72,7 +78,7 @@ namespace width_detail {
   return true;
 }
 
-}  // namespace width_detail
+} // namespace width_detail
 
 struct WidthInterval {
   char32_t first, last;
@@ -81,7 +87,7 @@ struct WidthInterval {
 // Sorted, non-overlapping half of the table lookup.
 [[nodiscard]] constexpr auto width_in_table(char32_t cp, const WidthInterval* t,
                                             std::size_t n) noexcept -> bool {
-  std::size_t lo = 0, hi = n;  // [lo, hi)
+  std::size_t lo = 0, hi = n; // [lo, hi)
   while (lo < hi) {
     const std::size_t mid = lo + (hi - lo) / 2;
     if (cp < t[mid].first)
@@ -111,11 +117,21 @@ inline constexpr std::array<WidthInterval, 34> kCombining{{
 // Width-2: East-Asian Wide/Fullwidth plus emoji. Sorted ascending (required by
 // the binary search).
 inline constexpr std::array<WidthInterval, 16> kWide{{
-    {0x1100, 0x115F},   {0x2E80, 0x303E},   {0x3041, 0x33FF},
-    {0x3400, 0x4DBF},   {0x4E00, 0x9FFF},   {0xA000, 0xA4CF},
-    {0xAC00, 0xD7A3},   {0xF900, 0xFAFF},   {0xFE10, 0xFE19},
-    {0xFE30, 0xFE6F},   {0xFF00, 0xFF60},   {0xFFE0, 0xFFE6},
-    {0x1F000, 0x1F0FF}, {0x1F100, 0x1F1FF}, {0x1F300, 0x1FAFF},
+    {0x1100, 0x115F},
+    {0x2E80, 0x303E},
+    {0x3041, 0x33FF},
+    {0x3400, 0x4DBF},
+    {0x4E00, 0x9FFF},
+    {0xA000, 0xA4CF},
+    {0xAC00, 0xD7A3},
+    {0xF900, 0xFAFF},
+    {0xFE10, 0xFE19},
+    {0xFE30, 0xFE6F},
+    {0xFF00, 0xFF60},
+    {0xFFE0, 0xFFE6},
+    {0x1F000, 0x1F0FF},
+    {0x1F100, 0x1F1FF},
+    {0x1F300, 0x1FAFF},
     {0x20000, 0x3FFFD},
 }};
 
@@ -146,7 +162,7 @@ inline constexpr std::array<WidthInterval, 16> kWide{{
       w += char_width(cp);
       i += len;
     } else {
-      i += 1;  // malformed lead/continuation: skip like sanitize does
+      i += 1; // malformed lead/continuation: skip like sanitize does
     }
   }
   return w;
@@ -220,13 +236,13 @@ inline constexpr std::array<WidthInterval, 16> kWide{{
       cw = char_width(cp);
       step = len;
     } else {
-      cw = 0;  // malformed byte: dropped by sanitize, contributes nothing
+      cw = 0; // malformed byte: dropped by sanitize, contributes nothing
     }
-    if (w + cw > max_cols) break;  // this glyph would overflow — stop before it
+    if (w + cw > max_cols) break; // this glyph would overflow — stop before it
     w += cw;
     i += step;
   }
   return s.substr(0, i);
 }
 
-}  // namespace termforge::detail
+} // namespace termforge::detail
