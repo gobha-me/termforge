@@ -21,7 +21,10 @@ auto Renderer::present(const Screen& screen) -> void {
     for (int x = 0; x < cols; ++x) {
       const Cell& cur = screen.at(x, y);
       if (!full) {
-        const Cell& prev = m_prev[static_cast<std::size_t>(y) * cols + x];
+        const Cell& prev =
+            m_prev[static_cast<std::size_t>(y) *
+                       static_cast<std::size_t>(cols) +
+                   static_cast<std::size_t>(x)];
         if (cur == prev) continue;  // unchanged — skip emission
       }
       if (cur.blank()) {

@@ -12,18 +12,23 @@ namespace termforge {
 Screen::Screen(int cols, int rows)
     : m_cols(cols < 0 ? 0 : cols),
       m_rows(rows < 0 ? 0 : rows),
-      m_cells(static_cast<std::size_t>(m_cols) * m_rows) {}
+      m_cells(static_cast<std::size_t>(m_cols) *
+              static_cast<std::size_t>(m_rows)) {}
 
 auto Screen::resize(int cols, int rows) -> void {
   cols = cols < 0 ? 0 : cols;
   rows = rows < 0 ? 0 : rows;
-  std::vector<Cell> next(static_cast<std::size_t>(cols) * rows);
+  std::vector<Cell> next(static_cast<std::size_t>(cols) *
+                         static_cast<std::size_t>(rows));
   const int copy_cols = std::min(m_cols, cols);
   const int copy_rows = std::min(m_rows, rows);
   for (int r = 0; r < copy_rows; ++r)
     for (int c = 0; c < copy_cols; ++c)
-      next[static_cast<std::size_t>(r) * cols + c] =
-          m_cells[static_cast<std::size_t>(r) * m_cols + c];
+      next[static_cast<std::size_t>(r) * static_cast<std::size_t>(cols) +
+           static_cast<std::size_t>(c)] =
+          m_cells[static_cast<std::size_t>(r) *
+                      static_cast<std::size_t>(m_cols) +
+                  static_cast<std::size_t>(c)];
   m_cols = cols;
   m_rows = rows;
   m_cells = std::move(next);
@@ -31,7 +36,9 @@ auto Screen::resize(int cols, int rows) -> void {
 
 auto Screen::at(int x, int y) const -> const Cell& {
   if (x < 0 || y < 0 || x >= m_cols || y >= m_rows) return m_out_of_bounds;
-  return m_cells[static_cast<std::size_t>(y) * m_cols + x];
+  return m_cells[static_cast<std::size_t>(y) *
+                     static_cast<std::size_t>(m_cols) +
+                 static_cast<std::size_t>(x)];
 }
 
 auto Screen::at(int x, int y) -> Cell& {
@@ -41,7 +48,9 @@ auto Screen::at(int x, int y) -> Cell& {
     sink = Cell{};
     return sink;
   }
-  return m_cells[static_cast<std::size_t>(y) * m_cols + x];
+  return m_cells[static_cast<std::size_t>(y) *
+                     static_cast<std::size_t>(m_cols) +
+                 static_cast<std::size_t>(x)];
 }
 
 auto Screen::clear(const Cell& fill) -> void {
@@ -61,7 +70,9 @@ auto Screen::fill_rect(int x, int y, int w, int h, Rgb fg, Rgb bg,
   const Cell fill{"", fg, bg, attrs};  // blank cell (image_id defaults to -1)
   for (int yy = r.y; yy < r.y + r.h; ++yy)
     for (int xx = r.x; xx < r.x + r.w; ++xx)
-      m_cells[static_cast<std::size_t>(yy) * m_cols + xx] = fill;
+      m_cells[static_cast<std::size_t>(yy) *
+                  static_cast<std::size_t>(m_cols) +
+              static_cast<std::size_t>(xx)] = fill;
 }
 
 auto Screen::write_text_impl(int x, int y, std::string_view text, Rgb fg,

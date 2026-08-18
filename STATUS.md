@@ -4,9 +4,25 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-17, latest)
+## Where we are (2026-08-18, latest)
 
-**Current stable release: v0.48.0 — many-region performance evidence.** The W4
+**Current stable release: v0.48.1 — conversion-warning-clean library.** #287
+fixes the consumer build failure exposed by global `-Wconversion` and
+`-Wsign-conversion` flags. Signed cell/image dimensions now cross into indexing
+only after their existing validation or clipping proves them non-negative;
+UTF-8, Kitty reply and trace byte paths preserve high-bit values explicitly;
+and little-endian trace decoding accumulates without narrow integer promotion.
+
+Dedicated GCC 14 and Clang 20 CI jobs now compile only the shipped static
+library with both conversion warnings promoted to errors. Existing failure
+tests continue to pin invalid dimensions and clipped image operations, while
+new cases cover negative Screen dimensions, four-byte UTF-8, high-bit Kitty
+status bytes and signed/high-bit trace fields. No public API, terminal wire or
+trace schema changed. #88 W2 remains next.
+
+## Previous stable release: v0.48.0
+
+**v0.48.0 — many-region performance evidence.** The W4
 slice of #88 extends the Release-only benchmark with App-cadence Immediate and
 Persistent region sweeps across 1/8/16/17/32/64 regions and three cell sizes.
 Schema 3 records `FrameObservation` phase medians/p95, an exact median-total

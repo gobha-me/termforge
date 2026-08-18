@@ -76,12 +76,13 @@ auto take_le(std::span<const std::uint8_t>& bytes) -> std::optional<T> {
   if (bytes.size() < sizeof(T)) return std::nullopt;
   using Raw = RawTypeT<T>;
   using Unsigned = std::make_unsigned_t<Raw>;
-  Unsigned bits{0};
+  static_assert(sizeof(T) <= sizeof(std::uintmax_t));
+  std::uintmax_t bits{0};
   for (std::size_t i = 0; i < sizeof(T); ++i) {
-    bits |= static_cast<Unsigned>(bytes[i]) << (i * 8U);
+    bits |= static_cast<std::uintmax_t>(bytes[i]) << (i * 8U);
   }
   bytes = bytes.subspan(sizeof(T));
-  return static_cast<T>(static_cast<Raw>(bits));
+  return static_cast<T>(static_cast<Raw>(static_cast<Unsigned>(bits)));
 }
 
 auto append_string(std::vector<std::uint8_t>& out, std::string_view text) -> void {
@@ -570,7 +571,8 @@ auto decode_terminal_reply(const TraceRecord& record)
     auto status = take_string(bytes);
     if (!status || status->empty() || !bytes.empty())
       return trace_error("terminal-reply record is invalid");
-    for (const unsigned char c : *status) {
+    for (const char byte : *status) {
+      const auto c = static_cast<unsigned char>(byte);
       if (c < 0x20 || c > 0x7e)
         return trace_error("terminal-reply record is invalid");
     }

@@ -72,6 +72,49 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  conversion-warnings:
+    # #287: consumer-supplied conversion warnings must remain clean for the
+    # shipped library. Keep tests/examples/binaries out of this compile so the
+    # gate measures the public artifact rather than developer-only targets.
+    name: Conversion warnings (${{ matrix.compiler.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - { name: GCC 14, kind: gcc, version: 14, cxx: g++-14 }
+          - { name: Clang 20, kind: clang, version: 20, cxx: clang++-20 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GCC ${{ matrix.compiler.version }}
+        if: matrix.compiler.kind == 'gcc'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-${{ matrix.compiler.version }}
+
+      - name: Install Clang ${{ matrix.compiler.version }}
+        if: matrix.compiler.kind == 'clang'
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh ${{ matrix.compiler.version }}
+
+      - name: Configure shipped library
+        run: >
+          cmake -B build
+          -DCMAKE_CXX_COMPILER=${{ matrix.compiler.cxx }}
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_FLAGS="-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Werror"
+          -Dtermforge_TESTS=OFF
+          -Dtermforge_EXAMPLES=OFF
+          -Dtermforge_BIN=OFF
+          -Dtermforge_BENCH=OFF
+
+      - name: Build shipped library
+        run: cmake --build build --target termforge_lib -j$(nproc)
+
   benchmark-smoke:
     # #88 performance numbers are artifacts, never CI thresholds. This job
     # proves the Release-only harness stays buildable and its JSON stays

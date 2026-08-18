@@ -18,6 +18,21 @@ TEST_CASE("Screen: dimensions and default-blank cells", "[screen]") {
   REQUIRE(s.at(0, 0).blank());
 }
 
+TEST_CASE("Screen: negative dimensions clamp independently to zero",
+          "[screen][failure]") {
+  Screen s{-80, -24};
+  REQUIRE(s.cols() == 0);
+  REQUIRE(s.rows() == 0);
+
+  s.resize(3, -1);
+  REQUIRE(s.cols() == 3);
+  REQUIRE(s.rows() == 0);
+
+  s.resize(-1, 2);
+  REQUIRE(s.cols() == 0);
+  REQUIRE(s.rows() == 2);
+}
+
 TEST_CASE("Screen: sanitize strips ESC and control chars (injection defense)", "[screen][security]") {
   // An attacker-supplied string with escape sequences must not reach the driver.
   REQUIRE(Screen::sanitize("hello\033[2Jworld") == "helloworld");   // clear-screen

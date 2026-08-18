@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstring>
 #include <format>
+#include <limits>
 #include <ranges>
 #include <sstream>
 #include <streambuf>
@@ -478,6 +479,66 @@ TEST_CASE("terminal reply records round-trip without becoming Events",
             std::get<ErrorEvent>(original).message);
     }
   }
+}
+
+TEST_CASE("trace codec preserves signed and high-bit integer fields",
+          "[trace][compatibility]") {
+  const MouseEvent original{
+      .x = std::numeric_limits<std::int32_t>::min(),
+      .y = std::numeric_limits<std::int32_t>::max(),
+      .button = -1,
+  };
+  detail::TraceRecord posted{
+      detail::TraceKind::Posted, detail::TracePhase::Posted, 0, 0,
+      detail::encode_event(Event{original})};
+  const auto decoded_event = detail::decode_event(posted);
+  REQUIRE(decoded_event.has_value());
+  const auto& decoded_mouse = std::get<MouseEvent>(*decoded_event);
+  CHECK(decoded_mouse.x == original.x);
+  CHECK(decoded_mouse.y == original.y);
+  CHECK(decoded_mouse.button == original.button);
+
+  detail::TraceHeader header;
+  header.initial_size = {1, 1, 0, 0};
+  std::ostringstream output{std::ios::binary};
+  REQUIRE(detail::write_trace_header(output, header).has_value());
+  constexpr auto kHigh = std::uint64_t{1} << 63U;
+  REQUIRE(detail::write_trace_record(
+              output,
+              detail::TraceRecord{detail::TraceKind::Frame,
+                                  detail::TracePhase::FrameStart, kHigh,
+                                  kHigh + 1U, {}})
+              .has_value());
+  REQUIRE(detail::write_trace_record(
+              output,
+              detail::TraceRecord{detail::TraceKind::End,
+                                  detail::TracePhase::End, kHigh + 2U,
+                                  kHigh + 3U,
+                                  detail::encode_end(detail::TraceEnd::Clean)})
+              .has_value());
+
+  std::istringstream input{output.str(), std::ios::binary};
+  const auto trace = detail::read_trace(input);
+  REQUIRE(trace.has_value());
+  REQUIRE(trace->records.size() == 2);
+  CHECK(trace->records[0].offset_ns == kHigh);
+  CHECK(trace->records[0].frame == kHigh + 1U);
+  CHECK(trace->records[1].offset_ns == kHigh + 2U);
+  CHECK(trace->records[1].frame == kHigh + 3U);
+}
+
+TEST_CASE("trace codec rejects high-bit terminal reply status",
+          "[trace][kitty-reply][failure]") {
+  std::string status;
+  status.push_back(static_cast<char>(0x80));
+  detail::TraceRecord record{
+      detail::TraceKind::TerminalReply, detail::TracePhase::InputPump, 0, 0,
+      detail::encode_terminal_reply(
+          TerminalReplyRecord{TerminalReply{42, std::nullopt, status}})};
+  const auto decoded = detail::decode_terminal_reply(record);
+  REQUIRE_FALSE(decoded.has_value());
+  CHECK(decoded.error().message.find("terminal-reply record is invalid") !=
+        std::string::npos);
 }
 
 TEST_CASE("image invalidation records and replays at its frame boundary (#113)",

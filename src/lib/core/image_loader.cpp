@@ -57,15 +57,17 @@ auto ImageLoader::load_from_memory(const std::string& data)
     return err(std::format("dimensions too large: {}x{} (max {})", w, h,
                            kMaxDimension));
 
-  const auto expected = kHeaderSize +
-                        static_cast<std::size_t>(w) * h * sizeof(Pixel);
+  const auto width = static_cast<std::size_t>(w);
+  const auto height = static_cast<std::size_t>(h);
+  const auto pixel_count = width * height;
+  const auto expected = kHeaderSize + pixel_count * sizeof(Pixel);
   if (data.size() != expected)
     return err(std::format("size mismatch: got {} bytes, expected {} ({}x{} RGBA)",
                            data.size(), expected, w, h));
 
   // Copy pixel data directly — the format stores RGBA in the same layout
   // as our Pixel struct (r, g, b, a bytes in order).
-  std::vector<Pixel> pixels(static_cast<std::size_t>(w) * h);
+  std::vector<Pixel> pixels(pixel_count);
   std::memcpy(pixels.data(), data.data() + kHeaderSize,
               pixels.size() * sizeof(Pixel));
 

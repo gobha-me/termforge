@@ -141,6 +141,7 @@ auto Image::blit(const Image& src, Rect src_rect, int dx, int dy) -> void {
   const auto p = clip_placement(m_width, m_height, src.width(), src.height(),
                                 src_rect, dx, dy);
   if (p.w == 0 || p.h == 0) return;
+  const auto width = static_cast<std::size_t>(p.w);
 
   for (int y = 0; y < p.h; ++y) {
     const auto srow = static_cast<std::size_t>(p.sy + y) *
@@ -149,8 +150,8 @@ auto Image::blit(const Image& src, Rect src_rect, int dx, int dy) -> void {
     const auto drow = static_cast<std::size_t>(p.dy + y) *
                       static_cast<std::size_t>(m_width) +
                       static_cast<std::size_t>(p.dx);
-    detail::copy_pixels(src.pixels().subspan(srow, p.w),
-                        pixels().subspan(drow, p.w));
+    detail::copy_pixels(src.pixels().subspan(srow, width),
+                        pixels().subspan(drow, width));
   }
 }
 
@@ -164,6 +165,7 @@ auto Image::blend(const Image& src, Rect src_rect, int dx, int dy) -> void {
   const auto p = clip_placement(m_width, m_height, src.width(), src.height(),
                                 src_rect, dx, dy);
   if (p.w == 0 || p.h == 0) return;
+  const auto width = static_cast<std::size_t>(p.w);
 
   for (int y = 0; y < p.h; ++y) {
     const auto srow = static_cast<std::size_t>(p.sy + y) *
@@ -172,20 +174,21 @@ auto Image::blend(const Image& src, Rect src_rect, int dx, int dy) -> void {
     const auto drow = static_cast<std::size_t>(p.dy + y) *
                       static_cast<std::size_t>(m_width) +
                       static_cast<std::size_t>(p.dx);
-    detail::blend_pixels(src.pixels().subspan(srow, p.w),
-                         pixels().subspan(drow, p.w));
+    detail::blend_pixels(src.pixels().subspan(srow, width),
+                         pixels().subspan(drow, width));
   }
 }
 
 auto Image::fill(Rect r, Pixel p) -> void {
   const Rect v = r.intersect(Rect{0, 0, m_width, m_height});
   if (v.empty()) return;
+  const auto width = static_cast<std::size_t>(v.w);
 
   for (int y = 0; y < v.h; ++y) {
     const auto row = static_cast<std::size_t>(v.y + y) *
                      static_cast<std::size_t>(m_width) +
                      static_cast<std::size_t>(v.x);
-    detail::fill_pixels(pixels().subspan(row, v.w), p);
+    detail::fill_pixels(pixels().subspan(row, width), p);
   }
 }
 
