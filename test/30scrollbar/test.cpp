@@ -23,7 +23,7 @@ namespace {
 // Read back the strip column as a string, one glyph per row.
 auto strip_text(const Screen& s, int x, int y, int h) -> std::string {
   std::string out;
-  for (int row = 0; row < h; ++row) out += s.at(x, y + row).text;
+  for (int row = 0; row < h; ++row) out += s.text_at(x, y + row);
   return out;
 }
 
@@ -133,7 +133,7 @@ TEST_CASE("draw_scrollbar: empty rect and empty strip are no-ops",
   draw_scrollbar(s, {0, 0, 0, 5}, 100, 0, 10, g, {}, {}, {});   // no width
   draw_scrollbar(s, {0, 0, 1, 0}, 100, 0, 10, g, {}, {}, {});   // no height
   draw_scrollbar(s, {9, 9, 1, 4}, 100, 0, 10, g, {}, {}, {});   // off-screen
-  REQUIRE(s.at(0, 0).text.empty());  // untouched (a fresh cell has no glyph)
+  REQUIRE(s.text_at(0, 0).empty());  // untouched (a fresh cell has no glyph)
 }
 
 TEST_CASE("scrollbar_glyphs: every style resolves, ascii is the 7-bit one",
@@ -157,7 +157,7 @@ namespace {
 // Read back a horizontal strip row as a string, one glyph per column.
 auto row_strip_text(const Screen& s, int x, int y, int w) -> std::string {
   std::string out;
-  for (int col = 0; col < w; ++col) out += s.at(x + col, y).text;
+  for (int col = 0; col < w; ++col) out += s.text_at(x + col, y);
   return out;
 }
 

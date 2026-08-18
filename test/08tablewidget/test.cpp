@@ -46,8 +46,8 @@ TEST_CASE("TableWidget: empty table draws header only", "[tablewidget]") {
   t.draw(s);
   // Text starts past the selection-marker gutter (#76): mark + separator == 2.
   REQUIRE(t.gutter_cols() == 2);
-  REQUIRE(s.at(2, 0).text == "N");
-  REQUIRE(s.at(3, 0).text == "a");
+  REQUIRE(s.text_at(2, 0) == "N");
+  REQUIRE(s.text_at(3, 0) == "a");
 }
 
 TEST_CASE("TableWidget: rows render below header", "[tablewidget]") {
@@ -58,8 +58,8 @@ TEST_CASE("TableWidget: rows render below header", "[tablewidget]") {
   t.add_row({"hello", "world"});
   t.draw(s);
   // Row 0 is header, row 1 is first data row; x is past the #76 gutter.
-  REQUIRE(s.at(2, 1).text == "h");
-  REQUIRE(s.at(3, 1).text == "e");
+  REQUIRE(s.text_at(2, 1) == "h");
+  REQUIRE(s.text_at(3, 1) == "e");
 }
 
 TEST_CASE("TableWidget: scroll moves visible window", "[tablewidget]") {
@@ -72,15 +72,15 @@ TEST_CASE("TableWidget: scroll moves visible window", "[tablewidget]") {
 
   t.draw(s);
   // First visible data row should be "row0", starting past the #76 gutter.
-  REQUIRE(s.at(2, 1).text == "r");
-  REQUIRE(s.at(3, 1).text == "o");
-  REQUIRE(s.at(4, 1).text == "w");
-  REQUIRE(s.at(5, 1).text == "0");
+  REQUIRE(s.text_at(2, 1) == "r");
+  REQUIRE(s.text_at(3, 1) == "o");
+  REQUIRE(s.text_at(4, 1) == "w");
+  REQUIRE(s.text_at(5, 1) == "0");
 
   t.scroll(5);
   t.draw(s);
   // Now first visible should be "row5".
-  REQUIRE(s.at(5, 1).text == "5");
+  REQUIRE(s.text_at(5, 1) == "5");
 }
 
 TEST_CASE("TableWidget: scroll clamps to bounds", "[tablewidget][failure]") {
@@ -117,7 +117,7 @@ TEST_CASE("TableWidget: a height grow re-clamps the scroll at draw (#48)",
   t.set_geometry({0, 0, 20, 12});  // grow: header + 11 visible rows
   t.draw(s);
   REQUIRE(t.scroll_offset() == 0);  // 10 rows fit in 11 visible rows
-  REQUIRE(s.at(5, 1).text == "0");  // row0 is back at the top (past the gutter)
+  REQUIRE(s.text_at(5, 1) == "0");  // row0 is back at the top (past the gutter)
 }
 
 TEST_CASE("TableWidget: zero-size rect doesn't crash", "[tablewidget][failure]") {
@@ -232,8 +232,8 @@ TEST_CASE("TableWidget: right-aligned column", "[tablewidget]") {
 
   // "42" right-aligned in a 10-wide column that starts past the #76 gutter:
   // ends at gutter+10, so the digits sit at 10 and 11.
-  REQUIRE(s.at(10, 1).text == "4");
-  REQUIRE(s.at(11, 1).text == "2");
+  REQUIRE(s.text_at(10, 1) == "4");
+  REQUIRE(s.text_at(11, 1) == "2");
 }
 
 TEST_CASE("TableWidget: set_cell updates a single value", "[tablewidget]") {
@@ -244,12 +244,12 @@ TEST_CASE("TableWidget: set_cell updates a single value", "[tablewidget]") {
   t.add_row({"cpu", "10%"});
   t.add_row({"mem", "50%"});
   t.draw(s);
-  REQUIRE(s.at(2, 1).text == "c");  // "cpu" row visible, past the #76 gutter
+  REQUIRE(s.text_at(2, 1) == "c");  // "cpu" row visible, past the #76 gutter
 
   t.set_cell(0, 1, "47%");
   t.draw(s);
   // The updated value should be visible in the cell after the header.
-  REQUIRE(s.at(2, 1).text == "c");
+  REQUIRE(s.text_at(2, 1) == "c");
 }
 
 TEST_CASE("TableWidget: set_cell out-of-bounds is a no-op", "[tablewidget][failure]") {
@@ -262,7 +262,7 @@ TEST_CASE("TableWidget: set_cell out-of-bounds is a no-op", "[tablewidget][failu
   t.set_cell(99, 0, "bad");  // row OOB
   t.set_cell(0, 99, "bad");  // col OOB
   t.draw(s);  // must not crash
-  REQUIRE(s.at(2, 1).text == "x");
+  REQUIRE(s.text_at(2, 1) == "x");
 }
 
 TEST_CASE("TableWidget: set_row replaces an entire row", "[tablewidget]") {
@@ -275,8 +275,8 @@ TEST_CASE("TableWidget: set_row replaces an entire row", "[tablewidget]") {
 
   t.set_row(0, {"new", "99"});
   t.draw(s);
-  REQUIRE(s.at(2, 1).text == "n");  // "new" replaced "old", past the #76 gutter
-  REQUIRE(s.at(2, 2).text == "k");  // "keep" unchanged
+  REQUIRE(s.text_at(2, 1) == "n");  // "new" replaced "old", past the #76 gutter
+  REQUIRE(s.text_at(2, 2) == "k");  // "keep" unchanged
 }
 
 TEST_CASE("TableWidget: set_row out-of-bounds is a no-op", "[tablewidget][failure]") {
@@ -288,7 +288,7 @@ TEST_CASE("TableWidget: set_row out-of-bounds is a no-op", "[tablewidget][failur
 
   t.set_row(99, {"bad"});
   t.draw(s);
-  REQUIRE(s.at(2, 1).text == "x");
+  REQUIRE(s.text_at(2, 1) == "x");
 }
 
 // ── Selection marker (#76) ──────────────────────────────────────────────────
@@ -308,10 +308,10 @@ TEST_CASE("TableWidget: the marker is on the selected row only", "[tablewidget]"
   t.set_selected(0);
   t.draw(s);
 
-  REQUIRE(s.at(0, 1).text == "▸");  // selected
-  REQUIRE(s.at(1, 1).text.empty());     // the separator column
-  REQUIRE(s.at(0, 2).text.empty());     // unselected: gutter stays blank
-  REQUIRE(s.at(0, 0).text.empty());     // the header's gutter stays blank too
+  REQUIRE(s.text_at(0, 1) == "▸");  // selected
+  REQUIRE(s.text_at(1, 1).empty());     // the separator column
+  REQUIRE(s.text_at(0, 2).empty());     // unselected: gutter stays blank
+  REQUIRE(s.text_at(0, 0).empty());     // the header's gutter stays blank too
 }
 
 TEST_CASE("TableWidget: the marker follows the selection", "[tablewidget]") {
@@ -323,12 +323,12 @@ TEST_CASE("TableWidget: the marker follows the selection", "[tablewidget]") {
   t.add_row({"b"});
   t.set_selected(0);
   t.draw(s);
-  REQUIRE(s.at(0, 1).text == "▸");
+  REQUIRE(s.text_at(0, 1) == "▸");
 
   t.set_selected(1);
   t.draw(s);
-  REQUIRE(s.at(0, 1).text.empty());
-  REQUIRE(s.at(0, 2).text == "▸");
+  REQUIRE(s.text_at(0, 1).empty());
+  REQUIRE(s.text_at(0, 2) == "▸");
 }
 
 TEST_CASE("TableWidget: the gutter indents the header with its column",
@@ -343,8 +343,8 @@ TEST_CASE("TableWidget: the gutter indents the header with its column",
   t.set_selected(0);
   t.draw(s);
 
-  REQUIRE(s.at(2, 0).text == "H");
-  REQUIRE(s.at(2, 1).text == "d");
+  REQUIRE(s.text_at(2, 0) == "H");
+  REQUIRE(s.text_at(2, 1) == "d");
 }
 
 TEST_CASE("TableWidget: no selection means no marker anywhere", "[tablewidget]") {
@@ -358,7 +358,7 @@ TEST_CASE("TableWidget: no selection means no marker anywhere", "[tablewidget]")
   t.draw(s);
 
   REQUIRE(t.selected() == -1);
-  REQUIRE(s.at(0, 1).text.empty());
+  REQUIRE(s.text_at(0, 1).empty());
 }
 
 TEST_CASE("TableWidget: BorderStyle::Ascii keeps the whole widget 7-bit",
@@ -372,10 +372,10 @@ TEST_CASE("TableWidget: BorderStyle::Ascii keeps the whole widget 7-bit",
   t.set_selected(0);
   t.draw(s);
 
-  REQUIRE(s.at(0, 1).text == "*");
+  REQUIRE(s.text_at(0, 1) == "*");
   REQUIRE(t.gutter_cols() == 2);  // same geometry as the Unicode family
   for (int y = 0; y < 3; ++y) {
-    for (int x = 0; x < 20; ++x) REQUIRE(all_seven_bit(s.at(x, y).text));
+    for (int x = 0; x < 20; ++x) REQUIRE(all_seven_bit(s.text_at(x, y)));
   }
 }
 
@@ -390,8 +390,8 @@ TEST_CASE("TableWidget: a custom marker resizes the gutter", "[tablewidget]") {
   t.set_marker("»»");  // two columns + separator
   REQUIRE(t.gutter_cols() == 3);
   t.draw(s);
-  REQUIRE(s.at(0, 1).text == "»");
-  REQUIRE(s.at(3, 1).text == "a");
+  REQUIRE(s.text_at(0, 1) == "»");
+  REQUIRE(s.text_at(3, 1) == "a");
 
   // Empty restores the style's glyph -- "no marker" is set_marker_enabled.
   t.set_marker("");
@@ -417,15 +417,15 @@ TEST_CASE("TableWidget: the measured marker is the painted marker",
   REQUIRE(t.marker() == ">");
   REQUIRE(t.gutter_cols() == 2);
   t.draw(s);
-  REQUIRE(s.at(0, 1).text == ">");
-  REQUIRE(s.at(2, 1).text == "a");  // NOT indented by the stripped escape
+  REQUIRE(s.text_at(0, 1) == ">");
+  REQUIRE(s.text_at(2, 1) == "a");  // NOT indented by the stripped escape
 
   t.set_marker("\t>");  // tab becomes a space
   REQUIRE(t.marker() == " >");
   REQUIRE(t.gutter_cols() == 3);
   t.draw(s);
-  REQUIRE(s.at(1, 1).text == ">");
-  REQUIRE(s.at(3, 1).text == "a");
+  REQUIRE(s.text_at(1, 1) == ">");
+  REQUIRE(s.text_at(3, 1) == "a");
 }
 
 TEST_CASE("TableWidget: a zero-width marker reserves nothing", "[tablewidget][failure]") {
@@ -450,9 +450,9 @@ TEST_CASE("TableWidget: set_marker_enabled(false) restores the old geometry",
   t.draw(s);
 
   REQUIRE(t.gutter_cols() == 0);
-  REQUIRE(s.at(0, 0).text == "N");  // header flush left
-  REQUIRE(s.at(0, 1).text == "a");  // data flush left, exactly as before #76
-  REQUIRE(s.at(0, 2).text == "b");
+  REQUIRE(s.text_at(0, 0) == "N");  // header flush left
+  REQUIRE(s.text_at(0, 1) == "a");  // data flush left, exactly as before #76
+  REQUIRE(s.text_at(0, 2) == "b");
 }
 
 TEST_CASE("TableWidget: a rect too narrow for both drops the marker, not the text",
@@ -466,8 +466,8 @@ TEST_CASE("TableWidget: a rect too narrow for both drops the marker, not the tex
     t.add_row({"alpha"});
     t.set_selected(0);
     t.draw(s);
-    REQUIRE(s.at(0, 1).text == "▸");
-    REQUIRE(s.at(2, 1).text == "a");
+    REQUIRE(s.text_at(0, 1) == "▸");
+    REQUIRE(s.text_at(2, 1) == "a");
   }
   // w <= 2: it would not, so the gutter goes and the text keeps the row.
   for (const int w : {2, 1}) {
@@ -481,7 +481,7 @@ TEST_CASE("TableWidget: a rect too narrow for both drops the marker, not the tex
     // And the accessor says so: gutter_cols() is what draw() used, not a
     // configured value a consumer would lay out against and be wrong by two.
     REQUIRE(t.gutter_cols() == 0);
-    if (w > 1) REQUIRE(n.at(0, 1).text == "a");
+    if (w > 1) REQUIRE(n.text_at(0, 1) == "a");
   }
 }
 
@@ -593,20 +593,20 @@ TEST_CASE("TableWidget: scrollbar appears only when rows overflow (#21)",
   t.add_row({"0"});
   t.draw(s);
   REQUIRE_FALSE(t.scrollbar_visible());
-  REQUIRE(s.at(11, 1).text != "█");
+  REQUIRE(s.text_at(11, 1) != "█");
   for (int i = 1; i < 6; ++i) t.add_row({std::to_string(i)});
   t.draw(s);
   REQUIRE(t.scrollbar_visible());
   // 6 rows in a 3-row view: the thumb covers half the track (1 of the 3
   // data rows rounds to 2 here -- (3*3 + 3) / 6), pinned at the top.
-  REQUIRE(s.at(11, 1).text == "█");
-  REQUIRE(s.at(11, 2).text == "█");
-  REQUIRE(s.at(11, 3).text == "│");
+  REQUIRE(s.text_at(11, 1) == "█");
+  REQUIRE(s.text_at(11, 2) == "█");
+  REQUIRE(s.text_at(11, 3) == "│");
   // The strip covers the data rows only: the header cell above it keeps the
   // header's own colours and text -- a bar cell there would read as a sort
   // affordance.
-  REQUIRE(s.at(11, 0).text != "█");
-  REQUIRE(s.at(11, 0).text != "│");
+  REQUIRE(s.text_at(11, 0) != "█");
+  REQUIRE(s.text_at(11, 0) != "│");
 }
 
 TEST_CASE("TableWidget: scrollbar thumb tracks the view offset (#21)",
@@ -617,12 +617,12 @@ TEST_CASE("TableWidget: scrollbar thumb tracks the view offset (#21)",
   t.set_columns({{"n"}});
   for (int i = 0; i < 12; ++i) t.add_row({std::to_string(i)});
   t.draw(s);
-  REQUIRE(s.at(11, 1).text == "█");
+  REQUIRE(s.text_at(11, 1) == "█");
   // Wheel to the bottom (12 rows, 3 visible -> max offset 9).
   for (int i = 0; i < 3; ++i) t.on_event(tfsupport::wheel(1, 2, /*up=*/false));
   t.draw(s);
-  REQUIRE(s.at(11, 3).text == "█");  // thumb pinned at the bottom data row
-  REQUIRE(s.at(11, 1).text == "│");
+  REQUIRE(s.text_at(11, 3) == "█");  // thumb pinned at the bottom data row
+  REQUIRE(s.text_at(11, 1) == "│");
 }
 
 TEST_CASE("TableWidget: scrollbar glyphs follow the ascii style (#21)",
@@ -634,8 +634,8 @@ TEST_CASE("TableWidget: scrollbar glyphs follow the ascii style (#21)",
   t.set_columns({{"n"}});
   for (int i = 0; i < 8; ++i) t.add_row({std::to_string(i)});
   t.draw(s);
-  REQUIRE(s.at(11, 1).text == "#");
-  REQUIRE(s.at(11, 2).text == "|");
+  REQUIRE(s.text_at(11, 1) == "#");
+  REQUIRE(s.text_at(11, 2) == "|");
 }
 
 TEST_CASE("TableWidget: click on the scrollbar track page-jumps the view (#21)",
@@ -673,7 +673,7 @@ TEST_CASE("TableWidget: a narrow rect drops the bar before the columns (#21)",
   for (int i = 0; i < 6; ++i) t.add_row({std::to_string(i)});
   t.draw(s);
   REQUIRE_FALSE(t.scrollbar_visible());
-  REQUIRE(s.at(2, 1).text != "█");
+  REQUIRE(s.text_at(2, 1) != "█");
   Screen s2{4, 3};
   TableWidget t2;
   t2.set_geometry({0, 0, 4, 3});
@@ -681,5 +681,5 @@ TEST_CASE("TableWidget: a narrow rect drops the bar before the columns (#21)",
   for (int i = 0; i < 6; ++i) t2.add_row({std::to_string(i)});
   t2.draw(s2);
   REQUIRE(t2.scrollbar_visible());
-  REQUIRE(s2.at(3, 1).text == "█");
+  REQUIRE(s2.text_at(3, 1) == "█");
 }

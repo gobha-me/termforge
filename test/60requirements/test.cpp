@@ -111,7 +111,7 @@ struct Plate : Widget {
   auto draw(Screen& screen) -> void override {
     for (int y = region.y; y < region.y + region.h; ++y)
       for (int x = region.x; x < region.x + region.w; ++x)
-        screen.at(x, y).text = "#";
+        screen.write_text(x, y, "#", Rgb{}, Rgb{});
   }
   auto pixel_regions() -> std::vector<Rect> override { return {region}; }
   [[nodiscard]] auto pixel_region_state(Rect) const noexcept

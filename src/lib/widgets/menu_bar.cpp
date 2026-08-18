@@ -191,7 +191,7 @@ auto MenuBar::draw(Screen& screen) -> void {
     // Still write_text rather than fill_rect. The left-edge reason is gone --
     // #152 made write_text clip a negative x instead of clamping it, so the
     // two now agree there -- but they still differ in the CELL they leave
-    // behind: fill_rect assigns a fresh Cell{"", fg, bg, attrs}, which is
+    // behind: fill_rect assigns a fresh blank Cell with fg/bg/attrs, which is
     // blank() and resets image_id, while write_text(" ") sets text to " " and
     // leaves image_id alone. Swapping is a separate change with its own
     // zero-delta claim to prove, not a tidy-up to smuggle in here.

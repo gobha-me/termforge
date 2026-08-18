@@ -543,7 +543,7 @@ TEST_CASE("FilePicker: BorderStyle::Ascii reaches the entry list and the error"
   for (int y = 0; y < screen.rows(); ++y) {
     for (int x = 0; x < screen.cols(); ++x) {
       INFO("cell " << x << "," << y);
-      REQUIRE(all_seven_bit(screen.at(x, y).text));
+      REQUIRE(all_seven_bit(screen.text_at(x, y)));
     }
   }
 
@@ -552,7 +552,7 @@ TEST_CASE("FilePicker: BorderStyle::Ascii reaches the entry list and the error"
   bool marked = false;
   for (int y = 0; y < screen.rows(); ++y)
     for (int x = 0; x < screen.cols(); ++x)
-      if (screen.at(x, y).text == "*") marked = true;
+      if (screen.text_at(x, y) == "*") marked = true;
   REQUIRE(marked);
 
   // Now the error dialog, which is the other widget the app cannot reach.
@@ -572,7 +572,7 @@ TEST_CASE("FilePicker: BorderStyle::Ascii reaches the entry list and the error"
   for (int y = 0; y < over.rows(); ++y) {
     for (int x = 0; x < over.cols(); ++x) {
       INFO("error-overlay cell " << x << "," << y);
-      REQUIRE(all_seven_bit(over.at(x, y).text));
+      REQUIRE(all_seven_bit(over.text_at(x, y)));
     }
   }
 }

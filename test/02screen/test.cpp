@@ -2,6 +2,7 @@
 
 #include <climits>
 #include <span>
+#include <type_traits>
 
 #include "support/screen.hpp"
 #include "termforge/core/screen.hpp"
@@ -10,6 +11,7 @@
 
 using termforge::Rgb;
 using termforge::Screen;
+using termforge::Cell;
 
 TEST_CASE("Screen: dimensions and default-blank cells", "[screen]") {
   Screen s{80, 24};
@@ -104,7 +106,7 @@ TEST_CASE("Screen: write_text sanitizes before placing cells", "[screen][securit
   s.write_text(0, 0, "hi\033[1Jthere", Rgb{255,255,255}, Rgb{0,0,0});
   // The ESC[1J must be gone; cells contain only "hithere".
   std::string row;
-  for (int x = 0; x < 7; ++x) row += s.at(x, 0).text;
+  for (int x = 0; x < 7; ++x) row += s.text_at(x, 0);
   REQUIRE(row == "hithere");
 }
 
@@ -112,8 +114,8 @@ TEST_CASE("Screen: write_text clips at the right edge", "[screen][failure]") {
   Screen s{5, 3};
   const int written = s.write_text(3, 0, "abcdefg", Rgb{}, Rgb{});
   REQUIRE(written == 2);  // only 'a','b' fit (cols 3,4)
-  REQUIRE(s.at(3, 0).text == "a");
-  REQUIRE(s.at(4, 0).text == "b");
+  REQUIRE(s.text_at(3, 0) == "a");
+  REQUIRE(s.text_at(4, 0) == "b");
 }
 
 TEST_CASE("Screen: write_text emits continuation cells for wide glyphs",
@@ -126,12 +128,12 @@ TEST_CASE("Screen: write_text emits continuation cells for wide glyphs",
   const std::string jie = "\xE7\x95\x8C";   // 界 U+4E16 (width 2)
   const int cols = s.write_text(0, 0, shi + jie, Rgb{}, Rgb{});
   REQUIRE(cols == 4);                        // two glyphs × two columns
-  REQUIRE(s.at(0, 0).text == shi);
-  REQUIRE(s.at(1, 0).text == std::string("\0", 1));  // continuation cell
-  REQUIRE(s.at(2, 0).text == jie);
-  REQUIRE(s.at(3, 0).text == std::string("\0", 1));
+  REQUIRE(s.text_at(0, 0) == shi);
+  REQUIRE(s.text_at(1, 0) == std::string("\0", 1));  // continuation cell
+  REQUIRE(s.text_at(2, 0) == jie);
+  REQUIRE(s.text_at(3, 0) == std::string("\0", 1));
   // The continuation cell is not "blank" (renderer must skip, not clear it).
-  REQUIRE_FALSE(s.at(1, 0).text.empty());
+  REQUIRE_FALSE(s.text_at(1, 0).empty());
 }
 
 TEST_CASE("Screen: write_text pads rather than splitting a wide glyph at the edge",
@@ -142,7 +144,7 @@ TEST_CASE("Screen: write_text pads rather than splitting a wide glyph at the edg
   const std::string shi = "\xE4\xB8\x96";   // 世
   const int cols = s.write_text(2, 0, shi, Rgb{}, Rgb{});  // only col 2 free
   REQUIRE(cols == 1);
-  REQUIRE(s.at(2, 0).text == " ");          // padded, not half a glyph
+  REQUIRE(s.text_at(2, 0) == " ");          // padded, not half a glyph
 }
 
 TEST_CASE("Screen: write_text folds a combining mark onto its base cell",
@@ -153,8 +155,66 @@ TEST_CASE("Screen: write_text folds a combining mark onto its base cell",
   const std::string base_accent = "a\xCC\x81";  // 'a' + combining acute U+0301
   const int cols = s.write_text(0, 0, base_accent, Rgb{}, Rgb{});
   REQUIRE(cols == 1);                            // one display column
-  REQUIRE(s.at(0, 0).text == base_accent);       // both code points in one cell
+  REQUIRE(s.text_at(0, 0) == base_accent);       // both code points in one cell
   REQUIRE(s.at(1, 0).blank());
+}
+
+TEST_CASE("Screen: Cell is compact and long graphemes spill losslessly",
+          "[screen][spill]") {
+  STATIC_REQUIRE(std::is_trivially_copyable_v<termforge::Cell>);
+  STATIC_REQUIRE(std::has_unique_object_representations_v<termforge::Cell>);
+  STATIC_REQUIRE(sizeof(termforge::Cell) == 24);
+
+  Screen s{8, 1};
+  const std::string emoji = "\xF0\x9F\x8E\x89";  // four-byte inline boundary
+  const std::string five = "a\xCC\x81\xCC\x80";  // five bytes: spill
+  std::string long_cluster{"a"};
+  for (int i = 0; i < 12; ++i) long_cluster += "\xCC\x81";  // 25 bytes
+
+  REQUIRE(s.write_text(0, 0, emoji, Rgb{}, Rgb{}) == 2);
+  REQUIRE(s.write_text(2, 0, five, Rgb{}, Rgb{}) == 1);
+  REQUIRE(s.write_text(3, 0, long_cluster, Rgb{}, Rgb{}) == 1);
+  REQUIRE(s.text_at(0, 0) == emoji);
+  REQUIRE(s.text_at(1, 0) == std::string_view{"\0", 1});
+  REQUIRE(s.text_at(2, 0) == five);
+  REQUIRE(s.text_at(3, 0) == long_cluster);
+}
+
+TEST_CASE("Screen: spill identities never create false Cell equality",
+          "[screen][spill][failure]") {
+  const std::string acute = "a\xCC\x81\xCC\x80";
+  const std::string grave = "a\xCC\x80\xCC\x81";
+  Screen a{1, 1};
+  Screen b{1, 1};
+  a.write_text(0, 0, acute, Rgb{}, Rgb{});
+  b.write_text(0, 0, grave, Rgb{}, Rgb{});
+  REQUIRE(a.text_at(0, 0) == acute);
+  REQUIRE(b.text_at(0, 0) == grave);
+  REQUIRE_FALSE(a.at(0, 0) == b.at(0, 0));
+
+  const Cell before = a.at(0, 0);
+  a.write_text(0, 0, acute, Rgb{}, Rgb{});  // same content keeps its token
+  REQUIRE(a.at(0, 0) == before);
+}
+
+TEST_CASE("Screen: resize, copy, fill and clear preserve spill ownership",
+          "[screen][spill][failure]") {
+  const std::string cluster = "x\xCC\x81\xCC\x80";
+  Screen s{3, 2};
+  s.write_text(1, 1, cluster, Rgb{1, 2, 3}, Rgb{4, 5, 6});
+
+  Screen copy = s;
+  REQUIRE(copy.text_at(1, 1) == cluster);
+  s.resize(5, 4);
+  REQUIRE(s.text_at(1, 1) == cluster);
+  s.fill_rect(1, 1, 1, 1, Rgb{}, Rgb{});
+  REQUIRE(s.text_at(1, 1).empty());
+  REQUIRE(copy.text_at(1, 1) == cluster);
+
+  copy.clear(Rgb{7, 8, 9}, Rgb{10, 11, 12});
+  REQUIRE(copy.text_at(1, 1).empty());
+  REQUIRE(copy.at(1, 1).fg == Rgb{7, 8, 9});
+  REQUIRE(copy.at(1, 1).bg == Rgb{10, 11, 12});
 }
 
 // --------------------------------------------------------------------------
@@ -185,7 +245,7 @@ TEST_CASE("Screen: write_text drops the off-screen prefix at a negative x",
   REQUIRE(n == 4);
   REQUIRE(tfsupport::row_text(s, 0) == "cdef      ");  // whole row: a
                                                        // relocation cannot hide
-  REQUIRE(s.at(0, 0).text == "c");
+  REQUIRE(s.text_at(0, 0) == "c");
   REQUIRE(s.at(3, 0).bg == kBg);
   REQUIRE(s.at(4, 0).bg != kBg);  // and the run stops where it should
 }
@@ -217,10 +277,10 @@ TEST_CASE("Screen: write_text pads rather than splitting a wide glyph at the lef
   Screen s{6, 1};
   const int n = s.write_text(-1, 0, kShi + "ab", kFg, kBg);
   REQUIRE(n == 3);                    // the pad, then 'a', then 'b'
-  REQUIRE(s.at(0, 0).text == " ");    // padded, not half a glyph, not "\0"
+  REQUIRE(s.text_at(0, 0) == " ");    // padded, not half a glyph, not "\0"
   REQUIRE(s.at(0, 0).bg == kBg);      // and PAINTED, in the run's colours
   REQUIRE_FALSE(s.at(0, 0).blank());
-  REQUIRE(s.at(1, 0).text == "a");
+  REQUIRE(s.text_at(1, 0) == "a");
   REQUIRE(tfsupport::row_text(s, 0) == " ab   ");
 }
 
@@ -231,7 +291,7 @@ TEST_CASE("Screen: a wide glyph fully off the left leaves column 0 to the next g
   Screen s{6, 1};
   const int n = s.write_text(-2, 0, kShi + "ab", kFg, kBg);  // 世 covers -2,-1
   REQUIRE(n == 2);
-  REQUIRE(s.at(0, 0).text == "a");
+  REQUIRE(s.text_at(0, 0) == "a");
   REQUIRE(tfsupport::row_text(s, 0) == "ab    ");
 }
 
@@ -240,7 +300,7 @@ TEST_CASE("Screen: a combining mark whose base fell off the left does not migrat
   Screen s{6, 1};
   const int n = s.write_text(-1, 0, "a\xCC\x81" "b", kFg, kBg);  // á at -1, b at 0
   REQUIRE(n == 1);
-  REQUIRE(s.at(0, 0).text == "b");  // the acute did not fold onto 'b'
+  REQUIRE(s.text_at(0, 0) == "b");  // the acute did not fold onto 'b'
   REQUIRE(tfsupport::row_text(s, 0) == "b     ");
 }
 
@@ -255,7 +315,7 @@ TEST_CASE("Screen: a combining mark after a dropped straddling glyph does not mi
   Screen s{6, 1};
   const int n = s.write_text(-1, 0, kShi + "\xCC\x81" "b", kFg, kBg);
   REQUIRE(n == 2);
-  REQUIRE(s.at(0, 0).text == " ");  // the pad, not " ́"
+  REQUIRE(s.text_at(0, 0) == " ");  // the pad, not " ́"
   REQUIRE(tfsupport::row_text(s, 0) == " b    ");
 }
 
@@ -264,8 +324,8 @@ TEST_CASE("Screen: a combining mark still folds when the run started off-screen"
   Screen s{6, 1};
   const int n = s.write_text(-2, 0, "xya\xCC\x81z", kFg, kBg);  // x,y dropped
   REQUIRE(n == 2);
-  REQUIRE(s.at(0, 0).text == std::string("a\xCC\x81"));
-  REQUIRE(s.at(1, 0).text == "z");
+  REQUIRE(s.text_at(0, 0) == std::string("a\xCC\x81"));
+  REQUIRE(s.text_at(1, 0) == "z");
 }
 
 TEST_CASE("Screen: write_text clips both edges at once", "[screen][width][failure]") {
@@ -278,8 +338,8 @@ TEST_CASE("Screen: write_text clips both edges at once", "[screen][width][failur
   // would pass under a mutant that painted neither.
   Screen t{2, 1};
   REQUIRE(t.write_text(-1, 0, kShi + kShi, kFg, kBg) == 2);
-  REQUIRE(t.at(0, 0).text == " ");
-  REQUIRE(t.at(1, 0).text == " ");
+  REQUIRE(t.text_at(0, 0) == " ");
+  REQUIRE(t.text_at(1, 0) == " ");
   REQUIRE(t.at(0, 0).bg == kBg);
   REQUIRE(t.at(1, 0).bg == kBg);
 }
@@ -312,11 +372,11 @@ TEST_CASE("Screen: a zero-column grid paints nothing at a negative x",
 TEST_CASE("Screen: out-of-bounds access is safe (no corruption)", "[screen][failure]") {
   Screen s{10, 10};
   // Writes out of bounds must not corrupt in-bounds cells or crash.
-  s.at(-1, -1).text = "X";
-  s.at(999, 999).text = "Y";
-  s.at(0, 0).text = "ok";
-  REQUIRE(s.at(0, 0).text == "ok");
-  REQUIRE(s.at(-1, -1).text.empty());  // OOB read returns a safe blank
+  s.write_text(-1, -1, "X", Rgb{}, Rgb{});
+  s.write_text(999, 999, "Y", Rgb{}, Rgb{});
+  s.write_text(0, 0, "o", Rgb{}, Rgb{});
+  REQUIRE(s.text_at(0, 0) == "o");
+  REQUIRE(s.text_at(-1, -1).empty());  // OOB read returns a safe blank
 }
 
 TEST_CASE("Screen: fill_rect blanks a sub-rect and clamps to the grid",
@@ -343,14 +403,14 @@ TEST_CASE("Screen: fill_rect blanks a sub-rect and clamps to the grid",
   // The wide-glyph continuation cell that sat at (4,3) is gone too.
   REQUIRE(s.at(4, 3).blank());
   // Cells outside the rect are untouched.
-  REQUIRE(s.at(0, 0).text == "o");                       // row above
+  REQUIRE(s.text_at(0, 0) == "o");                       // row above
   REQUIRE(s.at(6, 2).blank());                           // col to the right (was already blank)
 }
 
 TEST_CASE("Screen: fill_rect clips negative and oversized rects safely",
           "[screen][fill_rect][failure]") {
   Screen s{5, 4};
-  s.at(0, 0).text = "keep";
+  s.write_text(0, 0, "keep", Rgb{}, Rgb{});
   // A rect starting off the top-left and extending past the grid must clip,
   // not corrupt memory or wrap.
   s.fill_rect(-3, -3, 100, 100, Rgb{}, Rgb{0x09, 0x09, 0x09});
@@ -358,10 +418,10 @@ TEST_CASE("Screen: fill_rect clips negative and oversized rects safely",
   REQUIRE(s.at(0, 0).bg == Rgb{0x09, 0x09, 0x09});
   REQUIRE(s.at(4, 3).bg == Rgb{0x09, 0x09, 0x09});
   // Degenerate sizes are no-ops.
-  s.at(1, 1).text = "z";
+  s.write_text(1, 1, "z", Rgb{}, Rgb{});
   s.fill_rect(1, 1, 0, 5, Rgb{}, Rgb{});
   s.fill_rect(1, 1, 5, -2, Rgb{}, Rgb{});
-  REQUIRE(s.at(1, 1).text == "z");
+  REQUIRE(s.text_at(1, 1) == "z");
 }
 
 TEST_CASE("Screen: fill_rect does not lose a rect to signed overflow",
@@ -385,12 +445,12 @@ TEST_CASE("Screen: fill_rect does not lose a rect to signed overflow",
   // The same overflow in the direction that must stay a no-op: entirely off
   // the right edge, and entirely off the bottom.
   Screen t{5, 4};
-  t.at(0, 0).text = "keep";
-  t.at(1, 1).text = "also";
+  t.write_text(0, 0, "k", Rgb{}, Rgb{});
+  t.write_text(1, 1, "a", Rgb{}, Rgb{});
   t.fill_rect(INT_MAX - 2, 0, 100, 1, Rgb{}, bg);
   t.fill_rect(0, INT_MAX - 2, 1, 100, Rgb{}, bg);
-  REQUIRE(t.at(0, 0).text == "keep");
-  REQUIRE(t.at(1, 1).text == "also");
+  REQUIRE(t.text_at(0, 0) == "k");
+  REQUIRE(t.text_at(1, 1) == "a");
 
   // The underflow direction is deliberately not asserted: reaching it needs a
   // negative w, and both the old code and intersect() reject that before any
@@ -399,12 +459,12 @@ TEST_CASE("Screen: fill_rect does not lose a rect to signed overflow",
 
 TEST_CASE("Screen: resize preserves top-left content", "[screen]") {
   Screen s{10, 10};
-  s.at(2, 3).text = "k";
+  s.write_text(2, 3, "k", Rgb{}, Rgb{});
   s.resize(20, 20);
   REQUIRE(s.cols() == 20);
-  REQUIRE(s.at(2, 3).text == "k");
+  REQUIRE(s.text_at(2, 3) == "k");
   s.resize(2, 2);  // shrink clips
-  REQUIRE(s.at(2, 3).text.empty());  // now OOB -> blank
+  REQUIRE(s.text_at(2, 3).empty());  // now OOB -> blank
 }
 
 TEST_CASE("Screen: write_styled paints per-span styles and empty spans",
@@ -424,14 +484,14 @@ TEST_CASE("Screen: write_styled paints per-span styles and empty spans",
   };
   const int n = s.write_styled(0, 0, spans);
   REQUIRE(n == 4);
-  REQUIRE(s.at(0, 0).text == "a");
+  REQUIRE(s.text_at(0, 0) == "a");
   REQUIRE(s.at(0, 0).fg == red);
   REQUIRE(s.at(0, 0).attrs == Attr::Bold);
-  REQUIRE(s.at(1, 0).text == "b");
-  REQUIRE(s.at(2, 0).text == "c");
+  REQUIRE(s.text_at(1, 0) == "b");
+  REQUIRE(s.text_at(2, 0) == "c");
   REQUIRE(s.at(2, 0).fg == blue);
   REQUIRE(s.at(2, 0).attrs == Attr::None);
-  REQUIRE(s.at(3, 0).text == "d");
+  REQUIRE(s.text_at(3, 0) == "d");
 }
 
 TEST_CASE("Screen: write_styled keeps later spans past a right-clipped run",
@@ -446,9 +506,9 @@ TEST_CASE("Screen: write_styled keeps later spans past a right-clipped run",
       TextSpan{"Q", TextStyle{b, {}}},    // cursor is already past the edge
   };
   REQUIRE(s.write_styled(3, 0, spans) == 2);
-  REQUIRE(s.at(3, 0).text == "x");
+  REQUIRE(s.text_at(3, 0) == "x");
   REQUIRE(s.at(3, 0).fg == a);
-  REQUIRE(s.at(4, 0).text == "y");
+  REQUIRE(s.text_at(4, 0) == "y");
   REQUIRE(s.at(4, 0).fg == a);
 }
 
@@ -467,11 +527,11 @@ TEST_CASE("Screen: write_styled carries the logical cursor past a clipped prefix
       TextSpan{"XY", TextStyle{b, {}}},   // must begin at logical column 1
   };
   REQUIRE(s.write_styled(-2, 0, spans) == 3);
-  REQUIRE(s.at(0, 0).text == "c");
+  REQUIRE(s.text_at(0, 0) == "c");
   REQUIRE(s.at(0, 0).fg == a);
-  REQUIRE(s.at(1, 0).text == "X");
+  REQUIRE(s.text_at(1, 0) == "X");
   REQUIRE(s.at(1, 0).fg == b);
-  REQUIRE(s.at(2, 0).text == "Y");
+  REQUIRE(s.text_at(2, 0) == "Y");
   REQUIRE(s.at(2, 0).fg == b);
 }
 

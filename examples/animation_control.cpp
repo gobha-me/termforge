@@ -109,7 +109,7 @@ class AnimationControlDemo final : public App {
   }
 
   auto on_render(Screen& screen) -> void override {
-    screen.clear(Cell{.text = " ", .fg = {}, .bg = kBg});
+    screen.clear({}, kBg);
     screen.write_text(2, 1, "Terminal-driven animation control", {235, 240, 250},
                       {12, 16, 24}, Attr::Bold);
     screen.write_text(2, 3, "P once/restart   L loop   I once/ignore", kFg,

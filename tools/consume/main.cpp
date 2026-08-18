@@ -92,7 +92,7 @@ auto main() -> int {
 
   if (screen.at(0, 0).blank() ||
       screen.at(0, 1).attrs != termforge::Attr::Underline ||
-      screen.at(0, 2).text != "s")
+      screen.text_at(0, 2) != "s")
     return 1;
   return 0;
 }

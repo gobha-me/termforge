@@ -4,7 +4,7 @@
 // foreground/background combinations. Shows how to:
 //   - Use Rgb{r, g, b} for colors
 //   - Write colored text at specific positions
-//   - Clear the screen with a custom fill cell
+//   - Clear the screen with custom colors
 
 #include "termforge/core/app.hpp"
 
@@ -13,7 +13,7 @@ using namespace termforge;
 class ColorsApp final : public App {
  public:
   auto on_render(Screen& screen) -> void override {
-    screen.clear(Cell{.text = " ", .fg = {}, .bg = Rgb{0x05, 0x05, 0x10}});
+    screen.clear({}, Rgb{0x05, 0x05, 0x10});
 
     const int W = screen.cols();
     int y = 1;

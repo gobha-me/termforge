@@ -73,6 +73,44 @@ emitted bytes. At the same size, 100% ASCII churn was 5.234 ms and CJK-wide was
 to the serial payload hash and scalar frame-time work in #89 before #90 SIMD;
 they do not establish terminal throughput, which remains W5.
 
+## Trivially copyable Cell storage
+
+Issue #92 replaces `Cell`'s 48-byte `std::string` representation with a
+24-byte trivially copyable token. UTF-8 scalars through four bytes remain
+inline; longer grapheme clusters use a process-unique identity into their
+owning `Screen`'s spill table and are never truncated. `Screen::text_at`
+resolves either representation. A standalone copied `Cell` intentionally
+cannot resolve Screen-owned text, and colored clears now use
+`Screen::clear(fg, bg, attrs)` instead of accepting an aggregate cell.
+
+The renderer compares unchanged rows as raw cells and copies its shadow as one
+contiguous block. `clear` fills the whole grid with trivial cells and
+`fill_rect` does the same row by row. Spill identities are never reused, so
+different content cannot compare equal; identical content may conservatively
+redraw after reclamation. Grapheme bytes remain lossless at and beyond the
+inline boundary, including a 25-byte combining cluster.
+
+Same-host before/after run on 2026-08-18: GCC 14.2, Linux 6.12.74, x86-64
+container host, Release build, AVX2 auto-selected, nine calibrated samples
+after two warmups. The comparison input halves with `sizeof(Cell)`; durations
+are the directly comparable result.
+
+| workload | before median / p95 | after median / p95 | median change |
+| --- | ---: | ---: | ---: |
+| Cell comparison | 0.797 / 0.864 ms | 0.288 / 0.296 ms | -63.8% |
+| 400×120, 0% ASCII churn | 0.300 / 0.311 ms | 0.102 / 0.127 ms | -66.0% |
+| 400×120, 10% ASCII churn | 0.366 / 0.405 ms | 0.192 / 0.197 ms | -47.7% |
+| 400×120, 100% ASCII churn | 1.015 / 1.042 ms | 1.080 / 1.131 ms | +6.4% |
+| 400×120, 0% CJK-wide churn | 0.347 / 0.352 ms | 0.103 / 0.104 ms | -70.2% |
+| 400×120, 100% CJK-wide churn | 1.197 / 1.237 ms | 1.223 / 1.255 ms | +2.2% |
+| 400×120, 0% combining churn | 0.380 / 0.447 ms | 0.094 / 0.102 ms | -75.1% |
+| 400×120, 100% combining churn | 1.805 / 1.816 ms | 1.756 / 1.777 ms | -2.7% |
+
+The row fast path materially improves clean and partially dirty frames. Fully
+dirty output is effectively neutral: terminal command assembly and sink bytes
+dominate once every cell must be emitted. These are CPU-side O(1)-sink results,
+not terminal-throughput claims.
+
 ## W2 partial-update paint sweep
 
 W2 drives one deterministic SGR buttonless-motion event through the production

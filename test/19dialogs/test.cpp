@@ -473,14 +473,14 @@ TEST_CASE("Dialog: set_border_style reaches the frame it owns",
   d.draw(screen);
 
   const Rect g = d.rect();
-  REQUIRE(screen.at(g.x, g.y).text == "+");
-  REQUIRE(screen.at(g.x + g.w - 1, g.y + g.h - 1).text == "+");
-  REQUIRE(screen.at(g.x + 1, g.y).text == "|");  // title delimiter
-  REQUIRE(screen.at(g.x, g.y + 1).text == "|");
+  REQUIRE(screen.text_at(g.x, g.y) == "+");
+  REQUIRE(screen.text_at(g.x + g.w - 1, g.y + g.h - 1) == "+");
+  REQUIRE(screen.text_at(g.x + 1, g.y) == "|");  // title delimiter
+  REQUIRE(screen.text_at(g.x, g.y + 1) == "|");
   // Nothing multi-byte anywhere on the border ring.
   for (int x = g.x; x < g.x + g.w; ++x) {
-    for (const unsigned char c : screen.at(x, g.y).text) REQUIRE(c < 0x80);
-    for (const unsigned char c : screen.at(x, g.y + g.h - 1).text)
+    for (const unsigned char c : screen.text_at(x, g.y)) REQUIRE(c < 0x80);
+    for (const unsigned char c : screen.text_at(x, g.y + g.h - 1))
       REQUIRE(c < 0x80);
   }
 }
@@ -533,8 +533,8 @@ TEST_CASE("Dialog: body prose shares TextBox word boundaries (#24)",
   std::string first;
   std::string second;
   for (int x = g.x + 1; x < g.x + g.w - 1; ++x) {
-    first += screen.at(x, g.y + 1).text;
-    second += screen.at(x, g.y + 2).text;
+    first += screen.text_at(x, g.y + 1);
+    second += screen.text_at(x, g.y + 2);
   }
   CHECK(first == "alpha ");
   CHECK(second == "beta");
@@ -571,7 +571,7 @@ TEST_CASE("Dialog: draw repaints its whole rect", "[dialog][failure]") {
   for (int y = g.y + 1; y < g.y + g.h - 1; ++y) {
     for (int x = g.x + 1; x < g.x + g.w - 1; ++x) {
       REQUIRE(screen.at(x, y).bg == Rgb{0x0A, 0x0A, 0x14});
-      REQUIRE(screen.at(x, y).text != "X");
+      REQUIRE(screen.text_at(x, y) != "X");
     }
   }
 }
@@ -1452,6 +1452,29 @@ TEST_CASE("App: Backdrop::Fill is also restored", "[overlay][draw][failure]") {
   REQUIRE(screen.at(0, 0) == before);
 }
 
+TEST_CASE("App: Backdrop::Fill owns spilled text until restore",
+          "[overlay][draw][spill][failure]") {
+  OverlayProbe app;
+  Screen screen{20, 6};
+  const std::string cluster = "a\xCC\x81\xCC\x80";
+  const Rgb fg{0xFF, 0xEE, 0xDD};
+  const Rgb bg{0x40, 0x30, 0x20};
+  screen.write_text(0, 0, cluster, fg, bg);
+
+  CountWidget ov;
+  ov.set_geometry(Rect{4, 2, 6, 2});
+  app.push_overlay(ov, OverlayOptions{Backdrop::Fill, false});
+  app.draw_overlays(screen);
+  REQUIRE(screen.at(0, 0).blank());
+  // A same-size resize reclaims the now-unreferenced Screen spill. The
+  // backdrop therefore has to own the bytes, not merely copy the Cell token.
+  screen.resize(screen.cols(), screen.rows());
+  app.restore(screen);
+  REQUIRE(screen.text_at(0, 0) == cluster);
+  REQUIRE(screen.at(0, 0).fg == fg);
+  REQUIRE(screen.at(0, 0).bg == bg);
+}
+
 namespace {
 
 // An overlay that pops itself while drawing — a toast that expires mid-frame.
@@ -1498,7 +1521,7 @@ TEST_CASE("Dialog: controls never spill past the bottom border",
   // The bottom border row is still a border: no button text on it. Single is
   // the default border family (#20), which is what makes "─" the expectation.
   for (int x = g.x + 1; x < g.x + g.w - 1; ++x)
-    REQUIRE(screen.at(x, g.y + g.h - 1).text == "─");
+    REQUIRE(screen.text_at(x, g.y + g.h - 1) == "─");
   // And nothing was painted below the dialog.
   for (int y = g.y + g.h; y < 7; ++y)
     REQUIRE(screen.at(g.x + 1, y).bg == Rgb{0x90, 0x90, 0x90});
@@ -1514,8 +1537,8 @@ TEST_CASE("Dialog: a screen too narrow clips buttons inside the border",
   REQUIRE(g.x + g.w <= 14);
   // Every button stays inside the frame's interior.
   for (int y = g.y + 1; y < g.y + g.h - 1; ++y) {
-    REQUIRE(screen.at(g.x, y).text == "│");
-    REQUIRE(screen.at(g.x + g.w - 1, y).text == "│");
+    REQUIRE(screen.text_at(g.x, y) == "│");
+    REQUIRE(screen.text_at(g.x + g.w - 1, y) == "│");
   }
 }
 
@@ -1529,7 +1552,7 @@ TEST_CASE("PromptDialog: a short screen collapses the rows instead of "
   const Rect g = d.rect();
   REQUIRE(g.y + g.h <= 6);
   for (int x = g.x + 1; x < g.x + g.w - 1; ++x)
-    REQUIRE(screen.at(x, g.y + g.h - 1).text == "─");
+    REQUIRE(screen.text_at(x, g.y + g.h - 1) == "─");
 }
 
 TEST_CASE("Dialog: copy and move are deleted", "[dialog][failure]") {

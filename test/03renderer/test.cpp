@@ -159,6 +159,32 @@ TEST_CASE("Renderer: wide glyph round-trips without over-painting its continuati
   REQUIRE(out.empty());
 }
 
+TEST_CASE("Renderer: spilled graphemes diff by identity without losing bytes",
+          "[renderer][spill][failure]") {
+  FallbackDriver d;
+  std::string out;
+  d.set_output(&out);
+  Renderer r(d);
+  Screen s{2, 1};
+  const std::string first = "a\xCC\x81\xCC\x80";
+  const std::string second = "a\xCC\x80\xCC\x81";
+
+  s.write_text(0, 0, first, Rgb{}, Rgb{});
+  r.present(s);
+  r.flush();
+  REQUIRE(out.find(first) != std::string::npos);
+
+  out.clear();
+  r.present(s);
+  r.flush();
+  REQUIRE(out.empty());
+
+  s.write_text(0, 0, second, Rgb{}, Rgb{});
+  r.present(s);
+  r.flush();
+  REQUIRE(out.find(second) != std::string::npos);
+}
+
 TEST_CASE("Renderer: blank cells emit space with background color", "[renderer][color]") {
   AnsiRgbDriver d;
   std::string out;
@@ -166,7 +192,7 @@ TEST_CASE("Renderer: blank cells emit space with background color", "[renderer][
   Renderer r(d);
   Screen s{3, 1};
   // Leave cell (1,0) blank by clearing with a custom fill.
-  s.clear(Cell{.text = " ", .fg = Rgb{0xE0, 0xE0, 0xF0}, .bg = Rgb{0x0A, 0x0A, 0x14}});
+  s.clear(Rgb{0xE0, 0xE0, 0xF0}, Rgb{0x0A, 0x0A, 0x14});
   r.present(s);
   r.flush();
   // The blank cells should be emitted as spaces with the fill's bg color.

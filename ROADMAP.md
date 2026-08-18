@@ -94,6 +94,14 @@ completed items.
 > `memcpy` remains the blit kernel because a private AVX2 loop did not improve
 > it. The #88 harness records 16-52% median gains without timing gates.
 >
+> **2026-08-18 — compact, lossless Cell storage.** **#92** replaces the
+> 48-byte string-owning Cell with an exactly 24-byte trivially copyable token.
+> Four-byte UTF-8 scalars stay inline and longer graphemes use Screen-owned
+> spill storage without truncation. Renderer row diffs/shadow copies and
+> Screen clear/fill can now use bulk operations; the same-host W3 clean-frame
+> cases improve 66–75%. `Screen::text_at` is the intentional breaking read
+> boundary before any future grid-diff kernel work.
+>
 > **2026-08-14 — bounded game benchmark CLI.** **#252** was not reproducible
 > from a fresh GCC 13 Release build on either the development or reporting
 > host, but exposed that CI replayed the frame seam without ever launching the
@@ -413,6 +421,7 @@ completed items.
 11. ~~**Deterministic loop chain** — synthetic clock (#119), raw-input
     playback (#120), and opt-in demand rendering (#150)~~ **DONE**
 12. **Epic 5 (Sixel)** — kitty + half-blocks bracket the matrix
-13. ~~**#89 scalar frame-time bundle**~~ **DONE** — measured against #88's W3
+13. ~~**#89 scalar frame-time bundle and #92 trivial Cell storage**~~ **DONE**
+    — both measured against #88's W3
     and kernel baseline before adding SIMD
 14. **Epic 6.2-6.5 (Polish)** — as time allows

@@ -26,8 +26,8 @@ using namespace termforge;
 
 namespace {
 
-auto text_at(const Screen& screen, int x, int y) -> const std::string& {
-  return screen.at(x, y).text;
+auto text_at(const Screen& screen, int x, int y) -> std::string_view {
+  return screen.text_at(x, y);
 }
 
 struct BlockingOverlay final : Widget {

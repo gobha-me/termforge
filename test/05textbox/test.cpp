@@ -21,7 +21,7 @@ auto render_row(TextBox& box, int width, int height, int y) -> std::string {
   box.set_geometry({0, 0, width, height});
   box.draw(s);
   std::string row;
-  for (int x = 0; x < width; ++x) row += s.at(x, y).text;
+  for (int x = 0; x < width; ++x) row += s.text_at(x, y);
   return row;
 }
 
@@ -209,7 +209,7 @@ TEST_CASE("TextBox: scroll indicator appears when scrolled up", "[textbox]") {
   box.draw(s);
   // the "[more]" indicator should be somewhere on row 0
   std::string row0;
-  for (int x = 0; x < 20; ++x) row0 += s.at(x, 0).text;
+  for (int x = 0; x < 20; ++x) row0 += s.text_at(x, 0);
   REQUIRE(row0.find("[more]") != std::string::npos);
 }
 
@@ -229,7 +229,7 @@ TEST_CASE("TextBox: over-scrolling up clamps instead of blanking",
 
   std::string all;
   for (int y = 0; y < 10; ++y)
-    for (int x = 0; x < 20; ++x) all += s.at(x, y).text;
+    for (int x = 0; x < 20; ++x) all += s.text_at(x, y);
   REQUIRE(all.find("line 0") != std::string::npos);
   REQUIRE(all.find("line 4") != std::string::npos);
   // Content fits entirely → the clamp lands back at the bottom.
@@ -277,11 +277,11 @@ TEST_CASE("TextBox: scrollbar appears when content overflows, thumb at bottom (#
   for (int i = 0; i < 3; ++i) box.append("line " + std::to_string(i));
   Screen s{20, 4};
   box.draw(s);
-  REQUIRE(s.at(19, 0).text != "█");  // everything fits: no bar
+  REQUIRE(s.text_at(19, 0) != "█");  // everything fits: no bar
   for (int i = 3; i < 12; ++i) box.append("line " + std::to_string(i));
   box.draw(s);
-  REQUIRE(s.at(19, 3).text == "█");  // pinned to the bottom
-  REQUIRE(s.at(19, 0).text == "│");
+  REQUIRE(s.text_at(19, 3) == "█");  // pinned to the bottom
+  REQUIRE(s.text_at(19, 0) == "│");
 }
 
 TEST_CASE("TextBox: scrollbar thumb moves as the view scrolls up (#21)",
@@ -298,8 +298,8 @@ TEST_CASE("TextBox: scrollbar thumb moves as the view scrolls up (#21)",
   box.draw(s);
   // 12 rows, 4 visible, scrolled up 9 -> clamped to offset-from-bottom 8 =
   // the TOP of the content: thumb at the top row.
-  REQUIRE(s.at(19, 0).text == "█");
-  REQUIRE(s.at(19, 3).text == "│");
+  REQUIRE(s.text_at(19, 0) == "█");
+  REQUIRE(s.text_at(19, 3) == "│");
 }
 
 TEST_CASE("TextBox: scrollbar glyphs follow the ascii style (#21)",
@@ -310,8 +310,8 @@ TEST_CASE("TextBox: scrollbar glyphs follow the ascii style (#21)",
   for (int i = 0; i < 12; ++i) box.append("line " + std::to_string(i));
   Screen s{20, 4};
   box.draw(s);
-  REQUIRE(s.at(19, 3).text == "#");
-  REQUIRE(s.at(19, 0).text == "|");
+  REQUIRE(s.text_at(19, 3) == "#");
+  REQUIRE(s.text_at(19, 0) == "|");
 }
 
 TEST_CASE("TextBox: [more] chip and scrollbar coexist (#21)",
@@ -325,19 +325,19 @@ TEST_CASE("TextBox: [more] chip and scrollbar coexist (#21)",
   Screen s{20, 4};
   box.draw(s);
   std::string row0;
-  for (int x = 0; x < 20; ++x) row0 += s.at(x, 0).text;
+  for (int x = 0; x < 20; ++x) row0 += s.text_at(x, 0);
   REQUIRE(row0.find("[more]") != std::string::npos);
   // 12 rows, 4 visible: the thumb covers a third of the track (rounds to 1
   // row), and scrolled up 6 of the 8 max it sits one row down from the top.
-  REQUIRE(s.at(19, 0).text == "│");
-  REQUIRE(s.at(19, 1).text == "█");
+  REQUIRE(s.text_at(19, 0) == "│");
+  REQUIRE(s.text_at(19, 1) == "█");
   // Back at the bottom the chip clears but the bar stays (still scrollable).
   box.scroll_to_bottom();
   box.draw(s);
   row0.clear();
-  for (int x = 0; x < 20; ++x) row0 += s.at(x, 0).text;
+  for (int x = 0; x < 20; ++x) row0 += s.text_at(x, 0);
   REQUIRE(row0.find("[more]") == std::string::npos);
-  REQUIRE(s.at(19, 3).text == "█");
+  REQUIRE(s.text_at(19, 3) == "█");
 }
 
 TEST_CASE("TextBox: wrapping leaves the scrollbar column free (#21)",
@@ -352,7 +352,7 @@ TEST_CASE("TextBox: wrapping leaves the scrollbar column free (#21)",
   // 10-char lines wrap at 9 columns with the bar possible: no row's text
   // reaches the last column.
   for (int y = 0; y < 3; ++y) {
-    const std::string& last = s.at(9, y).text;
+    const std::string_view last = s.text_at(9, y);
     REQUIRE((last == "█" || last == "│"));
   }
 }
@@ -385,10 +385,10 @@ TEST_CASE("TextBox: a one-column rect keeps the text, drops the bar (#21)",
   // a widget whose whole job is text, and its caller can give it two
   // columns. The wrap still ran (cw 0 -> wrap_into's "don't wrap" passes the
   // lines through), so the pinned-to-the-bottom view shows the newest lines.
-  REQUIRE(s.at(0, 2).text == "x");
-  REQUIRE(s.at(0, 0).text == "x");
-  REQUIRE(s.at(0, 0).text != "█");
-  REQUIRE(s.at(0, 0).text != "│");
+  REQUIRE(s.text_at(0, 2) == "x");
+  REQUIRE(s.text_at(0, 0) == "x");
+  REQUIRE(s.text_at(0, 0) != "█");
+  REQUIRE(s.text_at(0, 0) != "│");
 }
 
 TEST_CASE("TextBox: styled append paints per-span fg/bg/attrs (#25)",
@@ -409,10 +409,10 @@ TEST_CASE("TextBox: styled append paints per-span fg/bg/attrs (#25)",
 
   Screen s{20, 3};
   box.draw(s);
-  REQUIRE(s.at(0, 0).text == "h");
+  REQUIRE(s.text_at(0, 0) == "h");
   REQUIRE(s.at(0, 0).fg == red);
   REQUIRE(s.at(0, 0).attrs == Attr::Bold);
-  REQUIRE(s.at(2, 0).text == "t");
+  REQUIRE(s.text_at(2, 0) == "t");
   REQUIRE(s.at(2, 0).fg == blue);
   REQUIRE(s.at(2, 0).attrs == Attr::None);
 }
@@ -433,13 +433,13 @@ TEST_CASE("TextBox: span boundary exactly at wrap column (#25)",
   Screen s{4, 5};
   box.set_geometry({0, 0, 4, 5});
   box.draw(s);
-  REQUIRE(s.at(0, 0).text == "a");
+  REQUIRE(s.text_at(0, 0) == "a");
   REQUIRE(s.at(0, 0).fg == a);
-  REQUIRE(s.at(3, 0).text == "d");
+  REQUIRE(s.text_at(3, 0) == "d");
   REQUIRE(s.at(3, 0).fg == a);
-  REQUIRE(s.at(0, 1).text == "e");
+  REQUIRE(s.text_at(0, 1) == "e");
   REQUIRE(s.at(0, 1).fg == b);
-  REQUIRE(s.at(3, 1).text == "h");
+  REQUIRE(s.text_at(3, 1) == "h");
   REQUIRE(s.at(3, 1).fg == b);
 }
 
@@ -465,9 +465,9 @@ TEST_CASE("TextBox: style continues across a wrapped span (#25)",
   REQUIRE(s.at(1, 0).fg == red);
   REQUIRE(s.at(2, 0).fg == blue);
   REQUIRE(s.at(3, 0).fg == blue);
-  REQUIRE(s.at(0, 1).text == "e");
+  REQUIRE(s.text_at(0, 1) == "e");
   REQUIRE(s.at(0, 1).fg == blue);
-  REQUIRE(s.at(1, 1).text == "f");
+  REQUIRE(s.text_at(1, 1) == "f");
   REQUIRE(s.at(1, 1).fg == blue);
 }
 
@@ -488,9 +488,9 @@ TEST_CASE("TextBox: zero-length spans paint nothing (#25)",
   Screen s{10, 2};
   box.set_geometry({0, 0, 10, 2});
   box.draw(s);
-  REQUIRE(s.at(0, 0).text == "o");
-  REQUIRE(s.at(1, 0).text == "k");
-  REQUIRE(s.at(2, 0).text.empty());
+  REQUIRE(s.text_at(0, 0) == "o");
+  REQUIRE(s.text_at(1, 0) == "k");
+  REQUIRE(s.text_at(2, 0).empty());
 }
 
 TEST_CASE("TextBox: sanitizes each span at append (#25)",
@@ -509,7 +509,7 @@ TEST_CASE("TextBox: sanitizes each span at append (#25)",
   box.set_geometry({0, 0, 20, 2});
   box.draw(s);
   std::string row;
-  for (int x = 0; x < 10; ++x) row += s.at(x, 0).text;
+  for (int x = 0; x < 10; ++x) row += s.text_at(x, 0);
   REQUIRE(row.substr(0, 7) == "hithere");
 }
 
@@ -588,9 +588,9 @@ TEST_CASE("TextBox: streaming UTF-8 survives chunk boundaries (#217)",
   Screen styled{10, 2};
   box.set_geometry({0, 0, 10, 2});
   box.draw(styled);
-  CHECK(styled.at(0, 0).text == "\xE7\x95\x8C");
-  CHECK(styled.at(1, 0).text == std::string(1, '\0'));
-  CHECK(styled.at(2, 0).text == "!");
+  CHECK(styled.text_at(0, 0) == "\xE7\x95\x8C");
+  CHECK(styled.text_at(1, 0) == std::string(1, '\0'));
+  CHECK(styled.text_at(2, 0) == "!");
   CHECK(styled.at(2, 0).fg == Rgb{1, 2, 3});
 
   const auto incomplete = box.begin_entry(b1);

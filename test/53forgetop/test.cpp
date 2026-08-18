@@ -90,7 +90,7 @@ auto process_row(int pid, std::string name, float cpu, std::uint64_t rss,
 auto screen_row(const Screen &screen, int y) -> std::string {
   std::string text;
   for (int x = 0; x < screen.cols(); ++x)
-    text += screen.at(x, y).text;
+    text += screen.text_at(x, y);
   return text;
 }
 
@@ -593,13 +593,13 @@ TEST_CASE("forge-top CPU grid reserves dividers in odd partial layouts",
   const auto regions = panel.pixel_regions();
   REQUIRE(regions == expected);
 
-  CHECK(screen.at(16, 1).text == "│");
-  CHECK(screen.at(16, 4).text == "┼");
-  CHECK(screen.at(16, 5).text == "│");
-  CHECK(screen.at(15, 7).text == "─");
-  CHECK(screen.at(16, 7).text == "│");
-  CHECK(screen.at(17, 7).text.empty());
-  CHECK(screen.at(16, 8).text.empty());
+  CHECK(screen.text_at(16, 1) == "│");
+  CHECK(screen.text_at(16, 4) == "┼");
+  CHECK(screen.text_at(16, 5) == "│");
+  CHECK(screen.text_at(15, 7) == "─");
+  CHECK(screen.text_at(16, 7) == "│");
+  CHECK(screen.text_at(17, 7).empty());
+  CHECK(screen.text_at(16, 8).empty());
   CHECK(tfsupport::row_text(screen, 5, 17, 14).starts_with("cpu3  67%"));
 
   for (const Rect region : regions) {
@@ -620,10 +620,10 @@ TEST_CASE("forge-top CPU grid follows the ASCII border style",
   Screen screen{32, 11};
   panel.draw(screen);
 
-  CHECK(screen.at(16, 1).text == "|");
-  CHECK(screen.at(16, 4).text == "+");
-  CHECK(screen.at(15, 4).text == "-");
-  CHECK(screen.at(16, 8).text.empty());
+  CHECK(screen.text_at(16, 1) == "|");
+  CHECK(screen.text_at(16, 4) == "+");
+  CHECK(screen.text_at(15, 4) == "-");
+  CHECK(screen.text_at(16, 8).empty());
 }
 
 TEST_CASE("forge-top aggregate CPU keeps the full graph and clears dividers",
@@ -636,16 +636,16 @@ TEST_CASE("forge-top aggregate CPU keeps the full graph and clears dividers",
   Screen screen{32, 11};
 
   panel.draw(screen);
-  REQUIRE(screen.at(16, 4).text == "┼");
+  REQUIRE(screen.text_at(16, 4) == "┼");
   panel.set_per_cpu(false);
   panel.draw(screen);
 
   REQUIRE(panel.pixel_regions() == std::vector<Rect>{{1, 2, 30, 8}});
   for (int y = 1; y < 10; ++y)
     for (int x = 1; x < 31; ++x) {
-      CHECK(screen.at(x, y).text != "─");
-      CHECK(screen.at(x, y).text != "│");
-      CHECK(screen.at(x, y).text != "┼");
+      CHECK(screen.text_at(x, y) != "─");
+      CHECK(screen.text_at(x, y) != "│");
+      CHECK(screen.text_at(x, y) != "┼");
     }
 }
 

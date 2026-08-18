@@ -41,9 +41,9 @@ TEST_CASE("ListWidget: items render with first selected", "[listwidget]") {
   REQUIRE(l.selected_text() == "alpha");
   // Item text starts past the marker gutter (#72): mark + separator == 2.
   REQUIRE(l.gutter_cols() == 2);
-  REQUIRE(s.at(2, 0).text == "a");
-  REQUIRE(s.at(2, 1).text == "b");
-  REQUIRE(s.at(2, 2).text == "g");
+  REQUIRE(s.text_at(2, 0) == "a");
+  REQUIRE(s.text_at(2, 1) == "b");
+  REQUIRE(s.text_at(2, 2) == "g");
 }
 
 TEST_CASE("ListWidget: selection highlight uses inverted colors", "[listwidget]") {
@@ -117,7 +117,7 @@ TEST_CASE("ListWidget: scroll follows selection", "[listwidget]") {
   l.draw(s);
   bool found = false;
   for (int y = 0; y < 3; ++y) {
-    if (s.at(2, y).text == "i") found = true;  // past the marker gutter (#72)
+    if (s.text_at(2, y) == "i") found = true;  // past the marker gutter (#72)
   }
   REQUIRE(found);
 }
@@ -144,19 +144,19 @@ TEST_CASE("ListWidget: a height shrink re-clamps the scroll at draw (#41)",
 
   l.draw(s);
   // Bounds-only clamp: scroll stays 3 (already inside [0, 6-2]), rows 3-4 show.
-  REQUIRE(s.at(3, 0).text == "3");  // row 3 (x=3: past the #72 marker gutter)
-  REQUIRE(s.at(3, 1).text == "4");  // row 4
+  REQUIRE(s.text_at(3, 0) == "3");  // row 3 (x=3: past the #72 marker gutter)
+  REQUIRE(s.text_at(3, 1) == "4");  // row 4
   // The selected row 5 is scrolled off the bottom: no marker is visible.
-  REQUIRE(s.at(0, 0).text.empty());
-  REQUIRE(s.at(0, 1).text.empty());
+  REQUIRE(s.text_at(0, 0).empty());
+  REQUIRE(s.text_at(0, 1).empty());
   REQUIRE(l.selected() == 5);  // ... but the selection itself is unmoved
 
   // The NEXT selection change re-reveals it (reveal is on selection change,
   // not draw): nudging the selection pulls row 5 back into the window.
   l.on_event(tfsupport::key(Key::Down));  // already at the last row; re-reveals
   l.draw(s);
-  REQUIRE(s.at(3, 1).text == "5");  // row 5 visible again
-  REQUIRE(s.at(0, 1).text == "▸");  // ... and marked as the selection
+  REQUIRE(s.text_at(3, 1) == "5");  // row 5 visible again
+  REQUIRE(s.text_at(0, 1) == "▸");  // ... and marked as the selection
 }
 
 TEST_CASE("ListWidget: wheel scrolls the selection out of view and it STAYS out (#35 Q2)",
@@ -182,8 +182,8 @@ TEST_CASE("ListWidget: wheel scrolls the selection out of view and it STAYS out 
   // shown) -- and draw() did NOT pull it back into view.
   REQUIRE(l.selected() == 0);
   REQUIRE(l.scroll_offset() == 3);
-  REQUIRE(s.at(3, 0).text == "3");  // topmost visible row is i3, not i0
-  REQUIRE(s.at(0, 0).text.empty());  // no marker visible: the selection is off-screen
+  REQUIRE(s.text_at(3, 0) == "3");  // topmost visible row is i3, not i0
+  REQUIRE(s.text_at(0, 0).empty());  // no marker visible: the selection is off-screen
 
   // An arrow key STILL moves the selection and reveals it (the arrow direction
   // is unchanged): Down from 0 selects 1 and pulls the window back up.
@@ -191,9 +191,9 @@ TEST_CASE("ListWidget: wheel scrolls the selection out of view and it STAYS out 
   REQUIRE(l.selected() == 1);
   l.draw(s);
   // The marker is visible somewhere again (the window snapped back to row 1).
-  const bool marker_visible = (s.at(0, 0).text == "▸") ||
-                              (s.at(0, 1).text == "▸") ||
-                              (s.at(0, 2).text == "▸");
+  const bool marker_visible = (s.text_at(0, 0) == "▸") ||
+                              (s.text_at(0, 1) == "▸") ||
+                              (s.text_at(0, 2) == "▸");
   REQUIRE(marker_visible);
 }
 
@@ -278,9 +278,9 @@ TEST_CASE("ListWidget: the marker is on the selected row only", "[listwidget]") 
   l.set_items({"alpha", "beta"});
   l.draw(s);
 
-  REQUIRE(s.at(0, 0).text == "▸");  // selected
-  REQUIRE(s.at(1, 0).text.empty());      // the separator column
-  REQUIRE(s.at(0, 1).text.empty());      // unselected: gutter stays blank
+  REQUIRE(s.text_at(0, 0) == "▸");  // selected
+  REQUIRE(s.text_at(1, 0).empty());      // the separator column
+  REQUIRE(s.text_at(0, 1).empty());      // unselected: gutter stays blank
 }
 
 TEST_CASE("ListWidget: the marker follows the selection", "[listwidget]") {
@@ -292,8 +292,8 @@ TEST_CASE("ListWidget: the marker follows the selection", "[listwidget]") {
   Event down = KeyEvent{Key::Down};
   REQUIRE(l.on_event(down));
   l.draw(s);
-  REQUIRE(s.at(0, 0).text.empty());
-  REQUIRE(s.at(0, 1).text == "▸");
+  REQUIRE(s.text_at(0, 0).empty());
+  REQUIRE(s.text_at(0, 1) == "▸");
 }
 
 TEST_CASE("ListWidget: BorderStyle::Ascii keeps the whole widget 7-bit",
@@ -305,10 +305,10 @@ TEST_CASE("ListWidget: BorderStyle::Ascii keeps the whole widget 7-bit",
   l.set_items({"alpha", "beta"});
   l.draw(s);
 
-  REQUIRE(s.at(0, 0).text == "*");
+  REQUIRE(s.text_at(0, 0) == "*");
   REQUIRE(l.gutter_cols() == 2);  // same geometry as the Unicode family
   for (int y = 0; y < 3; ++y) {
-    for (int x = 0; x < 20; ++x) REQUIRE(all_seven_bit(s.at(x, y).text));
+    for (int x = 0; x < 20; ++x) REQUIRE(all_seven_bit(s.text_at(x, y)));
   }
 }
 
@@ -321,8 +321,8 @@ TEST_CASE("ListWidget: a custom marker resizes the gutter", "[listwidget]") {
   l.set_marker("»»");  // two columns + separator
   REQUIRE(l.gutter_cols() == 3);
   l.draw(s);
-  REQUIRE(s.at(0, 0).text == "»");
-  REQUIRE(s.at(3, 0).text == "a");
+  REQUIRE(s.text_at(0, 0) == "»");
+  REQUIRE(s.text_at(3, 0) == "a");
 
   // Empty restores the style's glyph -- "no marker" is set_marker_enabled.
   l.set_marker("");
@@ -345,15 +345,15 @@ TEST_CASE("ListWidget: the measured marker is the painted marker",
   REQUIRE(l.marker() == ">");
   REQUIRE(l.gutter_cols() == 2);
   l.draw(s);
-  REQUIRE(s.at(0, 0).text == ">");
-  REQUIRE(s.at(2, 0).text == "a");  // NOT indented by the stripped escape
+  REQUIRE(s.text_at(0, 0) == ">");
+  REQUIRE(s.text_at(2, 0) == "a");  // NOT indented by the stripped escape
 
   l.set_marker("\t>");  // tab becomes a space
   REQUIRE(l.marker() == " >");
   REQUIRE(l.gutter_cols() == 3);
   l.draw(s);
-  REQUIRE(s.at(1, 0).text == ">");
-  REQUIRE(s.at(3, 0).text == "a");
+  REQUIRE(s.text_at(1, 0) == ">");
+  REQUIRE(s.text_at(3, 0) == "a");
 }
 
 TEST_CASE("ListWidget: a zero-width marker reserves nothing", "[listwidget][failure]") {
@@ -375,8 +375,8 @@ TEST_CASE("ListWidget: set_marker_enabled(false) restores the old geometry",
   l.draw(s);
 
   REQUIRE(l.gutter_cols() == 0);
-  REQUIRE(s.at(0, 0).text == "a");  // flush left, exactly as before #72
-  REQUIRE(s.at(0, 1).text == "b");
+  REQUIRE(s.text_at(0, 0) == "a");  // flush left, exactly as before #72
+  REQUIRE(s.text_at(0, 1) == "b");
 }
 
 TEST_CASE("ListWidget: a rect too narrow for both drops the marker, not the text",
@@ -389,8 +389,8 @@ TEST_CASE("ListWidget: a rect too narrow for both drops the marker, not the text
     l.set_geometry({0, 0, 4, 1});
     l.set_items({"alpha"});
     l.draw(s);
-    REQUIRE(s.at(0, 0).text == "▸");
-    REQUIRE(s.at(2, 0).text == "a");
+    REQUIRE(s.text_at(0, 0) == "▸");
+    REQUIRE(s.text_at(2, 0) == "a");
   }
   // w == 3: it would not, so the gutter goes and the text keeps the row.
   for (const int w : {3, 2, 1}) {
@@ -402,7 +402,7 @@ TEST_CASE("ListWidget: a rect too narrow for both drops the marker, not the text
     // And the accessor says so: gutter_cols() is what draw() used, not a
     // configured value a consumer would lay out against and be wrong by two.
     REQUIRE(l.gutter_cols() == 0);
-    if (w > 1) REQUIRE(n.at(0, 0).text == "a");
+    if (w > 1) REQUIRE(n.text_at(0, 0) == "a");
   }
 }
 
@@ -473,8 +473,8 @@ TEST_CASE("ListWidget: an item's tab paints the width the setter measured (#154)
   l.draw(s);
   // Text starts past the marker gutter (mark + separator == 2).
   REQUIRE(row_text(s, 0, 2, 6) == "mo re ");
-  REQUIRE(s.at(4, 0).text == " ");  // the tab's column is a painted space
-  REQUIRE(s.at(5, 0).text == "r");  // not pulled left onto column 4
+  REQUIRE(s.text_at(4, 0) == " ");  // the tab's column is a painted space
+  REQUIRE(s.text_at(5, 0) == "r");  // not pulled left onto column 4
 }
 
 TEST_CASE("ListWidget: a click in an escape-carrying item resolves to the row painted",
@@ -582,15 +582,15 @@ TEST_CASE("ListWidget: scrollbar appears only when content overflows (#21)",
   l.set_items({"a", "b", "c"});
   l.draw(s);
   REQUIRE_FALSE(l.scrollbar_visible());
-  REQUIRE(s.at(9, 0).text != "█");  // no thumb on a list that fits
+  REQUIRE(s.text_at(9, 0) != "█");  // no thumb on a list that fits
   l.add_item("d");
   l.draw(s);
   REQUIRE(l.scrollbar_visible());
   // 4 items in a 3-row view: the thumb covers 3/4 of the track (2 rows),
   // pinned at the top for offset 0.
-  REQUIRE(s.at(9, 0).text == "█");
-  REQUIRE(s.at(9, 1).text == "█");
-  REQUIRE(s.at(9, 2).text == "│");
+  REQUIRE(s.text_at(9, 0) == "█");
+  REQUIRE(s.text_at(9, 1) == "█");
+  REQUIRE(s.text_at(9, 2) == "│");
 }
 
 TEST_CASE("ListWidget: scrollbar thumb tracks the view offset (#21)",
@@ -600,13 +600,13 @@ TEST_CASE("ListWidget: scrollbar thumb tracks the view offset (#21)",
   l.set_geometry({0, 0, 10, 3});
   l.set_items({"0", "1", "2", "3", "4", "5", "6", "7"});
   l.draw(s);
-  REQUIRE(s.at(9, 0).text == "█");
+  REQUIRE(s.text_at(9, 0) == "█");
   // Wheel to the bottom (8 items, 3 visible -> max offset 5; two wheels).
   l.on_event(tfsupport::wheel(1, 1, /*up=*/false));
   l.on_event(tfsupport::wheel(1, 1, /*up=*/false));
   l.draw(s);
-  REQUIRE(s.at(9, 2).text == "█");  // thumb pinned at the bottom
-  REQUIRE(s.at(9, 0).text == "│");
+  REQUIRE(s.text_at(9, 2) == "█");  // thumb pinned at the bottom
+  REQUIRE(s.text_at(9, 0) == "│");
 }
 
 TEST_CASE("ListWidget: scrollbar glyphs follow the ascii style (#21)",
@@ -617,8 +617,8 @@ TEST_CASE("ListWidget: scrollbar glyphs follow the ascii style (#21)",
   l.set_style(termforge::BorderStyle::Ascii);
   l.set_items({"0", "1", "2", "3", "4", "5", "6", "7"});
   l.draw(s);
-  REQUIRE(s.at(9, 0).text == "#");
-  REQUIRE(s.at(9, 1).text == "|");
+  REQUIRE(s.text_at(9, 0) == "#");
+  REQUIRE(s.text_at(9, 1) == "|");
 }
 
 TEST_CASE("ListWidget: scrollbar is drawn on the list's own background (#21)",
@@ -670,7 +670,7 @@ TEST_CASE("ListWidget: a narrow rect drops the bar before the text (#21)",
   l.set_items({"0", "1", "2", "3"});
   l.draw(s);
   REQUIRE(l.scrollbar_visible());
-  REQUIRE(s.at(1, 0).text == "█");
+  REQUIRE(s.text_at(1, 0) == "█");
   // A one-wide rect has no column to give: the bar stays off (and the draw
   // does not crash).
   Screen s1{1, 2};
@@ -686,5 +686,5 @@ TEST_CASE("ListWidget: a narrow rect drops the bar before the text (#21)",
   l2.set_items({"0", "1", "2", "3"});
   l2.draw(s2);
   REQUIRE(l2.scrollbar_visible());
-  REQUIRE(s2.at(3, 0).text == "█");
+  REQUIRE(s2.text_at(3, 0) == "█");
 }
