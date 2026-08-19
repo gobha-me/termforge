@@ -22,6 +22,7 @@
 #include <csignal>
 #include <fcntl.h>
 #include <poll.h>
+#include <sys/select.h>
 #include <unistd.h>
 #if defined(__linux__)
 #include <pty.h>
@@ -102,6 +103,41 @@ class SocketPair {
  private:
   int m_fd[2]{-1, -1};
   bool m_ok{false};
+};
+
+// A pipe whose read end is deliberately outside select()'s fixed fd_set. The
+// server embedding path accepts arbitrary nonnegative descriptors, and busy
+// processes routinely allocate them above FD_SETSIZE (#308).
+class HighFdPipe {
+ public:
+  HighFdPipe() {
+    int fds[2]{-1, -1};
+    if (::pipe(fds) != 0) return;
+    m_read = ::fcntl(fds[0], F_DUPFD, FD_SETSIZE + 64);
+    ::close(fds[0]);
+    if (m_read < 0) {
+      ::close(fds[1]);
+      return;
+    }
+    m_write = fds[1];
+  }
+  ~HighFdPipe() {
+    if (m_write >= 0) ::close(m_write);
+    if (m_read >= 0) ::close(m_read);
+  }
+  HighFdPipe(const HighFdPipe&) = delete;
+  auto operator=(const HighFdPipe&) -> HighFdPipe& = delete;
+
+  [[nodiscard]] auto ok() const -> bool { return m_read > FD_SETSIZE; }
+  [[nodiscard]] auto read_end() const -> int { return m_read; }
+  auto feed(std::string_view bytes) const -> bool {
+    return ::write(m_write, bytes.data(), bytes.size()) ==
+           static_cast<ssize_t>(bytes.size());
+  }
+
+ private:
+  int m_read{-1};
+  int m_write{-1};
 };
 
 // An openpty pair, injected rather than dup2'd onto the process's streams. The
@@ -207,6 +243,20 @@ TEST_CASE("set_io: the injected fds are what the Terminal reports", "[fds]") {
   // adjacent, which is exactly the swap a round-trip on one of them misses.
   REQUIRE(t.io().in == sp.app());
   REQUIRE(t.io().out == sp.peer());
+}
+
+TEST_CASE("capability probing accepts an injected fd above FD_SETSIZE",
+          "[fds][probe][regression]") {
+  HighFdPipe pipe;
+  REQUIRE(pipe.ok());
+  REQUIRE(pipe.feed("\033[?62;4;22c"));
+
+  Terminal t;
+  REQUIRE(t.set_io(TerminalIo{pipe.read_end(), -1}).has_value());
+  const auto caps = t.query_capabilities();
+  REQUIRE(caps.has_value());
+  CHECK(caps->sixel);
+  t.leave_raw();
 }
 
 TEST_CASE("set_io: an input fd is required, an output fd is not", "[fds]") {
