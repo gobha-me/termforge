@@ -33,16 +33,14 @@ auto image(std::uint8_t seed, int width = 2, int height = 2) -> Image {
 
 auto animation_frames(const std::array<Image, 2>& images)
     -> std::array<AnimationFrame, 2> {
-  return {AnimationFrame{images[0], 40ms},
-          AnimationFrame{images[1], 40ms}};
+  return {AnimationFrame{images[0], 40ms}, AnimationFrame{images[1], 40ms}};
 }
 
 auto commands(std::string_view wire, std::string_view action)
     -> std::vector<tfsupport::Apc> {
   std::vector<tfsupport::Apc> result;
   for (const auto& command : tfsupport::apcs(wire)) {
-    if (tfsupport::key_value(command, "a") == action)
-      result.push_back(command);
+    if (tfsupport::key_value(command, "a") == action) result.push_back(command);
   }
   return result;
 }
@@ -79,9 +77,9 @@ TEST_CASE("animation placement refuses unusable handles and bad geometry",
   other.set_image_animation_support(true);
   CHECK_FALSE(other.draw_animation(Rect{0, 0, 3, 2}, *animation));
   CHECK_FALSE(driver.draw_animation(Rect{}, *animation));
-  CHECK_FALSE(driver.draw_animation(
-      Rect{0, 0, 1, 1}, *animation,
-      ImagePlacementOptions{.fit = PlacementFit::Exact}));
+  CHECK_FALSE(
+      driver.draw_animation(Rect{0, 0, 1, 1}, *animation,
+                            ImagePlacementOptions{.fit = PlacementFit::Exact}));
   CHECK_FALSE(driver.draw_animation(
       Rect{0, 0, 3, 2}, *animation,
       ImagePlacementOptions{.layer = ImageLayer::above_text(
@@ -111,8 +109,8 @@ TEST_CASE("animation placement is retained without wire and collected alone",
   driver.flush();
   wire.clear();
 
-  REQUIRE(driver.draw_animation(Rect{2, 3, 4, 5}, *animation,
-                                PlacementFit::Exact));
+  REQUIRE(
+      driver.draw_animation(Rect{2, 3, 4, 5}, *animation, PlacementFit::Exact));
   driver.flush();
   auto placements = commands(wire, "p");
   REQUIRE(placements.size() == 1);
@@ -154,12 +152,12 @@ TEST_CASE("animation placement is retained without wire and collected alone",
   REQUIRE(deletions.size() == 1);
   CHECK(tfsupport::key_value(deletions[0], "d") == "i");
   CHECK(driver.residency().pinned_images == 1);
-  REQUIRE(driver.animation_status(
-      *animation, std::chrono::steady_clock::time_point{}));
+  REQUIRE(driver.animation_status(*animation,
+                                  std::chrono::steady_clock::time_point{}));
   wire.clear();
 
-  REQUIRE(driver.draw_animation(Rect{2, 3, 4, 5}, *animation,
-                                PlacementFit::Exact));
+  REQUIRE(
+      driver.draw_animation(Rect{2, 3, 4, 5}, *animation, PlacementFit::Exact));
   driver.flush();
   CHECK(commands(wire, "p").size() == 1);
   CHECK(commands(wire, "t").empty());
@@ -191,8 +189,8 @@ TEST_CASE("refused placement is not remembered as retained",
   wire.clear();
 
   driver.set_output(&refusing);
-  REQUIRE(driver.draw_animation(Rect{1, 1, 2, 2}, *animation,
-                                PlacementFit::Exact));
+  REQUIRE(
+      driver.draw_animation(Rect{1, 1, 2, 2}, *animation, PlacementFit::Exact));
   driver.flush();
   REQUIRE(driver.take_output_error());
 
