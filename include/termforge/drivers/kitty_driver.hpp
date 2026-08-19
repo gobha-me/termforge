@@ -34,7 +34,8 @@
 // against and still re-uploads every frame. For that, pin it: draw_pinned
 // allocates no image id at all, which is the point of #109. A pinned image is
 // exempt from both the LRU scan and the collection: its lifetime is the
-// application's, and only its PLACEMENTS are collected.
+// application's; animation roots have the same split, and only their
+// PLACEMENTS are collected.
 //
 // Collection runs at the frame boundary. Since #148 App accumulates cells and
 // images, then flushes once, so every flush it issues is exactly that boundary;
@@ -141,6 +142,16 @@ class KittyDriver final : public TerminalDriver {
       const -> std::expected<AnimationStatus, ErrorEvent> override;
   auto unregister_animation(AnimationHandle animation)
       -> std::expected<void, ErrorEvent> override;
+  auto draw_animation(Rect cells, AnimationHandle animation, PlacementFit fit)
+      -> std::expected<void, ErrorEvent> override;
+  auto draw_animation(Rect cells, AnimationHandle animation,
+                      ImagePlacementOptions options)
+      -> std::expected<void, ErrorEvent> override;
+  auto retain_animation(Rect cells, AnimationHandle animation, PlacementFit fit)
+      -> std::expected<void, ErrorEvent> override;
+  auto retain_animation(Rect cells, AnimationHandle animation,
+                        ImagePlacementOptions options)
+      -> std::expected<void, ErrorEvent> override;
   auto pin_image(const Image& image)
       -> std::expected<PinnedImage, ErrorEvent> override;
   auto pin_image(const EncodedImage& image)
@@ -174,7 +185,9 @@ class KittyDriver final : public TerminalDriver {
   // The base's Stretch convenience overload is non-virtual, so overriding the
   // three-argument one above would HIDE it for every call made through
   // KittyDriver's static type. Same trap as draw_image, same fix.
+  using TerminalDriver::draw_animation;
   using TerminalDriver::draw_pinned;
+  using TerminalDriver::retain_animation;
   using TerminalDriver::retain_pinned;
 
   // How many images this tier can hold resident, and why the number is what it
@@ -293,6 +306,8 @@ class KittyDriver final : public TerminalDriver {
     // harmless because the clock is what gates them.
     std::uint64_t last_place_key{0};
     std::uint64_t last_place_clock{0};
+    std::uint64_t committed_last_place_key{0};
+    std::uint64_t committed_last_place_clock{0};
   };
 
   // One independently registered terminal-driven sequence (#116). It lives
@@ -316,6 +331,10 @@ class KittyDriver final : public TerminalDriver {
     std::vector<std::chrono::milliseconds> gaps;
     Playback committed;
     Playback projected;
+    std::uint64_t last_place_key{0};
+    std::uint64_t last_place_clock{0};
+    std::uint64_t committed_last_place_key{0};
+    std::uint64_t committed_last_place_clock{0};
   };
 
   struct StagedAnimation {
@@ -323,31 +342,40 @@ class KittyDriver final : public TerminalDriver {
     std::uint32_t serial{0};
   };
 
-  // One placement of a pinned image. The image outlives this; the placement is
-  // collected per frame exactly like a region, because a classic placement
-  // left behind floats above the text grid whether or not its data is
-  // resident.
-  struct PinPlacement {
+  // One placement of an application-resident image: either a pin or an
+  // animation root. The data outlives this; the placement is collected per
+  // frame exactly like a region, because a classic placement left behind
+  // floats above the text grid whether or not its data is resident.
+  struct ResidentPlacement {
+    struct State {
+      std::uint64_t last_used{0};
+      bool placed{false};
+      ImagePlacementOptions placement{};
+    };
+
     Rect rect{}; // cells occupied by the placeholder grid (#201)
     std::uint32_t image_id{0};
     std::uint32_t placement_id{0};
     std::uint64_t last_used{0}; // same per-draw clock as RegionSlot
     bool placed{false};
     ImagePlacementOptions placement{};
+    std::optional<State> committed;
+    bool retire_on_accept{false};
   };
 
-  // A pinned placement is identified by BOTH the resident image and its cell
-  // destination. Keying only by Rect made two independently resident layers
-  // at the same viewport replace each other before z-order could help (#114).
-  struct PinPlacementKey {
+  // A resident placement is identified by BOTH the resident image and its
+  // cell destination. Keying only by Rect made two independently resident
+  // layers at the same viewport replace each other before z-order could help
+  // (#114).
+  struct ResidentPlacementKey {
     std::uint64_t rect{0};
     std::uint32_t image_id{0};
-    auto operator==(const PinPlacementKey&) const -> bool = default;
+    auto operator==(const ResidentPlacementKey&) const -> bool = default;
   };
 
-  struct PinPlacementKeyHash {
-    [[nodiscard]] auto operator()(const PinPlacementKey& key) const noexcept
-        -> std::size_t {
+  struct ResidentPlacementKeyHash {
+    [[nodiscard]] auto operator()(
+        const ResidentPlacementKey& key) const noexcept -> std::size_t {
       const auto a = std::hash<std::uint64_t>{}(key.rect);
       const auto b = std::hash<std::uint32_t>{}(key.image_id);
       return a ^ (b + 0x9e3779b9U + (a << 6) + (a >> 2));
@@ -508,9 +536,24 @@ class KittyDriver final : public TerminalDriver {
   // The smallest positive p= no tracked placement of this image holds.
   // Placement ids are scoped by image id on the kitty wire, so consulting
   // placements of any other image would recreate #200's unnecessary global
-  // sequence. Exhaustion refuses before draw_pinned mutates state or emits.
-  auto next_pin_placement_id(std::uint32_t image_id) const
+  // sequence. Exhaustion refuses before a resident draw mutates state or emits.
+  auto next_resident_placement_id(std::uint32_t image_id,
+                                  std::string_view operation) const
       -> std::expected<std::uint32_t, ErrorEvent>;
+
+  auto draw_resident(Rect cells, std::uint32_t image_id, Extent pixels,
+                     std::uint64_t& last_place_key,
+                     std::uint64_t& last_place_clock,
+                     ImagePlacementOptions options, std::string_view operation,
+                     bool& warned_clamp) -> std::expected<void, ErrorEvent>;
+  auto retain_resident(Rect cells, std::uint32_t image_id, Extent pixels,
+                       std::uint64_t& last_place_key,
+                       std::uint64_t& last_place_clock,
+                       ImagePlacementOptions options,
+                       std::string_view operation, bool& warned_clamp)
+      -> std::expected<void, ErrorEvent>;
+  auto stage_resident_placements() -> void;
+  auto finish_resident_placement_frame(bool accepted) -> void;
 
   // Transmit an opaque payload under `id` via chunked APC sequences.
   // `format` determines Kitty's f=/o= envelope; `px` is the declared pixel
@@ -692,7 +735,7 @@ class KittyDriver final : public TerminalDriver {
   // the configured ceiling. Placement ids are
   // scoped per image on the kitty wire (#200): a region owns its image id and
   // always uses p=1, while a pin derives the smallest free positive p= from
-  // m_pin_places. The containers own the facts, so collection returns ids
+  // m_resident_places. The containers own the facts, so collection returns ids
   // without a counter or free list having to agree with each erase; a timeout
   // deliberately withholds its id in m_quarantined_ids.
   // Monotonic per-draw clock, advanced ONLY where a draw stamps a slot. It is
@@ -704,7 +747,7 @@ class KittyDriver final : public TerminalDriver {
   std::uint64_t m_clock{0};
   // Value of m_clock at the last collection that ran. A region whose last_used
   // is at or below this was not drawn since, so gc_regions() deletes it
-  // terminal-side and drops the slot. Also the frame window draw_pinned's two
+  // terminal-side and drops the slot. Also the frame window resident draws'
   // placeholder conflict guards and draw_payload's reciprocal are written
   // against, so anything that changes WHEN this advances moves all four.
   std::uint64_t m_frame_start_clock{0};
@@ -724,14 +767,17 @@ class KittyDriver final : public TerminalDriver {
   std::unordered_map<std::uint32_t, AccountedImage> m_accounted_images;
   std::vector<ResidencyMutation> m_residency_mutations;
   std::vector<ContentMutation> m_content_mutations;
-  // Placements of pinned images, keyed on BOTH destination rect and image id.
-  // Classic mode can therefore layer distinct resident images at one rect;
-  // Unicode placeholders refuse that cell-grid collision before mutation.
+  // Placements of pins and animation roots, keyed on BOTH destination rect and
+  // image id. Classic mode can therefore layer distinct resident images at one
+  // rect; Unicode placeholders refuse that cell-grid collision before mutation.
   // Uncapped on purpose: they are collected every frame, so the live count is
   // whatever the last frame drew, and an LRU here would reintroduce the silent
   // eviction the ticket exists to remove.
-  std::unordered_map<PinPlacementKey, PinPlacement, PinPlacementKeyHash>
-      m_pin_places;
+  std::unordered_map<ResidentPlacementKey, ResidentPlacement,
+                     ResidentPlacementKeyHash>
+      m_resident_places;
+  std::optional<std::uint64_t> m_resident_frame_start;
+  std::optional<PlacementMode> m_resident_frame_mode;
   // Monotonic and never reused, unlike the terminal-side ids. This is what a
   // handle carries so that an unpinned handle stays refused after its id has
   // been recycled -- see PinnedEntry::serial.
@@ -762,6 +808,7 @@ class KittyDriver final : public TerminalDriver {
   // then degrade in silence.
   bool m_warned_clamp{false};
   bool m_warned_clamp_pinned{false};
+  bool m_warned_clamp_animation{false};
   Extent m_cell_px{kNominalCellPixels};
 };
 

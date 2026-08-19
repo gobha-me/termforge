@@ -1528,7 +1528,7 @@ TEST_CASE("pinned: an unpinned draw to the same rect refuses under "
     const auto r = d.draw_image(Rect{2, 1, 3, 2}, art(32));
     REQUIRE_FALSE(r.has_value());
     CHECK(r.error().severity == Severity::Warning);
-    CHECK(r.error().message.find("draw_image: a pinned image") == 0);
+    CHECK(r.error().message.find("draw_image: a resident image") == 0);
   }
   SECTION("unpinned first, then pinned") {
     KittyDriver d;

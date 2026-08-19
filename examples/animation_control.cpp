@@ -1,10 +1,9 @@
 // TermForge example: terminal-driven animation control (#117).
 //
-// This is a controller/status example for a sequence kept resident by Kitty.
-// Registration and every playback command are independent of the cell render;
-// the screen shows the authored frames as swatches and the locally commanded
-// state. Kitty has no completion query, so "complete" means the declared gaps
-// reached their deadline on App's monotonic clock.
+// Registration, placement and playback are independent: the sequence uploads
+// once, on_pixels keeps its root visible without wire on unchanged frames, and
+// controls carry no payload. Kitty has no completion query, so "complete"
+// means the declared gaps reached their deadline on App's monotonic clock.
 
 #include <array>
 #include <chrono>
@@ -129,6 +128,17 @@ class AnimationControlDemo final : public App {
     for (int i = 0; i < 4; ++i) {
       screen.write_text(2 + i * 5, 11, std::format(" {} ", i), {8, 10, 14},
                         colors[static_cast<std::size_t>(i)], Attr::Bold);
+    }
+  }
+
+  auto on_pixels(TerminalDriver& driver) -> void override {
+    if (!m_animation) return;
+    const auto status = animation_status(m_animation);
+    if (!status || status->state == AnimationRunState::Pending) return;
+    if (auto placed = driver.retain_animation(Rect{28, 8, 6, 3}, m_animation,
+                                              PlacementFit::Exact);
+        !placed) {
+      m_message = placed.error().message;
     }
   }
 

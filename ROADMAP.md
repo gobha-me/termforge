@@ -413,10 +413,13 @@ completed items.
   independently owned resident root. #117 adds payload-free once/loop playback,
   explicit restart/ignore replay, hold/final-frame interruption, zero-based
   seek, commanded-state/deadline observation and owned-root release. App drives
-  the local deadline from its real or synthetic monotonic clock. The capability
-  remains action-level: Konsole's basic TGP query succeeds while its current
-  dispatcher has no animation/edit actions, so emulator identity or the coarse
-  `kitty_graphics` bit is not a sufficient gate.
+  the local deadline from its real or synthetic monotonic clock. #301 makes the
+  resident root visible through draw/zero-wire-retain placement operations;
+  omission retires only the placement, while playback continues to address the
+  resident sequence. The capability remains action-level: Konsole's basic TGP
+  query succeeds while its current dispatcher has no animation/edit actions,
+  so emulator identity or the coarse `kitty_graphics` bit is not a sufficient
+  gate.
 
 - [ ] **6.4 — Doxygen docs + custom-driver guide**
 
