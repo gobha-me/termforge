@@ -498,6 +498,90 @@ class TerminalDriver {
         "animations"}};
   }
 
+  // Place the resident root of a registered terminal-driven animation. The
+  // sequence remains independently owned by its AnimationHandle: omitting
+  // this placement from a later frame retires only the placement, while
+  // unregister_animation releases the root and every frame (#301).
+  //
+  // NON-PURE for source compatibility with drivers written before animation
+  // placement existed. A tier that can register a sequence but cannot place
+  // its root must refuse honestly rather than claim the animation is visible.
+  virtual auto draw_animation(Rect /*cells*/, AnimationHandle /*animation*/,
+                              PlacementFit /*fit*/)
+      -> std::expected<void, ErrorEvent> {
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "draw_animation: this tier cannot place terminal-driven image "
+        "animations"}};
+  }
+
+  virtual auto draw_animation(Rect cells, AnimationHandle animation,
+                              ImagePlacementOptions options)
+      -> std::expected<void, ErrorEvent> {
+    const auto z = options.layer.z_index();
+    if (!z) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "driver",
+          "draw_animation: image layer rank is outside the protocol range"}};
+    }
+    if (*z != 0) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "driver",
+          "draw_animation: this tier cannot place on a non-default image "
+          "layer"}};
+    }
+    if (options.pixel_offset != PixelPoint{} || options.source) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "driver",
+          "draw_animation: this tier cannot place with a pixel offset or "
+          "source crop"}};
+    }
+    return draw_animation(cells, animation, options.fit);
+  }
+
+  auto draw_animation(Rect cells, AnimationHandle animation)
+      -> std::expected<void, ErrorEvent> {
+    return draw_animation(cells, animation, ImagePlacementOptions{});
+  }
+
+  // Keep an unchanged animation placement live without emitting another
+  // placement command. The compatibility default delegates to draw_animation
+  // so an older driver remains correct, if less bandwidth-efficient.
+  virtual auto retain_animation(Rect cells, AnimationHandle animation,
+                                PlacementFit fit)
+      -> std::expected<void, ErrorEvent> {
+    return draw_animation(cells, animation, fit);
+  }
+
+  virtual auto retain_animation(Rect cells, AnimationHandle animation,
+                                ImagePlacementOptions options)
+      -> std::expected<void, ErrorEvent> {
+    const auto z = options.layer.z_index();
+    if (!z) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "driver",
+          "retain_animation: image layer rank is outside the protocol range"}};
+    }
+    if (*z != 0) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "driver",
+          "retain_animation: this tier cannot place on a non-default image "
+          "layer"}};
+    }
+    if (options.pixel_offset != PixelPoint{} || options.source) {
+      return std::unexpected{ErrorEvent{
+          Severity::Warning, "driver",
+          "retain_animation: this tier cannot place with a pixel offset or "
+          "source crop"}};
+    }
+    return retain_animation(cells, animation, options.fit);
+  }
+
+  auto retain_animation(Rect cells, AnimationHandle animation)
+      -> std::expected<void, ErrorEvent> {
+    return retain_animation(cells, animation, ImagePlacementOptions{});
+  }
+
   // Transmit `image` and hold it resident. The returned handle is the
   // application's until unpin_image; it is exempt from the driver's own cache,
   // its eviction and its per-frame collection.

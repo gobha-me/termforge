@@ -833,10 +833,10 @@ auto KittyDriver::register_animation(std::span<const AnimationFrame> frames)
   for (const auto& frame : prepared)
     gaps.push_back(frame.gap);
   m_animations.emplace(
-      id,
-      AnimationEntry{prepared.front().px, prepared.front().format,
-                     prepared.size(), serial, false, false, std::move(gaps),
-                     AnimationEntry::Playback{}, AnimationEntry::Playback{}});
+      id, AnimationEntry{prepared.front().px, prepared.front().format,
+                         prepared.size(), serial, false, false, std::move(gaps),
+                         AnimationEntry::Playback{}, AnimationEntry::Playback{},
+                         0, 0, 0, 0});
   m_staged_animations.push_back(StagedAnimation{id, serial});
   stage_residency_set(id, serial, ResidencyKind::Pinned,
                       static_cast<std::size_t>(source_bytes));
@@ -1103,6 +1103,14 @@ auto KittyDriver::unregister_animation(AnimationHandle animation)
 
   const std::size_t before = m_buf.size();
   delete_image(animation.id, serial);
+  // d=I frees the animation root and all of its placements. Retire the local
+  // placement records too, including placeholder cells that otherwise could
+  // name a later resident object after this id is recycled.
+  std::erase_if(m_resident_places, [&](const auto& item) {
+    if (item.second.image_id != animation.id) return false;
+    queue_placeholder_clear(item.second.rect, item.second.last_used);
+    return true;
+  });
   tally_image_edit(m_buf.size() - before);
   m_staged_animation_controls.erase(animation.id);
   m_animations.erase(animation.id);
@@ -1447,20 +1455,21 @@ auto KittyDriver::resolve_pin(PinnedImage image, std::string_view fn)
   return &it->second;
 }
 
-auto KittyDriver::next_pin_placement_id(std::uint32_t image_id) const
+auto KittyDriver::next_resident_placement_id(std::uint32_t image_id,
+                                             std::string_view operation) const
     -> std::expected<std::uint32_t, ErrorEvent> {
   // p= is scoped by image id: placements of a different resident image are a
   // different namespace and must not advance this one. Derive from the map
   // that owns the live set, for the same reason the two image-id allocators do
   // (#190): collection erases an entry and thereby returns its id without a
   // counter or free list that another path can forget to update.
-  // m_pin_places is intentionally uncapped, so do not rescan the whole map
+  // m_resident_places is intentionally uncapped, so do not rescan the whole map
   // once per candidate. Collect this image's namespace in one pass, then the
   // smallest-free walk is expected O(1) per probe and bounded by the number of
   // ids collected. Other images consume no entries in this set -- the scope
   // is part of the wire identity, not an optimization.
   std::unordered_set<std::uint32_t> held;
-  for (const auto& [key, place] : m_pin_places) {
+  for (const auto& [key, place] : m_resident_places) {
     (void)key;
     if (place.image_id == image_id) held.insert(place.placement_id);
   }
@@ -1474,12 +1483,71 @@ auto KittyDriver::next_pin_placement_id(std::uint32_t image_id) const
     if (id == std::numeric_limits<std::uint32_t>::max()) {
       return std::unexpected{ErrorEvent{
           Severity::Warning, "kitty",
-          std::format("draw_pinned: all placement ids for image {} are in use",
-                      image_id)}};
+          std::format("{}: all placement ids for image {} are in use",
+                      operation, image_id)}};
     }
     ++id;
   }
   return id;
+}
+
+auto KittyDriver::stage_resident_placements() -> void {
+  if (m_resident_frame_start) return;
+  m_resident_frame_start = m_frame_start_clock;
+  m_resident_frame_mode = m_mode;
+}
+
+auto KittyDriver::finish_resident_placement_frame(bool accepted) -> void {
+  if (!m_resident_frame_start) return;
+
+  for (auto it = m_resident_places.begin(); it != m_resident_places.end();) {
+    auto& place = it->second;
+    if (accepted) {
+      if (place.retire_on_accept) {
+        it = m_resident_places.erase(it);
+        continue;
+      }
+      place.committed = ResidentPlacement::State{place.last_used, place.placed,
+                                                 place.placement};
+    } else if (!place.committed) {
+      it = m_resident_places.erase(it);
+      continue;
+    } else {
+      place.last_used = place.committed->last_used;
+      place.placed = place.committed->placed;
+      place.placement = place.committed->placement;
+      place.retire_on_accept = false;
+    }
+    ++it;
+  }
+
+  for (auto& [id, entry] : m_pinned) {
+    (void)id;
+    if (accepted) {
+      entry.committed_last_place_key = entry.last_place_key;
+      entry.committed_last_place_clock = entry.last_place_clock;
+    } else {
+      entry.last_place_key = entry.committed_last_place_key;
+      entry.last_place_clock = entry.committed_last_place_clock;
+    }
+  }
+  for (auto& [id, entry] : m_animations) {
+    (void)id;
+    if (accepted) {
+      entry.committed_last_place_key = entry.last_place_key;
+      entry.committed_last_place_clock = entry.last_place_clock;
+    } else {
+      entry.last_place_key = entry.committed_last_place_key;
+      entry.last_place_clock = entry.committed_last_place_clock;
+    }
+  }
+
+  if (!accepted) {
+    m_frame_start_clock = *m_resident_frame_start;
+    m_mode = *m_resident_frame_mode;
+  }
+  m_resident_frame_start.reset();
+  m_resident_frame_mode.reset();
 }
 
 auto KittyDriver::unpin_image(PinnedImage image)
@@ -1493,7 +1561,7 @@ auto KittyDriver::unpin_image(PinnedImage image)
   // d=I frees the data AND every placement of it, so the placements need no
   // separate escape -- only their bookkeeping has to go.
   delete_image(image.id, (*entry)->serial);
-  std::erase_if(m_pin_places, [&](const auto& kv) {
+  std::erase_if(m_resident_places, [&](const auto& kv) {
     if (kv.second.image_id != image.id) return false;
     queue_placeholder_clear(kv.second.rect, kv.second.last_used);
     return true;
@@ -1520,7 +1588,9 @@ auto KittyDriver::invalidate_images() noexcept -> void {
   m_animations.clear();
   m_staged_animations.clear();
   m_staged_animation_controls.clear();
-  m_pin_places.clear();
+  m_resident_places.clear();
+  m_resident_frame_start.reset();
+  m_resident_frame_mode.reset();
   m_accounted_images.clear();
   m_residency_mutations.clear();
   m_content_mutations.clear();
@@ -1548,26 +1618,57 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image,
   if (!entry) return std::unexpected{entry.error()};
   if (!(*entry)->accepted)
     return std::unexpected{pending_warning("draw_pinned", image.id)};
+  return draw_resident(cells, image.id, (*entry)->px, (*entry)->last_place_key,
+                       (*entry)->last_place_clock, options, "draw_pinned",
+                       m_warned_clamp_pinned);
+}
+
+auto KittyDriver::draw_animation(Rect cells, AnimationHandle animation,
+                                 PlacementFit fit)
+    -> std::expected<void, ErrorEvent> {
+  return draw_animation(cells, animation,
+                        ImagePlacementOptions{.fit = fit, .layer = {}});
+}
+
+auto KittyDriver::draw_animation(Rect cells, AnimationHandle animation,
+                                 ImagePlacementOptions options)
+    -> std::expected<void, ErrorEvent> {
+  auto entry = resolve_animation(animation, "draw_animation");
+  if (!entry) return std::unexpected{entry.error()};
+  if (!(*entry)->accepted)
+    return std::unexpected{pending_warning("draw_animation", animation.id)};
+  return draw_resident(cells, animation.id, (*entry)->px,
+                       (*entry)->last_place_key, (*entry)->last_place_clock,
+                       options, "draw_animation", m_warned_clamp_animation);
+}
+
+auto KittyDriver::draw_resident(Rect cells, std::uint32_t image_id,
+                                Extent pixels, std::uint64_t& last_place_key,
+                                std::uint64_t& last_place_clock,
+                                ImagePlacementOptions options,
+                                std::string_view operation, bool& warned_clamp)
+    -> std::expected<void, ErrorEvent> {
   if (cells.empty()) {
-    return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
-                                      "draw_pinned: empty destination rect"}};
+    return std::unexpected{
+        ErrorEvent{Severity::Warning, "kitty",
+                   std::format("{}: empty destination rect", operation)}};
   }
   if (!options.layer.z_index()) {
     return std::unexpected{ErrorEvent{
         Severity::Warning, "kitty",
-        "draw_pinned: image layer rank is outside the protocol range"}};
+        std::format("{}: image layer rank is outside the protocol range",
+                    operation)}};
   }
-  // Against the extent declared at PIN time, from the driver's own copy --
-  // the handle carries no geometry a caller could get wrong. The crop plus
-  // sub-cell origin is the Exact footprint.
-  auto geometry = detail::validate_placement(options, cells, (*entry)->px,
-                                             *this, "kitty", "draw_pinned");
+  // Against the extent retained at registration time, from the driver's own
+  // copy -- neither handle carries geometry a caller could get wrong.
+  auto geometry = detail::validate_placement(options, cells, pixels, *this,
+                                             "kitty", operation);
   if (!geometry) return std::unexpected{geometry.error()};
 
   bool clamped = false;
   const Rect dest = clamp_dest(cells, clamped);
   const std::uint64_t rect_key = region_key(dest.x, dest.y, dest.w, dest.h);
-  const PinPlacementKey key{rect_key, image.id};
+  const ResidentPlacementKey key{rect_key, image_id};
 
   // Under placeholders a cell names its image by SGR foreground and names no
   // placement at all, so two placements of ONE image id showing at once are
@@ -1578,20 +1679,20 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image,
   //
   // "AT ONCE" MEANS WITHIN ONE FRAME, and getting that wrong is worse than not
   // having the guard. A placement drawn in the previous frame is still in
-  // m_pin_places -- gc_regions collects it at the NEXT flush, not this one --
-  // so a rule that merely asked "is it placed anywhere else" refused every
+  // m_resident_places -- gc_regions collects it at the NEXT flush, not this one
+  // -- so a rule that merely asked "is it placed anywhere else" refused every
   // move: a sprite stepping one cell per frame rendered on alternate frames
   // and flickered, which is precisely the motion case this ticket exists for.
   // The frame window is m_frame_start_clock, the same predicate the collection
   // uses.
   if (m_mode == PlacementMode::UnicodePlaceholders &&
-      (*entry)->last_place_clock > m_frame_start_clock &&
-      (*entry)->last_place_key != rect_key) {
+      last_place_clock > m_frame_start_clock && last_place_key != rect_key) {
     return std::unexpected{ErrorEvent{
         Severity::Warning, "kitty",
-        "draw_pinned: a pinned image can have only one live placement under "
-        "UnicodePlaceholders -- the placeholder cell encodes the image id and "
-        "not the placement id"}};
+        std::format("{}: a resident image can have only one live placement "
+                    "under UnicodePlaceholders -- the placeholder cell "
+                    "encodes the image id and not the placement id",
+                    operation)}};
   }
   // The other half of the same ambiguity: an ordinary region occupying this
   // exact rect this frame paints its own placeholder grid over these cells
@@ -1601,27 +1702,29 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image,
         r != m_regions.end() && r->second.last_used > m_frame_start_clock) {
       return std::unexpected{ErrorEvent{
           Severity::Warning, "kitty",
-          "draw_pinned: an unpinned image was already drawn to this rect this "
-          "frame -- under UnicodePlaceholders the two cell grids overwrite "
-          "each other"}};
+          std::format("{}: an unpinned image was already drawn to this rect "
+                      "this frame -- under UnicodePlaceholders the two cell "
+                      "grids overwrite each other",
+                      operation)}};
     }
-    for (const auto& [other_key, other] : m_pin_places) {
-      if (other_key.rect == rect_key && other_key.image_id != image.id &&
+    for (const auto& [other_key, other] : m_resident_places) {
+      if (other_key.rect == rect_key && other_key.image_id != image_id &&
           other.last_used > m_frame_start_clock) {
         return std::unexpected{ErrorEvent{
             Severity::Warning, "kitty",
-            "draw_pinned: another pinned image was already drawn to this "
-            "rect this frame -- under UnicodePlaceholders the two cell grids "
-            "overwrite each other"}};
+            std::format("{}: another resident image was already drawn to this "
+                        "rect this frame -- under UnicodePlaceholders the two "
+                        "cell grids overwrite each other",
+                        operation)}};
       }
     }
   }
 
-  auto place_it = m_pin_places.find(key);
-  const bool needs_placement_id = place_it == m_pin_places.end();
+  auto place_it = m_resident_places.find(key);
+  const bool needs_placement_id = place_it == m_resident_places.end();
   std::uint32_t new_placement_id = 1;
   if (needs_placement_id) {
-    auto id = next_pin_placement_id(image.id);
+    auto id = next_resident_placement_id(image_id, operation);
     if (!id) return std::unexpected{id.error()};
     new_placement_id = *id;
   }
@@ -1632,33 +1735,32 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image,
   // than a property a test has to keep watching. Allocation above can refuse;
   // it deliberately runs before this tally and before any map/wire mutation.
   ImageTally tally{*this, m_buf.size()};
+  stage_resident_placements();
 
   if (needs_placement_id) {
-    const PinPlacement replacement{dest, image.id, new_placement_id,
-                                   0,    false,    options};
-    place_it = m_pin_places.emplace(key, replacement).first;
+    const ResidentPlacement replacement{
+        dest, image_id, new_placement_id, 0, false, options, {}, false};
+    place_it = m_resident_places.emplace(key, replacement).first;
   }
   auto& place = place_it->second;
   const bool placement_changed = place.placement != options;
   place.placement = options;
   place.last_used = ++m_clock;
-  // A pinned image has no content to change, so stale placement options are
-  // the only reason to replace its placement.
+  // Application-resident content changes through its own edit/control API, so
+  // stale placement options are the only reason to replace this placement.
   emit_placement(place.image_id, place.placement_id, place.placed, dest,
                  options, false, placement_changed);
 
-  (*entry)->last_place_key = rect_key;
-  (*entry)->last_place_clock = m_clock;
+  last_place_key = rect_key;
+  last_place_clock = m_clock;
 
-  if (clamped && !m_warned_clamp_pinned) {
-    // A latch of its OWN. Sharing draw_image's would mean whichever path
-    // clamped first consumed the only report the driver will ever make, and
-    // the other would then clamp in silence -- a degradation with no event,
-    // which is the one thing this file may not do.
-    m_warned_clamp_pinned = true;
+  if (clamped && !warned_clamp) {
+    warned_clamp = true;
     return std::unexpected{ErrorEvent{
         Severity::Warning, "kitty",
-        "draw_pinned: destination clamped to the 297-cell placeholder limit"}};
+        std::format("{}: destination clamped to the 297-cell placeholder "
+                    "limit",
+                    operation)}};
   }
   return {};
 }
@@ -1676,73 +1778,110 @@ auto KittyDriver::retain_pinned(Rect cells, PinnedImage image,
   if (!entry) return std::unexpected{entry.error()};
   if (!(*entry)->accepted)
     return std::unexpected{pending_warning("retain_pinned", image.id)};
+  return retain_resident(cells, image.id, (*entry)->px,
+                         (*entry)->last_place_key, (*entry)->last_place_clock,
+                         options, "retain_pinned", m_warned_clamp_pinned);
+}
+
+auto KittyDriver::retain_animation(Rect cells, AnimationHandle animation,
+                                   PlacementFit fit)
+    -> std::expected<void, ErrorEvent> {
+  return retain_animation(cells, animation,
+                          ImagePlacementOptions{.fit = fit, .layer = {}});
+}
+
+auto KittyDriver::retain_animation(Rect cells, AnimationHandle animation,
+                                   ImagePlacementOptions options)
+    -> std::expected<void, ErrorEvent> {
+  auto entry = resolve_animation(animation, "retain_animation");
+  if (!entry) return std::unexpected{entry.error()};
+  if (!(*entry)->accepted)
+    return std::unexpected{pending_warning("retain_animation", animation.id)};
+  return retain_resident(cells, animation.id, (*entry)->px,
+                         (*entry)->last_place_key, (*entry)->last_place_clock,
+                         options, "retain_animation", m_warned_clamp_animation);
+}
+
+auto KittyDriver::retain_resident(Rect cells, std::uint32_t image_id,
+                                  Extent pixels, std::uint64_t& last_place_key,
+                                  std::uint64_t& last_place_clock,
+                                  ImagePlacementOptions options,
+                                  std::string_view operation,
+                                  bool& warned_clamp)
+    -> std::expected<void, ErrorEvent> {
   if (cells.empty()) {
-    return std::unexpected{ErrorEvent{Severity::Warning, "kitty",
-                                      "retain_pinned: empty destination rect"}};
+    return std::unexpected{
+        ErrorEvent{Severity::Warning, "kitty",
+                   std::format("{}: empty destination rect", operation)}};
   }
   if (!options.layer.z_index()) {
     return std::unexpected{ErrorEvent{
         Severity::Warning, "kitty",
-        "retain_pinned: image layer rank is outside the protocol range"}};
+        std::format("{}: image layer rank is outside the protocol range",
+                    operation)}};
   }
-  auto geometry = detail::validate_placement(options, cells, (*entry)->px,
-                                             *this, "kitty", "retain_pinned");
+  auto geometry = detail::validate_placement(options, cells, pixels, *this,
+                                             "kitty", operation);
   if (!geometry) return std::unexpected{geometry.error()};
 
   bool clamped = false;
   const Rect dest = clamp_dest(cells, clamped);
-  (void)clamped; // draw_pinned reported this placement's one-shot warning
+  (void)clamped; // the draw path reports this placement's one-shot warning
   const std::uint64_t rect_key = region_key(dest.x, dest.y, dest.w, dest.h);
-  const PinPlacementKey key{rect_key, image.id};
+  const ResidentPlacementKey key{rect_key, image_id};
 
-  // Retention is the no-wire half of draw_pinned. It is valid only while the
-  // exact placement App remembers is still live; anything else delegates to
+  // Retention is the no-wire half of a resident draw. It is valid only while
+  // the exact placement App remembers is still live; anything else delegates to
   // the ordinary draw, which creates or edits the placement correctly.
-  auto place = m_pin_places.find(key);
-  if (place == m_pin_places.end() || !place->second.placed ||
+  auto place = m_resident_places.find(key);
+  if (place == m_resident_places.end() || !place->second.placed ||
       place->second.placement != options) {
-    return draw_pinned(cells, image, options);
+    return draw_resident(cells, image_id, pixels, last_place_key,
+                         last_place_clock, options, operation, warned_clamp);
   }
 
-  // The same two Unicode-placeholder collisions draw_pinned refuses still
+  // The same two Unicode-placeholder collisions a resident draw refuses still
   // exist when no bytes are emitted: an ordinary region can overwrite this
   // retained grid, and retaining two rects for one image is still ambiguous.
   if (m_mode == PlacementMode::UnicodePlaceholders) {
-    if ((*entry)->last_place_clock > m_frame_start_clock &&
-        (*entry)->last_place_key != rect_key) {
+    if (last_place_clock > m_frame_start_clock && last_place_key != rect_key) {
       return std::unexpected{ErrorEvent{
           Severity::Warning, "kitty",
-          "retain_pinned: a pinned image can have only one live placement "
-          "under UnicodePlaceholders -- the placeholder cell encodes the "
-          "image id and not the placement id"}};
+          std::format("{}: a resident image can have only one live placement "
+                      "under UnicodePlaceholders -- the placeholder cell "
+                      "encodes the image id and not the placement id",
+                      operation)}};
     }
     if (const auto region = m_regions.find(rect_key);
         region != m_regions.end() &&
         region->second.last_used > m_frame_start_clock) {
       return std::unexpected{ErrorEvent{
           Severity::Warning, "kitty",
-          "retain_pinned: an unpinned image was already drawn to this rect "
-          "this frame -- under UnicodePlaceholders the two cell grids "
-          "overwrite each other"}};
+          std::format("{}: an unpinned image was already drawn to this rect "
+                      "this frame -- under UnicodePlaceholders the two cell "
+                      "grids overwrite each other",
+                      operation)}};
     }
-    for (const auto& [other_key, other] : m_pin_places) {
-      if (other_key.rect == rect_key && other_key.image_id != image.id &&
+    for (const auto& [other_key, other] : m_resident_places) {
+      if (other_key.rect == rect_key && other_key.image_id != image_id &&
           other.last_used > m_frame_start_clock) {
         return std::unexpected{ErrorEvent{
             Severity::Warning, "kitty",
-            "retain_pinned: another pinned image was already drawn to this "
-            "rect this frame -- under UnicodePlaceholders the two cell grids "
-            "overwrite each other"}};
+            std::format("{}: another resident image was already drawn to this "
+                        "rect this frame -- under UnicodePlaceholders the two "
+                        "cell grids overwrite each other",
+                        operation)}};
       }
     }
   }
 
-  // Nothing is appended. Advancing the same clocks draw_pinned advances is
+  // Nothing is appended. Advancing the same clocks a resident draw advances is
   // what keeps gc_regions from retiring the placement at this frame boundary
   // and keeps the within-frame collision predicates exact.
+  stage_resident_placements();
   place->second.last_used = ++m_clock;
-  (*entry)->last_place_key = rect_key;
-  (*entry)->last_place_clock = m_clock;
+  last_place_key = rect_key;
+  last_place_clock = m_clock;
   return {};
 }
 
@@ -1754,7 +1893,7 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   bool clamped = false;
   const Rect dest = clamp_dest(cells, clamped);
 
-  // The reciprocal of draw_pinned's guard, and it has to be here as well as
+  // The reciprocal of the resident-placement guard, and it has to be here as
   // there: widget draw order is not something an application controls, so
   // which of the two orderings it gets is incidental, and a hazard refused in
   // one order only is refused by luck. Under placeholders both paths paint a
@@ -1762,11 +1901,11 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   // ran second wins with nothing said.
   if (m_mode == PlacementMode::UnicodePlaceholders) {
     const std::uint64_t k = region_key(dest.x, dest.y, dest.w, dest.h);
-    for (const auto& [pin_key, place] : m_pin_places) {
+    for (const auto& [pin_key, place] : m_resident_places) {
       if (pin_key.rect == k && place.last_used > m_frame_start_clock) {
         return std::unexpected{ErrorEvent{
             Severity::Warning, "kitty",
-            "draw_image: a pinned image was already drawn to this rect this "
+            "draw_image: a resident image was already drawn to this rect this "
             "frame -- under UnicodePlaceholders the two cell grids overwrite "
             "each other"}};
       }
@@ -2065,7 +2204,7 @@ auto KittyDriver::finish_pending(std::uint32_t image_id,
           it->second.accepted = true;
           ++it->second.content_revision;
         } else {
-          std::erase_if(m_pin_places, [&](const auto& item) {
+          std::erase_if(m_resident_places, [&](const auto& item) {
             return item.second.image_id == image_id;
           });
           m_pinned.erase(it);
@@ -2347,6 +2486,7 @@ void KittyDriver::flush() {
   m_frame_success_events.clear();
   finish_animation_frame(accepted);
   finish_animation_controls(accepted);
+  finish_resident_placement_frame(accepted);
   finish_residency_frame(accepted);
   finish_content_frame(accepted);
   finish_direct_fallbacks(accepted);
@@ -2383,26 +2523,27 @@ void KittyDriver::set_placement_mode(PlacementMode mode) {
   if (m_mode == PlacementMode::UnicodePlaceholders) {
     for (const auto& [key, slot] : m_regions)
       if (slot.placed) queue_placeholder_clear(slot.rect, slot.last_used);
-    for (const auto& [key, place] : m_pin_places)
+    for (const auto& [key, place] : m_resident_places)
       if (place.placed) queue_placeholder_clear(place.rect, place.last_used);
   }
   if (m_mode == PlacementMode::Classic) {
     for (const auto& [key, slot] : m_regions)
       if (slot.placed) delete_image(slot.image_id, slot.serial);
   }
-  // Pinned placements are retired in BOTH directions, and that asymmetry with
+  // Resident placements are retired in BOTH directions, and that asymmetry with
   // the region loop above is deliberate rather than an oversight.
   //
-  // A pinned image is the application's, so its placement is retired with d=i
-  // and its DATA is not freed (#109). The region loop's d=I and the retransmit
-  // below are two halves of one fact: an unpinned region must re-upload
-  // because d=I just discarded what it would have reused. A pinned image has
-  // nothing to re-upload -- which is exactly why leaving its stale placement
-  // live would be unrecoverable. Going placeholders -> classic, a virtual
-  // placement nobody retired stays live under the same p= the next classic
-  // a=p reuses, and a region at least gets a second chance from its forced
-  // retransmit where a pinned image gets none.
-  for (const auto& [key, place] : m_pin_places)
+  // A pin or animation root is the application's, so its placement is retired
+  // with d=i and its DATA is not freed (#109/#301). The region loop's d=I and
+  // the retransmit below are two halves of one fact: an unpinned region must
+  // re-upload because d=I just discarded what it would have reused. A resident
+  // image has nothing to re-upload -- which is exactly why leaving its stale
+  // placement live would be unrecoverable. Going placeholders -> classic, a
+  // virtual placement nobody retired stays live under the same p= the next
+  // classic a=p reuses, and a region at least gets a second chance from its
+  // forced retransmit where an application-resident image gets none.
+  if (!m_resident_places.empty()) stage_resident_placements();
+  for (const auto& [key, place] : m_resident_places)
     if (place.placed) delete_placement(place.image_id, place.placement_id);
   tally_image_edit(m_buf.size() - before); // #139
 
@@ -2410,7 +2551,7 @@ void KittyDriver::set_placement_mode(PlacementMode mode) {
     slot.placed = false;
     slot.content_hash = 0; // force retransmit under the new placement
   }
-  for (auto& [key, place] : m_pin_places)
+  for (auto& [key, place] : m_resident_places)
     place.placed = false;
   m_mode = mode;
 }
@@ -2482,21 +2623,22 @@ auto KittyDriver::gc_regions() -> void {
       ++it;
     }
   }
-  // Placements of pinned images, on the same boundary and for the same reason
-  // -- a classic placement left behind floats above the text grid whether or
-  // not its data belongs to the application. What differs is the escape: d=i
-  // retires the placement and leaves the image resident (#109). Nothing here
-  // touches m_pinned, which is what makes "the collection cannot reach a
-  // pinned image" structural.
-  for (auto it = m_pin_places.begin(); it != m_pin_places.end();) {
-    if (it->second.last_used <= m_frame_start_clock) {
-      if (it->second.placed) {
-        queue_placeholder_clear(it->second.rect, it->second.last_used);
-        delete_placement(it->second.image_id, it->second.placement_id);
+  // Placements of pins and animation roots, on the same boundary and for the
+  // same reason -- a classic placement left behind floats above the text grid
+  // whether or not its data belongs to the application. What differs is the
+  // escape: d=i retires the placement and leaves the image resident (#109).
+  // Nothing here touches m_pinned or m_animations, which makes "the collection
+  // cannot reach application-owned image data" structural.
+  for (auto& [key, place] : m_resident_places) {
+    (void)key;
+    if (place.last_used <= m_frame_start_clock && !place.retire_on_accept) {
+      stage_resident_placements();
+      if (place.placed) {
+        queue_placeholder_clear(place.rect, place.last_used);
+        delete_placement(place.image_id, place.placement_id);
       }
-      it = m_pin_places.erase(it);
-    } else {
-      ++it;
+      place.placed = false;
+      place.retire_on_accept = true;
     }
   }
   // Regions drawn from here on get higher stamps; anything still at or below

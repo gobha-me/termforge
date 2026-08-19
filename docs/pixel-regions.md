@@ -872,6 +872,37 @@ when the frame write is accepted. Each opaque frame transfer must then receive i
 ordered `OK`; rejection or timeout rolls back the whole sequence, schedules a
 root delete, and quarantines the id until every late reply has arrived.
 
+### Visible animation placement (#301)
+
+Registration owns the sequence but does not display it. Place its resident root
+in the frame's pixel window, normally `App::on_pixels`, then retain the exact
+placement on unchanged frames:
+
+```cpp
+driver.draw_animation(rect, *animation, ImagePlacementOptions{
+    .fit = PlacementFit::Exact,
+});
+driver.retain_animation(rect, *animation, ImagePlacementOptions{
+    .fit = PlacementFit::Exact,
+});
+```
+
+The overloads and geometry rules mirror `draw_pinned`/`retain_pinned`: fit,
+layer, source crop and sub-cell offset compose in one options value. Kitty uses
+the animation root's resident image id and derives placement ids in that
+image's namespace. A successful unchanged retain emits zero bytes. Omitting
+both calls for one frame collects the placement with `d=i`; the animation data
+and its playback state remain resident, and a later draw places them again
+without retransmitting any frame payload.
+
+Pins and animation roots share placeholder collision rules because a
+placeholder cell encodes only the resident image id. Their handle types remain
+separate, so a `PinnedImage` cannot control or release an animation by
+accident. Placement state commits at the accepted frame-write boundary: sink
+refusal restores the prior live placement and discards a newly proposed one,
+including across terminal-id reuse. The four placement virtuals are non-pure;
+legacy drivers compile unchanged and return an honest `Warning`.
+
 ### Playback, interruption, and local completion (#117)
 
 The handle owns the sequence's independent playback and lifecycle state:
@@ -914,9 +945,10 @@ accepted. Controls update projected state immediately, commit with their frame
 write, and roll back if the sink refuses it. `unregister_animation` emits
 `a=d,d=I`, freeing the owned root and all of its frames; the handle becomes
 stale immediately. `invalidate_images()` forgets registrations without wire,
-and accepted shutdown delete-all retires them terminal-side. All five additions
-to `TerminalDriver` are non-pure honest defaults so existing out-of-tree tiers
-continue to compile and return `Warning` without output.
+and accepted shutdown delete-all retires them terminal-side. All five
+control/lifecycle additions to `TerminalDriver` are non-pure honest defaults so
+existing out-of-tree tiers continue to compile and return `Warning` without
+output.
 
 ### Mutable content keeps the handle and placement (#196, #261)
 

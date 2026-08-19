@@ -47,8 +47,9 @@
 #      offset through Classic Stretch and Classic Exact placements.
 #  14  #116 — the exact non-displayed root/new-frame/delete action probe used
 #      to gate terminal-driven animation registration. Self-contained.
-#  15  #117 — register/place a two-frame sequence, loop it, then interrupt onto
-#      its final frame with payload-free animation controls. Self-contained.
+#  15  #117/#301 — register, place a two-frame sequence exactly as
+#      draw_animation does, loop it, then interrupt onto its final frame with
+#      payload-free animation controls. Self-contained.
 #
 # All commands use q=0 so kitty REPORTS errors; every response the terminal
 # sends is captured and echoed in readable form. A response of "_Gi=42;OK"
@@ -632,7 +633,7 @@ stanza_14() {
 
 stanza_15() {
   say ""
-  say "== Stanza 15: #117 payload-free loop and finish interruption =="
+  say "== Stanza 15: #117/#301 visible animation placement and controls =="
   say "Expected: a 2x2 block alternates red/green, then remains green."
 
   local started finished

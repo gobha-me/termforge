@@ -311,6 +311,18 @@ file is the tactical version.
   boundary and roll back on sink refusal. Unregistration owns the sequence and
   therefore uses `d=I`, never placement-only `d=i`. The five driver additions
   are non-pure honest defaults; legacy and unsupported tiers return Warning.
+- **Animation registration is not placement** (#301). The root transmitted by
+  `register_animation` remains invisible until `draw_animation` places its
+  resident image id. Its placement follows the same frame lifetime as a pinned
+  placement: `retain_animation` keeps an unchanged placement live with zero
+  bytes, omission uses `d=i` and leaves the sequence resident, and unregister
+  remains the only path that owns enough to use `d=I`. Pins and animation roots
+  share the placement-id allocator and placeholder collision rules because the
+  wire sees the same `(image id, placement id)` identity. Their handles remain
+  type-separated at the public boundary. Placement bookkeeping commits only at
+  an accepted frame write; sink refusal restores the prior live placement so a
+  later retain cannot remember bytes the terminal never received. Both virtual
+  overload sets are non-pure compatibility additions.
 - **Raw mode is RAII** — `Terminal` restores termios on destruction. Never
   leave the terminal in raw mode on any exit path, **including one an exception
   takes**: a destructor is not a guarantee (an exception escaping `main`

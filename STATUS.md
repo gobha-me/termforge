@@ -4,9 +4,27 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-18, latest)
+## Where we are (2026-08-19, latest)
 
-**Current stable release: v0.55.0 — multi-page choice wizard.** #298 adds
+**Current stable release: v0.56.0 — visible terminal-driven animations.** #301
+completes the animation surface: `draw_animation` places a registered root and
+`retain_animation` keeps an unchanged placement live with zero wire bytes.
+Registration, placement and playback remain independent operations, so an
+omitted placement is retired with `d=i` while its sequence stays resident and
+payload-free controls continue to address it.
+
+Kitty shares one placement implementation across pins and animation roots,
+including Exact/crop/layer validation, placement-id derivation, placeholder
+collision guards and per-frame collection. Resident placement bookkeeping now
+rolls back at a refused sink boundary, preventing a later retain from claiming
+that rejected placement bytes reached the terminal. Legacy drivers keep
+compiling through non-pure warning defaults. The animation-control example now
+shows the registered sequence itself, and the real-Kitty probe covers the
+visible loop and final-frame hold.
+
+## Previous stable release: v0.55.0
+
+**v0.55.0 — multi-page choice wizard.** #298 adds
 `ChoiceWizardDialog`, a reusable modal over ordered `ChoiceWizardPage` values.
 Each page owns its title/body, single- or multiple-choice mode, selection
 limits, descriptions and optional Other field while results remain presentation
