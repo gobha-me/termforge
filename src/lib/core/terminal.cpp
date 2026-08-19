@@ -362,12 +362,12 @@ auto read_available(int fd, int timeout_ms) -> std::string {
   char buf[256];
   const int slices = timeout_ms / 20;
   for (int i = 0; i < slices; ++i) {
-    fd_set rfds;
-    FD_ZERO(&rfds);
-    FD_SET(fd, &rfds);
-    timeval tv{0, 20'000};
-    const int r = select(fd + 1, &rfds, nullptr, nullptr, &tv);
-    if (r > 0 && FD_ISSET(fd, &rfds)) {
+    // poll() accepts every nonnegative descriptor set_io() does. select()'s
+    // fixed fd_set wrote out of bounds as soon as an injected server session
+    // used an fd at or above FD_SETSIZE (#308).
+    pollfd pfd{fd, POLLIN, 0};
+    const int r = ::poll(&pfd, 1, 20);
+    if (r > 0 && (pfd.revents & (POLLIN | POLLERR | POLLHUP)) != 0) {
       const ssize_t n = ::read(fd, buf, sizeof(buf));
       if (n > 0) out.append(buf, static_cast<std::size_t>(n));
     }
