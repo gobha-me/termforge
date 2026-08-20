@@ -22,6 +22,16 @@ constexpr std::string_view kPasteEnd{"\033[201~"};
   return value >= 0x40U && value <= 0x7EU;
 }
 
+[[nodiscard]] auto is_csi_parameter(char byte) noexcept -> bool {
+  const auto value = static_cast<unsigned char>(byte);
+  return value >= 0x30U && value <= 0x3FU;
+}
+
+[[nodiscard]] auto is_csi_intermediate(char byte) noexcept -> bool {
+  const auto value = static_cast<unsigned char>(byte);
+  return value >= 0x20U && value <= 0x2FU;
+}
+
 // Map a CSI/SS3 letter final byte to a Key. Shared by the ESC[ and ESC O
 // paths: arrows and Home/End are identical in both, and P/Q/R/S are F1–F4
 // (SS3 in normal mode, or CSI "1;<mod>P" with modifiers). Returns Key::Unknown
@@ -216,11 +226,11 @@ struct CsiParams {
   int v[kParams][kSubs]{};
 };
 
-// Scan a CSI body from `i` up to its final byte, leaving `i` on that byte.
-// Returns false when the final byte has not arrived yet — the caller answers
-// "need more data" with 0, exactly as the old inline scan did.
+// Parse a collector-validated CSI body from `i` up to its final byte, leaving
+// `i` on that byte. Record completeness and byte-class order are structural at
+// this boundary; collect_csi owns those checks before it calls parse_csi.
 auto scan_csi_params(std::string_view buf, std::size_t& i, CsiParams& out)
-    -> bool {
+    -> void {
   int pi = 0, si = 0;
   while (i < buf.size()) {
     const char c = buf[i];
@@ -246,7 +256,6 @@ auto scan_csi_params(std::string_view buf, std::size_t& i, CsiParams& out)
     }
     ++i;
   }
-  return i < buf.size();
 }
 
 } // namespace
@@ -291,7 +300,7 @@ auto Input::feed(std::string_view bytes) -> void {
         break; // incomplete sequence; keep it in m_pending
       }
       off += used;
-      m_control_scan = 0;
+      reset_control_scan();
     }
     m_pending.erase(0, off);
   }
@@ -340,8 +349,14 @@ auto Input::discard_incomplete() noexcept -> void {
   m_discard_csi = false;
   m_discard_ss3 = false;
   m_discard_paste = false;
-  m_control_scan = 0;
+  reset_control_scan();
   m_paste_buf.clear();
+}
+
+auto Input::reset_control_scan() noexcept -> void {
+  m_control_scan = 0;
+  m_control_intermediate = false;
+  m_control_parseable = true;
 }
 
 auto Input::decode(std::string_view bytes) -> std::deque<Event> {
@@ -563,9 +578,14 @@ auto Input::parse_apc(std::string_view buf) -> std::size_t {
 }
 
 auto Input::collect_csi(std::string_view buf) -> std::size_t {
-  // Locate the record boundary incrementally, then parse the complete record
-  // once. Before #306 every fragmented feed rescanned the whole prefix from
-  // byte zero, making a digit-at-a-time incomplete CSI quadratic.
+  // Locate a syntactically complete record incrementally, then parse it once.
+  // CSI is parameters (30-3F), then intermediates (20-2F), then one final
+  // (40-7E). ESC belongs to none of those classes: it interrupts an incomplete
+  // record and must be reprocessed as the next introducer (#318).
+  //
+  // Before #306 every fragmented feed rescanned the whole prefix from byte
+  // zero, making a digit-at-a-time incomplete CSI quadratic. Keep the scan
+  // position and phase across feeds rather than giving that bound back.
   std::size_t body = 2;
   enum class Body { Generic, Mouse, Private };
   Body kind = Body::Generic;
@@ -580,69 +600,138 @@ auto Input::collect_csi(std::string_view buf) -> std::size_t {
   }
 
   std::size_t i = std::max(body, m_control_scan);
-  const auto is_body = [kind](char byte) {
-    const auto value = static_cast<unsigned char>(byte);
-    if (kind == Body::Private) return value >= 0x20U && value <= 0x3FU;
-    if (kind == Body::Mouse) return std::isdigit(value) != 0 || byte == ';';
-    return std::isdigit(value) != 0 || byte == ';' || byte == ':' ||
-           byte == '<';
+  const auto supported_parameter = [kind](char byte) {
+    if (kind == Body::Private) return true;
+    if (kind == Body::Mouse)
+      return std::isdigit(static_cast<unsigned char>(byte)) != 0 || byte == ';';
+    return std::isdigit(static_cast<unsigned char>(byte)) != 0 || byte == ';' ||
+           byte == ':';
   };
-  while (i < buf.size() && is_body(buf[i]))
-    ++i;
+  while (i < buf.size()) {
+    const char byte = buf[i];
+    if (byte == '\033') {
+      if (i >= kMaxCsiBytes)
+        m_events.emplace_back(
+            ErrorEvent{Severity::Warning, "input",
+                       "CSI record exceeded the 256-byte limit"});
+      return i;
+    }
+    if (is_csi_parameter(byte)) {
+      if (m_control_intermediate) {
+        // A parameter after an intermediate cannot belong to this CSI. Enter
+        // bounded discard until its final or a replacement ESC rather than
+        // exposing the malformed tail as user input.
+        m_discard_csi = true;
+        if (i + 1 >= kMaxCsiBytes)
+          m_events.emplace_back(
+              ErrorEvent{Severity::Warning, "input",
+                         "CSI record exceeded the 256-byte limit"});
+        return i + 1;
+      }
+      if (!supported_parameter(byte)) m_control_parseable = false;
+      ++i;
+      continue;
+    }
+    if (is_csi_intermediate(byte)) {
+      m_control_intermediate = true;
+      if (kind != Body::Private) m_control_parseable = false;
+      ++i;
+      continue;
+    }
+    if (is_csi_final(byte)) {
+      const std::size_t used = i + 1;
+      if (used > kMaxCsiBytes) {
+        m_events.emplace_back(
+            ErrorEvent{Severity::Warning, "input",
+                       "CSI record exceeded the 256-byte limit"});
+        return used;
+      }
+      if (!m_control_parseable) {
+        // A complete but unsupported CSI is still one control record. Preserve
+        // generic CSI's historical Unknown event without leaking its tail.
+        if (kind != Body::Private)
+          m_events.emplace_back(KeyEvent{Key::Unknown});
+        return used;
+      }
+      return parse_csi(buf.substr(0, used));
+    }
 
-  if (i == buf.size()) {
-    m_control_scan = i;
-    // At the ceiling an incomplete record can no longer acquire a final byte
-    // without exceeding it, so reject now rather than retain an impossible
-    // prefix for one more read.
-    if (buf.size() < kMaxCsiBytes) return 0;
-    m_events.emplace_back(ErrorEvent{Severity::Warning, "input",
-                                     "CSI record exceeded the 256-byte limit"});
+    // C0/C1 and high bytes are not CSI body or final bytes. Drop through the
+    // malformed record's boundary; discard_csi will stop before a new ESC.
     m_discard_csi = true;
-    m_control_scan = 0;
-    return buf.size();
+    if (i + 1 >= kMaxCsiBytes)
+      m_events.emplace_back(
+          ErrorEvent{Severity::Warning, "input",
+                     "CSI record exceeded the 256-byte limit"});
+    return i + 1;
   }
 
-  // ESC interrupts the oversized record and is the start of the next unit,
-  // not part of the rejected one. Ordinary under-limit interruption remains
-  // unchanged here and is the separate resynchronization work tracked by #318.
-  const bool interrupted = buf[i] == '\033';
-  const std::size_t used = interrupted ? i : i + 1;
-  if (used > kMaxCsiBytes) {
-    m_events.emplace_back(ErrorEvent{Severity::Warning, "input",
-                                     "CSI record exceeded the 256-byte limit"});
-    m_control_scan = 0;
-    return used;
-  }
-  return parse_csi(buf);
+  m_control_scan = i;
+  // At the ceiling an incomplete record can no longer acquire a final byte
+  // without exceeding it, so reject now rather than retain an impossible
+  // prefix for one more read.
+  if (buf.size() < kMaxCsiBytes) return 0;
+  m_events.emplace_back(ErrorEvent{Severity::Warning, "input",
+                                   "CSI record exceeded the 256-byte limit"});
+  m_discard_csi = true;
+  return buf.size();
 }
 
 auto Input::collect_ss3(std::string_view buf) -> std::size_t {
   std::size_t i = std::max(std::size_t{2}, m_control_scan);
-  while (i < buf.size() &&
-         (std::isdigit(static_cast<unsigned char>(buf[i])) != 0 ||
-          buf[i] == ';')) {
-    ++i;
-  }
-  if (i == buf.size()) {
-    m_control_scan = i;
-    if (buf.size() < kMaxSs3Bytes) return 0;
-    m_events.emplace_back(ErrorEvent{Severity::Warning, "input",
-                                     "SS3 record exceeded the 256-byte limit"});
-    m_discard_ss3 = true;
-    m_control_scan = 0;
-    return buf.size();
-  }
+  while (i < buf.size()) {
+    const char byte = buf[i];
+    if (byte == '\033') {
+      if (i >= kMaxSs3Bytes)
+        m_events.emplace_back(
+            ErrorEvent{Severity::Warning, "input",
+                       "SS3 record exceeded the 256-byte limit"});
+      return i;
+    }
+    if (is_csi_parameter(byte)) {
+      if (m_control_intermediate) {
+        m_discard_ss3 = true;
+        if (i + 1 >= kMaxSs3Bytes)
+          m_events.emplace_back(
+              ErrorEvent{Severity::Warning, "input",
+                         "SS3 record exceeded the 256-byte limit"});
+        return i + 1;
+      }
+      if (std::isdigit(static_cast<unsigned char>(byte)) == 0 && byte != ';')
+        m_control_parseable = false;
+      ++i;
+      continue;
+    }
+    if (is_csi_intermediate(byte)) {
+      m_control_intermediate = true;
+      m_control_parseable = false;
+      ++i;
+      continue;
+    }
+    if (is_csi_final(byte)) {
+      const std::size_t used = i + 1;
+      if (used > kMaxSs3Bytes) {
+        m_events.emplace_back(
+            ErrorEvent{Severity::Warning, "input",
+                       "SS3 record exceeded the 256-byte limit"});
+        return used;
+      }
+      return m_control_parseable ? parse_ss3(buf.substr(0, used)) : used;
+    }
 
-  const bool interrupted = buf[i] == '\033';
-  const std::size_t used = interrupted ? i : i + 1;
-  if (used > kMaxSs3Bytes) {
-    m_events.emplace_back(ErrorEvent{Severity::Warning, "input",
-                                     "SS3 record exceeded the 256-byte limit"});
-    m_control_scan = 0;
-    return used;
+    m_discard_ss3 = true;
+    if (i + 1 >= kMaxSs3Bytes)
+      m_events.emplace_back(
+          ErrorEvent{Severity::Warning, "input",
+                     "SS3 record exceeded the 256-byte limit"});
+    return i + 1;
   }
-  return parse_ss3(buf);
+  m_control_scan = i;
+  if (buf.size() < kMaxSs3Bytes) return 0;
+  m_events.emplace_back(ErrorEvent{Severity::Warning, "input",
+                                   "SS3 record exceeded the 256-byte limit"});
+  m_discard_ss3 = true;
+  return buf.size();
 }
 
 auto Input::discard_csi(std::string_view buf) -> std::size_t {
@@ -695,7 +784,7 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
   // SGR mouse: ESC [ < b ; x ; y (M|m) — three params after '<'.
 
   // Check for SGR mouse marker first.
-  if (buf.size() >= 4 && buf[2] == '<') {
+  if (buf[2] == '<') {
     std::size_t i = 3;
     int params[3] = {0, 0, 0};
     int pi = 0;
@@ -712,7 +801,6 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
         params[pi] = params[pi] * 10 + (buf[i] - '0');
       ++i;
     }
-    if (i >= buf.size()) return 0; // incomplete
     const char fin = buf[i];
     ++i;
 
@@ -759,27 +847,14 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
   // into a Key::Unknown plus a run of Char events for its digits. Consume the
   // parameter/intermediate bytes (0x20–0x3F) through the final byte
   // (0x40–0x7E) and emit nothing.
-  if (buf.size() >= 3 && (buf[2] == '?' || buf[2] == '>' || buf[2] == '=')) {
-    std::size_t i = 3;
-    while (i < buf.size()) {
-      const auto b = static_cast<unsigned char>(buf[i]);
-      if (b >= 0x40 && b <= 0x7E) return i + 1; // final byte: drop the report
-      if (b >= 0x20 && b <= 0x3F) {
-        ++i;
-        continue;
-      } // param / intermediate
-      // A byte outside the CSI body (e.g. an ESC starting the next sequence):
-      // the report was truncated. Drop just "ESC[<marker>" and resync on the
-      // rest rather than swallowing an unrelated sequence.
-      return 3;
-    }
-    return 0; // no final byte yet — wait for the rest of the report
+  if (buf[2] == '?' || buf[2] == '>' || buf[2] == '=') {
+    return buf.size();
   }
 
   // Generic CSI: params (0-9 ; :) + final byte.
   std::size_t i = 2;
   CsiParams p;
-  if (!scan_csi_params(buf, i, p)) return 0; // incomplete
+  scan_csi_params(buf, i, p);
   const char fin = buf[i];
   ++i;
 
@@ -854,7 +929,6 @@ auto Input::parse_ss3(std::string_view buf) -> std::size_t {
   // buf starts with ESC O (SS3). Application-cursor-keys mode and F1–F4:
   //   ESC O A/B/C/D -> arrows,  ESC O H/F -> Home/End,  ESC O P/Q/R/S -> F1–F4.
   // Some terminals encode modifiers as ESC O 1 ; <mod> <final> (like CSI).
-  if (buf.size() < 3) return 0; // need the final byte
   std::size_t i = 2;
   int p1 = 0, p2 = 0;
   bool have_p2 = false;
@@ -872,7 +946,6 @@ auto Input::parse_ss3(std::string_view buf) -> std::size_t {
     }
     ++i;
   }
-  if (i >= buf.size()) return 0; // params but no final byte yet
   const char fin = buf[i];
   ++i;
   const Key k = map_final_key(fin);

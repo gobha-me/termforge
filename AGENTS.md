@@ -353,7 +353,11 @@ file is the tactical version.
   rather than a limitation. The allowance is shared by normal decoding,
   replacement-mode discard and wait-phase absorption; spending it is not an
   input boundary, so parser and lone-ESC state carry into the next frame. The
-  refusal that remains is for a **discovered** non-tty stdin
+  CSI/SS3 parser validates parameter, intermediate and final byte classes; an
+  ESC inside an incomplete record retires only that prefix and is reprocessed
+  as the next introducer, so one truncated control cannot consume or explode a
+  valid replacement key (#318). The refusal that remains is for a
+  **discovered** non-tty stdin
   (`./app < file` is an accident); an injected one is a caller's deliberate
   choice, which is the whole discriminator.
   The crash backstop then arms in two halves with two predicates — termios when a

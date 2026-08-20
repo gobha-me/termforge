@@ -87,6 +87,9 @@ class Input {
   // Oversized paste: discard through ESC[201~.
   bool m_discard_paste{false};
   std::size_t m_control_scan{0}; // already-scanned CSI/SS3 body prefix
+  // Incremental CSI/SS3 grammar phase and decoder compatibility.
+  bool m_control_intermediate{false};
+  bool m_control_parseable{true};
   // Paste body accumulated until the close bracket.
   std::string m_paste_buf;
 
@@ -105,6 +108,7 @@ class Input {
   auto discard_paste(std::string_view buf) -> std::size_t;
   auto consume_paste(std::string_view buf) -> std::size_t; // inside a paste
   auto flush_esc() -> void; // held lone ESC -> Escape keypress
+  auto reset_control_scan() noexcept -> void;
 };
 
 } // namespace termforge
