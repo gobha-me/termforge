@@ -1,5 +1,6 @@
 #include "termforge/core/input.hpp"
 #include <catch2/catch_test_macros.hpp>
+#include <string>
 #include <variant>
 
 using termforge::Event;
@@ -616,6 +617,125 @@ TEST_CASE("Input: a stray paste-end with no open paste is swallowed",
   Input in;
   auto ev = in.decode("\033[201~");
   REQUIRE(ev.empty()); // no spurious key, no crash
+}
+
+TEST_CASE("Input: CSI accepts 256 bytes and rejects the next byte",
+          "[input][failure][bounds]") {
+  constexpr std::size_t kLimit = 256;
+
+  Input exact_input;
+  std::string exact{"\033["};
+  exact.append(kLimit - 3, '1');
+  exact += 'u';
+  REQUIRE(exact.size() == kLimit);
+  exact_input.feed(exact);
+  CHECK(exact_input.poll().empty());
+  auto after_exact = exact_input.decode("a");
+  REQUIRE(after_exact.size() == 1);
+  CHECK(first_key(after_exact).ch == U'a');
+
+  Input oversized_input;
+  std::string oversized{"\033["};
+  oversized.append(kLimit - 2, '1');
+  oversized += "Az";
+  auto rejected = oversized_input.decode(oversized);
+  REQUIRE(rejected.size() == 2);
+  const auto* error = std::get_if<termforge::ErrorEvent>(&rejected[0]);
+  REQUIRE(error != nullptr);
+  CHECK(error->severity == termforge::Severity::Warning);
+  CHECK(error->source == "input");
+  CHECK(error->message.find("CSI record exceeded") != std::string::npos);
+  CHECK(std::get<KeyEvent>(rejected[1]).ch == U'z');
+}
+
+TEST_CASE("Input: fragmented oversized CSI scans once and resynchronizes",
+          "[input][failure][bounds]") {
+  Input in;
+  in.feed("\033[");
+  for (int i = 0; i < 10'000; ++i)
+    in.feed("1");
+  in.feed("\033[A");
+
+  const auto events = in.poll();
+  REQUIRE(events.size() == 2);
+  CHECK(std::holds_alternative<termforge::ErrorEvent>(events[0]));
+  CHECK(std::get<KeyEvent>(events[1]).key == Key::Up);
+}
+
+TEST_CASE("Input: SS3 accepts 256 bytes and bounds fragmented records",
+          "[input][failure][bounds]") {
+  constexpr std::size_t kLimit = 256;
+
+  Input exact_input;
+  std::string exact{"\033O"};
+  exact.append(kLimit - 3, '1');
+  exact += 'A';
+  auto accepted = exact_input.decode(exact);
+  REQUIRE(accepted.size() == 1);
+  CHECK(first_key(accepted).key == Key::Up);
+
+  Input oversized_input;
+  oversized_input.feed("\033O");
+  for (int i = 0; i < 10'000; ++i)
+    oversized_input.feed("1");
+  oversized_input.feed("A\033OA");
+  const auto rejected = oversized_input.poll();
+  REQUIRE(rejected.size() == 2);
+  const auto* error = std::get_if<termforge::ErrorEvent>(&rejected[0]);
+  REQUIRE(error != nullptr);
+  CHECK(error->severity == termforge::Severity::Warning);
+  CHECK(error->message.find("SS3 record exceeded") != std::string::npos);
+  CHECK(std::get<KeyEvent>(rejected[1]).key == Key::Up);
+}
+
+TEST_CASE("Input: bracketed paste accepts an exact 1-MiB body",
+          "[input][paste][bounds]") {
+  constexpr std::size_t kLimit = std::size_t{1024} * 1024U;
+  Input in;
+  std::string bytes{"\033[200~"};
+  bytes.append(kLimit, 'x');
+  bytes += "\033[201~";
+
+  auto events = in.decode(bytes);
+  REQUIRE(events.size() == 1);
+  const auto* paste = std::get_if<PasteEvent>(&events[0]);
+  REQUIRE(paste != nullptr);
+  CHECK(paste->text.size() == kLimit);
+}
+
+TEST_CASE("Input: oversized paste warns once and hides a split terminator",
+          "[input][paste][failure][bounds]") {
+  constexpr std::size_t kLimit = std::size_t{1024} * 1024U;
+  Input in;
+  in.feed("\033[200~");
+  in.feed(std::string(kLimit + 1, 'x'));
+  in.feed(std::string(kLimit, 'y')); // sustained body stays in discard mode
+  in.feed("\033[20");
+  in.flush();
+  in.feed("1~z");
+
+  const auto events = in.poll();
+  REQUIRE(events.size() == 2);
+  const auto* error = std::get_if<termforge::ErrorEvent>(&events[0]);
+  REQUIRE(error != nullptr);
+  CHECK(error->severity == termforge::Severity::Warning);
+  CHECK(error->source == "input");
+  CHECK(error->message.find("bracketed paste exceeded") != std::string::npos);
+  CHECK(std::get<KeyEvent>(events[1]).ch == U'z');
+}
+
+TEST_CASE("Input: discarding incomplete state abandons an oversized paste",
+          "[input][paste][failure][bounds]") {
+  constexpr std::size_t kLimit = std::size_t{1024} * 1024U;
+  Input in;
+  in.feed("\033[200~");
+  in.feed(std::string(kLimit + 1, 'x'));
+  REQUIRE(in.poll().size() == 1);
+
+  in.discard_incomplete();
+  auto recovered = in.decode("z");
+  REQUIRE(recovered.size() == 1);
+  CHECK(first_key(recovered).ch == U'z');
 }
 
 // ── kitty keyboard protocol (CSI-u) — issue #60 ────────────────────────────
