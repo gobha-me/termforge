@@ -44,6 +44,7 @@
 #include "support/legacy_driver.hpp"
 #include "termforge/core/app.hpp"
 #include "termforge/core/byte_sink.hpp"
+#include "termforge/core/renderer.hpp"
 #include "termforge/core/screen.hpp"
 #include "termforge/core/types.hpp"
 #include "termforge/drivers/ansi_rgb_driver.hpp"
@@ -61,6 +62,7 @@ using termforge::Image;
 using termforge::KittyDriver;
 using termforge::Pixel;
 using termforge::Rect;
+using termforge::Renderer;
 using termforge::Rgb;
 using termforge::Severity;
 using termforge::StringSink;
@@ -312,6 +314,71 @@ TEST_CASE("sink: a refusal is reported once and then cleared", "[sink]") {
   // Taken means taken: a latch that never clears would republish the same
   // failure on every subsequent frame forever.
   CHECK_FALSE(d.take_output_error().has_value());
+}
+
+TEST_CASE("sink: a refused Renderer frame retries an unchanged Screen",
+          "[sink][renderer][failure]") {
+  FallbackDriver d;
+  Renderer renderer{d};
+  termforge::Screen screen{5, 1};
+  screen.write_text(0, 0, "frame", kFg, kBg);
+
+  FailingSink refused{"first frame refused"};
+  d.set_output(&refused);
+  renderer.present(screen);
+  renderer.flush();
+  REQUIRE(d.take_output_error());
+
+  std::string recovered;
+  d.set_output(&recovered);
+  renderer.present(screen);
+  renderer.flush();
+  CHECK(recovered.find("frame") != std::string::npos);
+
+  recovered.clear();
+  renderer.present(screen);
+  renderer.flush();
+  CHECK(recovered.empty());
+}
+
+TEST_CASE("sink: styled retries do not trust refused SGR projections",
+          "[sink][renderer][color][failure]") {
+  const auto check = [](TerminalDriver& driver) {
+    Renderer renderer{driver};
+    termforge::Screen screen{1, 1};
+    screen.write_text(0, 0, "A", Rgb{10, 20, 30}, Rgb{40, 50, 60}, Attr::Bold);
+    std::string accepted;
+    driver.set_output(&accepted);
+    renderer.present(screen);
+    renderer.flush();
+
+    screen.write_text(0, 0, "B", Rgb{70, 80, 90}, Rgb{100, 110, 120},
+                      Attr::Underline);
+    FailingSink refused{"styled frame refused"};
+    driver.set_output(&refused);
+    renderer.present(screen);
+    renderer.flush();
+    REQUIRE(driver.take_output_error());
+
+    std::string retry;
+    driver.set_output(&retry);
+    renderer.present(screen);
+    renderer.flush();
+    CHECK(retry.find("\033[0m") != std::string::npos);
+    CHECK(retry.find("\033[4m") != std::string::npos);
+    CHECK(retry.find("\033[38;2;70;80;90m") != std::string::npos);
+    CHECK(retry.find("\033[48;2;100;110;120m") != std::string::npos);
+    CHECK(retry.find('B') != std::string::npos);
+  };
+
+  SECTION("ANSI RGB") {
+    AnsiRgbDriver driver;
+    check(driver);
+  }
+  SECTION("Kitty") {
+    KittyDriver driver;
+    check(driver);
+  }
 }
 
 TEST_CASE("sink: the FIRST refusal survives, not the last", "[sink]") {
@@ -610,6 +677,9 @@ class FailingSinkProbe : public termforge::App {
   [[nodiscard]] auto seen() const -> const std::vector<ErrorEvent>& {
     return m_seen;
   }
+  [[nodiscard]] auto accepted_output() const -> const std::string& {
+    return m_sink;
+  }
 
  private:
   bool m_recover;
@@ -632,6 +702,7 @@ TEST_CASE("sink: a refused frame reaches the application as an ErrorEvent",
   REQUIRE(probe.seen().size() == 1);
   CHECK(probe.seen().front().message == "the session went away");
   CHECK(probe.seen().front().source == "sink");
+  CHECK(probe.accepted_output().find("frame") != std::string::npos);
 }
 
 TEST_CASE("sink: a sink that keeps failing keeps saying so, once per frame",

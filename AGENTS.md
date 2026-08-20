@@ -106,7 +106,13 @@ file is the tactical version.
   turn one oversized frame into a permanent session downgrade.
   A sink refusal is latched, not returned (`flush()` is pure and `-> void`,
   and giving it a return type would break every out-of-tree driver), and `App`
-  drains it into an `ErrorEvent` each frame. **The sink is borrowed, never
+  drains it into an `ErrorEvent` each frame. **Cell and rendition shadows commit
+  at that accepted-write boundary too** (#303): `Renderer::flush()` invalidates
+  its staged cell baseline after refusal, and built-in drivers invalidate their
+  projected cursor/SGR state, so an identical retry emits a complete repair.
+  The private base-owned acceptance bit does not consume the diagnostic, and a
+  driver that bypasses `emit_frame` opts out of this observation along with the
+  sink and meter. **The sink is borrowed, never
   owned**, which is why end-of-session cleanup goes through explicit
   `TerminalDriver::shutdown()` while the sink is known alive; destructors do
   not emit — see #148 and #144 row 7. **State, not behaviour, means base-owned

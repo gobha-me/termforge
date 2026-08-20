@@ -244,9 +244,15 @@ void AnsiRgbDriver::flush() {
   //
   // #178: emit_frame is the sink AND the meter -- it writes m_buf wherever the
   // output is pointed and calls tally_frame with exactly that count.
-  emit_frame(m_buf);
+  const bool accepted = emit_frame(m_buf);
   m_buf.clear();
   m_cursor_known = false;
+  if (!accepted) {
+    // The terminal retained the rendition from the last accepted frame, not
+    // the colors/attributes projected while assembling this refused one.
+    // Unknown is conservative: the retry begins with a complete SGR setup.
+    m_cur_fg = m_cur_bg = m_cur_attrs = -1;
+  }
 }
 
 } // namespace termforge

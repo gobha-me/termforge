@@ -6,7 +6,21 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-20, latest)
 
-**Current stable release: v0.57.3 — resilient CSI/SS3 resynchronization.** #318
+**Current stable release: v0.57.4 — recover refused terminal frames.** #303
+ties the Renderer's cell comparison shadow and each built-in driver's
+cursor/SGR projection to the accepted `emit_frame` boundary. A refused write
+invalidates those staged beliefs, so rendering the identical styled Screen
+after output recovery emits a complete repair instead of an empty diff with
+missing rendition escapes.
+
+The acceptance state is private, base-owned and non-virtual: public `flush()`
+remains source-compatible for out-of-tree drivers, while App still receives
+the original latched `ErrorEvent`. Drivers that bypass `emit_frame` retain the
+same explicit sink/meter/acceptance limitation.
+
+## Previous stable release: v0.57.3
+
+**v0.57.3 — resilient CSI/SS3 resynchronization.** #318
 validates parameter, intermediate and final byte classes before interpreting a
 terminal control record. An ESC that interrupts an incomplete CSI or SS3 now
 retires only the malformed prefix and is reprocessed as the next sequence

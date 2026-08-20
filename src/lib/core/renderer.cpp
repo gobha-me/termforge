@@ -68,7 +68,14 @@ auto Renderer::flush() -> void {
   // boundary is a property of the whole App frame -- cell diff AND pixel
   // regions -- so it lives on the Renderer the App drives, not inside
   // present() where it fired before the frame's images were drawn.
+  m_driver.begin_renderer_flush();
   m_driver.flush();
+  if (!m_driver.renderer_flush_accepted()) {
+    // present() stages the next diff baseline before the write. A refusal
+    // means the terminal saw none of it, so the identical next Screen must be
+    // a full repaint rather than an empty diff.
+    invalidate();
+  }
 }
 
 } // namespace termforge
