@@ -393,13 +393,57 @@ auto Input::decode_one(std::string_view buf) -> std::size_t {
     if (buf[1] == '[') return collect_csi(buf);
     if (buf[1] == 'O') return collect_ss3(buf); // app-cursor keys, F1–F4
     if (buf[1] == '_') return parse_apc(buf);   // terminal control-plane APC
-    // Alt+char: ESC followed by a printable char.
-    if (buf[1] >= 0x20 && buf[1] < 0x7F) {
-      m_events.push_back(KeyEvent{Key::Char, static_cast<char32_t>(buf[1]),
-                                  false, true, false});
+
+    // Legacy meta-prefix: ESC followed by a key that is not a CSI/SS3/APC
+    // introducer. Complete sequences above always win over this Alt fallback.
+    const auto rest = buf.substr(1);
+    const auto b1 = static_cast<unsigned char>(rest[0]);
+
+    // Alt+named control keys (and Alt+Ctrl+letter) share the ESC-prefix route.
+    switch (b1) {
+      case '\r':
+        m_events.push_back(KeyEvent{Key::Enter, 0, false, true, false});
+        return 2;
+      case '\t':
+        m_events.push_back(KeyEvent{Key::Tab, 0, false, true, false});
+        return 2;
+      case 0x7F:
+        m_events.push_back(KeyEvent{Key::Backspace, 0, false, true, false});
+        return 2;
+      default:
+        break;
+    }
+    if (b1 >= 1 && b1 <= 26) {
+      m_events.push_back(KeyEvent{Key::Char, static_cast<char32_t>('a' + b1 - 1),
+                                  true, true, false});
       return 2;
     }
-    return 1; // lone ESC / unknown
+
+    // Alt+UTF-8 scalar: one complete code point with alt=true (ASCII printable
+    // is the 1-byte case). Truncated-but-promising waits; malformed resyncs by
+    // consuming only ESC+lead so the following keypress is not swallowed.
+    if (b1 >= 0x20) {
+      char32_t cp = 0;
+      std::size_t len = 0;
+      if (detail::utf8_decode(rest, cp, len)) {
+        m_events.push_back(KeyEvent{Key::Char, cp, false, true, false});
+        return 1 + len;
+      }
+      const std::size_t want = detail::utf8_seq_len(b1);
+      if (want > 1 && rest.size() < want) {
+        bool plausible = rest.size() < 2 || ([&] {
+                           const auto [lo, hi] =
+                               detail::utf8_second_byte_range(b1);
+                           const auto s = static_cast<unsigned char>(rest[1]);
+                           return s >= lo && s <= hi;
+                         }());
+        if (plausible) return 0;
+      }
+      m_events.push_back(KeyEvent{Key::Char, U'\uFFFD', false, true, false});
+      return 2;
+    }
+
+    return 1; // lone ESC / unknown C0
   }
 
   // ── control chars ──
