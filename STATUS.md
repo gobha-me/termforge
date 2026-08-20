@@ -6,7 +6,23 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-20, latest)
 
-**Current stable release: v0.57.5 — detect stdout frame failures.** #304 makes
+**Current stable release: v0.57.6 — roll back refused Kitty image work.** #313
+extends the accepted-write boundary across the complete Kitty image
+transaction. Region hashes, cache membership, placement options and LRU state
+now restore from a bounded pre-frame snapshot, while new raw/opaque pins and
+animations are committed only after their queued bytes reach the sink.
+
+A refused frame drops only reply correlations issued by that frame, preserves
+older accepted correlations, releases staged indirect resources, and keeps the
+last accepted pinned hash, revision and residency across replacements and
+partial edits. A new handle whose upload never reached the terminal becomes
+stale; App detects that state and re-borrows the widget-owned payload on the
+next production frame without rerasterizing it. The production-order refusal
+suite covers raw and opaque regions, pins, replacements, edits and animations.
+
+## Previous stable release: v0.57.5
+
+**v0.57.5 — detect stdout frame failures.** #304 makes
 the default stdout route honor the same accepted-write boundary as an injected
 `ByteSink`. Short `fwrite` calls, failed `fflush` calls and a resulting FILE
 error now refuse the frame and latch a `Severity::Error` instead of committing
