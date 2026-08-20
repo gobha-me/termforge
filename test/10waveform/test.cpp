@@ -3,7 +3,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -31,6 +33,93 @@ TEST_CASE("WaveformWidget: ring buffer drops oldest at capacity",
   for (int i = 0; i < 8; ++i)
     w.push(static_cast<float>(i));
   REQUIRE(w.sample_count() == 4); // only last 4 kept
+}
+
+TEST_CASE("WaveformWidget: non-finite input is rejected atomically (#316)",
+          "[waveform][failure]") {
+  constexpr float nan = std::numeric_limits<float>::quiet_NaN();
+  constexpr float inf = std::numeric_limits<float>::infinity();
+
+  WaveformWidget w{8};
+  w.set_geometry({0, 0, 4, 2});
+  REQUIRE(w.set_range(0.0F, 1.0F));
+  REQUIRE(w.push(0.25F));
+
+  Screen screen{4, 2};
+  w.draw(screen);
+  const Image* first = w.draw_pixels(w.rect(), Extent{32, 16});
+  REQUIRE(first != nullptr);
+  const std::vector<Pixel> before(first->pixels().begin(),
+                                  first->pixels().end());
+  w.pixel_region_submitted(w.rect());
+  REQUIRE_FALSE(w.dirty());
+  REQUIRE_FALSE(w.pixel_region_state(w.rect()).content_dirty);
+
+  CHECK_FALSE(w.push(nan));
+  CHECK_FALSE(w.push(inf));
+  CHECK_FALSE(w.push(-inf));
+  CHECK_FALSE(w.set_range(nan, 1.0F));
+  CHECK_FALSE(w.set_range(0.0F, inf));
+  CHECK_FALSE(w.set_range(-inf, 1.0F));
+
+  const std::array mixed{0.5F, nan, 0.75F};
+  CHECK_FALSE(w.push(std::span<const float>{mixed}));
+  CHECK(w.sample_count() == 1);
+  CHECK_FALSE(w.dirty());
+  CHECK_FALSE(w.pixel_region_state(w.rect()).content_dirty);
+
+  const Image* unchanged = w.draw_pixels(w.rect(), Extent{32, 16});
+  REQUIRE(unchanged == first);
+  CHECK(std::equal(before.begin(), before.end(), unchanged->pixels().begin(),
+                   unchanged->pixels().end()));
+
+  const std::array finite{0.5F, 0.75F};
+  REQUIRE(w.push(std::span<const float>{finite}));
+  CHECK(w.sample_count() == 3);
+  CHECK(w.dirty());
+  CHECK(w.pixel_region_state(w.rect()).content_dirty);
+
+  // Force a fresh normalization after every rejected endpoint. A partial
+  // range mutation hidden behind the unchanged raster cache would surface
+  // here when the valid push bumps the generation.
+  w.draw(screen);
+  REQUIRE(w.draw_pixels(w.rect(), Extent{32, 16}) != nullptr);
+}
+
+TEST_CASE("WaveformWidget: extreme finite ranges remain renderable (#316)",
+          "[waveform][failure]") {
+  constexpr float limit = std::numeric_limits<float>::max();
+
+  WaveformWidget fixed{4};
+  fixed.set_geometry({0, 0, 2, 2});
+  REQUIRE(fixed.set_range(-limit, limit));
+  REQUIRE(fixed.push(-limit));
+  REQUIRE(fixed.push(limit));
+
+  Screen fixed_screen{2, 2};
+  fixed.draw(fixed_screen);
+  const Image* fixed_image = fixed.draw_pixels(fixed.rect(), Extent{64, 32});
+  REQUIRE(fixed_image != nullptr);
+  CHECK(fixed_image->width() == 64);
+  CHECK(fixed_image->height() == 32);
+
+  WaveformWidget automatic{4};
+  automatic.set_geometry({0, 0, 2, 2});
+  REQUIRE(automatic.push(-limit));
+  REQUIRE(automatic.push(limit));
+
+  Screen auto_screen{2, 2};
+  automatic.draw(auto_screen);
+  const Image* auto_image =
+      automatic.draw_pixels(automatic.rect(), Extent{64, 32});
+  REQUIRE(auto_image != nullptr);
+  CHECK(auto_image->width() == 64);
+  CHECK(auto_image->height() == 32);
+
+  // Preserve the existing finite policy: reversed ranges are accepted and
+  // use the same one-unit degenerate span as equal endpoints.
+  REQUIRE(automatic.set_range(1.0F, -1.0F));
+  REQUIRE(automatic.draw_pixels(automatic.rect(), Extent{64, 32}) != nullptr);
 }
 
 TEST_CASE("WaveformWidget: full-scale value renders full blocks",

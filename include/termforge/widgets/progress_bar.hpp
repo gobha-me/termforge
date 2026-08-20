@@ -30,8 +30,9 @@ class ProgressBar final : public Widget {
  public:
   ProgressBar() = default;
 
-  // Set progress (0.0 to 1.0, clamped). Determinate mode.
-  auto set_value(float v) -> void;
+  // Set progress (0.0 to 1.0, clamped). Determinate mode. A non-finite value
+  // is rejected without changing the value or mode.
+  auto set_value(float v) -> bool;
 
   // Set indeterminate mode (animated pulse). Forward ticks to animate it —
   // App::tick_widgets(dt, {&bar}) from the app's on_tick. A bar nobody ticks
@@ -43,12 +44,15 @@ class ProgressBar final : public Widget {
   // frame-counted pulse did at the default 33 ms budget (~30 cells/s), so the
   // animation looks unchanged on a default app. Note the sweep PERIOD still
   // depends on the bar's width (it is 2*(w + 16) cells of travel) — that is
-  // unchanged by #69, which is about frame-rate coupling only.
-  auto set_pulse_rate(float cells_per_second) -> void;
+  // unchanged by #69, which is about frame-rate coupling only. A non-finite
+  // rate is rejected without changing the current rate.
+  auto set_pulse_rate(float cells_per_second) -> bool;
   [[nodiscard]] auto pulse_rate() const noexcept -> float {
     return m_pulse_rate;
   }
 
+  // Non-finite deltas and advances that would overflow the stored phase are
+  // ignored without changing the animation.
   auto on_tick(std::chrono::duration<double> dt) -> void override;
 
   // Rewinds the pulse to its start. Not the value or the mode — those are

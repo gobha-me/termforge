@@ -8,10 +8,12 @@
 
 namespace termforge {
 
-auto ProgressBar::set_value(float v) -> void {
+auto ProgressBar::set_value(float v) -> bool {
+  if (!std::isfinite(v)) return false;
   m_value = std::clamp(v, 0.0f, 1.0f);
   m_indeterminate = false;
   mark_dirty();
+  return true;
 }
 
 auto ProgressBar::set_indeterminate(bool on) -> void {
@@ -25,21 +27,27 @@ auto ProgressBar::set_indeterminate(bool on) -> void {
   mark_dirty();
 }
 
-auto ProgressBar::set_pulse_rate(float cells_per_second) -> void {
+auto ProgressBar::set_pulse_rate(float cells_per_second) -> bool {
+  if (!std::isfinite(cells_per_second)) return false;
   m_pulse_rate = std::max(0.0f, cells_per_second);
   mark_dirty();
+  return true;
 }
 
 auto ProgressBar::on_tick(std::chrono::duration<double> dt) -> void {
   // A determinate bar has nothing to advance, and a tick carrying no time is
   // not a content change — the first frame of a run delivers dt == 0.
-  // Spelled as a negated positive test so a NaN delta is rejected too: NaN
-  // fails every comparison, and one that got through would make m_pulse_cells
-  // NaN permanently — std::fmod(NaN, period) is NaN and the cast in draw() is
-  // then undefined behaviour, so the bar would never animate again.
-  if (!m_indeterminate || !(dt > std::chrono::duration<double>::zero())) return;
+  // Spelled as a negated positive test plus an explicit finite guard so neither
+  // NaN nor infinity can poison m_pulse_cells. The product and sum are guarded
+  // separately below because finite inputs can still overflow together;
+  // std::fmod(non-finite, period) followed by draw()'s int cast is undefined.
+  const double seconds = dt.count();
+  if (!m_indeterminate || !(seconds > 0.0) || !std::isfinite(seconds)) return;
   const double before = m_pulse_cells;
-  m_pulse_cells += dt.count() * static_cast<double>(m_pulse_rate);
+  const double advance = seconds * static_cast<double>(m_pulse_rate);
+  const double next = before + advance;
+  if (!std::isfinite(advance) || !std::isfinite(next)) return;
+  m_pulse_cells = next;
   // Dirty only when the pulse crossed into a new CELL — the bar is painted in
   // whole cells, so sub-cell motion changes nothing on screen. Marking every
   // tick would make a slow (or set_pulse_rate(0), which is legal) bar

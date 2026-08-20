@@ -23,14 +23,17 @@ class WaveformWidget final : public Widget {
   // Construct with a fixed sample capacity (ring buffer size).
   explicit WaveformWidget(int capacity = 256);
 
-  // Push a new sample. Oldest sample drops off when at capacity.
-  auto push(float value) -> void;
+  // Push a new sample. Oldest sample drops off when at capacity. Non-finite
+  // samples are rejected without changing the series.
+  auto push(float value) -> bool;
 
-  // Push multiple samples at once.
-  auto push(std::span<const float> values) -> void;
+  // Push multiple samples at once. The update is atomic: if any sample is
+  // non-finite, none of them are appended.
+  auto push(std::span<const float> values) -> bool;
 
-  // Set fixed Y-axis range (disables auto-scaling).
-  auto set_range(float min, float max) -> void;
+  // Set fixed Y-axis range (disables auto-scaling). Non-finite endpoints are
+  // rejected without changing the current range mode or bounds.
+  auto set_range(float min, float max) -> bool;
 
   // Re-enable auto-scaling (default).
   auto auto_range() -> void;
