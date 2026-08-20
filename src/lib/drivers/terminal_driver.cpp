@@ -175,6 +175,9 @@ auto TerminalDriver::emit_frame(std::string_view bytes) -> bool {
   // and tally_frame's remainder puts them in cells, which is the honest
   // answer -- they are not image traffic.
   tally_frame(frame.size());
+  // Renderer reads this without consuming m_output_error so a refused frame
+  // cannot become its diff baseline while App still receives the diagnostic.
+  m_last_emit_accepted = accepted;
   return accepted;
 }
 

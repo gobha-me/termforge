@@ -33,6 +33,7 @@
 namespace termforge {
 
 class App;
+class Renderer;
 
 // Which built-in rendering tier an application wants App/Terminal to select.
 // Automatic preserves capability-based selection; the concrete values are an
@@ -1169,6 +1170,16 @@ class TerminalDriver {
 
  private:
   friend class App;
+  friend class Renderer;
+
+  // Renderer owns the cell shadow, while emit_frame owns the only observable
+  // write result. Reset before calling the open virtual flush() so a legacy
+  // driver that bypasses emit_frame retains that documented limitation rather
+  // than inheriting a stale refusal from an earlier in-tree write.
+  auto begin_renderer_flush() noexcept -> void { m_last_emit_accepted = true; }
+  [[nodiscard]] auto renderer_flush_accepted() const noexcept -> bool {
+    return m_last_emit_accepted;
+  }
 
   // App's opt-in frame observer (#258) arms exactly the rendered frame's
   // write. Keeping the timer at emit_frame makes sink_write the blocking
@@ -1204,6 +1215,10 @@ class TerminalDriver {
   FrameBytes m_total_bytes{};
   std::chrono::nanoseconds m_last_frame_sink_write{};
   bool m_measure_next_write{false};
+  // Base-owned, non-virtual acceptance state for Renderer. Public flush()
+  // remains void for out-of-tree compatibility, and reading this does not
+  // consume the ErrorEvent that App must dispatch.
+  bool m_last_emit_accepted{true};
 
   // Borrowed, never owned; null means stdout. m_string_sink backs the
   // std::string* overload and m_sink may point AT it, which is why copy and

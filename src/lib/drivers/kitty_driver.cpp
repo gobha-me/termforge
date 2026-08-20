@@ -2492,9 +2492,17 @@ void KittyDriver::flush() {
   finish_direct_fallbacks(accepted);
   m_buf.clear();
   m_cursor_known = false;
-  m_frame_start_fg = m_cur_fg;
-  m_frame_start_bg = m_cur_bg;
-  m_frame_start_attrs = m_cur_attrs;
+  if (accepted) {
+    m_frame_start_fg = m_cur_fg;
+    m_frame_start_bg = m_cur_bg;
+    m_frame_start_attrs = m_cur_attrs;
+  } else {
+    // Cell rendition is projected while m_buf is assembled just like image
+    // state. The refused bytes changed neither the terminal's SGR state nor
+    // the frame-start state future placeholder cleanup must restore.
+    m_cur_fg = m_cur_bg = m_cur_attrs = -1;
+    m_frame_start_fg = m_frame_start_bg = m_frame_start_attrs = -1;
+  }
 }
 
 void KittyDriver::set_placement_mode(PlacementMode mode) {
