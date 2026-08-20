@@ -282,6 +282,16 @@ class KittyDriver final : public TerminalDriver {
     ImagePlacementOptions placement{};
   };
 
+  // Regions are capped at sixteen entries, so copying the complete map is a
+  // small and exact transaction journal. The live map is projected while a
+  // frame is assembled; refusal restores entries erased/reused by GC or LRU
+  // along with content and placement-only changes.
+  struct RegionFrameState {
+    std::unordered_map<std::uint64_t, RegionSlot> regions;
+    std::uint64_t frame_start_clock{0};
+    PlacementMode mode{PlacementMode::Classic};
+  };
+
   // One image the application asked the terminal to keep (#109). Deliberately
   // NOT a RegionSlot: a region's identity is its destination rect and its
   // lifetime is one frame, and a pinned image has neither property. Keeping
@@ -308,6 +318,17 @@ class KittyDriver final : public TerminalDriver {
     std::uint64_t last_place_clock{0};
     std::uint64_t committed_last_place_key{0};
     std::uint64_t committed_last_place_clock{0};
+  };
+
+  // Initial pin uploads are projected until their frame reaches the sink.
+  // Locally checked direct bytes may still be placed later in that same
+  // buffer and keep the historical projected-ready API view, but they are not
+  // committed terminal belief before the write.
+  struct StagedPin {
+    std::uint32_t image_id{0};
+    std::uint32_t serial{0};
+    std::uint64_t content_hash{0};
+    bool awaits_reply{false};
   };
 
   // One independently registered terminal-driven sequence (#116). It lives
@@ -634,7 +655,7 @@ class KittyDriver final : public TerminalDriver {
   auto finish_pending(std::uint32_t image_id, const PendingReply& pending,
                       bool success, std::string_view status, bool timed_out,
                       bool report_failure = true) -> void;
-  auto discard_unwritten_edits() -> void;
+  auto discard_unwritten_image_work() -> void;
   auto finish_direct_fallbacks(bool accepted) -> void;
   auto retry_indirect_direct(std::uint32_t image_id, PendingReply pending,
                              std::string_view status) -> void;
@@ -665,6 +686,12 @@ class KittyDriver final : public TerminalDriver {
       std::uint32_t image_id, const PinnedEntry& entry) const noexcept
       -> std::uint64_t;
   auto finish_content_frame(bool accepted) -> void;
+  auto stage_region_frame() -> void;
+  auto finish_region_frame(bool accepted) -> void;
+  auto finish_pin_frame(bool accepted) -> void;
+  [[nodiscard]] auto staged_pin_ready(std::uint32_t image_id,
+                                      std::uint32_t serial) const noexcept
+      -> bool;
   auto finish_animation_frame(bool accepted) -> void;
 
   // Retire the text-grid half of a Unicode-placeholder placement (#201).
@@ -754,11 +781,13 @@ class KittyDriver final : public TerminalDriver {
   // Region key (packed x,y,w,h) -> slot. Bounded: LRU-evicted past
   // kMaxRegionSlots, freeing the terminal-side image data too.
   std::unordered_map<std::uint64_t, RegionSlot> m_regions;
+  std::optional<RegionFrameState> m_region_frame;
   std::unordered_map<std::uint32_t, PendingReply> m_pending_replies;
   std::unordered_set<std::uint32_t> m_quarantined_ids;
   // Resident images (#109), keyed on the terminal-side image id. Nothing in
   // gc_regions or region_slot can reach this map -- that is the feature.
   std::unordered_map<std::uint32_t, PinnedEntry> m_pinned;
+  std::vector<StagedPin> m_staged_pins;
   std::unordered_map<std::uint32_t, AnimationEntry> m_animations;
   std::vector<StagedAnimation> m_staged_animations;
   std::unordered_set<std::uint32_t> m_staged_animation_controls;

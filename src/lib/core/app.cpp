@@ -2657,9 +2657,16 @@ auto App::flush_pixel_regions() -> void {
     const bool submit_content = !state.content_ready || pr.content_dirty ||
                                 state.recreate || identity_changed;
     if ((state.recreate || identity_changed) && state.pin) {
-      if (auto released = m_driver->unpin_image(state.pin); !released) {
-        m_input.push_error(std::move(released.error()));
-        continue;
+      // A refused initial upload invalidates the projected handle at the same
+      // boundary that makes App retry this region. Nothing reached the
+      // terminal, so there is no live image to unpin; clear the stale handle
+      // and reuse the widget-owned payload below. Accepted roots still take
+      // the explicit delete path before their identity changes.
+      if (m_driver->pinned_image_status(state.pin).valid) {
+        if (auto released = m_driver->unpin_image(state.pin); !released) {
+          m_input.push_error(std::move(released.error()));
+          continue;
+        }
       }
       state.pin = {};
       state.content_ready = false;

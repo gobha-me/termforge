@@ -1,5 +1,6 @@
 #include "termforge/drivers/kitty_driver.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <format>
@@ -694,10 +695,13 @@ auto KittyDriver::pinned_image_status(PinnedImage image) const noexcept
                reply->second.kind == PendingKind::PinnedReplace ||
                reply->second.kind == PendingKind::PinnedEdit);
   }
-  return PinnedImageStatus{.valid = true,
-                           .content_ready = entry->second.accepted,
-                           .update_pending = pending,
-                           .content_revision = entry->second.content_revision};
+  const bool projected_ready = staged_pin_ready(image.id, image.serial);
+  return PinnedImageStatus{
+      .valid = true,
+      .content_ready = entry->second.accepted || projected_ready,
+      .update_pending = pending,
+      .content_revision = entry->second.content_revision +
+                          static_cast<std::uint64_t>(projected_ready)};
 }
 
 auto KittyDriver::register_animation(std::span<const AnimationFrame> frames)
@@ -1183,10 +1187,11 @@ auto KittyDriver::pin_payload(std::span<const std::byte> payload,
   const auto hash = detail::payload_hash(payload, px, format);
   m_pinned.emplace(id, PinnedEntry{.px = px,
                                    .format = format,
-                                   .content_hash = request_reply ? 0 : hash,
-                                   .content_revision = request_reply ? 0U : 1U,
-                                   .accepted = !request_reply,
+                                   .content_hash = 0,
+                                   .content_revision = 0,
+                                   .accepted = false,
                                    .serial = serial});
+  m_staged_pins.push_back(StagedPin{id, serial, hash, transfer.request_reply});
   stage_residency_set(id, serial, ResidencyKind::Pinned, payload.size());
   if (transfer.request_reply) {
     PendingReply pending{PendingKind::PinTransmit,
@@ -1307,7 +1312,7 @@ auto KittyDriver::replace_payload(std::uint32_t id, PinnedEntry& entry,
         std::format("replace_pinned: image format must remain {} (got {})",
                     wire_format_name(entry.format), wire_format_name(format))}};
   }
-  if (!entry.accepted) {
+  if (!entry.accepted && !staged_pin_ready(id, entry.serial)) {
     return std::unexpected{pending_warning("replace_pinned", id)};
   }
 
@@ -1357,7 +1362,7 @@ auto KittyDriver::edit_payload(std::uint32_t id, PinnedEntry& entry,
                                ImageFormat format, Extent px,
                                ImageComposition composition, bool request_reply)
     -> std::expected<void, ErrorEvent> {
-  if (!entry.accepted)
+  if (!entry.accepted && !staged_pin_ready(id, entry.serial))
     return std::unexpected{pending_warning("edit_pinned", id)};
   if (m_pending_replies.contains(id))
     return std::unexpected{pending_warning("edit_pinned", id)};
@@ -1584,7 +1589,9 @@ auto KittyDriver::invalidate_images() noexcept -> void {
   }
   m_pending_replies.clear();
   m_regions.clear();
+  m_region_frame.reset();
   m_pinned.clear();
+  m_staged_pins.clear();
   m_animations.clear();
   m_staged_animations.clear();
   m_staged_animation_controls.clear();
@@ -1616,7 +1623,7 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image,
     -> std::expected<void, ErrorEvent> {
   auto entry = resolve_pin(image, "draw_pinned");
   if (!entry) return std::unexpected{entry.error()};
-  if (!(*entry)->accepted)
+  if (!(*entry)->accepted && !staged_pin_ready(image.id, (*entry)->serial))
     return std::unexpected{pending_warning("draw_pinned", image.id)};
   return draw_resident(cells, image.id, (*entry)->px, (*entry)->last_place_key,
                        (*entry)->last_place_clock, options, "draw_pinned",
@@ -1776,7 +1783,7 @@ auto KittyDriver::retain_pinned(Rect cells, PinnedImage image,
     -> std::expected<void, ErrorEvent> {
   auto entry = resolve_pin(image, "retain_pinned");
   if (!entry) return std::unexpected{entry.error()};
-  if (!(*entry)->accepted)
+  if (!(*entry)->accepted && !staged_pin_ready(image.id, (*entry)->serial))
     return std::unexpected{pending_warning("retain_pinned", image.id)};
   return retain_resident(cells, image.id, (*entry)->px,
                          (*entry)->last_place_key, (*entry)->last_place_clock,
@@ -1926,6 +1933,8 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   // delete, the placement, the placeholder cell grid — is image_edit. Both are
   // disjoint sub-ranges of m_buf, which only grows until flush() clears it.
   ImageTally tally{*this, m_buf.size()};
+
+  stage_region_frame();
 
   auto resolved_slot = region_slot(dest);
   if (!resolved_slot) return std::unexpected{resolved_slot.error()};
@@ -2121,6 +2130,10 @@ auto KittyDriver::projected_content_hash(
     std::uint32_t image_id, const PinnedEntry& entry) const noexcept
     -> std::uint64_t {
   std::uint64_t result = entry.content_hash;
+  for (const auto& pin : m_staged_pins) {
+    if (pin.image_id == image_id && pin.serial == entry.serial)
+      result = pin.content_hash;
+  }
   for (const auto& change : m_content_mutations) {
     if (change.image_id == image_id && change.serial == entry.serial)
       result = change.content_hash;
@@ -2139,6 +2152,51 @@ auto KittyDriver::finish_content_frame(bool accepted) -> void {
     }
   }
   m_content_mutations.clear();
+}
+
+auto KittyDriver::stage_region_frame() -> void {
+  if (m_region_frame) return;
+  m_region_frame = RegionFrameState{m_regions, m_frame_start_clock, m_mode};
+}
+
+auto KittyDriver::finish_region_frame(bool accepted) -> void {
+  if (!m_region_frame) return;
+  if (!accepted) {
+    m_regions = std::move(m_region_frame->regions);
+    m_frame_start_clock = m_region_frame->frame_start_clock;
+    m_mode = m_region_frame->mode;
+  }
+  m_region_frame.reset();
+}
+
+auto KittyDriver::staged_pin_ready(std::uint32_t image_id,
+                                   std::uint32_t serial) const noexcept
+    -> bool {
+  return std::any_of(m_staged_pins.begin(), m_staged_pins.end(),
+                     [&](const StagedPin& pin) {
+                       return pin.image_id == image_id &&
+                              pin.serial == serial && !pin.awaits_reply;
+                     });
+}
+
+auto KittyDriver::finish_pin_frame(bool accepted) -> void {
+  for (const auto staged : m_staged_pins) {
+    const auto it = m_pinned.find(staged.image_id);
+    if (it == m_pinned.end() || it->second.serial != staged.serial) continue;
+    if (!accepted) {
+      std::erase_if(m_resident_places, [&](const auto& item) {
+        return item.second.image_id == staged.image_id;
+      });
+      m_pinned.erase(it);
+      continue;
+    }
+    if (!staged.awaits_reply) {
+      it->second.content_hash = staged.content_hash;
+      it->second.accepted = true;
+      ++it->second.content_revision;
+    }
+  }
+  m_staged_pins.clear();
 }
 
 auto KittyDriver::finish_animation_frame(bool accepted) -> void {
@@ -2358,27 +2416,23 @@ auto KittyDriver::finish_direct_fallbacks(bool accepted) -> void {
   }
 }
 
-auto KittyDriver::discard_unwritten_edits() -> void {
-  // An opaque edit installs its reply correlation while queueing, before the
-  // frame reaches the sink. If that write is refused, no terminal can answer
-  // it and leaving the correlation live would block the handle for 120 flushes
-  // before reporting a fictitious terminal timeout. Content and residency
-  // mutations are discarded separately at this same boundary; retire only the
-  // edit operation issued for the frame that just failed.
-  std::vector<std::pair<std::uint32_t, PendingReply>> indirect;
+auto KittyDriver::discard_unwritten_image_work() -> void {
+  // Reply correlations are projected state too. A terminal cannot answer an
+  // operation whose frame never reached it, while correlations from an older
+  // accepted frame must remain live. Locally complete direct fallbacks are
+  // the exception: their indirect predecessor was accepted and rejected, so
+  // failure of the retry must run the normal rollback/invalidation path.
+  std::vector<std::pair<std::uint32_t, PendingReply>> completions;
   for (auto it = m_pending_replies.begin(); it != m_pending_replies.end();) {
-    if (it->second.kind == PendingKind::PinnedEdit &&
-        it->second.issued_flush + 1 == m_flush_count) {
-      it = m_pending_replies.erase(it);
-    } else if (it->second.indirect &&
-               it->second.issued_flush + 1 == m_flush_count) {
-      indirect.emplace_back(it->first, std::move(it->second));
-      it = m_pending_replies.erase(it);
-    } else {
+    if (it->second.issued_flush + 1 != m_flush_count) {
       ++it;
+      continue;
     }
+    if (it->second.complete_on_flush)
+      completions.emplace_back(it->first, std::move(it->second));
+    it = m_pending_replies.erase(it);
   }
-  for (const auto& [id, pending] : indirect)
+  for (const auto& [id, pending] : completions)
     finish_pending(id, pending, false, "sink refusal", false, false);
 }
 
@@ -2478,7 +2532,7 @@ void KittyDriver::flush() {
   // guarantees collection precedes wrap. emit_frame stays AFTER gc_regions()
   // above, or the deletions land in the next frame.
   const bool accepted = emit_frame(m_buf);
-  if (!accepted) discard_unwritten_edits();
+  if (!accepted) discard_unwritten_image_work();
   if (accepted) {
     for (auto& event : m_frame_success_events)
       push_driver_event(std::move(event));
@@ -2487,6 +2541,8 @@ void KittyDriver::flush() {
   finish_animation_frame(accepted);
   finish_animation_controls(accepted);
   finish_resident_placement_frame(accepted);
+  finish_pin_frame(accepted);
+  finish_region_frame(accepted);
   finish_residency_frame(accepted);
   finish_content_frame(accepted);
   finish_direct_fallbacks(accepted);
@@ -2507,6 +2563,7 @@ void KittyDriver::flush() {
 
 void KittyDriver::set_placement_mode(PlacementMode mode) {
   if (mode == m_mode) return;
+  stage_region_frame();
   // A region transmit and this mode transition cannot both commit. The
   // transition deletes classic region data and forces every region to upload
   // again; a later OK for the old upload must not restore its hash and make
@@ -2565,6 +2622,7 @@ void KittyDriver::set_placement_mode(PlacementMode mode) {
 }
 
 auto KittyDriver::gc_regions() -> void {
+  stage_region_frame();
   // A flush is a WRITE boundary; a collection needs a FRAME boundary. Before
   // #187 nothing told this driver where one was, and it collected on every
   // flush: App flushed twice per frame, the first flush had drawn nothing,

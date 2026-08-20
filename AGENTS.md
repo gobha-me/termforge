@@ -74,6 +74,15 @@ file is the tactical version.
   them, and a later Kitty rejection/timeout invalidates or restores the relevant
   belief. The ledger is per-driver instance state. `invalidate_images` clears it
   without wire, while an accepted shutdown delete-all clears it with wire.
+  **That boundary covers the complete Kitty image transaction** (#313): raw
+  and opaque region content, placement state, initial pins, replacements,
+  partial edits, animations and their reply correlations are all projected
+  until the frame write is accepted. Sink refusal restores the last committed
+  hashes, revisions, placements and residency, drops only correlations created
+  by the unwritten frame, releases staged transport resources, and invalidates
+  a new pin/animation handle whose upload never reached the terminal. Never
+  retain a borrowed payload merely to manufacture an automatic retry; App
+  re-borrows widget-owned content on its next production frame.
 - **Indirect image transport is explicit embedding policy** (#111). Never
   infer a shared filesystem/shm namespace from `TERM`, SSH variables, a tty,
   or an emulator name. `TerminalDriver::set_image_transport` is base-owned
