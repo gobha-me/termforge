@@ -6,7 +6,21 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-20, latest)
 
-**Current stable release: v0.57.1 — bounded terminal input parsing.** #306
+**Current stable release: v0.57.2 — fair terminal input draining.** #312
+bounds each frame's terminal work to a shared 64-KiB and 256-read allowance,
+so a continuously readable injected PTY or socket cannot indefinitely suppress
+event dispatch, ticks or rendering. Normal decoding, replacement-mode discard
+and wait-phase absorption spend the same allowance, with non-overflowing
+accounting across both full and one-byte reads.
+
+Spending the allowance is not reported to the parser as an empty fd. Partial
+control records and a held lone Escape therefore carry into the next frame;
+only a real empty read permits `Input::flush()` to commit Escape, preserving
+#3's split-sequence guarantee at the new artificial boundary.
+
+## Previous stable release: v0.57.1
+
+**v0.57.1 — bounded terminal input parsing.** #306
 bounds complete CSI and SS3 records to 256 bytes and bracketed-paste bodies to
 1 MiB. Each oversized record produces one `Warning`, emits no partial input,
 and discards through its protocol boundary before normal decoding resumes.

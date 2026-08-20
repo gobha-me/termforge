@@ -346,10 +346,14 @@ file is the tactical version.
   session reading its own channel and writing somebody else's terminal.
   `enter_raw()` puts the input stream into the mode the loop **requires**:
   termios on a tty, `O_NONBLOCK` on anything else. That second half is not a
-  nicety. `App::drain_input()` reads until a read comes back empty, and
-  `set_read_timeout()` — the call that arranges that on a tty — is a silent
-  no-op on a socket, so a "raw mode that does nothing" ships a hang rather than
-  a limitation. The refusal that remains is for a **discovered** non-tty stdin
+  nicety. `App::drain_input()` reads until a read comes back empty or the
+  frame's shared 64-KiB/256-read fairness allowance is spent, and
+  `set_read_timeout()` — the call that arranges nonblocking reads on a tty — is
+  a silent no-op on a socket, so a "raw mode that does nothing" ships a hang
+  rather than a limitation. The allowance is shared by normal decoding,
+  replacement-mode discard and wait-phase absorption; spending it is not an
+  input boundary, so parser and lone-ESC state carry into the next frame. The
+  refusal that remains is for a **discovered** non-tty stdin
   (`./app < file` is an accident); an injected one is a caller's deliberate
   choice, which is the whole discriminator.
   The crash backstop then arms in two halves with two predicates — termios when a

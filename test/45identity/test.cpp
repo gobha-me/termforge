@@ -14,9 +14,9 @@
 // Three rules hold for every case below, the same three test/44size ships on:
 //
 // 1. **Inject, then test_setup(), before any test_run_frames.** enter_raw() is
-//    what puts a socket into O_NONBLOCK, and drain_input() terminates only
-//    because reads come back empty. Skipping it hangs the drain loop, and a
-//    hanging suite reports nothing.
+//    what puts a socket into O_NONBLOCK. A blocking read can still hang before
+//    drain_input() reaches either an empty read or its frame allowance;
+//    skipping setup can therefore hang the suite without reporting anything.
 // 2. **The process environment is a hostile witness here.** Cases that assert
 //    on env corroboration run setenv/unsetenv in pairs -- a build that quietly
 //    read the daemon's environment instead of the session's would still pass

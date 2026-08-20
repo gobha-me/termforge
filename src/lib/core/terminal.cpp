@@ -249,9 +249,10 @@ auto Terminal::enter_raw() -> std::expected<void, ErrorEvent> {
 
 // The mode a stream with no termios can be in: non-blocking. Reached only for
 // an injected fd (see enter_raw's discriminator), and it is not a courtesy —
-// App's input drain reads until a read comes back empty, so a blocking stream
-// does not slow that loop down, it never leaves it. On a tty the same guarantee
-// comes from VMIN=0/VTIME=0, which is why nothing needed this before. (#179)
+// App's input drain reads until a read comes back empty or its per-frame
+// allowance is spent, so a blocking stream can stop the loop before either
+// boundary. On a tty the same guarantee comes from VMIN=0/VTIME=0, which is why
+// nothing needed this before. (#179)
 auto Terminal::enter_nonblocking() -> std::expected<void, ErrorEvent> {
   const int flags = ::fcntl(m_impl->tty_fd, F_GETFL);
   if (flags < 0) {

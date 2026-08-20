@@ -13,9 +13,9 @@
 // lie rather than fail:
 //
 // 1. **Inject, then test_setup(), before any test_run_frames.** enter_raw() is
-//    what puts a socket into O_NONBLOCK, and drain_input() terminates only
-//    because reads come back empty. A build that skipped it would HANG in the
-//    drain loop, and a hanging suite reports nothing.
+//    what puts a socket into O_NONBLOCK. A blocking read can still hang before
+//    drain_input() reaches either an empty read or its frame allowance, and a
+//    hanging suite reports nothing.
 // 2. **test_run_frames' own cols/rows must differ from every asserted number
 //    and from 80x24.** It builds its own Screen (test_wire_headless), so a case
 //    that passes the number it is trying to prove cannot tell a working push

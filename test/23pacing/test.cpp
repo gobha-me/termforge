@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <string>
 #include <variant>
@@ -44,6 +45,7 @@ class PacingProbe : public App {
   std::vector<std::chrono::milliseconds> frames; // wall time each frame took
   std::vector<Event> seen;
   int renders{0};
+  int reads{0};
 
   auto on_event(const Event& ev) -> void override { seen.push_back(ev); }
   auto on_render(Screen&) -> void override {
@@ -87,6 +89,7 @@ class PacingProbe : public App {
   }
 
   auto read_available(char* out, int max) -> int override {
+    ++reads;
     if (fd_hungup || pending.empty()) return 0;
     const std::string chunk = pending.front();
     pending.erase(pending.begin());
@@ -101,6 +104,50 @@ class PacingProbe : public App {
  private:
   std::chrono::steady_clock::time_point m_now{};
   std::string m_sink;
+};
+
+// A source that deliberately never reports an empty read. Its first bytes open
+// a bracketed paste, keeping the test focused on App's fairness rather than on
+// allocating and dispatching one KeyEvent per payload byte.
+class SustainedInputProbe final : public App {
+ public:
+  bool active{true};
+  bool activate_during_wait{false};
+  bool one_byte_reads{false};
+  int reads{0};
+  std::size_t bytes{0};
+  int renders{0};
+
+  auto on_event(const Event&) -> void override {}
+  auto on_render(Screen&) -> void override { ++renders; }
+
+ protected:
+  auto now_steady() const -> std::chrono::steady_clock::time_point override {
+    return m_now;
+  }
+
+  auto wait_readable(int timeout_ms) -> bool override {
+    if (activate_during_wait) active = true;
+    if (active) return true;
+    m_now += std::chrono::milliseconds(timeout_ms);
+    return false;
+  }
+
+  auto read_available(char* out, int max) -> int override {
+    if (!active) return 0;
+    ++reads;
+    const int count = one_byte_reads ? 1 : max;
+    std::fill_n(out, count, 'x');
+    constexpr std::string_view paste_start{"\x1b[200~"};
+    for (int i = 0; i < count && m_prefix < paste_start.size(); ++i)
+      out[i] = paste_start[m_prefix++];
+    bytes += static_cast<std::size_t>(count);
+    return count;
+  }
+
+ private:
+  std::chrono::steady_clock::time_point m_now{};
+  std::size_t m_prefix{0};
 };
 
 } // namespace
@@ -148,6 +195,51 @@ TEST_CASE("frame rate does not depend on input activity", "[pacing]") {
   // ...and the input actually got through, so this isn't passing by dropping
   // it.
   REQUIRE(busy.seen.size() > 0);
+}
+
+TEST_CASE("sustained terminal producers cannot starve frames", "[pacing]") {
+  constexpr std::size_t bytes_per_frame{64U * 1024U};
+  constexpr int reads_per_frame{256};
+
+  SECTION("full reads stop at the byte and call allowance") {
+    SustainedInputProbe app;
+    app.set_frame_ms(0);
+    std::string wire;
+    app.test_run_frames(3, 20, 5, &wire);
+
+    REQUIRE(app.renders == 3);
+    REQUIRE(app.reads == 3 * reads_per_frame);
+    REQUIRE(app.bytes == 3U * bytes_per_frame);
+  }
+
+  SECTION("one-byte reads stop at the call allowance") {
+    SustainedInputProbe app;
+    app.one_byte_reads = true;
+    app.set_frame_ms(0);
+    std::string wire;
+    app.test_run_frames(3, 20, 5, &wire);
+
+    REQUIRE(app.renders == 3);
+    REQUIRE(app.reads == 3 * reads_per_frame);
+    REQUIRE(app.bytes == static_cast<std::size_t>(3 * reads_per_frame));
+  }
+}
+
+TEST_CASE("wait-phase terminal draining shares the frame allowance",
+          "[pacing]") {
+  SustainedInputProbe app;
+  app.active = false;
+  app.activate_during_wait = true;
+  app.set_frame_ms(16);
+  std::string wire;
+  app.test_run_frames(2, 20, 5, &wire);
+
+  // Frame one spends one read observing the initially empty source, then the
+  // remaining 255 after wait_readable activates it. Frame two spends all 256
+  // in its ordinary pump. Neither phase can trap frame progression.
+  REQUIRE(app.renders == 2);
+  REQUIRE(app.reads == 511);
+  REQUIRE(app.bytes == 511U * 256U);
 }
 
 TEST_CASE("render time comes out of the budget, not on top of it", "[pacing]") {
@@ -207,6 +299,43 @@ TEST_CASE("a split escape sequence still decodes as one key", "[pacing][esc]") {
   const auto* k = std::get_if<KeyEvent>(&app.seen[0]);
   REQUIRE(k != nullptr);
   REQUIRE(k->key == Key::Up);
+}
+
+TEST_CASE("the input allowance boundary does not fabricate Escape",
+          "[pacing][esc]") {
+  PacingProbe app;
+  app.set_frame_ms(0);
+
+  // Exactly 256 full reads spend both allowances. The long CSI is already in
+  // discard state; its final ESC resynchronizes the parser and lands alone at
+  // the artificial boundary. The continuation is already queued for the next
+  // frame and must fold back into that ESC before any flush can commit it.
+  std::string first(256, '1');
+  first[0] = '\x1b';
+  first[1] = '[';
+  app.pending.push_back(first);
+  for (int i = 0; i < 254; ++i)
+    app.pending.emplace_back(256, '1');
+  std::string last(256, '1');
+  last.back() = '\x1b';
+  app.pending.push_back(last);
+  app.pending.emplace_back("[A");
+
+  app.run_frames(1);
+  for (const auto& event : app.seen) {
+    const auto* key = std::get_if<KeyEvent>(&event);
+    REQUIRE((key == nullptr || key->key != Key::Escape));
+  }
+
+  app.run_frames(1);
+  int up_events{0};
+  for (const auto& event : app.seen) {
+    if (const auto* key = std::get_if<KeyEvent>(&event);
+        key != nullptr && key->key == Key::Up)
+      ++up_events;
+  }
+  REQUIRE(up_events == 1);
+  REQUIRE(app.reads == 258); // 256 capped + continuation + true empty boundary
 }
 
 TEST_CASE("a held ESC extends the frame to the grace floor", "[pacing][esc]") {

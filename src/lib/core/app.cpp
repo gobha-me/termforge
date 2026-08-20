@@ -1252,19 +1252,33 @@ auto App::dispatch_terminal_replies() -> void {
     dispatch_event(error);
 }
 
-auto App::discard_terminal_input() -> int {
+auto App::drain_terminal_input(bool discard_events) -> InputDrainResult {
   char buf[256];
-  int total{0};
-  while (true) {
-    const int n = read_available(buf, sizeof(buf));
-    if (n <= 0) break;
-    m_input.feed(std::string_view{buf, static_cast<std::size_t>(n)});
-    collect_terminal_replies(true);
-    (void)m_input.poll();
-    total += n;
+  InputDrainResult result;
+  while (m_input_drain_bytes_left > 0 && m_input_drain_reads_left > 0) {
+    const std::size_t available =
+        std::min(sizeof(buf), m_input_drain_bytes_left);
+    --m_input_drain_reads_left;
+    const int n = read_available(buf, static_cast<int>(available));
+    if (n <= 0) {
+      result.source_empty = true;
+      break;
+    }
+    const std::size_t count = static_cast<std::size_t>(n);
+    const std::string_view bytes{buf, count};
+    m_input_drain_bytes_left -= count;
+    result.bytes += count;
+    if (!discard_events) record_input(bytes);
+    m_input.feed(bytes);
+    collect_terminal_replies(discard_events);
+    if (discard_events) (void)m_input.poll();
   }
-  if (total > 0) m_got_bytes = true;
-  return total;
+  if (result.bytes > 0) m_got_bytes = true;
+  return result;
+}
+
+auto App::discard_terminal_input() -> InputDrainResult {
+  return drain_terminal_input(true);
 }
 
 auto App::open_post_pipe() -> std::expected<void, ErrorEvent> {
@@ -1565,6 +1579,8 @@ auto App::run_loop() -> int {
 
 auto App::frame_step() -> void {
   m_frame_active = true;
+  m_input_drain_bytes_left = kInputDrainMaxBytes;
+  m_input_drain_reads_left = kInputDrainMaxReads;
   m_trace_point = TracePoint::FrameStart;
   playback_begin_frame();
   // Playback is an isolated source, not a fourth custom virtual override. A
@@ -1846,25 +1862,17 @@ auto App::read_available(char* out, int max) -> int {
   return m_term.raw() ? m_term.read_input(out, max) : 0;
 }
 
-auto App::drain_input() -> int {
-  if (m_playback) return playback_feed(m_trace_point);
-  // Production reads are non-blocking (VMIN=0/VTIME=0, set once in setup), so
-  // this empties whatever the tty has buffered and stops the instant it's dry.
-  // The default headless source returns empty before touching an unprepared fd;
-  // a read_available() override carries the same nonblocking contract itself.
-  char buf[256];
-  int total = 0;
-  while (true) {
-    const int n = read_available(buf, sizeof(buf));
-    if (n <= 0) break;
-    const std::string_view bytes{buf, static_cast<std::size_t>(n)};
-    record_input(bytes);
-    m_input.feed(bytes);
-    collect_terminal_replies(false);
-    total += n;
+auto App::drain_input() -> InputDrainResult {
+  if (m_playback) {
+    return InputDrainResult{
+        static_cast<std::size_t>(playback_feed(m_trace_point)), true};
   }
-  if (total > 0) m_got_bytes = true;
-  return total;
+  // Production reads are non-blocking (VMIN=0/VTIME=0, set once in setup), so
+  // this empties whatever the tty has buffered until it is dry or this frame's
+  // fairness allowance is spent. The default headless source returns empty
+  // before touching an unprepared fd; a read_available() override carries the
+  // same nonblocking contract itself.
+  return drain_terminal_input(false);
 }
 
 auto App::wait_frame(std::chrono::steady_clock::time_point frame_start,
@@ -1880,6 +1888,13 @@ auto App::wait_frame(std::chrono::steady_clock::time_point frame_start,
   // without a signal to interrupt poll. Demand mode must hand control straight
   // to the next frame so the armed resize is consumed rather than sleeping.
   if (m_render_mode == RenderMode::Demand && m_resize_pending.load()) return;
+
+  // The pump already gave this frame its fair share of terminal work. Do not
+  // rediscover the same always-readable fd in the wait phase. In particular,
+  // a trailing ESC at this artificial boundary has not earned its grace wait:
+  // the next frame must first try to read the continuation that may already be
+  // buffered, and only a real empty read may turn it into a lone keypress.
+  if (m_input_drain_bytes_left == 0 || m_input_drain_reads_left == 0) return;
 
   const bool demand_idle = m_running && m_render_mode == RenderMode::Demand &&
                            !rendered && !m_render_requested &&
@@ -1934,7 +1949,7 @@ auto App::wait_frame(std::chrono::steady_clock::time_point frame_start,
     }
     // Readable but empty means EOF/hangup: stop, or we'd spin on a dead fd
     // for the rest of the budget.
-    const int input_bytes =
+    const InputDrainResult input =
         !m_playback && m_event_source &&
                 m_event_source_mode == EventSourceMode::ReplaceTerminal
             ? discard_terminal_input()
@@ -1946,9 +1961,15 @@ auto App::wait_frame(std::chrono::steady_clock::time_point frame_start,
     // budget. Demand mode is latency-oriented once a source has work: end the
     // wait, then dispatch at the next frame boundary.
     if (m_render_mode == RenderMode::Demand &&
-        (input_bytes > 0 || source_work > 0))
+        (input.bytes > 0 || source_work > 0))
       break;
-    if (input_bytes == 0 && source_work == 0) break;
+    // A sustained producer is still readable after the allowance. Advancing
+    // the frame here is the fairness guarantee; polling it again would merely
+    // rediscover the same fd and could spin forever under a synthetic clock.
+    if (!input.source_empty &&
+        (m_input_drain_bytes_left == 0 || m_input_drain_reads_left == 0))
+      break;
+    if (input.bytes == 0 && source_work == 0) break;
   }
 }
 
@@ -2055,10 +2076,8 @@ auto App::pump_input() -> void {
   // terminal Events below.
   std::deque<Event> preserved_events;
   if (replacing_terminal) preserved_events = m_input.poll();
-  if (replacing_terminal)
-    (void)discard_terminal_input();
-  else
-    (void)drain_input();
+  const InputDrainResult input =
+      replacing_terminal ? discard_terminal_input() : drain_input();
 
   // Only flush at a true input boundary, and never while an escape sequence
   // may still be in flight — flushing a lone ESC commits it as an Escape
@@ -2067,7 +2086,7 @@ auto App::pump_input() -> void {
   // alone after that, m_esc_waited says the wait already happened and this
   // frame commits it.
   const bool hold_for_esc = m_input.esc_pending() && !m_esc_waited;
-  if (m_got_bytes && !hold_for_esc) {
+  if (input.source_empty && m_got_bytes && !hold_for_esc) {
     m_input.flush();
     m_got_bytes = false;
   }
