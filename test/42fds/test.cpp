@@ -372,8 +372,9 @@ TEST_CASE("enter_raw: an injected pty is still a terminal", "[fds]") {
 TEST_CASE("enter_raw: a stream with no termios is made non-blocking",
           "[fds][regression]") {
   // The reason this is not a "documented no-op". App's input drain reads until
-  // a read comes back empty; on a blocking stream the second read never
-  // returns, so the frame never ends. set_read_timeout() -- the call that
+  // a read comes back empty or its frame allowance is spent; on a blocking
+  // stream the second read can stop the loop before either boundary.
+  // set_read_timeout() -- the call that
   // arranges non-blocking reads on a tty -- is a silent no-op here, because it
   // is tcgetattr all the way down.
   int fd[2]{-1, -1};

@@ -730,10 +730,11 @@ class App {
     m_resume_invalidation_pending.store(true, std::memory_order_relaxed);
   }
 
-  // Test hooks: drive the input pump with the sequence of read() chunks a
-  // single drain would produce, then the one end-of-drain flush. Models
-  // pump_input() exactly: every chunk the fd yields is fed, and only after
-  // the fd reports "nothing left" is the lone-ESC boundary applied.
+  // Test hooks: drive the input parser with the sequence of read() chunks a
+  // completed drain would produce, then the one end-of-drain flush. Every
+  // supplied chunk is fed, and only after the scripted "nothing left" boundary
+  // is the lone-ESC boundary applied. This does not model #312's per-frame
+  // fairness allowance; test/23pacing reaches that through frame_step().
   auto test_pump(std::initializer_list<std::string_view> chunks) -> void {
     for (auto chunk : chunks)
       if (!chunk.empty()) m_input.feed(chunk);
@@ -1134,10 +1135,11 @@ class App {
 
   // Copy up to max immediately available bytes into out without blocking.
   // Return the byte count, or a nonpositive value when no bytes are available
-  // or the source has ended. App drains repeatedly until that boundary. The
-  // default reads Terminal only after enter_raw() established the event-loop
-  // read mode; headless frame hooks skip setup, so their default source is
-  // empty while an override remains fully active.
+  // or the source has ended. App drains repeatedly until that boundary or the
+  // frame's shared byte/read allowance is spent. The default reads Terminal
+  // only after enter_raw() established the event-loop read mode; headless frame
+  // hooks skip setup, so their default source is empty while an override
+  // remains fully active.
   virtual auto read_available(char* out, int max) -> int;
 
  private:
@@ -1201,7 +1203,12 @@ class App {
   auto dispatch_source_events() -> void;
   auto collect_terminal_replies(bool record_normalized) -> void;
   auto dispatch_terminal_replies() -> void;
-  auto discard_terminal_input() -> int;
+  struct InputDrainResult {
+    std::size_t bytes{0};
+    bool source_empty{false};
+  };
+  auto drain_terminal_input(bool discard_events) -> InputDrainResult;
+  auto discard_terminal_input() -> InputDrainResult;
   auto fail_event_source(ErrorEvent error) -> void;
   auto apply_source_capabilities(InputCapabilities next) -> void;
   auto release_source_keys() -> void;
@@ -1230,10 +1237,12 @@ class App {
   // fake wait_readable clock.
   auto wait_for_sources(int timeout_ms) -> bool;
 
-  // Drain everything currently readable into m_input. Returns the byte count;
-  // 0 means the fd had nothing (or hung up), which is the signal to stop
-  // waiting on it. Never blocks: the reads are zero-timeout by construction.
-  auto drain_input() -> int;
+  // Drain terminal bytes into m_input within this frame's shared byte/read
+  // allowance. `source_empty` distinguishes a real zero-timeout read boundary
+  // from the artificial fairness boundary: only the former may commit a held
+  // lone ESC. Never blocks; parser state carries into the next frame when the
+  // allowance is spent.
+  auto drain_input() -> InputDrainResult;
   // Wait out the rest of this frame's budget, absorbing (but not dispatching)
   // any input that arrives. Dispatch happens at the top of the next frame,
   // which is what keeps the frame rate independent of input activity.
@@ -1288,6 +1297,15 @@ class App {
   std::uint64_t m_frame_index{0};
   TracePoint m_trace_point{TracePoint::FrameStart};
   bool m_frame_active{false};
+  // One live terminal route may stay readable forever (an injected socket is
+  // explicitly supported). Bound both dimensions: a byte-only allowance still
+  // permits thousands of one-byte syscalls, while a read-only allowance lets
+  // full buffers monopolize parser work. Normal decoding, replacement-mode
+  // discard and wait-phase absorption all spend this same per-frame state.
+  static constexpr std::size_t kInputDrainMaxBytes{std::size_t{64} * 1024U};
+  static constexpr std::size_t kInputDrainMaxReads{256U};
+  std::size_t m_input_drain_bytes_left{kInputDrainMaxBytes};
+  std::size_t m_input_drain_reads_left{kInputDrainMaxReads};
 
   // #28: the queue is the cross-thread state; the pipe only wakes poll(). One
   // byte per post is deliberately best-effort because a full nonblocking pipe

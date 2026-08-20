@@ -167,6 +167,9 @@ class TerminalAndSourceProbe final : public SourceProbe {
  public:
   std::string terminal_bytes;
   std::deque<std::string> terminal_reads;
+  bool sustain_terminal{false};
+  int sustained_reads{0};
+  std::size_t sustained_bytes{0};
 
  protected:
   auto read_available(char* out, int max) -> int override {
@@ -186,6 +189,15 @@ class TerminalAndSourceProbe final : public SourceProbe {
       }
       return count;
     }
+    if (sustain_terminal) {
+      ++sustained_reads;
+      std::fill_n(out, max, 'x');
+      constexpr std::string_view paste_start{"\x1b[200~"};
+      for (int i = 0; i < max && m_paste_prefix < paste_start.size(); ++i)
+        out[i] = paste_start[m_paste_prefix++];
+      sustained_bytes += static_cast<std::size_t>(max);
+      return max;
+    }
     if (terminal_bytes.empty() || max <= 0) return 0;
     const int count = std::min(max, static_cast<int>(terminal_bytes.size()));
     std::copy_n(terminal_bytes.data(), count, out);
@@ -195,6 +207,7 @@ class TerminalAndSourceProbe final : public SourceProbe {
 
  private:
   bool m_read_boundary{false};
+  std::size_t m_paste_prefix{0};
 };
 
 class ReplyDriver final : public TerminalDriver {
@@ -381,6 +394,27 @@ TEST_CASE("replacement drains terminal input while composition orders it first",
       REQUIRE(observed[1].ch == U's');
     }
   }
+}
+
+TEST_CASE("replacement mode bounds sustained terminal discarding",
+          "[event-source][mode][fairness]") {
+  auto state = make_source_state();
+  queue_events(state, {key(Key::Char, KeyAction::Press, U's')});
+
+  TerminalAndSourceProbe app;
+  app.sustain_terminal = true;
+  app.set_frame_ms(0);
+  REQUIRE(app.set_event_source(std::make_unique<PipeSource>(state),
+                               EventSourceMode::ReplaceTerminal));
+  std::string wire;
+  app.test_run_frames(2, 20, 5, &wire);
+
+  const auto observed = key_events(app.events);
+  REQUIRE(observed.size() == 1);
+  REQUIRE(observed[0].ch == U's');
+  REQUIRE(app.renders == 2);
+  REQUIRE(app.sustained_reads == 512);
+  REQUIRE(app.sustained_bytes == 2U * 64U * 1024U);
 }
 
 TEST_CASE("replacement still routes terminal replies before source events",

@@ -185,9 +185,9 @@ class Terminal {
   // armed. It does whichever applies, and leave_raw() undoes whichever it did.
   //
   // O_NONBLOCK is not a detail. App's input drain loops until a read comes back
-  // empty, so a blocking stream does not merely slow the loop down, it stops it
-  // — and set_read_timeout(), the call that arranges non-blocking reads on a
-  // tty, is a silent no-op on anything else.
+  // empty or its per-frame allowance is spent, so a blocking stream can stop
+  // the loop before either boundary — and set_read_timeout(), the call that
+  // arranges non-blocking reads on a tty, is a silent no-op on anything else.
   //
   // Idempotent. Failure -> ErrorEvent, and the one failure left is a
   // *discovered* stdin that is not a tty (see set_io: an injected one is a
