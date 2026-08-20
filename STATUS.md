@@ -4,9 +4,37 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-19, latest)
+## Where we are (2026-08-20, latest)
 
-**Current stable release: v0.56.0 — visible terminal-driven animations.** #301
+**Current stable release: v0.57.1 — bounded terminal input parsing.** #306
+bounds complete CSI and SS3 records to 256 bytes and bracketed-paste bodies to
+1 MiB. Each oversized record produces one `Warning`, emits no partial input,
+and discards through its protocol boundary before normal decoding resumes.
+
+Fragmented control records now carry their scan position between reads and are
+parsed only once their final byte arrives, eliminating the former quadratic
+prefix rescans. Input is copied into bounded working chunks, oversized paste
+storage is released immediately, split paste terminators stay control data, and
+the existing lone-Escape and Kitty APC behavior remain intact.
+
+## Previous stable release: v0.57.0
+
+**v0.57.0 — safe numeric widget inputs.** #316 rejects non-finite waveform
+samples, ranges, progress values and pulse rates without mutating widget state.
+Waveform normalization uses finite double-precision intermediates across
+extreme, reversed, fixed and automatic ranges, while ProgressBar rejects
+invalid or overflowing ticks before animation phase state can be poisoned.
+
+## Previous stable release: v0.56.1
+
+**v0.56.1 — safe high-fd capability probing.** #308 replaces `select`'s fixed
+`fd_set` with `poll`, so injected server descriptors above `FD_SETSIZE` cannot
+write beyond the set or corrupt the process while capability replies are
+collected.
+
+## Previous stable release: v0.56.0
+
+**v0.56.0 — visible terminal-driven animations.** #301
 completes the animation surface: `draw_animation` places a registered root and
 `retain_animation` keeps an unchanged placement live with zero wire bytes.
 Registration, placement and playback remain independent operations, so an

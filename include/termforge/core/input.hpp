@@ -25,7 +25,11 @@ class Input {
   Input() = default;
 
   // Feed raw bytes; decoded events are queued for poll(). A trailing
-  // incomplete sequence (incl. a lone ESC) is held in the buffer.
+  // incomplete sequence (incl. a lone ESC) is held in the buffer. Complete
+  // CSI and SS3 records are limited to 256 bytes, including their introducer
+  // and final byte. Bracketed-paste bodies are limited to 1 MiB. An oversized
+  // record emits one Warning, is not delivered partially, and is discarded
+  // through a safe record boundary.
   auto feed(std::string_view bytes) -> void;
 
   // Signal that no more bytes are available right now (the read timed out
@@ -78,7 +82,13 @@ class Input {
   bool m_esc_pending{false}; // held lone ESC awaiting the flush() boundary
   bool m_in_paste{false};    // inside a bracketed paste (ESC[200~ .. ESC[201~)
   bool m_discard_apc{false}; // oversized APC: discard through its ST
-  std::string m_paste_buf;   // paste body accumulated until the close bracket
+  bool m_discard_csi{false}; // oversized CSI: discard through its final byte
+  bool m_discard_ss3{false}; // oversized SS3: discard through its final byte
+  // Oversized paste: discard through ESC[201~.
+  bool m_discard_paste{false};
+  std::size_t m_control_scan{0}; // already-scanned CSI/SS3 body prefix
+  // Paste body accumulated until the close bracket.
+  std::string m_paste_buf;
 
   // Decode one unit from the front of `buf`; returns bytes consumed (0 =
   // need more data). Appends any resulting event(s) to m_events.
@@ -88,6 +98,11 @@ class Input {
   auto parse_ss3(std::string_view buf) -> std::size_t; // after ESC O
   auto parse_apc(std::string_view buf) -> std::size_t; // after ESC _
   auto discard_apc(std::string_view buf) -> std::size_t;
+  auto collect_csi(std::string_view buf) -> std::size_t;
+  auto collect_ss3(std::string_view buf) -> std::size_t;
+  auto discard_csi(std::string_view buf) -> std::size_t;
+  auto discard_ss3(std::string_view buf) -> std::size_t;
+  auto discard_paste(std::string_view buf) -> std::size_t;
   auto consume_paste(std::string_view buf) -> std::size_t; // inside a paste
   auto flush_esc() -> void; // held lone ESC -> Escape keypress
 };

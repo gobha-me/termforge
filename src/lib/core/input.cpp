@@ -1,5 +1,6 @@
 #include "termforge/core/input.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <charconv>
 #include <utility>
@@ -9,6 +10,17 @@
 namespace termforge {
 
 namespace {
+
+constexpr std::size_t kMaxCsiBytes{256};
+constexpr std::size_t kMaxSs3Bytes{256};
+constexpr std::size_t kMaxPasteBytes{std::size_t{1024} * 1024U};
+constexpr std::size_t kFeedChunkBytes{4096};
+constexpr std::string_view kPasteEnd{"\033[201~"};
+
+[[nodiscard]] auto is_csi_final(char byte) noexcept -> bool {
+  const auto value = static_cast<unsigned char>(byte);
+  return value >= 0x40U && value <= 0x7EU;
+}
 
 // Map a CSI/SS3 letter final byte to a Key. Shared by the ESC[ and ESC O
 // paths: arrows and Home/End are identical in both, and P/Q/R/S are F1–F4
@@ -254,15 +266,35 @@ auto Input::feed(std::string_view bytes) -> void {
       m_esc_pending = false;
     }
   }
-  m_pending += bytes;
-  std::size_t off = 0;
-  while (off < m_pending.size()) {
-    const std::size_t used =
-        decode_one(std::string_view{m_pending}.substr(off));
-    if (used == 0) break; // incomplete sequence; keep it in m_pending
-    off += used;
+  // Process a bounded view at a time. `bytes` is borrowed and may itself be
+  // arbitrarily large; copying it wholesale into m_pending would turn the
+  // caller's buffer size into retained parser capacity even when the record is
+  // rejected below. The extra chunk also lets ordinary input keep the existing
+  // decode_one path without growing the incomplete-record buffer unboundedly.
+  while (!bytes.empty()) {
+    const std::size_t take = std::min(bytes.size(), kFeedChunkBytes);
+    m_pending.append(bytes.data(), take);
+    bytes.remove_prefix(take);
+
+    std::size_t off = 0;
+    while (off < m_pending.size()) {
+      const bool was_discarding =
+          m_discard_apc || m_discard_csi || m_discard_ss3 || m_discard_paste;
+      const std::size_t used =
+          decode_one(std::string_view{m_pending}.substr(off));
+      const bool still_discarding =
+          m_discard_apc || m_discard_csi || m_discard_ss3 || m_discard_paste;
+      if (used == 0) {
+        // A discarded CSI/SS3 record may end immediately before an ESC. Leave
+        // that introducer untouched and re-run the ordinary decoder on it.
+        if (was_discarding && !still_discarding) continue;
+        break; // incomplete sequence; keep it in m_pending
+      }
+      off += used;
+      m_control_scan = 0;
+    }
+    m_pending.erase(0, off);
   }
-  m_pending.erase(0, off);
 
   // Hold a lone trailing ESC: it is either a real Escape keypress or the
   // first byte of a split sequence. Deciding requires the caller's
@@ -274,8 +306,8 @@ auto Input::feed(std::string_view bytes) -> void {
   // (Not while a bracketed paste is open: a trailing ESC there is either the
   // start of the ESC[201~ terminator or a literal pasted ESC, never a
   // keypress.)
-  if (!m_in_paste && !m_discard_apc && m_pending.size() == 1 &&
-      m_pending[0] == '\x1B') {
+  if (!m_in_paste && !m_discard_apc && !m_discard_csi && !m_discard_ss3 &&
+      !m_discard_paste && m_pending.size() == 1 && m_pending[0] == '\x1B') {
     m_pending.clear();
     m_esc_pending = true;
   }
@@ -305,6 +337,10 @@ auto Input::discard_incomplete() noexcept -> void {
   m_esc_pending = false;
   m_in_paste = false;
   m_discard_apc = false;
+  m_discard_csi = false;
+  m_discard_ss3 = false;
+  m_discard_paste = false;
+  m_control_scan = 0;
   m_paste_buf.clear();
 }
 
@@ -326,6 +362,9 @@ auto Input::decode_one(std::string_view buf) -> std::size_t {
   if (buf.empty()) return 0;
 
   if (m_discard_apc) return discard_apc(buf);
+  if (m_discard_csi) return discard_csi(buf);
+  if (m_discard_ss3) return discard_ss3(buf);
+  if (m_discard_paste) return discard_paste(buf);
 
   // In a bracketed paste every byte is literal content until the ESC[201~
   // terminator — including ESC bytes, which must not decode as keypresses.
@@ -336,9 +375,9 @@ auto Input::decode_one(std::string_view buf) -> std::size_t {
   // ── escape sequences ──
   if (c == 0x1B) {
     if (buf.size() < 2) return 0; // need more
-    if (buf[1] == '[') return parse_csi(buf);
-    if (buf[1] == 'O') return parse_ss3(buf); // SS3: app-cursor keys, F1–F4
-    if (buf[1] == '_') return parse_apc(buf); // terminal control-plane APC
+    if (buf[1] == '[') return collect_csi(buf);
+    if (buf[1] == 'O') return collect_ss3(buf); // app-cursor keys, F1–F4
+    if (buf[1] == '_') return parse_apc(buf);   // terminal control-plane APC
     // Alt+char: ESC followed by a printable char.
     if (buf[1] >= 0x20 && buf[1] < 0x7F) {
       m_events.push_back(KeyEvent{Key::Char, static_cast<char32_t>(buf[1]),
@@ -521,6 +560,134 @@ auto Input::parse_apc(std::string_view buf) -> std::size_t {
   reply.status = status;
   m_replies.emplace_back(std::move(reply));
   return used;
+}
+
+auto Input::collect_csi(std::string_view buf) -> std::size_t {
+  // Locate the record boundary incrementally, then parse the complete record
+  // once. Before #306 every fragmented feed rescanned the whole prefix from
+  // byte zero, making a digit-at-a-time incomplete CSI quadratic.
+  std::size_t body = 2;
+  enum class Body { Generic, Mouse, Private };
+  Body kind = Body::Generic;
+  if (buf.size() >= 3) {
+    if (buf[2] == '?' || buf[2] == '>' || buf[2] == '=') {
+      kind = Body::Private;
+      body = 3;
+    } else if (buf[2] == '<') {
+      kind = Body::Mouse;
+      body = 3;
+    }
+  }
+
+  std::size_t i = std::max(body, m_control_scan);
+  const auto is_body = [kind](char byte) {
+    const auto value = static_cast<unsigned char>(byte);
+    if (kind == Body::Private) return value >= 0x20U && value <= 0x3FU;
+    if (kind == Body::Mouse) return std::isdigit(value) != 0 || byte == ';';
+    return std::isdigit(value) != 0 || byte == ';' || byte == ':' ||
+           byte == '<';
+  };
+  while (i < buf.size() && is_body(buf[i]))
+    ++i;
+
+  if (i == buf.size()) {
+    m_control_scan = i;
+    // At the ceiling an incomplete record can no longer acquire a final byte
+    // without exceeding it, so reject now rather than retain an impossible
+    // prefix for one more read.
+    if (buf.size() < kMaxCsiBytes) return 0;
+    m_events.emplace_back(ErrorEvent{Severity::Warning, "input",
+                                     "CSI record exceeded the 256-byte limit"});
+    m_discard_csi = true;
+    m_control_scan = 0;
+    return buf.size();
+  }
+
+  // ESC interrupts the oversized record and is the start of the next unit,
+  // not part of the rejected one. Ordinary under-limit interruption remains
+  // unchanged here and is the separate resynchronization work tracked by #318.
+  const bool interrupted = buf[i] == '\033';
+  const std::size_t used = interrupted ? i : i + 1;
+  if (used > kMaxCsiBytes) {
+    m_events.emplace_back(ErrorEvent{Severity::Warning, "input",
+                                     "CSI record exceeded the 256-byte limit"});
+    m_control_scan = 0;
+    return used;
+  }
+  return parse_csi(buf);
+}
+
+auto Input::collect_ss3(std::string_view buf) -> std::size_t {
+  std::size_t i = std::max(std::size_t{2}, m_control_scan);
+  while (i < buf.size() &&
+         (std::isdigit(static_cast<unsigned char>(buf[i])) != 0 ||
+          buf[i] == ';')) {
+    ++i;
+  }
+  if (i == buf.size()) {
+    m_control_scan = i;
+    if (buf.size() < kMaxSs3Bytes) return 0;
+    m_events.emplace_back(ErrorEvent{Severity::Warning, "input",
+                                     "SS3 record exceeded the 256-byte limit"});
+    m_discard_ss3 = true;
+    m_control_scan = 0;
+    return buf.size();
+  }
+
+  const bool interrupted = buf[i] == '\033';
+  const std::size_t used = interrupted ? i : i + 1;
+  if (used > kMaxSs3Bytes) {
+    m_events.emplace_back(ErrorEvent{Severity::Warning, "input",
+                                     "SS3 record exceeded the 256-byte limit"});
+    m_control_scan = 0;
+    return used;
+  }
+  return parse_ss3(buf);
+}
+
+auto Input::discard_csi(std::string_view buf) -> std::size_t {
+  for (std::size_t i = 0; i < buf.size(); ++i) {
+    if (buf[i] == '\033') {
+      m_discard_csi = false;
+      return i;
+    }
+    if (is_csi_final(buf[i])) {
+      m_discard_csi = false;
+      return i + 1;
+    }
+  }
+  return buf.size();
+}
+
+auto Input::discard_ss3(std::string_view buf) -> std::size_t {
+  for (std::size_t i = 0; i < buf.size(); ++i) {
+    if (buf[i] == '\033') {
+      m_discard_ss3 = false;
+      return i;
+    }
+    if (is_csi_final(buf[i])) {
+      m_discard_ss3 = false;
+      return i + 1;
+    }
+  }
+  return buf.size();
+}
+
+auto Input::discard_paste(std::string_view buf) -> std::size_t {
+  if (const auto end = buf.find(kPasteEnd); end != std::string_view::npos) {
+    m_discard_paste = false;
+    return end + kPasteEnd.size();
+  }
+
+  // Retain only the longest suffix that could be the start of a terminator.
+  // This is at most five bytes, so a split ESC[201~ closes the discard without
+  // ever exposing its ESC as an application key.
+  const std::size_t max_keep = std::min(buf.size(), kPasteEnd.size() - 1);
+  for (std::size_t keep = max_keep; keep > 0; --keep) {
+    if (buf.substr(buf.size() - keep) == kPasteEnd.substr(0, keep))
+      return buf.size() - keep;
+  }
+  return buf.size();
 }
 
 auto Input::parse_csi(std::string_view buf) -> std::size_t {
@@ -722,29 +889,43 @@ auto Input::consume_paste(std::string_view buf) -> std::size_t {
   // across feed() calls, and the pasted content itself may contain raw ESC
   // bytes — so a leading ESC is disambiguated against the terminator rather
   // than assumed to be it.
-  static constexpr std::string_view kEnd = "\033[201~";
+  const auto append_body = [&](std::string_view body) {
+    if (m_paste_buf.size() <= kMaxPasteBytes &&
+        body.size() <= kMaxPasteBytes - m_paste_buf.size()) {
+      m_paste_buf.append(body.data(), body.size());
+      return;
+    }
+    m_events.emplace_back(
+        ErrorEvent{Severity::Warning, "input",
+                   "bracketed paste exceeded the 1-MiB limit"});
+    std::string{}.swap(m_paste_buf);
+    m_in_paste = false;
+    m_discard_paste = true;
+  };
+
   const std::size_t esc = buf.find('\033');
   if (esc == std::string_view::npos) { // no ESC: all paste body
-    m_paste_buf.append(buf.data(), buf.size());
+    append_body(buf);
     return buf.size();
   }
   if (esc > 0) { // body up to the ESC is literal; re-examine from the ESC
-    m_paste_buf.append(buf.data(), esc);
+    append_body(buf.substr(0, esc));
     return esc;
   }
   // buf starts with ESC — terminator, a split terminator, or a literal ESC.
-  if (buf.size() < kEnd.size()) {
-    if (kEnd.substr(0, buf.size()) == buf) return 0; // partial terminator: wait
-    m_paste_buf.push_back('\033'); // not a terminator prefix: literal ESC
+  if (buf.size() < kPasteEnd.size()) {
+    if (kPasteEnd.substr(0, buf.size()) == buf)
+      return 0;                    // partial terminator: wait
+    append_body(buf.substr(0, 1)); // not a terminator prefix: literal ESC
     return 1;
   }
-  if (buf.substr(0, kEnd.size()) == kEnd) { // close bracket
+  if (buf.substr(0, kPasteEnd.size()) == kPasteEnd) { // close bracket
     m_events.push_back(PasteEvent{std::move(m_paste_buf)});
     m_paste_buf.clear();
     m_in_paste = false;
-    return kEnd.size();
+    return kPasteEnd.size();
   }
-  m_paste_buf.push_back('\033'); // ESC that isn't the terminator: literal
+  append_body(buf.substr(0, 1)); // ESC that isn't the terminator: literal
   return 1;
 }
 
