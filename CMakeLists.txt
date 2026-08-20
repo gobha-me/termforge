@@ -114,6 +114,14 @@ if (${PROJECT_NAME}_EXAMPLES)
   add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/examples)
 endif ()
 
+# Developer asset tool (raw-RGBA gradient). Top-level only — not a consumer
+# artifact. Tests cover the shared helpers in tools/gen_gradient.hpp.
+if (PROJECT_IS_TOP_LEVEL)
+  add_executable(gen_gradient ${CMAKE_CURRENT_LIST_DIR}/tools/gen_gradient.cpp)
+  target_include_directories(gen_gradient PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/tools)
+endif ()
+
 # Install / export. Gated so a vendored termforge's install() rules do not
 # pollute a consumer's `cmake --install`; a consumer that genuinely wants to
 # ship termforge alongside its own export set flips termforge_INSTALL back on.
