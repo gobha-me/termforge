@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <limits>
 #include <string>
 
 #include "detail/width.hpp"
@@ -244,6 +245,73 @@ TEST_CASE("ProgressBar: value clamps to 0-1",
   REQUIRE(p.value() == 0.0f);
   p.set_value(1.5f);
   REQUIRE(p.value() == 1.0f);
+}
+
+TEST_CASE("ProgressBar: non-finite values and rates are rejected (#316)",
+          "[primitives][progress][failure]") {
+  constexpr float nan = std::numeric_limits<float>::quiet_NaN();
+  constexpr float inf = std::numeric_limits<float>::infinity();
+
+  ProgressBar p;
+  p.set_geometry({0, 0, 20, 1});
+  p.set_indeterminate();
+  Screen screen{20, 1};
+  p.draw(screen);
+  REQUIRE_FALSE(p.dirty());
+
+  CHECK_FALSE(p.set_value(nan));
+  CHECK_FALSE(p.set_value(inf));
+  CHECK_FALSE(p.set_value(-inf));
+  CHECK(p.indeterminate());
+  CHECK(p.value() == 0.0F);
+  CHECK_FALSE(p.dirty());
+
+  REQUIRE(p.set_pulse_rate(12.0F));
+  p.draw(screen);
+  CHECK_FALSE(p.set_pulse_rate(nan));
+  CHECK_FALSE(p.set_pulse_rate(inf));
+  CHECK_FALSE(p.set_pulse_rate(-inf));
+  CHECK(p.pulse_rate() == 12.0F);
+  CHECK_FALSE(p.dirty());
+
+  REQUIRE(p.set_value(-0.5F));
+  CHECK(p.value() == 0.0F);
+  REQUIRE(p.set_value(1.5F));
+  CHECK(p.value() == 1.0F);
+  REQUIRE(p.set_pulse_rate(-1.0F));
+  CHECK(p.pulse_rate() == 0.0F);
+}
+
+TEST_CASE("ProgressBar: non-finite or overflowing ticks do not poison phase",
+          "[primitives][progress][failure]") {
+  constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+  constexpr double inf = std::numeric_limits<double>::infinity();
+
+  ProgressBar p;
+  p.set_geometry({0, 0, 20, 1});
+  p.set_indeterminate();
+  REQUIRE(p.set_pulse_rate(std::numeric_limits<float>::max()));
+  Screen screen{20, 1};
+  p.draw(screen);
+  REQUIRE_FALSE(p.dirty());
+
+  p.on_tick(std::chrono::duration<double>{nan});
+  p.on_tick(std::chrono::duration<double>{inf});
+  p.on_tick(std::chrono::duration<double>{-inf});
+  p.on_tick(std::chrono::duration<double>{std::numeric_limits<double>::max()});
+  CHECK_FALSE(p.dirty());
+
+  // A valid tick after the rejected inputs still advances and renders the
+  // pulse, proving no non-finite phase was retained internally.
+  REQUIRE(p.set_pulse_rate(30.0F));
+  p.draw(screen);
+  p.on_tick(std::chrono::duration<double>{0.5});
+  REQUIRE(p.dirty());
+  p.draw(screen);
+  bool has_block = false;
+  for (int x = 0; x < 20; ++x)
+    if (screen.text_at(x, 0) == "█") has_block = true;
+  CHECK(has_block);
 }
 
 TEST_CASE("ProgressBar: label overlays the bar", "[primitives][progress]") {

@@ -11,26 +11,34 @@ WaveformWidget::WaveformWidget(int capacity)
     : m_capacity(capacity > 0 ? capacity : 256) {
 }
 
-auto WaveformWidget::push(float value) -> void {
+auto WaveformWidget::push(float value) -> bool {
+  if (!std::isfinite(value)) return false;
   m_samples.push_back(value);
   if (static_cast<int>(m_samples.size()) > m_capacity) m_samples.pop_front();
   ++m_gen;
   m_content_dirty = true;
   mark_dirty();
+  return true;
 }
 
-auto WaveformWidget::push(std::span<const float> values) -> void {
+auto WaveformWidget::push(std::span<const float> values) -> bool {
+  if (!std::all_of(values.begin(), values.end(),
+                   [](float value) { return std::isfinite(value); }))
+    return false;
   for (const float v : values)
     push(v);
+  return true;
 }
 
-auto WaveformWidget::set_range(float min, float max) -> void {
+auto WaveformWidget::set_range(float min, float max) -> bool {
+  if (!std::isfinite(min) || !std::isfinite(max)) return false;
   m_auto_range = false;
   m_min = min;
   m_max = max;
   ++m_gen;
   m_content_dirty = true;
   mark_dirty();
+  return true;
 }
 
 auto WaveformWidget::auto_range() -> void {
@@ -45,23 +53,35 @@ auto WaveformWidget::auto_range() -> void {
 namespace {
 
 struct Range {
-  float lo, hi;
+  // Keep the accepted float inputs in double and carry an explicit span. At
+  // float's finite extremes, materializing `hi = lo + 1` can round back to lo;
+  // an explicit span keeps the normalization finite and non-zero.
+  double lo;
+  double offset;
+  double span;
 };
 
 auto compute_range(const std::deque<float>& samples, bool auto_range,
                    float fixed_min, float fixed_max) -> Range {
-  float lo = fixed_min;
-  float hi = fixed_max;
+  double lo = static_cast<double>(fixed_min);
+  double hi = static_cast<double>(fixed_max);
   if (auto_range) {
-    lo = *std::min_element(samples.begin(), samples.end());
-    hi = *std::max_element(samples.begin(), samples.end());
+    const auto [min, max] = std::minmax_element(samples.begin(), samples.end());
+    lo = static_cast<double>(*min);
+    hi = static_cast<double>(*max);
   }
   // Guard a degenerate span on BOTH paths: a fixed range with min == max
   // would otherwise divide by zero (NaN → UB on int cast → OOB indexing).
-  if (hi - lo < 1e-6f) hi = lo + 1.0f;
-  if (!auto_range) return {lo, hi};
-  const float margin = (hi - lo) * 0.05f;
-  return {lo - margin, hi + margin};
+  double span = hi - lo;
+  if (span < 1e-6) span = 1.0;
+  if (!auto_range) return {lo, 0.0, span};
+  const double margin = span * 0.05;
+  return {lo, margin, span + margin * 2.0};
+}
+
+auto normalize(float value, Range range) -> double {
+  const double from_lo = static_cast<double>(value) - range.lo;
+  return std::clamp((from_lo + range.offset) / range.span, 0.0, 1.0);
 }
 
 } // namespace
@@ -85,7 +105,7 @@ auto WaveformWidget::draw(Screen& screen) -> void {
     return;
   }
 
-  const auto [lo, hi] = compute_range(m_samples, m_auto_range, m_min, m_max);
+  const Range range = compute_range(m_samples, m_auto_range, m_min, m_max);
   const int vres = r.h * 2;
 
   const int visible = std::min(static_cast<int>(m_samples.size()), r.w);
@@ -94,8 +114,8 @@ auto WaveformWidget::draw(Screen& screen) -> void {
   for (int col = 0; col < visible; ++col) {
     const float val = m_samples[static_cast<std::size_t>(start) +
                                 static_cast<std::size_t>(col)];
-    const float norm = std::clamp((val - lo) / (hi - lo), 0.0f, 1.0f);
-    const auto level = static_cast<int>(norm * static_cast<float>(vres));
+    const double norm = normalize(val, range);
+    const auto level = static_cast<int>(norm * static_cast<double>(vres));
 
     for (int row = 0; row < r.h; ++row) {
       const int sub_lo = row * 2;
@@ -136,7 +156,7 @@ auto WaveformWidget::draw_pixels(Rect region, Extent pixels) -> const Image* {
   if (m_raster_valid && m_raster_gen == m_gen && m_raster_extent == pixels)
     return &m_raster;
 
-  const auto [lo, hi] = compute_range(m_samples, m_auto_range, m_min, m_max);
+  const Range range = compute_range(m_samples, m_auto_range, m_min, m_max);
 
   // Rasterize at the resolution the driver asked for, not at the cell count.
   // This is the whole point of #83: at a nominal 8x16 cell an 80x24 region is
@@ -161,9 +181,9 @@ auto WaveformWidget::draw_pixels(Rect region, Extent pixels) -> const Image* {
   const auto y_for = [&](int sample) {
     const float val = m_samples[static_cast<std::size_t>(start) +
                                 static_cast<std::size_t>(sample)];
-    const float norm = std::clamp((val - lo) / (hi - lo), 0.0f, 1.0f);
+    const double norm = normalize(val, range);
     // y=0 is top in image coordinates; norm=1 should be at top.
-    return h - 1 - static_cast<int>(norm * static_cast<float>(h - 1));
+    return h - 1 - static_cast<int>(norm * static_cast<double>(h - 1));
   };
 
   // Filled area chart: bright line at the sample value, dim fill below.
