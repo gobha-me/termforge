@@ -91,11 +91,11 @@ if (${PROJECT_NAME}_TESTS)
   include(CTest)
 
   if (BUILD_TESTING)
-    find_package(Git REQUIRED) # Catch2's FetchContent fallback needs it
-
     # Catch2 lives here, not at top level: it used to be pulled in
     # unconditionally, so a consumer -- or anyone with -Dtermforge_TESTS=OFF --
     # still paid for a find_package/clone of a test-only dependency.
+    # Git is required only inside cmake/deps/catch2.cmake's FetchContent
+    # fallback (#323) — an installed Catch2 must configure with Git disabled.
     include(${CMAKE_CURRENT_LIST_DIR}/cmake/dependencies.cmake)
 
     add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/test)

@@ -6,6 +6,15 @@ add_test(
           -DPROJECT_ROOT=${PROJECT_SOURCE_DIR}
           -P ${PROJECT_SOURCE_DIR}/cmake/check_layer_z.cmake
 )
+add_test(
+  NAME catch2-without-git
+  COMMAND ${CMAKE_COMMAND}
+          -DPROJECT_ROOT=${PROJECT_SOURCE_DIR}
+          -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+          -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+          -DCMAKE_BINARY_DIR=${CMAKE_BINARY_DIR}/catch2-without-git-check
+          -P ${PROJECT_SOURCE_DIR}/cmake/check_catch2_without_git.cmake
+)
 
 file(GLOB TEST_DIRS ${CMAKE_CURRENT_LIST_DIR}/*)
 
