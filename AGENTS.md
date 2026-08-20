@@ -104,9 +104,11 @@ file is the tactical version.
   capability stays enabled so a later small frame is wrapped normally. Never
   split a frame or an escape sequence to force it under the budget, and never
   turn one oversized frame into a permanent session downgrade.
-  A sink refusal is latched, not returned (`flush()` is pure and `-> void`,
+  An output refusal is latched, not returned (`flush()` is pure and `-> void`,
   and giving it a return type would break every out-of-tree driver), and `App`
-  drains it into an `ErrorEvent` each frame. **Cell and rendition shadows commit
+  drains it into an `ErrorEvent` each frame. The stdout route is fallible too
+  (#304): a short `fwrite`, failed `fflush` or resulting stream error refuses
+  the frame at the same boundary as a `ByteSink`. **Cell and rendition shadows commit
   at that accepted-write boundary too** (#303): `Renderer::flush()` invalidates
   its staged cell baseline after refusal, and built-in drivers invalidate their
   projected cursor/SGR state, so an identical retry emits a complete repair.

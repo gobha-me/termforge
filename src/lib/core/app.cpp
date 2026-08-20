@@ -1676,7 +1676,8 @@ auto App::frame_step() -> void {
     flush_pixel_regions();
     if (observing) m_driver->measure_next_frame_write();
     m_renderer->flush(); // #148: ONE write carries the whole rendered frame
-    // #178: a sink that refused this frame's bytes surfaces as an ErrorEvent
+    // #178/#304: an output route that refused this frame's bytes surfaces as an
+    // ErrorEvent
     // rather than a silently dropped frame. flush() is `-> void` and pure, so
     // the driver latches the refusal and this is where it is read -- after the
     // frame's SINGLE write above, so a frame carrying pixel regions is drained
