@@ -513,6 +513,123 @@ TEST_CASE("Input: valid multibyte still decodes after hardening", "[input]") {
   REQUIRE(got == U"h\xE9llo \x4E2D \x1F389");
 }
 
+// ── Legacy ESC-prefix Alt — issue #307 ────────────────────────────────────
+
+TEST_CASE("Input: legacy Alt+UTF-8 and Alt+controls via decode()",
+          "[input][alt][legacy]") {
+  Input in;
+
+  auto utf8 = in.decode("\033\xC3\xA9"); // Alt+é
+  REQUIRE(utf8.size() == 1);
+  auto k = first_key(utf8);
+  REQUIRE(k.key == Key::Char);
+  REQUIRE(k.ch == 0xE9);
+  REQUIRE(k.alt);
+  REQUIRE_FALSE(k.ctrl);
+
+  auto ascii = in.decode("\033a");
+  k = first_key(ascii);
+  REQUIRE(k.ch == U'a');
+  REQUIRE(k.alt);
+
+  auto enter = in.decode("\033\r");
+  k = first_key(enter);
+  REQUIRE(k.key == Key::Enter);
+  REQUIRE(k.alt);
+
+  auto tab = in.decode("\033\t");
+  k = first_key(tab);
+  REQUIRE(k.key == Key::Tab);
+  REQUIRE(k.alt);
+
+  auto bs = in.decode("\033\x7F");
+  k = first_key(bs);
+  REQUIRE(k.key == Key::Backspace);
+  REQUIRE(k.alt);
+
+  auto ctrl_c = in.decode("\033\x03");
+  k = first_key(ctrl_c);
+  REQUIRE(k.key == Key::Char);
+  REQUIRE(k.ch == U'c');
+  REQUIRE(k.ctrl);
+  REQUIRE(k.alt);
+}
+
+TEST_CASE("Input: legacy Alt+UTF-8 across fragmented feeds",
+          "[input][alt][legacy][fragment]") {
+  Input in;
+  in.feed("\033");
+  REQUIRE(in.poll().empty());
+  in.feed("\xC3");
+  REQUIRE(in.poll().empty()); // incomplete Alt+é — wait for continuation
+  in.feed("\xA9");
+  auto ev = in.poll();
+  REQUIRE(ev.size() == 1);
+  auto k = first_key(ev);
+  REQUIRE(k.ch == 0xE9);
+  REQUIRE(k.alt);
+
+  Input split_pair;
+  split_pair.feed("\033\xC3");
+  REQUIRE(split_pair.poll().empty());
+  split_pair.feed("\xA9""z");
+  ev = split_pair.poll();
+  REQUIRE(ev.size() == 2);
+  k = first_key(ev);
+  REQUIRE(k.ch == 0xE9);
+  REQUIRE(k.alt);
+  ev.pop_front();
+  k = first_key(ev);
+  REQUIRE(k.ch == U'z');
+  REQUIRE_FALSE(k.alt);
+}
+
+TEST_CASE("Input: malformed Alt+UTF-8 resyncs without swallowing the next key",
+          "[input][alt][legacy][security]") {
+  Input in;
+  // ESC + stray lead 0xC3 + 'A': Alt+FFFD, then plain 'A'.
+  auto ev = in.decode("\033\xC3"
+                      "A");
+  REQUIRE(ev.size() == 2);
+  auto* bad = std::get_if<KeyEvent>(&ev[0]);
+  REQUIRE(bad != nullptr);
+  REQUIRE(bad->ch == 0xFFFD);
+  REQUIRE(bad->alt);
+  auto* a = std::get_if<KeyEvent>(&ev[1]);
+  REQUIRE(a != nullptr);
+  REQUIRE(a->ch == U'A');
+  REQUIRE_FALSE(a->alt);
+
+  // Bad lead must not eat a following CSI arrow.
+  ev = in.decode("\033\xF0\x1B[A");
+  bool saw_replacement = false;
+  bool saw_up = false;
+  for (const auto& e : ev) {
+    if (const auto* k = std::get_if<KeyEvent>(&e)) {
+      if (k->key == Key::Char && k->ch == 0xFFFD && k->alt)
+        saw_replacement = true;
+      if (k->key == Key::Up) saw_up = true;
+    }
+  }
+  REQUIRE(saw_replacement);
+  REQUIRE(saw_up);
+}
+
+TEST_CASE("Input: CSI/SS3/APC still beat the legacy Alt fallback",
+          "[input][alt][legacy]") {
+  Input in;
+  // Complete CSI/SS3 must not be misread as Alt+'[' / Alt+'O'.
+  auto up = in.decode("\033[A");
+  REQUIRE(first_key(up).key == Key::Up);
+  auto home = in.decode("\033OH");
+  REQUIRE(first_key(home).key == Key::Home);
+
+  auto replies = in.decode("\033_Gi=1;OK\033\\");
+  REQUIRE(replies.empty()); // graphics reply is not a key event
+  auto rec = in.poll_replies();
+  REQUIRE_FALSE(rec.empty());
+}
+
 // ── SS3 (ESC O …) — issue #13.3 ───────────────────────────────────────────
 
 TEST_CASE("Input: SS3 Home decodes as Home, not a spurious 'H'",
