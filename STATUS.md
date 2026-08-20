@@ -6,7 +6,21 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-20, latest)
 
-**Current stable release: v0.57.2 — fair terminal input draining.** #312
+**Current stable release: v0.57.3 — resilient CSI/SS3 resynchronization.** #318
+validates parameter, intermediate and final byte classes before interpreting a
+terminal control record. An ESC that interrupts an incomplete CSI or SS3 now
+retires only the malformed prefix and is reprocessed as the next sequence
+introducer, so the replacement arrow or function key arrives as one event
+instead of exploding into `Unknown` and printable tail characters.
+
+Fragmented controls keep #306's incremental scan position and 256-byte bound.
+Complete but unsupported controls are consumed atomically, malformed byte-class
+order discards through a final or replacement ESC, and valid mouse, private
+report, paste and kitty-keyboard paths retain their existing behavior.
+
+## Previous stable release: v0.57.2
+
+**v0.57.2 — fair terminal input draining.** #312
 bounds each frame's terminal work to a shared 64-KiB and 256-read allowance,
 so a continuously readable injected PTY or socket cannot indefinitely suppress
 event dispatch, ticks or rendering. Normal decoding, replacement-mode discard

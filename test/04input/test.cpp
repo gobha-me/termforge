@@ -1,6 +1,8 @@
 #include "termforge/core/input.hpp"
+#include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <string>
+#include <string_view>
 #include <variant>
 
 using termforge::Event;
@@ -87,6 +89,109 @@ TEST_CASE("Input: malformed/truncated escape doesn't wedge the parser",
   auto ev2 = in.decode("\033");
   // should not crash; may yield nothing or an unknown
   REQUIRE(ev2.size() <= 1);
+}
+
+TEST_CASE("Input: ESC interrupts incomplete CSI at every body boundary",
+          "[input][failure][resync]") {
+  constexpr std::array prefixes{
+      std::string_view{"\033["},      std::string_view{"\033[1"},
+      std::string_view{"\033[1;"},    std::string_view{"\033[1;5"},
+      std::string_view{"\033[1;5:"},  std::string_view{"\033[1;5:3"},
+      std::string_view{"\033[<0;1;"}, std::string_view{"\033[?62;4;"},
+  };
+
+  for (const auto prefix : prefixes) {
+    CAPTURE(prefix.size());
+    Input in;
+    for (const char byte : prefix)
+      in.feed(std::string_view{&byte, 1});
+    for (const char byte : std::string_view{"\033[A"})
+      in.feed(std::string_view{&byte, 1});
+
+    const auto events = in.poll();
+    REQUIRE(events.size() == 1);
+    CHECK(std::get<KeyEvent>(events.front()).key == Key::Up);
+  }
+}
+
+TEST_CASE("Input: ESC interrupts incomplete SS3 at every body boundary",
+          "[input][failure][resync][ss3]") {
+  constexpr std::array prefixes{
+      std::string_view{"\033O"},
+      std::string_view{"\033O1"},
+      std::string_view{"\033O1;"},
+      std::string_view{"\033O1;5"},
+  };
+
+  for (const auto prefix : prefixes) {
+    CAPTURE(prefix.size());
+    Input in;
+    for (const char byte : prefix)
+      in.feed(std::string_view{&byte, 1});
+    for (const char byte : std::string_view{"\033OP"})
+      in.feed(std::string_view{&byte, 1});
+
+    const auto events = in.poll();
+    REQUIRE(events.size() == 1);
+    CHECK(std::get<KeyEvent>(events.front()).key == Key::F1);
+  }
+}
+
+TEST_CASE("Input: consecutive interrupted CSI and SS3 prefixes resynchronize",
+          "[input][failure][resync]") {
+  Input in;
+  in.feed("\033[1;\033O1;\033[A");
+
+  const auto events = in.poll();
+  REQUIRE(events.size() == 1);
+  CHECK(std::get<KeyEvent>(events.front()).key == Key::Up);
+}
+
+TEST_CASE("Input: interrupted CSI and SS3 can cross replacement families",
+          "[input][failure][resync]") {
+  Input csi;
+  csi.feed("\033[1;\033OP");
+  auto events = csi.poll();
+  REQUIRE(events.size() == 1);
+  CHECK(std::get<KeyEvent>(events.front()).key == Key::F1);
+
+  Input ss3;
+  ss3.feed("\033O1;\033[A");
+  events = ss3.poll();
+  REQUIRE(events.size() == 1);
+  CHECK(std::get<KeyEvent>(events.front()).key == Key::Up);
+}
+
+TEST_CASE("Input: CSI and SS3 validate byte classes without leaking tails",
+          "[input][failure][resync]") {
+  Input csi_intermediate;
+  auto events = csi_intermediate.decode("\033[1$y");
+  REQUIRE(events.size() == 1);
+  CHECK(std::get<KeyEvent>(events.front()).key == Key::Unknown);
+
+  Input ss3_intermediate;
+  events = ss3_intermediate.decode("\033O1$Az");
+  REQUIRE(events.size() == 1);
+  CHECK(std::get<KeyEvent>(events.front()).ch == U'z');
+
+  Input csi_bad_order;
+  csi_bad_order.feed("\033[1$2A\033[A");
+  events = csi_bad_order.poll();
+  REQUIRE(events.size() == 1);
+  CHECK(std::get<KeyEvent>(events.front()).key == Key::Up);
+
+  Input ss3_bad_order;
+  ss3_bad_order.feed("\033O1$2A\033OP");
+  events = ss3_bad_order.poll();
+  REQUIRE(events.size() == 1);
+  CHECK(std::get<KeyEvent>(events.front()).key == Key::F1);
+
+  Input embedded_control;
+  embedded_control.feed("\033[1;\x01"
+                        "A\033[A");
+  events = embedded_control.poll();
+  REQUIRE(events.size() == 1);
+  CHECK(std::get<KeyEvent>(events.front()).key == Key::Up);
 }
 
 TEST_CASE("Input: kitty graphics replies use a separate ordered channel",
@@ -660,6 +765,29 @@ TEST_CASE("Input: fragmented oversized CSI scans once and resynchronizes",
   REQUIRE(events.size() == 2);
   CHECK(std::holds_alternative<termforge::ErrorEvent>(events[0]));
   CHECK(std::get<KeyEvent>(events[1]).key == Key::Up);
+}
+
+TEST_CASE("Input: an exact-limit incomplete control warns before replacement",
+          "[input][failure][bounds][resync]") {
+  constexpr std::size_t kLimit = 256;
+
+  Input csi;
+  std::string csi_prefix{"\033["};
+  csi_prefix.append(kLimit - csi_prefix.size(), '1');
+  csi.feed(csi_prefix + "\033[A");
+  auto events = csi.poll();
+  REQUIRE(events.size() == 2);
+  CHECK(std::holds_alternative<termforge::ErrorEvent>(events[0]));
+  CHECK(std::get<KeyEvent>(events[1]).key == Key::Up);
+
+  Input ss3;
+  std::string ss3_prefix{"\033O"};
+  ss3_prefix.append(kLimit - ss3_prefix.size(), '1');
+  ss3.feed(ss3_prefix + "\033OP");
+  events = ss3.poll();
+  REQUIRE(events.size() == 2);
+  CHECK(std::holds_alternative<termforge::ErrorEvent>(events[0]));
+  CHECK(std::get<KeyEvent>(events[1]).key == Key::F1);
 }
 
 TEST_CASE("Input: SS3 accepts 256 bytes and bounds fragmented records",
