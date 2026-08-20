@@ -18,11 +18,12 @@
 // to cover what they cannot reach: the base-pointer path, the failure branch,
 // and the boundaries.
 //
-// All offline. Nothing here needs a tty, and the only case that touches stdout
-// at all (the clear_output one) emits a handful of ASCII on purpose.
+// All offline. Nothing here needs a tty. The stdout cases either capture a
+// handful of ASCII or redirect fd 1 to /dev/full for the exact failure window.
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <fcntl.h>
 #include <unistd.h>
 
 #include <cstddef>
@@ -177,6 +178,50 @@ auto capture_stdout(const std::function<void()>& body) -> std::string {
     out.append(buf, n);
   std::fclose(tmp);
   return out;
+}
+
+struct FailingStdoutResult {
+  int opened{-1};
+  int saved{-1};
+  int redirected{-1};
+  int restored{-1};
+  bool stream_error{false};
+};
+
+// Run without a ByteSink while stdout points at a deterministic failing fd.
+// As with capture_stdout, no Catch2 assertion may run until fd 1 is restored:
+// ctest asks Catch2 to print passing assertions, and those diagnostics would
+// otherwise become part of the operation under test. clearerr belongs to the
+// harness, not TerminalDriver -- the library reports the FILE failure without
+// rewriting process-global stdio state behind its caller's back.
+auto fail_stdout(const std::function<void()>& body) -> FailingStdoutResult {
+  std::cout.flush();
+  std::fflush(stdout);
+
+  FailingStdoutResult result;
+  result.opened = ::open("/dev/full", O_WRONLY);
+  result.saved = result.opened >= 0 ? ::dup(STDOUT_FILENO) : -1;
+  result.redirected =
+      result.saved >= 0 ? ::dup2(result.opened, STDOUT_FILENO) : -1;
+
+  const auto restore = [&] {
+    result.stream_error = std::ferror(stdout) != 0;
+    if (result.saved >= 0) {
+      result.restored = ::dup2(result.saved, STDOUT_FILENO);
+      ::close(result.saved);
+    }
+    if (result.opened >= 0) ::close(result.opened);
+    std::clearerr(stdout);
+  };
+
+  try {
+    if (result.redirected >= 0) body();
+  } catch (...) {
+    restore();
+    throw;
+  }
+  restore();
+  return result;
 }
 
 } // namespace
@@ -547,6 +592,61 @@ TEST_CASE("sink: with no sink the frame goes to stdout, flushed", "[sink]") {
   CHECK(d.last_frame_bytes().total() == got.size());
 }
 
+TEST_CASE("sink: a failed stdout frame is refused and repaired",
+          "[sink][renderer][failure]") {
+  FallbackDriver d;
+  Renderer renderer{d};
+  termforge::Screen screen{5, 1};
+  screen.write_text(0, 0, "frame", kFg, kBg);
+
+  const auto failed = fail_stdout([&] {
+    renderer.present(screen);
+    renderer.flush();
+  });
+
+  REQUIRE(failed.opened >= 0);
+  REQUIRE(failed.saved >= 0);
+  REQUIRE(failed.redirected >= 0);
+  REQUIRE(failed.restored >= 0);
+  CHECK(failed.stream_error);
+  CHECK(d.last_frame_bytes().total() > 0);
+
+  const auto error = d.take_output_error();
+  REQUIRE(error.has_value());
+  CHECK(error->severity == Severity::Error);
+  CHECK(error->source == "stdout");
+  CHECK(error->message.starts_with("fflush(stdout) failed"));
+
+  const std::string repaired = capture_stdout([&] {
+    renderer.present(screen);
+    renderer.flush();
+  });
+  CHECK(repaired.find("frame") != std::string::npos);
+  CHECK_FALSE(d.take_output_error().has_value());
+}
+
+TEST_CASE("sink: a short stdout fwrite is refused", "[sink][failure]") {
+  FallbackDriver d;
+  const std::string payload(64 * 1024, 'x');
+
+  const auto failed = fail_stdout([&] {
+    d.draw_text(0, 0, payload, kFg, kBg, Attr::None);
+    d.flush();
+  });
+
+  REQUIRE(failed.opened >= 0);
+  REQUIRE(failed.saved >= 0);
+  REQUIRE(failed.redirected >= 0);
+  REQUIRE(failed.restored >= 0);
+  CHECK(failed.stream_error);
+  const auto error = d.take_output_error();
+  REQUIRE(error.has_value());
+  CHECK(error->severity == Severity::Error);
+  CHECK(error->source == "stdout");
+  CHECK(error->message.starts_with("fwrite(stdout): wrote"));
+  CHECK(d.last_frame_bytes().total() >= payload.size());
+}
+
 TEST_CASE("sink: with a sink set, stdout gets NOTHING", "[sink]") {
   // The else is a real else. Writing to both would satisfy every other case in
   // this file -- the sink still receives its bytes and the meter still agrees
@@ -689,6 +789,41 @@ class FailingSinkProbe : public termforge::App {
   std::vector<ErrorEvent> m_seen;
 };
 
+class FailingStdoutProbe : public termforge::App {
+ public:
+  FailingStdoutProbe() {
+    set_frame_ms(0);
+    set_frame_observer([this](const termforge::FrameObservation& observation) {
+      m_observations.push_back(observation);
+    });
+  }
+
+  auto on_render(termforge::Screen& s) -> void override {
+    s.write_text(0, 0, "frame", kFg, kBg);
+  }
+  auto on_event(const termforge::Event& ev) -> void override {
+    if (const auto* e = std::get_if<ErrorEvent>(&ev)) m_seen.push_back(*e);
+  }
+  auto run(int frames) -> void {
+    test_run_frames(frames, 20, 5, static_cast<std::string*>(nullptr));
+  }
+  [[nodiscard]] auto observations() const
+      -> const std::vector<termforge::FrameObservation>& {
+    return m_observations;
+  }
+  [[nodiscard]] auto seen() const -> const std::vector<ErrorEvent>& {
+    return m_seen;
+  }
+
+ protected:
+  auto wait_readable(int) -> bool override { return false; }
+  auto read_available(char*, int) -> int override { return 0; }
+
+ private:
+  std::vector<termforge::FrameObservation> m_observations;
+  std::vector<ErrorEvent> m_seen;
+};
+
 } // namespace
 
 TEST_CASE("sink: a refused frame reaches the application as an ErrorEvent",
@@ -725,4 +860,23 @@ TEST_CASE("sink: a sink that keeps failing keeps saying so, once per frame",
   for (const auto& e : probe.seen()) {
     CHECK(e.message == "the session went away");
   }
+}
+
+TEST_CASE("sink: App observes and dispatches failed stdout frames",
+          "[sink][app][frameobserver][failure]") {
+  FailingStdoutProbe probe;
+  const auto failed = fail_stdout([&] { probe.run(2); });
+
+  REQUIRE(failed.opened >= 0);
+  REQUIRE(failed.saved >= 0);
+  REQUIRE(failed.redirected >= 0);
+  REQUIRE(failed.restored >= 0);
+  CHECK(failed.stream_error);
+  REQUIRE(probe.observations().size() == 2);
+  CHECK_FALSE(probe.observations()[0].output_accepted);
+  CHECK_FALSE(probe.observations()[1].output_accepted);
+  CHECK(probe.observations()[0].bytes.total() > 0);
+  REQUIRE(probe.seen().size() == 1);
+  CHECK(probe.seen().front().severity == Severity::Error);
+  CHECK(probe.seen().front().source == "stdout");
 }

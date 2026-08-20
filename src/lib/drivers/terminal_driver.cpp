@@ -6,8 +6,10 @@
 
 #include "termforge/drivers/terminal_driver.hpp"
 
+#include <cerrno>
 #include <cstdio>
 #include <span>
+#include <system_error>
 #include <utility>
 
 #include "termforge/core/byte_sink.hpp"
@@ -115,6 +117,28 @@ constexpr std::size_t kSyncPendingBudget = std::size_t{1024} * 1024;
 static_assert(kSyncEnd.size() < kSyncPendingBudget);
 constexpr std::size_t kMaxSyncFrameBytes = kSyncPendingBudget - kSyncEnd.size();
 
+namespace {
+
+auto stdout_failure(std::size_t written, std::size_t expected, int flush_result,
+                    int error) -> ErrorEvent {
+  std::string message;
+  if (written != expected) {
+    message = "fwrite(stdout): wrote " + std::to_string(written) + " of " +
+              std::to_string(expected) + " frame bytes";
+  } else if (flush_result == EOF) {
+    message = "fflush(stdout) failed";
+  } else {
+    message = "stdout stream entered an error state";
+  }
+  if (error != 0) {
+    message += ": ";
+    message += std::generic_category().message(error);
+  }
+  return ErrorEvent{Severity::Error, "stdout", std::move(message)};
+}
+
+} // namespace
+
 auto TerminalDriver::emit_frame(std::string_view bytes) -> bool {
   // #148: the synchronized-output wrap. ONE write either way -- a driver
   // never calls emit_frame() for the begin and end separately, so the
@@ -150,8 +174,26 @@ auto TerminalDriver::emit_frame(std::string_view bytes) -> bool {
         m_output_error = std::move(r.error()); // first failure wins
     }
   } else {
-    std::fwrite(frame.data(), 1, frame.size(), stdout);
-    std::fflush(stdout);
+    // stdout is the local session's sink and obeys the same all-or-refused
+    // frame contract as ByteSink. fwrite may report success after merely
+    // buffering the frame, so fflush and the FILE error indicator are both
+    // part of the one blocking handoff observed here.
+    errno = 0;
+    const std::size_t written =
+        std::fwrite(frame.data(), 1, frame.size(), stdout);
+    const int write_error = written != frame.size() ? errno : 0;
+    errno = 0;
+    const int flush_result = std::fflush(stdout);
+    const int flush_error = flush_result == EOF ? errno : 0;
+    const bool stream_error = std::ferror(stdout) != 0;
+    if (written != frame.size() || flush_result == EOF || stream_error) {
+      accepted = false;
+      if (!m_output_error.has_value()) {
+        const int error = write_error != 0 ? write_error : flush_error;
+        m_output_error =
+            stdout_failure(written, frame.size(), flush_result, error);
+      }
+    }
   }
   if (measure_write) {
     m_last_frame_sink_write =

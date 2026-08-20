@@ -1031,7 +1031,8 @@ class TerminalDriver {
   // explicit handoff while the destination is known alive.
   auto shutdown() -> void;
 
-  // The last sink refusal, taken and cleared.
+  // The last output refusal, taken and cleared. This covers both a ByteSink
+  // refusal and a short/failed write through the default stdout route.
   //
   // Latched rather than returned because flush() is `-> void` and pure: giving
   // it a return type would break every out-of-tree driver at compile time,
@@ -1157,7 +1158,7 @@ class TerminalDriver {
   // metered" both unspellable, where three hand-written copies of the branch
   // made each of them one edit away.
   //
-  // tally_frame RUNS ON BOTH BRANCHES, including a refused write. Not because
+  // tally_frame RUNS ON BOTH ROUTES, including a refused write. Not because
   // the bytes reached a wire — they did not — but because tally_frame also
   // RESETS m_pending, and skipping it would carry this frame's image tallies
   // into the next one and over-report it. The meter measures what the driver

@@ -6,12 +6,23 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-20, latest)
 
-**Current stable release: v0.57.4 — recover refused terminal frames.** #303
-ties the Renderer's cell comparison shadow and each built-in driver's
-cursor/SGR projection to the accepted `emit_frame` boundary. A refused write
-invalidates those staged beliefs, so rendering the identical styled Screen
-after output recovery emits a complete repair instead of an empty diff with
-missing rendition escapes.
+**Current stable release: v0.57.5 — detect stdout frame failures.** #304 makes
+the default stdout route honor the same accepted-write boundary as an injected
+`ByteSink`. Short `fwrite` calls, failed `fflush` calls and a resulting FILE
+error now refuse the frame and latch a `Severity::Error` instead of committing
+renderer, driver or image state for bytes the terminal never received.
+
+Refused stdout frames remain metered as attempted and report
+`FrameObservation::output_accepted == false`. The diagnostic identifies stdout
+and includes the failing stdio operation plus the available system error.
+
+## Previous stable release: v0.57.4
+
+**v0.57.4 — recover refused terminal frames.** #303 ties the Renderer's cell
+comparison shadow and each built-in driver's cursor/SGR projection to the
+accepted `emit_frame` boundary. A refused write invalidates those staged
+beliefs, so rendering the identical styled Screen after output recovery emits
+a complete repair instead of an empty diff with missing rendition escapes.
 
 The acceptance state is private, base-owned and non-virtual: public `flush()`
 remains source-compatible for out-of-tree drivers, while App still receives
