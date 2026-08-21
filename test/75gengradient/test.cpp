@@ -22,8 +22,7 @@ namespace fs = std::filesystem;
 
 struct TempRgba {
   fs::path path;
-  explicit TempRgba(const char* name)
-      : path(fs::temp_directory_path() / name) {
+  explicit TempRgba(const char* name) : path(fs::temp_directory_path() / name) {
     fs::remove(path);
   }
   ~TempRgba() { fs::remove(path); }
@@ -70,6 +69,18 @@ auto round_trip(const std::string& path, std::uint32_t w, std::uint32_t h)
   }
 }
 
+// Load and assert one pixel against a literal the test states itself. The
+// values below are computed by hand from the documented ramp -- r = 255 -
+// x*255/x_den, g = x*255/x_den, b = y*255/y_den, a = 255, with x_den = w-1
+// (or 1 when w == 1) and likewise for y -- deliberately NOT by calling
+// fill_pixel. round_trip() alone cannot catch a wrong ramp, because both its
+// sides come from the same function it is meant to check.
+auto require_pixel(const std::string& path, int x, int y, Pixel want) -> void {
+  auto r = ImageLoader::load(path);
+  REQUIRE(r.has_value());
+  REQUIRE(r->at(x, y) == want);
+}
+
 } // namespace
 
 TEST_CASE("gen_gradient: 1x1 has deterministic colour and loads",
@@ -77,27 +88,43 @@ TEST_CASE("gen_gradient: 1x1 has deterministic colour and loads",
   TempRgba tmp("termforge-gen-gradient-1x1.rgba");
   round_trip(tmp.c_str(), 1, 1);
   // Lone sample is the low end of both ramps: red, no green, no blue.
-  auto r = ImageLoader::load(tmp.c_str());
-  REQUIRE(r.has_value());
-  REQUIRE(r->at(0, 0) == Pixel{255, 0, 0, 255});
+  require_pixel(tmp.c_str(), 0, 0, Pixel{255, 0, 0, 255});
 }
 
 TEST_CASE("gen_gradient: 1xN vertical strip round-trips",
           "[gen_gradient][imageloader]") {
   TempRgba tmp("termforge-gen-gradient-1x8.rgba");
   round_trip(tmp.c_str(), 1, 8);
+  // w == 1 collapses the x ramp: red pinned high, green pinned 0 throughout.
+  // Blue walks y*255/7: 0 at the top, 109 at y=3, 255 at the bottom.
+  require_pixel(tmp.c_str(), 0, 0, Pixel{255, 0, 0, 255});
+  require_pixel(tmp.c_str(), 0, 3, Pixel{255, 0, 109, 255});
+  require_pixel(tmp.c_str(), 0, 7, Pixel{255, 0, 255, 255});
 }
 
 TEST_CASE("gen_gradient: Nx1 horizontal strip round-trips",
           "[gen_gradient][imageloader]") {
   TempRgba tmp("termforge-gen-gradient-8x1.rgba");
   round_trip(tmp.c_str(), 8, 1);
+  // h == 1 collapses the y ramp: blue is 0 everywhere. Red/green walk
+  // x*255/7 -- 109 at x=3, and a full 0/255 swap at the far edge, which is
+  // what pins the divisor to w-1 rather than w.
+  require_pixel(tmp.c_str(), 0, 0, Pixel{255, 0, 0, 255});
+  require_pixel(tmp.c_str(), 3, 0, Pixel{146, 109, 0, 255});
+  require_pixel(tmp.c_str(), 7, 0, Pixel{0, 255, 0, 255});
 }
 
 TEST_CASE("gen_gradient: normal-size gradient round-trips",
           "[gen_gradient][imageloader]") {
   TempRgba tmp("termforge-gen-gradient-16x16.rgba");
   round_trip(tmp.c_str(), 16, 16);
+  // Four corners pin both ramps; the interior sample has three distinct
+  // channels, so an r/g swap cannot hide behind a symmetric value.
+  require_pixel(tmp.c_str(), 0, 0, Pixel{255, 0, 0, 255});
+  require_pixel(tmp.c_str(), 15, 0, Pixel{0, 255, 0, 255});
+  require_pixel(tmp.c_str(), 0, 15, Pixel{255, 0, 255, 255});
+  require_pixel(tmp.c_str(), 15, 15, Pixel{0, 255, 255, 255});
+  require_pixel(tmp.c_str(), 5, 10, Pixel{170, 85, 170, 255});
 }
 
 TEST_CASE("gen_gradient: parse_dimension rejects junk without writing",
@@ -115,4 +142,22 @@ TEST_CASE("gen_gradient: parse_dimension rejects junk without writing",
   // Invalid dims must not leave a successful-looking file behind.
   REQUIRE_FALSE(gen_gradient::write_file(tmp.c_str(), 0, 4));
   REQUIRE_FALSE(fs::exists(tmp.path));
+  REQUIRE_FALSE(gen_gradient::write_file(tmp.c_str(), 4, 0));
+  REQUIRE_FALSE(fs::exists(tmp.path));
+  REQUIRE_FALSE(gen_gradient::write_file(tmp.c_str(), 4097, 4));
+  REQUIRE_FALSE(fs::exists(tmp.path));
+}
+
+TEST_CASE("gen_gradient: unopenable target reports failure, creates nothing",
+          "[gen_gradient][failure]") {
+  // A directory that does not exist: the ofstream cannot open, so write_file
+  // must report failure rather than return a half-written asset. Valid dims,
+  // so this exercises the output-error path and not the dimension guard.
+  const auto missing =
+      fs::temp_directory_path() / "termforge-gen-gradient-absent-dir";
+  fs::remove_all(missing);
+  const auto target = missing / "out.rgba";
+  REQUIRE_FALSE(gen_gradient::write_file(target.string(), 4, 4));
+  REQUIRE_FALSE(fs::exists(target));
+  REQUIRE_FALSE(fs::exists(missing));
 }
