@@ -2,8 +2,13 @@ find_package(Catch2 3 QUIET)
 
 if (Catch2_FOUND)
 else ()
+    # FetchContent's GIT_REPOSITORY path needs Git. Require it only here so an
+    # installed Catch2 package can configure with CMAKE_DISABLE_FIND_PACKAGE_Git
+    # (#323). Offline/package-managed builds must not need an unrelated VCS.
+    find_package(Git REQUIRED)
+
     if (NOT Catch2_URI)
-        set(Catch2_URI https://github.com/catchorg/Catch2.git) 
+        set(Catch2_URI https://github.com/catchorg/Catch2.git)
     endif()
 
     if (NOT Catch2_TAG)
