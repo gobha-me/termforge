@@ -324,6 +324,18 @@ auto Input::feed(std::string_view bytes) -> void {
 
 auto Input::flush() -> void {
   flush_esc();
+  // A held ESC + incomplete-but-plausible UTF-8 prefix (e.g. a split
+  // Alt+é) can no longer complete once the caller has drained the fd, so
+  // resolve it as Alt+U+FFFD — the same event decode_one emits for ESC +
+  // malformed UTF-8 — and consume the held bytes. Otherwise they wedge in
+  // m_pending (the two-byte ESC+lead shape never arms the lone-ESC hold)
+  // and the next keypress decodes in their shadow (#335). Every other held
+  // shape — split CSI/SS3/APC, a plain partial UTF-8 sequence with no ESC
+  // — stays held; only a later feed() can complete those.
+  if (held_esc_utf8()) {
+    m_events.push_back(KeyEvent{Key::Char, U'\uFFFD', false, true, false});
+    m_pending.clear();
+  }
 }
 
 auto Input::flush_esc() -> void {
@@ -331,6 +343,35 @@ auto Input::flush_esc() -> void {
     m_events.push_back(KeyEvent{Key::Escape});
     m_esc_pending = false;
   }
+}
+
+auto Input::held_esc_utf8() const noexcept -> bool {
+  // Mirror feed()'s hold condition: inside a bracketed paste or an
+  // oversized-record discard the held bytes are content or garbage, never
+  // a keypress prefix.
+  if (m_in_paste || m_discard_apc || m_discard_csi || m_discard_ss3 ||
+      m_discard_paste)
+    return false;
+  if (m_pending.size() < 2 || m_pending[0] != '\x1B') return false;
+  // The introducer set is decode_one's ESC route: '[' / 'O' / '_' begin a
+  // CSI / SS3 / APC whose completion later feed() calls own — flush() must
+  // not touch them. (All three are ASCII, so the utf8_seq_len test below
+  // would already reject them; naming them keeps this pinned to the decoder
+  // if the introducer set ever grows.)
+  if (m_pending[1] == '[' || m_pending[1] == 'O' || m_pending[1] == '_')
+    return false;
+  const std::string_view rest{m_pending.data() + 1, m_pending.size() - 1};
+  const auto lead = static_cast<unsigned char>(rest[0]);
+  const std::size_t want = detail::utf8_seq_len(lead);
+  if (want <= 1 || rest.size() >= want) return false;
+  // decode_one's truncated-but-promising test: a lone lead byte always
+  // qualifies; with a second byte present it must satisfy the lead's
+  // RFC 3629 range (otherwise decode_one would already have resolved the
+  // prefix as malformed instead of holding it).
+  if (rest.size() < 2) return true;
+  const auto [lo, hi] = detail::utf8_second_byte_range(lead);
+  const auto second = static_cast<unsigned char>(rest[1]);
+  return second >= lo && second <= hi;
 }
 
 auto Input::poll() -> std::deque<Event> {
