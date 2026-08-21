@@ -532,6 +532,15 @@ TEST_CASE("Input: legacy Alt+UTF-8 and Alt+controls via decode()",
   REQUIRE(k.ch == U'a');
   REQUIRE(k.alt);
 
+  // Space is the low boundary of the printable range the old Alt branch
+  // covered; the UTF-8 arm must keep it rather than fall through to lone-ESC.
+  auto space = in.decode("\033 ");
+  REQUIRE(space.size() == 1);
+  k = first_key(space);
+  REQUIRE(k.key == Key::Char);
+  REQUIRE(k.ch == U' ');
+  REQUIRE(k.alt);
+
   auto enter = in.decode("\033\r");
   k = first_key(enter);
   REQUIRE(k.key == Key::Enter);
