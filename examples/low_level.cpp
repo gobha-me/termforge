@@ -4,9 +4,11 @@
 // Shows the full manual lifecycle for advanced use cases:
 //   - Terminal::enter_raw() and RAII cleanup
 //   - Capability probing and driver selection
-//   - Manual event loop with Input parser
-//   - Screen + Renderer for diff-based rendering
-//   - Proper cleanup on exit
+//   - Manual event loop with Input parser: drain the fd fully, Input::flush()
+//     at the drained boundary, then poll
+//   - Screen + Renderer for diff-based rendering: present() queues the cell
+//     diff, flush() is the frame's single write boundary (#148)
+//   - Exception-safe cleanup: driver->shutdown() then leave_screen()
 
 #include <chrono>
 #include <cstdio>
@@ -19,6 +21,22 @@
 #include "termforge/core/terminal.hpp"
 
 using namespace termforge;
+
+// End-of-session teardown as an RAII guard, so cleanup runs on the exception
+// path too and not just on a normal return. shutdown() is the driver's
+// explicit cleanup handoff (#148): it writes what the driver owes the
+// terminal (e.g. kitty freeing its resident images) through the still-alive
+// output sink -- a driver's destructor never writes. leave_screen() then
+// drops the alt-screen. Declared after enter_screen() so destruction unwinds
+// setup in reverse order.
+struct ScreenGuard {
+  TerminalDriver& driver;
+  Terminal& term;
+  ~ScreenGuard() {
+    driver.shutdown();
+    term.leave_screen();
+  }
+};
 
 auto main() -> int {
   Terminal term;
@@ -47,8 +65,10 @@ auto main() -> int {
     return 1;
   }
 
-  // Enter alt-screen
+  // Enter alt-screen, then arm the guard that undoes it (and ends the
+  // driver's session) on every exit path from here on.
   term.enter_screen();
+  const ScreenGuard cleanup{*driver, term};
 
   // Create screen and renderer
   Screen screen(80, 24);
@@ -64,23 +84,32 @@ auto main() -> int {
   term.set_read_timeout(1); // 100ms poll
 
   while (running) {
-    // Read input
+    // Drain input fully: feed every chunk until a read comes back empty.
     char buf[256];
-    const int n = term.read_input(buf, sizeof(buf));
-    if (n > 0) {
+    while (true) {
+      const int n = term.read_input(buf, sizeof(buf));
+      if (n <= 0) break;
       input.feed(std::string_view{buf, static_cast<std::size_t>(n)});
-      for (auto& ev : input.poll()) {
-        std::visit(
-            [&](const auto& e) {
-              using T = std::decay_t<decltype(e)>;
-              if constexpr (std::is_same_v<T, KeyEvent>) {
-                if (e.key == Key::Escape || (e.ctrl && e.ch == 'c')) {
-                  running = false;
-                }
+    }
+    // Only flush at this drained boundary: the empty read proves no more
+    // bytes are coming right now, so a held lone ESC resolves to an Escape
+    // keypress, while split CSI/SS3 sequences stay held for their remaining
+    // bytes. Flushing earlier would fabricate an Escape mid-sequence.
+    input.flush();
+
+    // Poll even when the drain read nothing: flush() above may have just
+    // released a held Escape.
+    for (auto& ev : input.poll()) {
+      std::visit(
+          [&](const auto& e) {
+            using T = std::decay_t<decltype(e)>;
+            if constexpr (std::is_same_v<T, KeyEvent>) {
+              if (e.key == Key::Escape || (e.ctrl && e.ch == 'c')) {
+                running = false;
               }
-            },
-            ev);
-      }
+            }
+          },
+          ev);
     }
 
     // Render
@@ -111,12 +140,16 @@ auto main() -> int {
     screen.write_text(2, 14, "Press ESC to exit", Rgb{0x80, 0x80, 0x80}, {});
 
     renderer.present(screen);
+    // present() only queues the cell diff into the driver's buffer; flush()
+    // is the frame's single write boundary (#148). Without it nothing is
+    // written and the buffer grows every frame.
+    renderer.flush();
     ++frame_count;
 
     std::this_thread::sleep_for(std::chrono::milliseconds(33)); // ~30fps
   }
 
-  // Cleanup
-  term.leave_screen();
+  // Cleanup runs in the ScreenGuard destructor: driver->shutdown() while the
+  // output sink is still alive, then leave_screen().
   return 0;
 }
