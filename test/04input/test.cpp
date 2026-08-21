@@ -572,7 +572,8 @@ TEST_CASE("Input: legacy Alt+UTF-8 across fragmented feeds",
   Input split_pair;
   split_pair.feed("\033\xC3");
   REQUIRE(split_pair.poll().empty());
-  split_pair.feed("\xA9""z");
+  split_pair.feed("\xA9"
+                  "z");
   ev = split_pair.poll();
   REQUIRE(ev.size() == 2);
   k = first_key(ev);
