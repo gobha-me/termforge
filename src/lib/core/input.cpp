@@ -410,12 +410,11 @@ auto Input::decode_one(std::string_view buf) -> std::size_t {
       case 0x7F:
         m_events.push_back(KeyEvent{Key::Backspace, 0, false, true, false});
         return 2;
-      default:
-        break;
+      default: break;
     }
     if (b1 >= 1 && b1 <= 26) {
-      m_events.push_back(KeyEvent{Key::Char, static_cast<char32_t>('a' + b1 - 1),
-                                  true, true, false});
+      m_events.push_back(KeyEvent{
+          Key::Char, static_cast<char32_t>('a' + b1 - 1), true, true, false});
       return 2;
     }
 
