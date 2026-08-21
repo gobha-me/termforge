@@ -640,6 +640,118 @@ TEST_CASE("Input: CSI/SS3/APC still beat the legacy Alt fallback",
   REQUIRE_FALSE(rec.empty());
 }
 
+// ── flush() boundary: held ESC + partial UTF-8 — issue #335 ─────────────────
+
+TEST_CASE("Input: flush resolves a held ESC + partial UTF-8 as Alt+FFFD",
+          "[input][alt][flush]") {
+  // #335: feed() holds a split Alt+é (ESC + 0xC3 — two bytes, so the
+  // lone-ESC arm never fires and m_esc_pending stays false). Before the fix
+  // flush() left those bytes wedged in m_pending until the next keypress
+  // decoded in their shadow; the drained-fd boundary must resolve them as
+  // the same Alt+U+FFFD decode_one emits for ESC + malformed UTF-8.
+  Input in;
+  in.feed("\033\xC3");
+  REQUIRE(in.poll().empty());
+  REQUIRE(in.esc_pending()); // the held prefix must arm App's grace read
+
+  in.flush();
+  auto ev = in.poll();
+  REQUIRE(ev.size() == 1);
+  const auto k = first_key(ev);
+  CHECK(k.key == Key::Char);
+  CHECK(k.ch == U'\uFFFD');
+  CHECK(k.alt);
+  CHECK_FALSE(k.ctrl);
+  CHECK_FALSE(k.shift);
+
+  CHECK(in.poll().empty()); // nothing stays wedged behind the flush
+  CHECK_FALSE(in.esc_pending());
+}
+
+TEST_CASE("Input: flush resolves a longer partial Alt+UTF-8 prefix too",
+          "[input][alt][flush]") {
+  // ESC + 3-byte lead + one continuation: the plausibility test runs on
+  // the second byte's RFC 3629 range, not just the lead's shape.
+  Input in;
+  in.feed("\033\xE4\xB8"); // split Alt+中 (U+4E2D)
+  REQUIRE(in.esc_pending());
+
+  in.flush();
+  auto ev = in.poll();
+  REQUIRE(ev.size() == 1);
+  const auto k = first_key(ev);
+  CHECK(k.key == Key::Char);
+  CHECK(k.ch == U'\uFFFD');
+  CHECK(k.alt);
+  CHECK(in.poll().empty());
+  CHECK_FALSE(in.esc_pending());
+}
+
+TEST_CASE("Input: a lone ESC still flushes as Escape, never Alt+FFFD",
+          "[input][flush]") {
+  // #335 pins the pre-existing boundary: the lone-ESC hold is unchanged.
+  Input in;
+  in.feed("\033");
+  REQUIRE(in.esc_pending());
+  REQUIRE(in.poll().empty());
+
+  in.flush();
+  auto ev = in.poll();
+  REQUIRE(ev.size() == 1);
+  CHECK(first_key(ev).key == Key::Escape);
+  CHECK(in.poll().empty());
+  CHECK_FALSE(in.esc_pending());
+}
+
+TEST_CASE("Input: split CSI/SS3 stay held across flush and complete after",
+          "[input][flush]") {
+  // #335 must not move the sequence boundary: a split CSI/SS3 belongs to
+  // the next feed(), never to the Alt+U+FFFD resolution.
+  for (const char* introducer : {"\033[", "\033O"}) {
+    Input in;
+    in.feed(introducer);
+    in.flush();
+    CHECK(in.poll().empty());
+    CHECK_FALSE(in.esc_pending());
+
+    in.feed("A"); // the held record still completes normally
+    auto ev = in.poll();
+    REQUIRE(ev.size() == 1);
+    CHECK(first_key(ev).key == Key::Up);
+  }
+}
+
+TEST_CASE("Input: a split APC stays held across flush", "[input][flush]") {
+  Input in;
+  in.feed("\033_Gi=1;"); // kitty graphics reply, no terminator yet
+  in.flush();
+  CHECK(in.poll().empty());
+  CHECK(in.poll_replies().empty());
+  CHECK_FALSE(in.esc_pending());
+
+  in.feed("OK\033\\"); // completes the reply
+  CHECK(in.poll().empty());
+  CHECK(in.poll_replies().size() == 1);
+}
+
+TEST_CASE("Input: split Alt+multibyte completing in a later feed is unchanged",
+          "[input][alt][flush]") {
+  // The flush boundary only fires when the fd is drained; a continuation
+  // that does arrive still decodes as the real Alt+codepoint.
+  Input in;
+  in.feed("\033\xE4\xB8");
+  REQUIRE(in.esc_pending());
+  REQUIRE(in.poll().empty());
+
+  in.feed("\xAD"); // completes 中 (U+4E2D)
+  auto ev = in.poll();
+  REQUIRE(ev.size() == 1);
+  const auto k = first_key(ev);
+  CHECK(k.ch == 0x4E2D);
+  CHECK(k.alt);
+  CHECK_FALSE(in.esc_pending());
+}
+
 // ── SS3 (ESC O …) — issue #13.3 ───────────────────────────────────────────
 
 TEST_CASE("Input: SS3 Home decodes as Home, not a spurious 'H'",
