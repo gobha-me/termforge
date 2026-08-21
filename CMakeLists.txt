@@ -75,6 +75,7 @@ option(${PROJECT_NAME}_TESTS    "Build the termforge test suite"    ${PROJECT_IS
 option(${PROJECT_NAME}_EXAMPLES "Build the termforge examples"      ${PROJECT_IS_TOP_LEVEL})
 option(${PROJECT_NAME}_BIN      "Build the forge-top system monitor" ${PROJECT_IS_TOP_LEVEL})
 option(${PROJECT_NAME}_INSTALL  "Generate termforge install rules"  ${PROJECT_IS_TOP_LEVEL})
+option(${PROJECT_NAME}_TOOLS    "Build developer asset tools (gen_gradient)" ${PROJECT_IS_TOP_LEVEL})
 option(${PROJECT_NAME}_BENCH    "Build Release-only performance harness" OFF)
 
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/src/lib)
@@ -114,9 +115,11 @@ if (${PROJECT_NAME}_EXAMPLES)
   add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/examples)
 endif ()
 
-# Developer asset tool (raw-RGBA gradient). Top-level only — not a consumer
-# artifact. Tests cover the shared helpers in tools/gen_gradient.hpp.
-if (PROJECT_IS_TOP_LEVEL)
+# Developer asset tool (raw-RGBA gradient). Not a consumer artifact, so it
+# rides the same option-defaulted-to-top-level convention as the others above.
+# Tests cover the shared helpers in tools/gen_gradient.hpp directly and do not
+# depend on this target.
+if (${PROJECT_NAME}_TOOLS)
   add_executable(gen_gradient ${CMAKE_CURRENT_LIST_DIR}/tools/gen_gradient.cpp)
   target_include_directories(gen_gradient PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/tools)
