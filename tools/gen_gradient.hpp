@@ -46,7 +46,7 @@ inline auto fill_pixel(std::uint32_t x, std::uint32_t y, std::uint32_t w,
   out[0] = static_cast<std::uint8_t>(255 - (x * 255 / x_den)); // r
   out[1] = static_cast<std::uint8_t>(x * 255 / x_den);         // g
   out[2] = static_cast<std::uint8_t>(y * 255 / y_den);         // b
-  out[3] = 255;                                                 // a
+  out[3] = 255;                                                // a
 }
 
 // Write a raw-RGBA asset. On any failure after the file is created, remove it
