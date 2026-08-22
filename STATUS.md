@@ -4,9 +4,29 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-20, latest)
+## Where we are (2026-08-22, latest)
 
-**Current stable release: v0.57.6 — roll back refused Kitty image work.** #313
+**Current stable release: v0.57.12 — image/sprites examples exception-safe
+lifecycle and input preservation.** #320 (PR #338) fixes the last two manual
+examples that taught an unsafe lifecycle: fallible setup (probe, driver
+init, asset load) now runs before `enter_screen()`; an RAII `ScreenGuard`
+runs `driver->shutdown()` then `leave_screen()` on every exit path,
+exceptions included; and the exit wait uses the `Input` decoder — user keys
+typed early are preserved, and terminal control-plane replies route to
+`consume_reply()` instead of being discarded raw. New offline
+`test/77exampleexit` pins the contracts (mutation-verified).
+
+## Previous stable releases: v0.57.7 – v0.57.11
+
+Shipped 2026-08-21/22 without STATUS updates (see `git tag`/releases):
+v0.57.7 Catch2-without-Git tests; v0.57.8 legacy ESC-Alt decoding (#307);
+v0.57.9 gen_gradient 1px axes + little-endian headers (#322); v0.57.10
+flush() resolves held ESC + partial UTF-8 as Alt+U+FFFD (#335); v0.57.11
+low_level example flushes frames and lone-Escape input (#321, PR #337).
+
+## Previous stable release: v0.57.6
+
+**v0.57.6 — roll back refused Kitty image work.** #313
 extends the accepted-write boundary across the complete Kitty image
 transaction. Region hashes, cache membership, placement options and LRU state
 now restore from a bounded pre-frame snapshot, while new raw/opaque pins and
