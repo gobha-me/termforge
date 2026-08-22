@@ -23,12 +23,21 @@
 //   * the 50% square shows the checker through it, tinted
 //   * the transparent slot leaves the checker completely untouched
 //   * the four edge sprites are cut off cleanly with nothing wrapping around
+//
+// Lifecycle (#320): every fallible step -- capability probe, driver init --
+// runs BEFORE enter_screen(), so no failure path strands the user's terminal
+// on the alt-screen; an RAII guard then runs driver->shutdown() and
+// leave_screen() on every exit path, exceptions included; and the exit wait
+// goes through the Input decoder, so early-typed keys are preserved and
+// terminal control-plane replies reach the driver instead of being
+// discarded raw.
 
 #include <cmath>
 #include <cstdio>
 #include <format>
 #include <vector>
 
+#include "termforge/core/input.hpp"
 #include "termforge/core/terminal.hpp"
 #include "termforge/core/types.hpp"
 #include "termforge/widgets/theme.hpp"
@@ -36,6 +45,22 @@
 using namespace termforge;
 
 namespace {
+
+// End-of-session teardown as an RAII guard (#320), so cleanup runs on the
+// exception path too and not just on a normal return. shutdown() is the
+// driver's explicit cleanup handoff (#148): it writes what the driver owes
+// the terminal (kitty freeing its resident images) through the still-alive
+// output sink -- a driver's destructor never writes. leave_screen() then
+// drops the alt-screen. Declared after enter_screen() so destruction unwinds
+// setup in reverse order.
+struct ScreenGuard {
+  TerminalDriver& driver;
+  Terminal& term;
+  ~ScreenGuard() {
+    driver.shutdown();
+    term.leave_screen();
+  }
+};
 
 constexpr int kSprite = 8;  // each atlas slot is 8x8
 constexpr int kSlots = 4;   // ... and there are four of them
@@ -153,8 +178,10 @@ auto main() -> int {
             .c_str());
     return 1;
   }
-  term.enter_screen();
 
+  // Everything fallible happens before enter_screen() (#320): a failure on
+  // either of these paths returns with the terminal still on its normal
+  // screen.
   auto caps = term.query_capabilities();
   if (!caps) {
     std::fprintf(
@@ -171,6 +198,11 @@ auto main() -> int {
         std::format("Driver init failed: {}", res.error().message).c_str());
     return 1;
   }
+
+  // Enter alt-screen, then arm the guard that undoes it (and ends the
+  // driver's session) on every exit path from here on.
+  term.enter_screen();
+  const ScreenGuard cleanup{*driver, term};
 
   const auto dcaps = driver->capabilities();
   const char* tier = dcaps.kitty_graphics ? "Kitty graphics"
@@ -212,18 +244,48 @@ auto main() -> int {
                     Attr::Dim);
   driver->flush();
 
-  // Drain the kitty APC acknowledgements before waiting for a real keypress,
-  // exactly as examples/image.cpp does.
-  term.set_read_timeout(1);
-  char buf[256];
-  while (term.read_input(buf, sizeof(buf)) > 0) {
-    // discard driver ack responses
-  }
-  term.set_read_blocking();
-  while (term.read_input(buf, sizeof(buf)) <= 0) {
-    // keep waiting for a real keypress
+  // Wait for a keypress through the Input decoder (#320), exactly as
+  // examples/image.cpp does. This demo uploads raw RGBA with no ack
+  // requested, so the raw drain loop this replaces was not discarding
+  // "driver ack responses" -- it was discarding keys the user typed early.
+  // Feed every chunk until a read comes back empty, flush() only at that
+  // drained boundary (a held lone ESC resolves to Escape there, while split
+  // sequences stay held), route control-plane replies to the driver, and
+  // exit on the first decoded key press.
+  Input input;
+  term.set_read_timeout(1); // 100ms poll
+  bool running = true;
+  while (running) {
+    char buf[256];
+    while (true) {
+      const int n = term.read_input(buf, sizeof(buf));
+      if (n <= 0) break;
+      input.feed(std::string_view{buf, static_cast<std::size_t>(n)});
+    }
+    input.flush();
+
+    // Control-plane records are not keypresses: offer real replies to the
+    // driver (base-class consume_reply is a no-op; KittyDriver overrides it
+    // to consume its acks), and let a malformed-APC ErrorEvent pass silently
+    // rather than surfacing it as input.
+    for (auto& record : input.poll_replies()) {
+      if (auto* reply = std::get_if<TerminalReply>(&record))
+        driver->consume_reply(*reply);
+    }
+
+    for (auto& ev : input.poll()) {
+      std::visit(
+          [&](const auto& e) {
+            using T = std::decay_t<decltype(e)>;
+            if constexpr (std::is_same_v<T, KeyEvent>) {
+              if (e.action == KeyAction::Press) running = false;
+            }
+          },
+          ev);
+    }
   }
 
-  term.leave_screen();
+  // Cleanup runs in the ScreenGuard destructor: driver->shutdown() while the
+  // output sink is still alive, then leave_screen().
   return 0;
 }
