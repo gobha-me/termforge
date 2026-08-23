@@ -373,7 +373,13 @@ file is the tactical version.
   CSI/SS3 parser validates parameter, intermediate and final byte classes; an
   ESC inside an incomplete record retires only that prefix and is reprocessed
   as the next introducer, so one truncated control cannot consume or explode a
-  valid replacement key (#318). The refusal that remains is for a
+  valid replacement key (#318). **A press-only `EventSource` is discrete**
+  (#311): repeated Press events are independent actions, not held-state
+  violations waiting for a Release the route cannot provide. App tracks source
+  keys only when repeat or release was declared, synthesizes Release only when
+  release was declared, and silently clears repeat-only tracking when that
+  stateful capability disappears. Live validation and trace preflight carry
+  the same rule. The refusal that remains is for a
   **discovered** non-tty stdin
   (`./app < file` is an accident); an injected one is a caller's deliberate
   choice, which is the whole discriminator.

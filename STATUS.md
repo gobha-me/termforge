@@ -4,9 +4,24 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-22, latest)
+## Where we are (2026-08-23, latest)
 
-**Current stable release: v0.57.12 — image/sprites examples exception-safe
+**Current stable release: v0.57.13 — discrete press-only structured input.**
+#311 makes a press-only `EventSource` treat every Press as a complete action,
+so repeated keys in one batch or across polls no longer terminate a valid
+legacy/remote route. Held state now belongs only to sources that declare
+repeat or release semantics, and App never manufactures Release for a source
+that did not declare it.
+
+Capability loss, source failure/removal and trace preflight share the same
+retirement rule: release-capable state synthesizes ordered releases;
+repeat-only state is cleared silently before a later stateful route can inherit
+it. Release-capable sources retain duplicate-press and matching-transition
+validation. The trace schema and terminal wire are unchanged.
+
+## Previous stable release: v0.57.12
+
+**v0.57.12 — image/sprites examples exception-safe
 lifecycle and input preservation.** #320 (PR #338) fixes the last two manual
 examples that taught an unsafe lifecycle: fallible setup (probe, driver
 init, asset load) now runs before `enter_screen()`; an RAII `ScreenGuard`

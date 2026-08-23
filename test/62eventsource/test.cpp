@@ -345,6 +345,91 @@ TEST_CASE("source batches preserve modifier and key transition order",
   REQUIRE(state->stops == 1);
 }
 
+TEST_CASE("press-only source presses are discrete within and across batches",
+          "[event-source][order][press-only]") {
+  for (const bool same_batch : {true, false}) {
+    const char* const section = same_batch ? "same batch" : "successive polls";
+    DYNAMIC_SECTION(section) {
+      auto state = make_source_state();
+      state->capabilities = InputCapabilities{true, false, false, false};
+      if (same_batch) {
+        queue_events(state, {key(Key::Char, KeyAction::Press, U'x'),
+                             key(Key::Char, KeyAction::Press, U'x')});
+      } else {
+        queue_events(state, {key(Key::Char, KeyAction::Press, U'x')});
+        queue_events(state, {key(Key::Char, KeyAction::Press, U'x')});
+      }
+
+      SourceProbe app;
+      app.set_frame_ms(0);
+      REQUIRE(app.set_event_source(std::make_unique<PipeSource>(state),
+                                   EventSourceMode::ReplaceTerminal));
+      std::string wire;
+      app.test_run_frames(same_batch ? 1 : 2, 20, 5, &wire);
+
+      const auto observed = key_events(app.events);
+      REQUIRE(observed.size() == 2);
+      CHECK(observed[0].action == KeyAction::Press);
+      CHECK(observed[1].action == KeyAction::Press);
+      CHECK(observed[0].ch == U'x');
+      CHECK(observed[1].ch == U'x');
+      CHECK(errors(app.events).empty());
+    }
+  }
+}
+
+TEST_CASE("a source never invents releases it did not declare",
+          "[event-source][failure][press-only]") {
+  for (const auto caps : {InputCapabilities{true, false, false, false},
+                          InputCapabilities{true, true, false, false}}) {
+    const char* const section =
+        caps.key_repeat ? "repeat without release" : "press only";
+    DYNAMIC_SECTION(section) {
+      auto state = make_source_state();
+      state->capabilities = caps;
+      queue_events(state, {key(Key::Char, KeyAction::Press, U'x')});
+      queue_reply(state,
+                  SourceReply{std::unexpected{ErrorEvent{
+                                  Severity::Error, "evdev", "device gone"}},
+                              std::nullopt});
+
+      SourceProbe app;
+      app.set_frame_ms(0);
+      REQUIRE(app.set_event_source(std::make_unique<PipeSource>(state),
+                                   EventSourceMode::ReplaceTerminal));
+      std::string wire;
+      app.test_run_frames(2, 20, 5, &wire);
+
+      REQUIRE(app.events.size() == 2);
+      CHECK(std::get<KeyEvent>(app.events[0]).action == KeyAction::Press);
+      const auto& failure = std::get<ErrorEvent>(app.events[1]);
+      CHECK(failure.severity == Severity::Warning);
+      CHECK(failure.source == "evdev");
+    }
+  }
+}
+
+TEST_CASE("release-capable sources still reject duplicate held presses",
+          "[event-source][failure][release]") {
+  auto state = make_source_state();
+  queue_events(state, {key(Key::Char, KeyAction::Press, U'x')});
+  queue_events(state, {key(Key::Char, KeyAction::Press, U'x')});
+
+  SourceProbe app;
+  app.set_frame_ms(0);
+  REQUIRE(app.set_event_source(std::make_unique<PipeSource>(state),
+                               EventSourceMode::ReplaceTerminal));
+  std::string wire;
+  app.test_run_frames(2, 20, 5, &wire);
+
+  REQUIRE(app.events.size() == 3);
+  CHECK(std::get<KeyEvent>(app.events[0]).action == KeyAction::Press);
+  CHECK(std::get<KeyEvent>(app.events[1]).action == KeyAction::Release);
+  const auto& failure = std::get<ErrorEvent>(app.events[2]);
+  CHECK(failure.severity == Severity::Warning);
+  CHECK(failure.message.find("duplicate key press") != std::string::npos);
+}
+
 TEST_CASE("an invalid replacement is a total refusal",
           "[event-source][lifecycle][failure]") {
   auto original = make_source_state();
@@ -574,21 +659,53 @@ TEST_CASE("release-capability loss synthesizes releases before degradation",
   auto state = make_source_state();
   queue_events(state, {key(Key::Char, KeyAction::Press, U'x')});
   queue_events(state, {}, InputCapabilities{true, false, false, false});
+  queue_events(state, {key(Key::Char, KeyAction::Press, U'x'),
+                       key(Key::Char, KeyAction::Press, U'x')});
   SourceProbe app;
   app.set_frame_ms(0);
   REQUIRE(app.set_event_source(std::make_unique<PipeSource>(state),
                                EventSourceMode::ReplaceTerminal));
   std::string wire;
-  app.test_run_frames(2, 20, 5, &wire);
+  app.test_run_frames(3, 20, 5, &wire);
 
-  REQUIRE(app.events.size() == 3);
+  REQUIRE(app.events.size() == 5);
   REQUIRE(std::get<KeyEvent>(app.events[0]).action == KeyAction::Press);
   REQUIRE(std::get<KeyEvent>(app.events[1]).action == KeyAction::Release);
   const auto& degraded = std::get<ErrorEvent>(app.events[2]);
   REQUIRE(degraded.severity == Severity::Warning);
   REQUIRE(degraded.message.find("degraded") != std::string::npos);
+  CHECK(std::get<KeyEvent>(app.events[3]).action == KeyAction::Press);
+  CHECK(std::get<KeyEvent>(app.events[4]).action == KeyAction::Press);
   REQUIRE(app.input_capabilities() ==
           InputCapabilities{true, false, false, false});
+}
+
+TEST_CASE("losing repeat-only state does not poison a restored route",
+          "[event-source][capabilities][press-only]") {
+  auto state = make_source_state();
+  state->capabilities = InputCapabilities{true, true, false, false};
+  queue_events(state, {key(Key::Char, KeyAction::Press, U'x')});
+  queue_events(state, {}, InputCapabilities{true, false, false, false});
+  queue_events(state, {}, InputCapabilities{true, true, false, false});
+  queue_events(state, {key(Key::Char, KeyAction::Press, U'x')});
+
+  SourceProbe app;
+  app.set_frame_ms(0);
+  REQUIRE(app.set_event_source(std::make_unique<PipeSource>(state),
+                               EventSourceMode::ReplaceTerminal));
+  std::string wire;
+  app.test_run_frames(4, 20, 5, &wire);
+
+  const auto observed = key_events(app.events);
+  REQUIRE(observed.size() == 2);
+  CHECK(observed[0].action == KeyAction::Press);
+  CHECK(observed[1].action == KeyAction::Press);
+  const auto transitions = errors(app.events);
+  REQUIRE(transitions.size() == 2);
+  CHECK(transitions[0].severity == Severity::Warning);
+  CHECK(transitions[1].severity == Severity::Info);
+  CHECK(app.input_capabilities() ==
+        InputCapabilities{true, true, false, false});
 }
 
 TEST_CASE("clearing a live source releases its held keys and destroys it",
@@ -751,4 +868,86 @@ TEST_CASE(
   REQUIRE(ignored_live_state->starts == 0);
   REQUIRE(ignored_live_state->polls == 0);
   REQUIRE(ignored_live_state->stops == 0);
+}
+
+TEST_CASE("trace replay accepts repeated discrete source presses",
+          "[event-source][trace][press-only]") {
+  SocketPair recording_socket;
+  REQUIRE(recording_socket.ok());
+  auto state = make_source_state();
+  state->capabilities = InputCapabilities{true, false, false, false};
+  queue_events(state, {key(Key::Char, KeyAction::Press, U'q'),
+                       key(Key::Char, KeyAction::Press, U'q')});
+
+  LiveSourceProbe recording;
+  recording.quit_after_renders = 6;
+  REQUIRE(recording.configure(recording_socket.app_fd()));
+  REQUIRE(recording.set_event_source(std::make_unique<PipeSource>(state),
+                                     EventSourceMode::ReplaceTerminal));
+  std::stringstream trace;
+  recording.start_recording(trace);
+  REQUIRE(recording.run() == 0);
+  const auto recorded = key_events(recording.events);
+  REQUIRE(recorded.size() == 2);
+  CHECK(recorded[0].action == KeyAction::Press);
+  CHECK(recorded[1].action == KeyAction::Press);
+
+  std::stringstream inspection{trace.str()};
+  const auto decoded = detail::read_trace(inspection);
+  REQUIRE(decoded);
+  CHECK(decoded->header.input_capabilities ==
+        InputCapabilities{true, false, false, false});
+
+  SocketPair playback_socket;
+  REQUIRE(playback_socket.ok());
+  LiveSourceProbe playback;
+  REQUIRE(playback.configure(playback_socket.app_fd()));
+  std::stringstream replay{trace.str()};
+  REQUIRE(playback.play(replay));
+  const auto replayed = key_events(playback.events);
+  REQUIRE(replayed.size() == 2);
+  CHECK(replayed[0].action == KeyAction::Press);
+  CHECK(replayed[1].action == KeyAction::Press);
+}
+
+TEST_CASE("trace preflight retires state when repeat-only capability is lost",
+          "[event-source][trace][capabilities][press-only]") {
+  SocketPair recording_socket;
+  REQUIRE(recording_socket.ok());
+  auto state = make_source_state();
+  state->capabilities = InputCapabilities{true, true, false, false};
+  queue_events(state, {key(Key::Char, KeyAction::Press, U'x')});
+  queue_events(state, {}, InputCapabilities{true, false, false, false});
+  queue_events(state, {}, InputCapabilities{true, true, false, false});
+  queue_events(state, {key(Key::Char, KeyAction::Press, U'x')});
+  queue_events(state, {key(Key::Char, KeyAction::Press, U'q')});
+
+  LiveSourceProbe recording;
+  recording.quit_after_renders = 6;
+  REQUIRE(recording.configure(recording_socket.app_fd()));
+  REQUIRE(recording.set_event_source(std::make_unique<PipeSource>(state),
+                                     EventSourceMode::ReplaceTerminal));
+  std::stringstream trace;
+  recording.start_recording(trace);
+  REQUIRE(recording.run() == 0);
+  const auto recorded = key_events(recording.events);
+  REQUIRE(recorded.size() == 3);
+  CHECK(recorded[0].ch == U'x');
+  CHECK(recorded[1].ch == U'x');
+  CHECK(recorded[2].ch == U'q');
+  CHECK(std::ranges::none_of(recorded, [](const KeyEvent& event) {
+    return event.action == KeyAction::Release;
+  }));
+
+  SocketPair playback_socket;
+  REQUIRE(playback_socket.ok());
+  LiveSourceProbe playback;
+  REQUIRE(playback.configure(playback_socket.app_fd()));
+  std::stringstream replay{trace.str()};
+  REQUIRE(playback.play(replay));
+  const auto replayed = key_events(playback.events);
+  REQUIRE(replayed.size() == 3);
+  CHECK(replayed[0].ch == U'x');
+  CHECK(replayed[1].ch == U'x');
+  CHECK(replayed[2].ch == U'q');
 }

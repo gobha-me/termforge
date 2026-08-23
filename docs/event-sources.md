@@ -68,6 +68,11 @@ exposes that value, and `AppRequirements::key_*` evaluates against it. A
 structured source can therefore satisfy a repeat/release floor on a terminal
 without the kitty keyboard protocol.
 
+A source that declares press but neither repeat nor release is discrete. Each
+`Press` is a complete action, so the same `(key, ch)` may be pressed again in
+the same or a later batch without an unavailable `Release` between them. App
+tracks held keys only while the route declares repeat or release semantics.
+
 Capabilities may change while a source is active. The descriptor must become
 readable, `poll()` returns the batch produced under the old declaration, and
 the source exposes the new declaration from `capabilities()` afterwards.
@@ -80,11 +85,12 @@ cannot remain stuck.
 
 A batch is atomic. `App` validates the complete batch before delivering any of
 it. It rejects malformed key or mouse values, transitions exceeding the
-declared capabilities, duplicate presses, repeats/releases without a matching
-press, `ResizeEvent` (a remote adapter must use `App::set_size`), and
-`ImageInvalidatedEvent` (embedding code must use `App::invalidate_images` or
-the thread-safe `App::post` boundary). Paste payload bytes remain opaque;
-display sanitization still belongs to the renderer.
+declared capabilities, duplicate held presses on stateful routes,
+repeats/releases without a matching press, `ResizeEvent` (a remote adapter
+must use `App::set_size`), and `ImageInvalidatedEvent` (embedding code must use
+`App::invalidate_images` or the thread-safe `App::post` boundary). Paste
+payload bytes remain opaque; display sanitization still belongs to the
+renderer.
 
 The matching identity available in today's `KeyEvent` is `(key, ch)`. An
 adapter must preserve that pair from press through repeat and release, even if
@@ -92,7 +98,9 @@ the modifier snapshot changes while the key is held.
 
 On a malformed batch, returned failure, or exception, `App`:
 
-1. synthesizes releases for held source keys;
+1. synthesizes releases for held source keys only when the source declared
+   release support, otherwise clears its private tracking without inventing an
+   unsupported event;
 2. emits an `ErrorEvent` with `Severity::Warning`;
 3. stops the source for that run; and
 4. marks its capabilities unavailable and re-evaluates requirements.
