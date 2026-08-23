@@ -150,6 +150,11 @@ auto trace_warning(std::string message) -> ErrorEvent {
   return {true, enhanced, enhanced, enhanced};
 }
 
+[[nodiscard]] constexpr auto tracks_source_key_state(
+    InputCapabilities caps) noexcept -> bool {
+  return caps.key_repeat || caps.key_release;
+}
+
 [[nodiscard]] constexpr auto bare_modifier(Key key) noexcept -> bool {
   return key >= Key::LeftShift && key <= Key::RightAlt;
 }
@@ -181,6 +186,7 @@ auto validate_source_batch(std::span<const Event> events,
                            InputCapabilities caps, std::vector<KeyEvent>& held,
                            std::string& reason) -> bool {
   auto next_held = held;
+  const bool tracks_keys = tracks_source_key_state(caps);
   for (const auto& event : events) {
     if (const auto* key = std::get_if<KeyEvent>(&event)) {
       if (!valid_key(key->key) || !valid_action(key->action) ||
@@ -200,11 +206,13 @@ auto validate_source_batch(std::span<const Event> events,
           next_held.begin(), next_held.end(),
           [&](const KeyEvent& prior) { return same_source_key(prior, *key); });
       if (key->action == KeyAction::Press) {
-        if (it != next_held.end()) {
-          reason = "duplicate key press without an intervening release";
-          return false;
+        if (tracks_keys) {
+          if (it != next_held.end()) {
+            reason = "duplicate key press without an intervening release";
+            return false;
+          }
+          next_held.push_back(*key);
         }
-        next_held.push_back(*key);
       } else if (key->action == KeyAction::Repeat) {
         if (!caps.key_repeat || it == next_held.end()) {
           reason = "key repeat is unsupported or has no matching press";
@@ -366,7 +374,7 @@ auto App::set_event_source(std::unique_ptr<EventSource> source,
       mode == EventSourceMode::ReplaceTerminal ||
       (m_event_source &&
        m_event_source_mode == EventSourceMode::ReplaceTerminal);
-  if (live_source_session) release_source_keys();
+  if (live_source_session) retire_source_keys();
   stop_event_source();
   m_event_source = std::move(source);
   m_event_source_mode = mode;
@@ -387,7 +395,7 @@ auto App::clear_event_source() -> void {
   const bool replaced_terminal =
       m_event_source_mode == EventSourceMode::ReplaceTerminal;
   const bool live_source_session = m_loop_active && !m_playback;
-  if (live_source_session) release_source_keys();
+  if (live_source_session) retire_source_keys();
   stop_event_source();
   m_event_source.reset();
   m_source_capabilities = {};
@@ -535,6 +543,10 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
               !source_held.empty()) {
             return std::unexpected{trace_warning(
                 "play: input capabilities lost release with held keys")};
+          }
+          if (tracks_source_key_state(source_caps) &&
+              !tracks_source_key_state(*caps)) {
+            source_held.clear();
           }
           source_caps = *caps;
         }
@@ -1139,11 +1151,13 @@ auto App::stop_event_source() noexcept -> void {
   m_source_held.clear();
 }
 
-auto App::release_source_keys() -> void {
-  for (auto key : m_source_held) {
-    key.action = KeyAction::Release;
-    m_source_events.emplace_back(key);
-    record_source_event(m_source_events.back());
+auto App::retire_source_keys() -> void {
+  if (m_source_capabilities.key_release) {
+    for (auto key : m_source_held) {
+      key.action = KeyAction::Release;
+      m_source_events.emplace_back(key);
+      record_source_event(m_source_events.back());
+    }
   }
   m_source_held.clear();
 }
@@ -1155,7 +1169,10 @@ auto App::apply_source_capabilities(InputCapabilities next) -> void {
                     (prior.key_repeat && !next.key_repeat) ||
                     (prior.key_release && !next.key_release) ||
                     (prior.modifier_transitions && !next.modifier_transitions);
-  if (prior.key_release && !next.key_release) release_source_keys();
+  const bool lost_release = prior.key_release && !next.key_release;
+  const bool lost_key_state =
+      tracks_source_key_state(prior) && !tracks_source_key_state(next);
+  if (lost_release || lost_key_state) retire_source_keys();
   m_source_capabilities = next;
   record_input_capabilities(input_capabilities());
   m_source_events.emplace_back(
@@ -1168,7 +1185,7 @@ auto App::apply_source_capabilities(InputCapabilities next) -> void {
 
 auto App::fail_event_source(ErrorEvent error) -> void {
   if (!m_event_source_active) return;
-  release_source_keys();
+  retire_source_keys();
   error.severity = Severity::Warning;
   if (error.source.empty()) error.source = "input_source";
   m_source_events.emplace_back(std::move(error));

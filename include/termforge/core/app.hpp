@@ -1211,7 +1211,7 @@ class App {
   auto discard_terminal_input() -> InputDrainResult;
   auto fail_event_source(ErrorEvent error) -> void;
   auto apply_source_capabilities(InputCapabilities next) -> void;
-  auto release_source_keys() -> void;
+  auto retire_source_keys() -> void;
   // The headless Screen/Renderer/driver wiring shared by the test hooks. Not a
   // test hook itself — none of them should own it.
   //
@@ -1288,9 +1288,10 @@ class App {
   bool m_event_source_active{false};
   bool m_source_woke{false};
   std::deque<Event> m_source_events;
-  // Source-only held state, in first-press order.  A release synthesized on
-  // loss/removal therefore has deterministic order and never touches a key
-  // that arrived through the terminal half of a composed session.
+  // Source-only held state, in first-press order. Press-only routes are
+  // discrete and never enter this vector. A release synthesized for a
+  // release-capable route on loss/removal therefore has deterministic order
+  // and never touches a key from the terminal half of a composed session.
   std::vector<KeyEvent> m_source_held;
   std::unique_ptr<RecordingState> m_recording;
   std::unique_ptr<PlaybackState> m_playback;

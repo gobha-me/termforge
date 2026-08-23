@@ -20,7 +20,9 @@ namespace termforge {
 // standalone Left/Right Shift/Ctrl/Alt press and release events; modifier bits
 // carried on another key do not require it.  Repeat, release and modifier
 // transitions all imply key_press, and modifier transitions also imply
-// key_release.  App rejects an inconsistent declaration rather than guessing.
+// key_release. A press-only route is discrete: repeated Press events do not
+// require an unavailable Release between them. App rejects an inconsistent
+// declaration rather than guessing.
 struct InputCapabilities {
   bool key_press{false};
   bool key_repeat{false};
