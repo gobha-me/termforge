@@ -4,9 +4,23 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-23, latest)
+## Where we are (2026-08-24, latest)
 
-**Current stable release: v0.57.13 — discrete press-only structured input.**
+**Current stable release: v0.57.14 — exact capability reply parsing.** #309
+parses complete terminal records instead of searching their raw concatenation
+for substrings. Kitty graphics and animation replies now require one exact
+numeric probe id and an exact `OK` status while unrelated complete APCs are
+skipped. DA1 recognition ignores APC string bodies, validates the complete
+numeric parameter list and derives sixel only from an exact attribute `4`.
+
+Malformed, truncated, reordered and attacker-controlled replies can no longer
+select a stronger driver tier or hide a supported Kitty route through id/status
+prefix collisions. The capability schema, emitted probe bytes and public API
+are unchanged.
+
+## Previous stable release: v0.57.13
+
+**v0.57.13 — discrete press-only structured input.**
 #311 makes a press-only `EventSource` treat every Press as a complete action,
 so repeated keys in one batch or across polls no longer terminate a valid
 legacy/remote route. Held state now belongs only to sources that declare

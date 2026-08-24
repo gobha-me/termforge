@@ -22,25 +22,143 @@
 // DA1 locator — find_da1() below checks the *final byte* too, and everything
 // that needs DA1's position goes through it.
 
+#include <charconv>
 #include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <string_view>
 
 namespace termforge::detail {
 
-// Offset of a complete DA1 primary device-attributes report — CSI ? then only
-// parameter bytes [0-9;] then a final 'c' — or npos. Skips CSI ? reports with
-// any other final byte (notably the keyboard-flags report, CSI ? <flags> u),
-// so adding a query cannot make an unrelated reply look like DA1.
-[[nodiscard]] inline auto find_da1(std::string_view reply) -> std::size_t {
-  for (auto at = reply.find("\033[?"); at != std::string_view::npos;
-       at = reply.find("\033[?", at + 3)) {
-    for (std::size_t i = at + 3; i < reply.size(); ++i) {
-      const char c = reply[i];
-      if (c == 'c') return at;
-      if (!((c >= '0' && c <= '9') || c == ';')) break; // some other report
+namespace probe_detail {
+
+struct Da1Record {
+  std::size_t offset;
+  std::string_view parameters;
+};
+
+// Locate the first complete, syntactically valid DA1 record. APC bodies are
+// string data until ST, so CSI-looking bytes inside one must never terminate
+// the probe or advertise a capability.
+[[nodiscard]] inline auto find_da1_record(std::string_view reply)
+    -> std::optional<Da1Record> {
+  std::size_t search_from = 0;
+  while (true) {
+    const auto esc = reply.find('\033', search_from);
+    if (esc == std::string_view::npos) return std::nullopt;
+
+    if (esc + 1 < reply.size() && reply[esc + 1] == '_') {
+      const auto st = reply.find("\033\\", esc + 2);
+      if (st == std::string_view::npos) return std::nullopt;
+      search_from = st + 2;
+      continue;
     }
+
+    if (esc + 2 >= reply.size() || reply[esc + 1] != '[' ||
+        reply[esc + 2] != '?') {
+      search_from = esc + 1;
+      continue;
+    }
+
+    const auto parameters_at = esc + 3;
+    std::size_t i = parameters_at;
+    bool field_has_digit = false;
+    for (; i < reply.size(); ++i) {
+      const char c = reply[i];
+      if (c >= '0' && c <= '9') {
+        field_has_digit = true;
+        continue;
+      }
+      if (c == ';' && field_has_digit) {
+        field_has_digit = false;
+        continue;
+      }
+      if (c == 'c' && field_has_digit) {
+        return Da1Record{esc, reply.substr(parameters_at, i - parameters_at)};
+      }
+      break;
+    }
+    search_from = esc + 1;
   }
-  return std::string_view::npos;
+}
+
+[[nodiscard]] inline auto parse_probe_id(std::string_view digits)
+    -> std::optional<std::uint32_t> {
+  if (digits.empty()) return std::nullopt;
+  std::uint32_t value = 0;
+  const auto parsed =
+      std::from_chars(digits.data(), digits.data() + digits.size(), value);
+  if (parsed.ec != std::errc{} || parsed.ptr != digits.data() + digits.size())
+    return std::nullopt;
+  return value;
+}
+
+// A graphics reply is G followed by comma-separated key=value fields, then a
+// semicolon and one status token. Treat duplicate ids and malformed fields as
+// ambiguous rather than allowing attacker-controlled text to select a tier.
+[[nodiscard]] inline auto graphics_reply_ok(std::string_view body,
+                                            std::uint32_t probe_id) -> bool {
+  if (body.empty() || body.front() != 'G') return false;
+  body.remove_prefix(1);
+
+  const auto separator = body.find(';');
+  if (separator == std::string_view::npos || body.substr(separator + 1) != "OK")
+    return false;
+
+  const auto controls = body.substr(0, separator);
+  bool found_id = false;
+  std::size_t field_at = 0;
+  while (field_at <= controls.size()) {
+    const auto comma = controls.find(',', field_at);
+    const auto field = controls.substr(field_at, comma == std::string_view::npos
+                                                     ? std::string_view::npos
+                                                     : comma - field_at);
+    const auto equals = field.find('=');
+    if (field.empty() || equals == std::string_view::npos || equals == 0 ||
+        equals + 1 == field.size() ||
+        field.find('=', equals + 1) != std::string_view::npos)
+      return false;
+
+    if (field.substr(0, equals) == "i") {
+      if (found_id) return false;
+      const auto id = parse_probe_id(field.substr(equals + 1));
+      if (!id || *id != probe_id) return false;
+      found_id = true;
+    }
+
+    if (comma == std::string_view::npos) break;
+    field_at = comma + 1;
+  }
+  return found_id;
+}
+
+[[nodiscard]] inline auto probe_graphics_ok(std::string_view reply,
+                                            std::uint32_t probe_id) -> bool {
+  const auto da1 = find_da1_record(reply);
+  std::size_t search_from = 0;
+  while (true) {
+    const auto apc = reply.find("\033_", search_from);
+    if (apc == std::string_view::npos || (da1 && apc > da1->offset))
+      return false;
+
+    const auto st = reply.find("\033\\", apc + 2);
+    if (st == std::string_view::npos) return false;
+    if (graphics_reply_ok(reply.substr(apc + 2, st - (apc + 2)), probe_id))
+      return true;
+    search_from = st + 2;
+  }
+}
+
+} // namespace probe_detail
+
+// Offset of a complete DA1 primary device-attributes report — CSI ? then only
+// non-empty numeric fields separated by ';' then a final 'c' — or npos. Skips
+// APC string bodies and CSI ? reports with any other final byte (notably the
+// keyboard-flags report, CSI ? <flags> u), so unrelated terminal records
+// cannot make text look like DA1.
+[[nodiscard]] inline auto find_da1(std::string_view reply) -> std::size_t {
+  const auto record = probe_detail::find_da1_record(reply);
+  return record ? record->offset : std::string_view::npos;
 }
 
 // A complete DA1 primary device-attributes report is present in `reply`.
@@ -90,19 +208,7 @@ namespace termforge::detail {
 // that echoes our probe id (i=31) and carries an OK status, arriving before
 // the DA1 reply. A ";E..." error status or a missing/late response is a "no".
 [[nodiscard]] inline auto probe_kitty_ok(std::string_view reply) -> bool {
-  const auto g = reply.find("\033_G");
-  if (g == std::string_view::npos) return false;
-  const auto st = reply.find("\033\\", g);        // APC String Terminator
-  if (st == std::string_view::npos) return false; // response not terminated
-  const auto apc = reply.substr(g, st - g);
-  if (apc.find("i=31") == std::string_view::npos) return false;
-  if (apc.find(";OK") == std::string_view::npos) return false; // reject ";E..."
-  // A genuine graphics response precedes the DA1 primary reply. Located with
-  // find_da1, not a bare "\033[?" search: the keyboard-flags report shares that
-  // prefix, and mistaking it for DA1 would report "graphics arrived late" —
-  // a silent driver downgrade caused by an unrelated query.
-  const auto da1 = find_da1(reply);
-  return da1 == std::string_view::npos || g < da1;
+  return probe_detail::probe_graphics_ok(reply, 31);
 }
 
 // Kitty image-animation actions are supported: the terminal accepted the
@@ -114,30 +220,25 @@ namespace termforge::detail {
 // query intentionally precedes this one in the same startup response stream.
 [[nodiscard]] inline auto probe_kitty_animation(std::string_view reply)
     -> bool {
-  constexpr std::string_view kProbeId{"i=4294967295"};
-  const auto da1 = find_da1(reply);
-  std::size_t search_from = 0;
-  while (true) {
-    const auto g = reply.find("\033_G", search_from);
-    if (g == std::string_view::npos) break;
-    const auto st = reply.find("\033\\", g);
-    if (st == std::string_view::npos) return false;
-    const auto apc = reply.substr(g, st - g);
-    if (apc.find(kProbeId) != std::string_view::npos &&
-        apc.find(";OK") != std::string_view::npos) {
-      return da1 == std::string_view::npos || g < da1;
-    }
-    search_from = st + 2;
-  }
-  return false;
+  return probe_detail::probe_graphics_ok(reply, UINT32_C(4294967295));
 }
 
 // Sixel is advertised in the DA1 attribute list (attribute "4").
 [[nodiscard]] inline auto probe_sixel(std::string_view reply) -> bool {
-  return reply.find(";4;") != std::string_view::npos ||
-         reply.find(";4c") != std::string_view::npos ||
-         reply.find("[?4;") != std::string_view::npos ||
-         reply.find("[?4c") != std::string_view::npos;
+  const auto da1 = probe_detail::find_da1_record(reply);
+  if (!da1) return false;
+
+  std::size_t field_at = 0;
+  while (field_at <= da1->parameters.size()) {
+    const auto separator = da1->parameters.find(';', field_at);
+    const auto field = da1->parameters.substr(
+        field_at, separator == std::string_view::npos ? std::string_view::npos
+                                                      : separator - field_at);
+    if (field == "4") return true;
+    if (separator == std::string_view::npos) break;
+    field_at = separator + 1;
+  }
+  return false;
 }
 
 } // namespace termforge::detail
