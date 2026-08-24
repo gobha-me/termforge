@@ -35,6 +35,20 @@ TEST_CASE("probe_kitty_ok: response missing our probe id is not support",
   REQUIRE_FALSE(detail::probe_kitty_ok("\033_Gi=99;OK\033\\\033[?62c"));
 }
 
+TEST_CASE("probe_kitty_ok: scans complete APC records for the exact reply",
+          "[probe][kitty][regression]") {
+  REQUIRE(detail::probe_kitty_ok(
+      "\033_Gi=99;OK\033\\\033_Ga=q,i=31;OK\033\\\033[?62c"));
+  REQUIRE(detail::probe_kitty_ok(
+      "\033_unrelated;i=31;OK\033\\\033_Gi=31;OK\033\\\033[?62c"));
+
+  REQUIRE_FALSE(detail::probe_kitty_ok("\033_Gi=310;OK\033\\\033[?62c"));
+  REQUIRE_FALSE(detail::probe_kitty_ok("\033_Gpi=31;OK\033\\\033[?62c"));
+  REQUIRE_FALSE(detail::probe_kitty_ok("\033_Gi=31;OKAY\033\\\033[?62c"));
+  REQUIRE_FALSE(detail::probe_kitty_ok("\033_Gi=31,i=31;OK\033\\\033[?62c"));
+  REQUIRE_FALSE(detail::probe_kitty_ok("\033_Gi=4294967296;OK\033\\\033[?62c"));
+}
+
 TEST_CASE("probe_kitty_ok: a graphics reply after DA1 does not count",
           "[probe][kitty]") {
   // Ordering guard: a genuine graphics response precedes DA1.
@@ -44,6 +58,8 @@ TEST_CASE("probe_kitty_ok: a graphics reply after DA1 does not count",
 TEST_CASE("probe_kitty_ok: an unterminated APC response is not support",
           "[probe][kitty]") {
   REQUIRE_FALSE(detail::probe_kitty_ok("\033_Gi=31;OK")); // no ST yet
+  REQUIRE_FALSE(
+      detail::probe_kitty_ok("\033_unterminated\033_Gi=31;OK\033\\\033[?62c"));
 }
 
 TEST_CASE("probe_kitty_animation: only the dedicated action reply is support",
@@ -61,6 +77,12 @@ TEST_CASE("probe_kitty_animation: only the dedicated action reply is support",
                                               std::string{animation}));
   REQUIRE_FALSE(detail::probe_kitty_animation(
       "\033_Gi=429496729;OK\033\\\033[?62c")); // truncated id
+  REQUIRE_FALSE(detail::probe_kitty_animation(
+      "\033_Gi=42949672950;OK\033\\\033[?62c")); // prefixed id
+  REQUIRE_FALSE(
+      detail::probe_kitty_animation("\033_Gi=4294967295;OKAY\033\\\033[?62c"));
+  REQUIRE(detail::probe_kitty_animation(
+      "\033_Gi=99;OK\033\\\033_Ga=f,i=4294967295;OK\033\\\033[?62c"));
 }
 
 TEST_CASE("probe_da1_complete: false until the DA1 terminator arrives",
@@ -69,7 +91,11 @@ TEST_CASE("probe_da1_complete: false until the DA1 terminator arrives",
   // flips true instead of burning the whole 150ms window.
   REQUIRE_FALSE(detail::probe_da1_complete(""));
   REQUIRE_FALSE(detail::probe_da1_complete("\033[?62;4")); // mid-report
+  REQUIRE_FALSE(detail::probe_da1_complete("\033[?62;;4c"));
+  REQUIRE_FALSE(
+      detail::probe_da1_complete("\033_not a DA1: \033[?62;4c\033\\"));
   REQUIRE(detail::probe_da1_complete("\033[?62;4;22c"));
+  REQUIRE(detail::probe_da1_complete("\033[?62;4\033[?62;22c"));
   REQUIRE(detail::probe_da1_complete("\033_Gi=31;OK\033\\\033[?62c"));
 }
 
@@ -125,8 +151,15 @@ TEST_CASE("probe_kitty_keyboard: any flags report means the protocol is there",
 
 TEST_CASE("probe_sixel: DA1 advertises attribute 4", "[probe][sixel]") {
   REQUIRE(detail::probe_sixel("\033[?62;4;22c"));
+  REQUIRE(detail::probe_sixel("\033[?4;22c"));
   REQUIRE(detail::probe_sixel("\033[?4c"));
   REQUIRE_FALSE(detail::probe_sixel("\033[?62;22c"));
+  REQUIRE_FALSE(detail::probe_sixel("\033[?62;40;22c"));
+  REQUIRE_FALSE(detail::probe_sixel("\033[?62;4"));
+  REQUIRE_FALSE(detail::probe_sixel("\033[?62;;4c"));
+  REQUIRE_FALSE(detail::probe_sixel("\033_Gi=99;ERR;4;NO\033\\\033[?62c"));
+  REQUIRE_FALSE(detail::probe_sixel("\033_unrelated;4;data\033\\\033[?62c"));
+  REQUIRE_FALSE(detail::probe_sixel("\033[?1u;4;\033[?62c"));
 }
 
 // ── #8: single probe → driver selection is a pure caps → driver mapping ──────
