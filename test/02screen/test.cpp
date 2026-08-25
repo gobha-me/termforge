@@ -220,6 +220,42 @@ TEST_CASE("Screen: spill identities never create false Cell equality",
   REQUIRE(a.at(0, 0) == before);
 }
 
+TEST_CASE("Screen: repeated spill replacement reclaims superseded entries",
+          "[screen][spill][failure]") {
+  const std::string first = "a\xCC\x81\xCC\x80";
+  const std::string second = "a\xCC\x80\xCC\x81";
+  Screen s{2, 1};
+  s.write_text(0, 0, first, Rgb{}, Rgb{});
+  const Cell stale = static_cast<const Screen&>(s).at(0, 0);
+
+  // More than the small-grid allocation interval. This is deliberately
+  // Screen-only: steady-size users that assemble many updates before a
+  // Renderer boundary must still have bounded spill storage (#305).
+  for (int i = 0; i < 128; ++i)
+    s.write_text(0, 0, i % 2 == 0 ? second : first, Rgb{}, Rgb{});
+
+  // A standalone Cell cannot revive storage its owning Screen reclaimed.
+  // Without the allocation-pressure sweep this old token still resolves.
+  s.at(1, 0) = stale;
+  REQUIRE(s.text_at(1, 0).empty());
+}
+
+TEST_CASE("Screen: spill reclamation preserves caller-copied live tokens",
+          "[screen][spill][failure]") {
+  const std::string shared = "x\xCC\x81\xCC\x80";
+  const std::string other = "x\xCC\x80\xCC\x81";
+  Screen s{2, 1};
+  s.write_text(0, 0, shared, Rgb{}, Rgb{});
+  s.at(1, 0) = static_cast<const Screen&>(s).at(0, 0);
+
+  for (int i = 0; i < 128; ++i)
+    s.write_text(0, 0, i % 2 == 0 ? other : shared, Rgb{}, Rgb{});
+
+  // Mutable at() makes reference accounting impossible: the mark phase must
+  // find the copied token in cell 1 and keep its bytes alive.
+  REQUIRE(s.text_at(1, 0) == shared);
+}
+
 TEST_CASE("Screen: resize, copy, fill and clear preserve spill ownership",
           "[screen][spill][failure]") {
   const std::string cluster = "x\xCC\x81\xCC\x80";

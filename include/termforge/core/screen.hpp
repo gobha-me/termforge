@@ -154,13 +154,15 @@ class Screen {
 
   [[nodiscard]] auto cell_text(const Cell& cell) const noexcept
       -> std::string_view;
+  auto mutable_cell(int x, int y) noexcept -> Cell&;
   auto reset_text(Cell& cell) noexcept -> void;
   auto set_text(Cell& cell, std::string_view text) -> void;
   auto append_text(Cell& cell, std::string_view suffix) -> void;
   auto restore_cell(int x, int y, const Cell& cell, std::string_view text)
       -> void;
   auto clear_cell(int x, int y) -> void;
-  auto reclaim_unused_spills() -> void;
+  auto maybe_reclaim_spills_after_mutation() -> void;
+  auto reclaim_unused_spills() const -> void;
 
   // Renderer owns the shadow copy of this exact grid. Keeping the contiguous
   // hand-off private avoids exposing Screen's vector representation as API.
@@ -170,7 +172,17 @@ class Screen {
   int m_cols{0};
   int m_rows{0};
   std::vector<Cell> m_cells;
-  std::unordered_map<std::uint64_t, SpillEntry> m_spills;
+  // Spill storage is logically ancillary to the grid: Renderer may erase
+  // entries no live Cell names after it has resolved the current frame,
+  // without changing any observable Screen content. The collection
+  // bookkeeping is mutable for that same const-present boundary.
+  mutable std::unordered_map<std::uint64_t, SpillEntry> m_spills;
+  mutable std::size_t m_spill_allocations_since_reclaim{0};
+  mutable bool m_spill_reclaim_pending{false};
+  // Returning Cell& lets a caller keep and mutate it after at() returns. Once
+  // that has happened, only a grid scan can prove which spill tokens remain;
+  // the latch therefore stays set for the Screen's lifetime.
+  mutable bool m_mutable_cell_access_exposed{false};
   Cell m_out_of_bounds; // returned (const) for OOB reads; writes are dropped
 };
 

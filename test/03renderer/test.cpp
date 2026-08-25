@@ -177,6 +177,7 @@ TEST_CASE("Renderer: spilled graphemes diff by identity without losing bytes",
   const std::string second = "a\xCC\x80\xCC\x81";
 
   s.write_text(0, 0, first, Rgb{}, Rgb{});
+  const Cell first_identity = static_cast<const Screen&>(s).at(0, 0);
   r.present(s);
   r.flush();
   REQUIRE(out.find(first) != std::string::npos);
@@ -190,6 +191,38 @@ TEST_CASE("Renderer: spilled graphemes diff by identity without losing bytes",
   r.present(s);
   r.flush();
   REQUIRE(out.find(second) != std::string::npos);
+
+  // The first token has been absent for a complete present boundary and may
+  // be reclaimed, but the renderer shadow still carries identities. Painting
+  // the same bytes again must allocate a different process-unique token so a
+  // stale shadow can never compare equal and suppress the repair (#305).
+  out.clear();
+  s.write_text(0, 0, first, Rgb{}, Rgb{});
+  REQUIRE_FALSE(static_cast<const Screen&>(s).at(0, 0) == first_identity);
+  r.present(s);
+  r.flush();
+  REQUIRE(out.find(first) != std::string::npos);
+}
+
+TEST_CASE("Renderer: present reclaims spills superseded by fill_rect",
+          "[renderer][spill][failure]") {
+  FallbackDriver d;
+  std::string out;
+  d.set_output(&out);
+  Renderer r(d);
+  Screen s{2, 1};
+  const std::string cluster = "z\xCC\x81\xCC\x80";
+
+  s.write_text(0, 0, cluster, Rgb{}, Rgb{});
+  const Cell stale = static_cast<const Screen&>(s).at(0, 0);
+  s.fill_rect(0, 0, 1, 1, Rgb{}, Rgb{});
+  r.present(s);
+  r.flush();
+
+  // present() is the steady rendering boundary: all current text has already
+  // been resolved, so a token absent from the live grid no longer resolves.
+  s.at(1, 0) = stale;
+  REQUIRE(s.text_at(1, 0).empty());
 }
 
 TEST_CASE("Renderer: blank cells emit space with background color",

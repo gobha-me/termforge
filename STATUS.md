@@ -6,7 +6,23 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-25, latest)
 
-**Current stable release: v0.57.15 — forge-top process-generation identity.**
+**Current stable release: v0.57.16 — bounded Screen spill reclamation.**
+#305 reclaims long-grapheme spill strings after their last live `Cell` token is
+superseded, so steady-size incremental rendering no longer retains every prior
+value until `clear()` or `resize()`. Renderer presentation is the normal safe
+collection boundary, while a cell-count-scaled allocation threshold bounds
+Screen-only churn before a frame is presented.
+
+The collector marks the complete live grid because mutable `Cell&` access can
+copy tokens without an interceptable reference-count update. Process-global
+token identities remain monotonic and are never reused, so a reclaimed token
+left in a Renderer shadow produces only a conservative redraw, never false
+equality with later content. The public API, 24-byte `Cell` representation and
+terminal wire are unchanged.
+
+## Previous stable release: v0.57.15
+
+**v0.57.15 — forge-top process-generation identity.**
 #317 parses `/proc/<pid>/stat` field 22 and keys CPU deltas, graph history,
 table selection and process detail by `(PID, starttime)` rather than PID alone.
 A recycled PID therefore begins at zero CPU with fresh history and cannot

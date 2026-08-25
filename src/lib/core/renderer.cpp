@@ -61,6 +61,12 @@ auto Renderer::present(const Screen& screen) -> void {
                 m_prev.size() * sizeof(Cell));
   m_prev_cols = cols;
   m_prev_rows = rows;
+
+  // All current spill text has been resolved and the shadow now owns only
+  // process-unique identities. Reclaiming an entry no live grid Cell names is
+  // therefore safe: an old shadow token can cause a conservative redraw but
+  // can never compare equal to later content through token reuse (#305).
+  screen.reclaim_unused_spills();
 }
 
 auto Renderer::flush() -> void {
