@@ -49,6 +49,21 @@ class ForgeTopApp final : public App {
       -> std::array<bool, 4> {
     return {m_show_overview, m_show_cpu, m_show_memory, m_show_processes};
   }
+  [[nodiscard]] auto history_size_for_test(ProcessIdentity identity) const
+      -> std::size_t {
+    const auto history = m_history.find(identity);
+    return history == m_history.end() ? 0 : history->second.size();
+  }
+  [[nodiscard]] auto detail_identity_for_test() const noexcept
+      -> std::optional<ProcessIdentity> {
+    return m_detail.identity();
+  }
+  [[nodiscard]] auto detail_open_for_test() const -> bool {
+    return top_overlay() == &m_detail;
+  }
+  [[nodiscard]] auto status_for_test() const noexcept -> const std::string& {
+    return m_status;
+  }
 
   auto on_event(const Event& event) -> void override;
   auto on_tick(std::chrono::duration<double> dt) -> void override;
@@ -82,7 +97,8 @@ class ForgeTopApp final : public App {
   PromptDialog m_delay_prompt{"Sampling delay",
                               "Seconds between samples (0 = every frame):"};
   SystemSnapshot m_snapshot;
-  std::unordered_map<int, std::vector<float>> m_history;
+  std::unordered_map<ProcessIdentity, std::vector<float>, ProcessIdentityHash>
+      m_history;
   std::chrono::duration<double> m_sample_elapsed{};
   std::chrono::duration<double> m_sample_delay{1.0};
   bool m_show_overview{true};

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -33,6 +34,23 @@ struct TaskCounts {
   int zombie{};
 };
 
+struct ProcessIdentity {
+  int pid{};
+  std::uint64_t start_time_ticks{};
+
+  auto operator==(const ProcessIdentity&) const -> bool = default;
+};
+
+struct ProcessIdentityHash {
+  [[nodiscard]] auto operator()(const ProcessIdentity& identity) const noexcept
+      -> std::size_t {
+    const std::size_t pid = std::hash<int>{}(identity.pid);
+    const std::size_t start =
+        std::hash<std::uint64_t>{}(identity.start_time_ticks);
+    return start ^ (pid + 0x9e3779b9U + (start << 6U) + (start >> 2U));
+  }
+};
+
 struct ProcessRow {
   int pid{};
   std::string name;
@@ -43,6 +61,11 @@ struct ProcessRow {
   float memory_percent{};
   double cpu_seconds{};
   std::string command;
+  std::uint64_t start_time_ticks{};
+
+  [[nodiscard]] auto identity() const noexcept -> ProcessIdentity {
+    return {pid, start_time_ticks};
+  }
 
   auto operator==(const ProcessRow&) const -> bool = default;
 };

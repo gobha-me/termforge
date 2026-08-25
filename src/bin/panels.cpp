@@ -511,11 +511,11 @@ auto ProcessPanel::on_activate(std::function<void(const ProcessRow&)> callback)
   m_on_activate = std::move(callback);
 }
 
-auto ProcessPanel::selected_pid() const -> std::optional<int> {
+auto ProcessPanel::selected_identity() const -> std::optional<ProcessIdentity> {
   const int selected = m_table.selected();
   if (selected < 0 || selected >= static_cast<int>(m_visible.size()))
     return std::nullopt;
-  return m_visible[static_cast<std::size_t>(selected)].pid;
+  return m_visible[static_cast<std::size_t>(selected)].identity();
 }
 
 auto ProcessPanel::activate_selected() -> bool {
@@ -635,7 +635,7 @@ auto ProcessPanel::update_columns(int width) -> void {
 }
 
 auto ProcessPanel::rebuild() -> void {
-  const auto keep = selected_pid();
+  const auto keep = selected_identity();
   const std::string needle = ascii_lower(m_filter.text());
   m_visible.clear();
   for (const auto& process : m_processes) {
@@ -721,7 +721,10 @@ auto ProcessPanel::rebuild() -> void {
     m_table.add_row(std::move(row));
   }
   if (keep) {
-    const auto it = std::ranges::find(m_visible, *keep, &ProcessRow::pid);
+    const auto it =
+        std::ranges::find_if(m_visible, [&](const ProcessRow& process) {
+          return process.identity() == *keep;
+        });
     if (it != m_visible.end())
       m_table.set_selected(static_cast<int>(it - m_visible.begin()));
   }
@@ -762,7 +765,7 @@ auto DetailPopup::on_event(const Event& event) -> bool {
 
 auto DetailPopup::set_process(const ProcessRow& process,
                               std::span<const float> history) -> void {
-  m_pid = process.pid;
+  m_identity = process.identity();
   set_title(
       std::format("{} ({})", Screen::sanitize(process.name), process.pid));
   set_text(std::format("CPU {:.1f}%   RSS {}", process.cpu_percent,

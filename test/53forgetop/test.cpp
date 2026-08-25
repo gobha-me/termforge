@@ -70,20 +70,31 @@ struct TempProc {
 };
 
 auto process_stat(int pid, std::string_view name, int utime, int stime,
-                  int rss_pages, char state = 'S') -> std::string {
+                  int rss_pages, char state = 'S',
+                  std::string_view start_time_ticks = "10") -> std::string {
   return std::to_string(pid) + " (" + std::string{name} + ") " + state +
          " 1 1 1 0 0 0 0 0 0 0 " + std::to_string(utime) + " " +
-         std::to_string(stime) + " 0 0 20 0 1 0 10 4096 " +
-         std::to_string(rss_pages) + "\n";
+         std::to_string(stime) + " 0 0 20 0 1 0 " +
+         std::string{start_time_ticks} + " 4096 " + std::to_string(rss_pages) +
+         "\n";
 }
 
 auto process_row(int pid, std::string name, float cpu, std::uint64_t rss,
                  std::string user = "user", char state = 'S',
                  float memory = 1.0F, double time = 1.0,
-                 std::string command = {}) -> ProcessRow {
+                 std::string command = {}, std::uint64_t start_time_ticks = 10)
+    -> ProcessRow {
   if (command.empty()) command = name;
-  return {pid,  std::move(name),   cpu, rss, std::move(user), state, memory,
-          time, std::move(command)};
+  return {pid,
+          std::move(name),
+          cpu,
+          rss,
+          std::move(user),
+          state,
+          memory,
+          time,
+          std::move(command),
+          start_time_ticks};
 }
 
 auto screen_row(const Screen& screen, int y) -> std::string {
@@ -108,6 +119,21 @@ class CountingReader final : public SystemReader {
   }
 
   int calls{};
+};
+
+class SequenceReader final : public SystemReader {
+ public:
+  explicit SequenceReader(std::vector<SystemSnapshot> snapshots)
+      : m_snapshots(std::move(snapshots)) {}
+
+  auto sample() -> std::expected<SystemSnapshot, ErrorEvent> override {
+    REQUIRE(m_next < m_snapshots.size());
+    return m_snapshots[m_next++];
+  }
+
+ private:
+  std::vector<SystemSnapshot> m_snapshots;
+  std::size_t m_next{};
 };
 
 auto count(std::string_view text, std::string_view needle) -> int {
@@ -316,6 +342,10 @@ TEST_CASE("forge-top /proc reader computes deltas and tolerates a vanished PID",
   REQUIRE(std::ranges::all_of(first->processes, [](const ProcessRow& row) {
     return row.cpu_percent == 0.0F;
   }));
+  const auto initial =
+      std::ranges::find(first->processes, 101, &ProcessRow::pid);
+  REQUIRE(initial != first->processes.end());
+  REQUIRE(initial->start_time_ticks == 10);
   REQUIRE(first->memory.total_bytes == 1000 * 1024);
   REQUIRE(first->uptime_seconds == 12345.0);
   REQUIRE(first->load_average[0] == 1.25);
@@ -336,6 +366,18 @@ TEST_CASE("forge-top /proc reader computes deltas and tolerates a vanished PID",
   REQUIRE(second->processes.front().command == "tool --flag value");
   REQUIRE(second->processes.front().cpu_seconds == 0.25);
   REQUIRE(second->aggregate_cpu.usage == 0.5F);
+
+  proc.write("stat", "cpu 200 0 200 1000 0 0 0 0\n"
+                     "cpu0 100 0 100 500 0 0 0 0\n"
+                     "cpu1 100 0 100 500 0 0 0 0\n");
+  proc.write("101/stat", process_stat(101, "replacement", 30, 5, 7, 'S', "20"));
+  const auto third = reader->sample();
+  REQUIRE(third.has_value());
+  REQUIRE(third->processes.size() == 1);
+  REQUIRE(third->processes.front().pid == 101);
+  REQUIRE(third->processes.front().name == "replacement");
+  REQUIRE(third->processes.front().start_time_ticks == 20);
+  REQUIRE(third->processes.front().cpu_percent == 0.0F);
 }
 
 TEST_CASE("forge-top /proc reader rejects malformed root data",
@@ -371,6 +413,10 @@ TEST_CASE("forge-top /proc reader pins top fields and ancillary failures",
   proc.write("202/cmdline", "");
   proc.write("303/stat", process_stat(303, "unreadable", 2, 1, 3, 'T'));
   proc.write("404/stat", process_stat(404, "disk sleep", 2, 1, 3, 'D'));
+  proc.write("505/stat",
+             process_stat(505, "bad start", 2, 1, 3, 'S', "invalid"));
+  proc.write("606/stat", process_stat(606, "overflow start", 2, 1, 3, 'S',
+                                      "18446744073709551616"));
 
   auto reader = make_proc_reader(
       proc.root, ProcReaderConfig{.page_size = 4096, .clock_ticks = 100});
@@ -438,8 +484,9 @@ TEST_CASE("forge-top summary presents load tasks and one unit per memory line",
             "Swap 1.0 used / 2.0 total · 1.0 free GiB") != std::string::npos);
 }
 
-TEST_CASE("forge-top process view filters, sorts and preserves PID selection",
-          "[forge-top]") {
+TEST_CASE(
+    "forge-top process view preserves selection only for one process identity",
+    "[forge-top]") {
   ProcessPanel panel;
   panel.set_geometry({0, 0, 80, 14});
   Screen screen{80, 14};
@@ -456,6 +503,12 @@ TEST_CASE("forge-top process view filters, sorts and preserves PID selection",
   REQUIRE(
       panel.visible_rows()[static_cast<std::size_t>(panel.table().selected())]
           .pid == 30);
+
+  auto replacement = process_row(30, "replacement", 0.0F, 100);
+  replacement.start_time_ticks = 20;
+  panel.set_processes({replacement, process_row(20, "beta", 78.0F, 200),
+                       process_row(10, "alpha", 6.0F, 400)});
+  REQUIRE(panel.table().selected() == -1);
 
   panel.set_filter("alp");
   REQUIRE(panel.visible_rows().size() == 1);
@@ -479,6 +532,35 @@ TEST_CASE("forge-top process view filters, sorts and preserves PID selection",
       MouseEvent{table.x + panel.table().gutter_cols() + 1, table.y, 0, true}));
   REQUIRE(panel.sort_key() == ProcessSort::Pid);
   REQUIRE_FALSE(panel.descending());
+}
+
+TEST_CASE("forge-top PID reuse starts fresh history and closes old detail",
+          "[forge-top][failure]") {
+  SystemSnapshot initial;
+  initial.processes = {process_row(101, "original", 75.0F, 4096)};
+  initial.tasks.total = 1;
+
+  SystemSnapshot replacement;
+  replacement.processes = {process_row(101, "replacement", 0.0F, 8192, "user",
+                                       'S', 1.0F, 1.0, {}, 20)};
+  replacement.tasks.total = 1;
+
+  ForgeTopApp app{std::make_unique<SequenceReader>(
+      std::vector<SystemSnapshot>{initial, replacement})};
+  const ProcessIdentity old_identity{101, 10};
+  const ProcessIdentity new_identity{101, 20};
+  REQUIRE(app.history_size_for_test(old_identity) == 1);
+  REQUIRE(app.show_first_process_for_test());
+  REQUIRE(app.detail_open_for_test());
+  REQUIRE(app.detail_identity_for_test() == old_identity);
+
+  app.on_tick(std::chrono::seconds{1});
+
+  REQUIRE(app.history_size_for_test(old_identity) == 0);
+  REQUIRE(app.history_size_for_test(new_identity) == 1);
+  REQUIRE_FALSE(app.detail_open_for_test());
+  REQUIRE(app.detail_identity_for_test() == old_identity);
+  REQUIRE(app.status_for_test() == "PID 101 was replaced");
 }
 
 TEST_CASE("forge-top process columns elide by priority and sanitize COMMAND",

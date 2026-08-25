@@ -48,7 +48,8 @@ class FakeReader final : public SystemReader {
            static_cast<float>(static_cast<long double>(rss) * 100.0L /
                               snapshot.memory.total_bytes),
            12.34 + i * 67.0 + m_step * 0.1,
-           std::format("worker-{:02} --slot {} --fake", i, i)});
+           std::format("worker-{:02} --slot {} --fake", i, i),
+           static_cast<std::uint64_t>(10'000 + i)});
       ++snapshot.tasks.total;
       if (state == 'R')
         ++snapshot.tasks.running;

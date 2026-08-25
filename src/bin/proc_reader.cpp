@@ -147,6 +147,7 @@ struct ParsedProcess {
   std::string name;
   std::uint64_t ticks{};
   std::uint64_t rss_pages{};
+  std::uint64_t start_time_ticks{};
   char state{'?'};
 };
 
@@ -165,15 +166,20 @@ auto read_process(const std::filesystem::path& path, int pid)
   std::istringstream tail{line.substr(close + 1)};
   for (std::string field; tail >> field;)
     fields.push_back(std::move(field));
-  // fields[0] is stat field 3 (state); utime/stime are 14/15 and RSS is 24.
+  // fields[0] is stat field 3 (state); utime/stime are 14/15, starttime is 22,
+  // and RSS is 24.
   if (fields.size() <= 21) return std::nullopt;
 
-  std::uint64_t utime = 0, stime = 0, rss_pages = 0;
+  std::uint64_t utime = 0, stime = 0, start_time_ticks = 0, rss_pages = 0;
   if (!parse_integer(fields[11], utime) || !parse_integer(fields[12], stime) ||
+      !parse_integer(fields[19], start_time_ticks) ||
       !parse_integer(fields[21], rss_pages))
     return std::nullopt;
-  return ParsedProcess{pid, line.substr(open + 1, close - open - 1),
-                       utime + stime, rss_pages,
+  return ParsedProcess{pid,
+                       line.substr(open + 1, close - open - 1),
+                       utime + stime,
+                       rss_pages,
+                       start_time_ticks,
                        fields[0].empty() ? '?' : fields[0].front()};
 }
 
@@ -272,7 +278,8 @@ class ProcReader final : public SystemReader {
       snapshot.cpus.push_back({name, usage});
     }
 
-    std::unordered_map<int, ProcessTicks> next_process_ticks;
+    std::unordered_map<ProcessIdentity, ProcessTicks, ProcessIdentityHash>
+        next_process_ticks;
     std::error_code error;
     std::filesystem::directory_iterator entries{m_root, error};
     if (error) return warning("cannot enumerate " + m_root.string());
@@ -296,7 +303,8 @@ class ProcReader final : public SystemReader {
       tally_state(snapshot.tasks, parsed->state);
 
       float cpu = 0.0F;
-      const auto previous = m_process_ticks.find(pid);
+      const ProcessIdentity identity{pid, parsed->start_time_ticks};
+      const auto previous = m_process_ticks.find(identity);
       if (previous != m_process_ticks.end() && total_delta > 0 &&
           parsed->ticks >= previous->second.ticks) {
         cpu = static_cast<float>(parsed->ticks - previous->second.ticks) /
@@ -318,8 +326,9 @@ class ProcReader final : public SystemReader {
            parsed->state, std::max(0.0F, memory_percent),
            static_cast<double>(parsed->ticks) /
                static_cast<double>(m_clock_ticks),
-           read_command(entry.path() / "cmdline", parsed->name)});
-      next_process_ticks.emplace(pid, ProcessTicks{parsed->ticks});
+           read_command(entry.path() / "cmdline", parsed->name),
+           parsed->start_time_ticks});
+      next_process_ticks.emplace(identity, ProcessTicks{parsed->ticks});
     }
 
     m_cpu_ticks.clear();
@@ -333,7 +342,8 @@ class ProcReader final : public SystemReader {
  private:
   std::filesystem::path m_root;
   std::unordered_map<std::string, CpuTicks> m_cpu_ticks;
-  std::unordered_map<int, ProcessTicks> m_process_ticks;
+  std::unordered_map<ProcessIdentity, ProcessTicks, ProcessIdentityHash>
+      m_process_ticks;
   CpuTicks m_total_ticks;
   long m_page_size{};
   long m_clock_ticks{};

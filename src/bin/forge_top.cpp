@@ -169,13 +169,15 @@ auto ForgeTopApp::refresh() -> void {
   m_cpu.set_aggregate_sample(m_snapshot.aggregate_cpu);
   m_memory.set_memory(m_snapshot.memory);
 
-  std::unordered_map<int, std::vector<float>> next_history;
+  std::unordered_map<ProcessIdentity, std::vector<float>, ProcessIdentityHash>
+      next_history;
   next_history.reserve(m_snapshot.processes.size());
   for (const auto& process : m_snapshot.processes) {
-    auto history = std::move(m_history[process.pid]);
+    const ProcessIdentity identity = process.identity();
+    auto history = std::move(m_history[identity]);
     history.push_back(process.cpu_percent);
     if (history.size() > 160) history.erase(history.begin());
-    next_history.emplace(process.pid, std::move(history));
+    next_history.emplace(identity, std::move(history));
   }
   m_history = std::move(next_history);
   m_processes.set_processes(m_snapshot.processes);
@@ -185,7 +187,7 @@ auto ForgeTopApp::refresh() -> void {
 }
 
 auto ForgeTopApp::open_detail(const ProcessRow& process) -> void {
-  const auto it = m_history.find(process.pid);
+  const auto it = m_history.find(process.identity());
   const std::span<const float> history =
       it == m_history.end()
           ? std::span<const float>{}
@@ -195,12 +197,20 @@ auto ForgeTopApp::open_detail(const ProcessRow& process) -> void {
 }
 
 auto ForgeTopApp::update_detail() -> void {
-  if (top_overlay() != &m_detail || m_detail.pid() < 0) return;
-  const auto process =
-      std::ranges::find(m_snapshot.processes, m_detail.pid(), &ProcessRow::pid);
+  const auto identity = m_detail.identity();
+  if (top_overlay() != &m_detail || !identity) return;
+  const auto process = std::ranges::find_if(
+      m_snapshot.processes, [&](const ProcessRow& candidate) {
+        return candidate.identity() == *identity;
+      });
   if (process == m_snapshot.processes.end()) {
+    const bool replaced = std::ranges::any_of(
+        m_snapshot.processes, [&](const ProcessRow& candidate) {
+          return candidate.pid == identity->pid;
+        });
     pop_overlay();
-    set_status(std::format("PID {} exited", m_detail.pid()));
+    set_status(std::format("PID {} {}", identity->pid,
+                           replaced ? "was replaced" : "exited"));
     return;
   }
   open_detail(*process);

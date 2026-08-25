@@ -127,7 +127,7 @@ class ProcessPanel final : public Widget {
 
   auto rebuild() -> void;
   auto update_columns(int width) -> void;
-  auto selected_pid() const -> std::optional<int>;
+  auto selected_identity() const -> std::optional<ProcessIdentity>;
 
   Frame m_frame{"Processes"};
   TextInput m_filter;
@@ -149,7 +149,10 @@ class DetailPopup final : public Dialog {
   auto set_style(BorderStyle style) -> void { set_border_style(style); }
   auto set_process(const ProcessRow& process, std::span<const float> history)
       -> void;
-  [[nodiscard]] auto pid() const noexcept -> int { return m_pid; }
+  [[nodiscard]] auto identity() const noexcept
+      -> std::optional<ProcessIdentity> {
+    return m_identity;
+  }
 
   auto pixel_regions() -> std::vector<Rect> override;
   auto draw_pixels(Rect region, Extent preferred) -> const Image* override;
@@ -170,7 +173,7 @@ class DetailPopup final : public Dialog {
   auto rasterize(std::span<const float> history) -> void;
 
   PixelSurface m_graph{{160, 64}};
-  int m_pid{-1};
+  std::optional<ProcessIdentity> m_identity;
 };
 
 } // namespace termforge::forge_top

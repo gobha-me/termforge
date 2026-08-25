@@ -4,9 +4,22 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-24, latest)
+## Where we are (2026-08-25, latest)
 
-**Current stable release: v0.57.14 — exact capability reply parsing.** #309
+**Current stable release: v0.57.15 — forge-top process-generation identity.**
+#317 parses `/proc/<pid>/stat` field 22 and keys CPU deltas, graph history,
+table selection and process detail by `(PID, starttime)` rather than PID alone.
+A recycled PID therefore begins at zero CPU with fresh history and cannot
+inherit selection or silently retarget an open detail popup.
+
+Malformed or overflowing start times omit only the raced/unreadable process,
+matching the existing `/proc` sampling contract. The fake reader supplies
+stable deterministic generations, and the public library API and terminal
+wire are unchanged.
+
+## Previous stable release: v0.57.14
+
+**v0.57.14 — exact capability reply parsing.** #309
 parses complete terminal records instead of searching their raw concatenation
 for substrings. Kitty graphics and animation replies now require one exact
 numeric probe id and an exact `OK` status while unrelated complete APCs are
