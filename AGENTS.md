@@ -141,6 +141,14 @@ file is the tactical version.
 - **Runtime polymorphism for drivers** (`std::unique_ptr<TerminalDriver>`);
   the `DriverImpl` concept is a `static_assert` check only, not dispatch.
   Don't convert drivers to a closed `std::variant`.
+- **Screen spill identities are never reused, and reclamation is a mark/sweep
+  boundary** (#305). `Screen::at()` exposes mutable `Cell&`, so a caller may
+  copy a token between cells without an interceptable reference-count update.
+  Keep process-unique monotonic tokens: a reclaimed id left in a Renderer
+  shadow must cause a conservative mismatch, never false equality with later
+  text. Superseded spill strings are collected after `Renderer::present()`
+  has resolved the current frame, and allocation pressure also sweeps Screen-
+  only churn; every sweep marks the complete live cell grid before erasing.
 - **Capability detection queries the terminal**, never the display server. Pin
   capability *requirements*, never emulator version numbers.
 - **Pixel destinations are named in cells, never in pixels** (#83).

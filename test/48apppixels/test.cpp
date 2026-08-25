@@ -180,6 +180,39 @@ class PixelApp : public App {
   std::chrono::steady_clock::time_point m_now{};
 };
 
+// #305's production clear_cell route. Pixel collection blanks a widget's
+// authored Baseline before Renderer::present, so this reaches the private
+// Screen primitive in the same order App does rather than replaying it.
+struct SpillPlateWidget final : Widget {
+  static constexpr std::string_view kBaseline = "x\xCC\x81\xCC\x80";
+
+  Rect region{0, 0, 1, 1};
+  Image cache = tfsupport::solid(1, 1, Pixel{80, 120, 200, 255});
+  Cell baseline_identity{};
+
+  auto draw(Screen& screen) -> void override {
+    screen.write_text(0, 0, kBaseline, Rgb{}, Rgb{});
+    baseline_identity = static_cast<const Screen&>(screen).at(0, 0);
+  }
+  auto pixel_regions() -> std::vector<Rect> override { return {region}; }
+  auto draw_pixels(Rect, Extent) -> const Image* override { return &cache; }
+};
+
+class SpillClearApp final : public PixelApp {
+ public:
+  SpillPlateWidget spill;
+
+  auto on_render(Screen& screen) -> void override {
+    spill.draw(screen);
+    render_pixel_regions(spill);
+  }
+
+  [[nodiscard]] auto baseline_storage_reclaimed() -> bool {
+    screen().at(2, 0) = spill.baseline_identity;
+    return screen().text_at(2, 0).empty();
+  }
+};
+
 // The #191 subject: an app that ALSO owns a resident image and places it every
 // frame. `where` is the whole experiment -- the same draw, in either of App's
 // two windows.
@@ -1082,6 +1115,17 @@ TEST_CASE("app pixels: an unchanged region transmits ONCE across many frames",
   CHECK(data_deletes_of(app.wire(), 1) == 0);
   CHECK(placements_of(app.wire(), 1) == 1);
   CHECK(ids_named(app.wire()) == std::set<std::uint32_t>{1});
+}
+
+TEST_CASE("app pixels: clear_cell spills are reclaimed after present (#305)",
+          "[apppixels][kitty][failure]") {
+  SpillClearApp app;
+  app.run(1);
+
+  // collect_pixel_regions cleared the spilled Baseline through Screen's
+  // private clear_cell(), then the real frame reached Renderer::present.
+  // Reassigning the saved standalone token must not revive its old bytes.
+  CHECK(app.baseline_storage_reclaimed());
 }
 
 TEST_CASE("app pixels: moving placeholders clear the terminal cell grid",

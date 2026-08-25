@@ -56,6 +56,7 @@ auto Screen::resize(int cols, int rows) -> void {
   m_cols = cols;
   m_rows = rows;
   m_cells = std::move(next);
+  if (!m_spills.empty()) m_spill_reclaim_pending = true;
   reclaim_unused_spills();
 }
 
@@ -67,6 +68,12 @@ auto Screen::at(int x, int y) const -> const Cell& {
 }
 
 auto Screen::at(int x, int y) -> Cell& {
+  if (x >= 0 && y >= 0 && x < m_cols && y < m_rows)
+    m_mutable_cell_access_exposed = true;
+  return mutable_cell(x, y);
+}
+
+auto Screen::mutable_cell(int x, int y) noexcept -> Cell& {
   if (x < 0 || y < 0 || x >= m_cols || y >= m_rows) {
     // Return a throwaway so callers can't corrupt the grid via OOB writes.
     static Cell sink;
@@ -101,10 +108,12 @@ auto Screen::reset_text(Cell& cell) noexcept -> void {
 
 auto Screen::set_text(Cell& cell, std::string_view text) -> void {
   if (cell_text(cell) == text) return;
+  const bool replaced_spill = cell.m_text_size == Cell::kSpilledText;
   if (text.size() <= Cell::kInlineTextBytes) {
     reset_text(cell);
     std::copy(text.begin(), text.end(), cell.m_inline_text.begin());
     cell.m_text_size = static_cast<std::uint8_t>(text.size());
+    if (replaced_spill) m_spill_reclaim_pending = true;
     return;
   }
   const std::uint64_t token = next_spill_token();
@@ -114,6 +123,8 @@ auto Screen::set_text(Cell& cell, std::string_view text) -> void {
   reset_text(cell);
   cell.m_text_token = token;
   cell.m_text_size = Cell::kSpilledText;
+  ++m_spill_allocations_since_reclaim;
+  if (replaced_spill) m_spill_reclaim_pending = true;
 }
 
 auto Screen::append_text(Cell& cell, std::string_view suffix) -> void {
@@ -125,21 +136,43 @@ auto Screen::append_text(Cell& cell, std::string_view suffix) -> void {
 auto Screen::restore_cell(int x, int y, const Cell& source,
                           std::string_view text) -> void {
   if (x < 0 || y < 0 || x >= m_cols || y >= m_rows) return;
+  Cell& target = mutable_cell(x, y);
+  const bool replaced_spill = target.m_text_size == Cell::kSpilledText;
   Cell replacement;
   replacement.image_id = source.image_id;
   replacement.fg = source.fg;
   replacement.bg = source.bg;
   replacement.attrs = source.attrs;
   set_text(replacement, text);
-  m_cells[static_cast<std::size_t>(y) * static_cast<std::size_t>(m_cols) +
-          static_cast<std::size_t>(x)] = replacement;
+  target = replacement;
+  if (replaced_spill) m_spill_reclaim_pending = true;
+  maybe_reclaim_spills_after_mutation();
 }
 
 auto Screen::clear_cell(int x, int y) -> void {
   restore_cell(x, y, Cell{}, {});
 }
 
-auto Screen::reclaim_unused_spills() -> void {
+auto Screen::maybe_reclaim_spills_after_mutation() -> void {
+  // One sweep per grid's worth of new spills amortizes the O(cells + spills)
+  // walk over the allocations that made it necessary. Tiny grids still get a
+  // short runway so a hot one-cell counter does not scan on every update,
+  // while its stale storage remains bounded independently of resize/present.
+  constexpr std::size_t kMinAllocationsBetweenSweeps = 64;
+  const std::size_t interval =
+      std::max(kMinAllocationsBetweenSweeps, m_cells.size());
+  if (m_spill_allocations_since_reclaim < interval) return;
+  m_spill_reclaim_pending = true;
+  reclaim_unused_spills();
+}
+
+auto Screen::reclaim_unused_spills() const -> void {
+  if (m_spills.empty()) {
+    m_spill_allocations_since_reclaim = 0;
+    m_spill_reclaim_pending = false;
+    return;
+  }
+  if (!m_spill_reclaim_pending && !m_mutable_cell_access_exposed) return;
   for (auto& spill : m_spills)
     spill.second.referenced = false;
   for (const Cell& cell : m_cells) {
@@ -153,6 +186,8 @@ auto Screen::reclaim_unused_spills() -> void {
     else
       ++it;
   }
+  m_spill_allocations_since_reclaim = 0;
+  m_spill_reclaim_pending = false;
 }
 
 auto Screen::clear() -> void {
@@ -162,6 +197,8 @@ auto Screen::clear() -> void {
 
 auto Screen::clear(Rgb fg, Rgb bg, Attr attrs) -> void {
   m_spills.clear();
+  m_spill_allocations_since_reclaim = 0;
+  m_spill_reclaim_pending = false;
   Cell fill;
   fill.fg = fg;
   fill.bg = bg;
@@ -179,6 +216,7 @@ auto Screen::fill_rect(int x, int y, int w, int h, Rgb fg, Rgb bg, Attr attrs)
   // #102. An empty or non-positive rect needs no early return — intersect
   // returns an empty Rect and the loops run zero times.
   const Rect r = Rect{x, y, w, h}.intersect(Rect{0, 0, m_cols, m_rows});
+  if (r.w > 0 && r.h > 0 && !m_spills.empty()) m_spill_reclaim_pending = true;
   Cell fill;
   fill.fg = fg;
   fill.bg = bg;
@@ -246,7 +284,8 @@ auto Screen::write_text_impl(int x, int y, std::string_view text, Rgb fg,
       // the test would not be observable: at(-1, y) returns the throwaway
       // sink, so the mark would be dropped either way. What the suite CAN
       // pin is that base_cx is never set to an off-screen or clamped column.)
-      if (base_cx >= 0) append_text(at(base_cx, y), sv.substr(i, len));
+      if (base_cx >= 0)
+        append_text(mutable_cell(base_cx, y), sv.substr(i, len));
       i += len;
       continue;
     }
@@ -285,7 +324,8 @@ auto Screen::write_text_impl(int x, int y, std::string_view text, Rgb fg,
       //
       // base_cx is deliberately NOT set: the base is gone, so a combining mark
       // following it has nothing to fold onto.
-      Cell& cell = at(0, y); // m_cols >= 1, established by the guard above
+      Cell& cell =
+          mutable_cell(0, y); // m_cols >= 1, established by the guard above
       set_text(cell, " ");
       cell.fg = fg;
       cell.bg = bg;
@@ -297,7 +337,7 @@ auto Screen::write_text_impl(int x, int y, std::string_view text, Rgb fg,
     }
     if (w == 2 && cx + 1 >= m_cols) {
       // A wide glyph would straddle the right edge: pad with a space and stop.
-      Cell& cell = at(cx, y);
+      Cell& cell = mutable_cell(cx, y);
       set_text(cell, " ");
       cell.fg = fg;
       cell.bg = bg;
@@ -312,7 +352,7 @@ auto Screen::write_text_impl(int x, int y, std::string_view text, Rgb fg,
     // toward zero. Computing a skip count as `x + display_width(text)` would
     // reintroduce #102's signed-overflow class instead.
     if (cx >= 0) {
-      Cell& cell = at(cx, y);
+      Cell& cell = mutable_cell(cx, y);
       set_text(cell, sv.substr(i, cluster_end - i));
       cell.fg = fg;
       cell.bg = bg;
@@ -323,7 +363,7 @@ auto Screen::write_text_impl(int x, int y, std::string_view text, Rgb fg,
         // Inside the same gate on purpose: the continuation is painted iff its
         // base was. cx == -1 is the straddle arm above and cx <= -2 puts both
         // columns off screen, so one is never visible without the other.
-        Cell& cont = at(cx + 1, y);
+        Cell& cont = mutable_cell(cx + 1, y);
         set_text(cont, std::string_view{"\0", 1});
         cont.fg = fg;
         cont.bg = bg;
@@ -339,7 +379,9 @@ auto Screen::write_text_impl(int x, int y, std::string_view text, Rgb fg,
 
 auto Screen::write_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
                         Attr attrs) -> int {
-  return write_text_impl(x, y, text, fg, bg, attrs).written;
+  const int written = write_text_impl(x, y, text, fg, bg, attrs).written;
+  maybe_reclaim_spills_after_mutation();
+  return written;
 }
 
 auto Screen::write_styled(int x, int y, std::span<const TextSpan> spans)
@@ -357,6 +399,7 @@ auto Screen::write_styled(int x, int y, std::span<const TextSpan> spans)
     cx = result.next_x;
     total += result.written;
   }
+  maybe_reclaim_spills_after_mutation();
   return total;
 }
 
