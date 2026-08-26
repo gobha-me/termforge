@@ -445,6 +445,35 @@ TEST_CASE("posted mouse actions round-trip through trace schema 5 (#267)",
   }
 }
 
+TEST_CASE(
+    "horizontal wheel directions round-trip through trace schema 7 (#319)",
+    "[trace][mouse]") {
+  for (const MouseEvent original : {
+           MouseEvent{.x = 3, .y = 4, .button = -1, .scroll_left = true},
+           MouseEvent{.x = 5,
+                      .y = 6,
+                      .button = -1,
+                      .ctrl = true,
+                      .scroll_right = true},
+       }) {
+    detail::TraceRecord record{detail::TraceKind::Posted,
+                               detail::TracePhase::Posted, 0, 0,
+                               detail::encode_event(Event{original})};
+    const auto decoded = detail::decode_event(record);
+    REQUIRE(decoded.has_value());
+    const auto& mouse = std::get<MouseEvent>(*decoded);
+    CHECK(mouse.x == original.x);
+    CHECK(mouse.y == original.y);
+    CHECK(mouse.button == -1);
+    CHECK(mouse.scroll_left == original.scroll_left);
+    CHECK(mouse.scroll_right == original.scroll_right);
+    CHECK_FALSE(mouse.scroll_up);
+    CHECK_FALSE(mouse.scroll_down);
+    CHECK(mouse.ctrl == original.ctrl);
+    CHECK(mouse.action() == MouseAction::Wheel);
+  }
+}
+
 TEST_CASE("pre-schema-5 mouse payloads retain their representable actions",
           "[trace][mouse][compatibility]") {
   for (const MouseEvent original : {
@@ -492,6 +521,7 @@ TEST_CASE("trace codec preserves signed and high-bit integer fields",
       .x = std::numeric_limits<std::int32_t>::min(),
       .y = std::numeric_limits<std::int32_t>::max(),
       .button = -1,
+      .scroll_up = true,
   };
   detail::TraceRecord posted{detail::TraceKind::Posted,
                              detail::TracePhase::Posted, 0, 0,
@@ -601,7 +631,7 @@ TEST_CASE("malformed traces are rejected before the App starts",
   SECTION("unknown schema") {
     std::string broken = artifact.trace;
     REQUIRE(broken.size() > 9);
-    broken[8] = 7;
+    broken[8] = 8;
     const auto [wire, error] = play_bytes(std::move(broken));
     REQUIRE(wire.empty());
     REQUIRE(error.message.find("schema") != std::string::npos);
@@ -674,6 +704,17 @@ TEST_CASE("schema 4 traces remain readable after mouse motion was added",
   v4[8] = 4;
   v4[9] = 0;
   std::istringstream input{v4, std::ios::binary};
+  REQUIRE(detail::read_trace(input).has_value());
+}
+
+TEST_CASE("schema 6 traces remain readable before horizontal wheel support",
+          "[trace][compatibility][mouse]") {
+  const Artifact artifact = make_artifact();
+  std::string v6 = artifact.trace;
+  REQUIRE(v6.size() > 56);
+  v6[8] = 6;
+  v6[9] = 0;
+  std::istringstream input{v6, std::ios::binary};
   REQUIRE(detail::read_trace(input).has_value());
 }
 

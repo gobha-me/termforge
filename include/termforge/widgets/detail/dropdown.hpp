@@ -245,8 +245,12 @@ enum class WheelResult {
                                          const Widget& w, int& scroll,
                                          int& highlight, int count,
                                          int visible_rows) -> WheelResult {
-  if (!m.scroll_up && !m.scroll_down) return WheelResult::Declined;
+  if (m.action() != MouseAction::Wheel) return WheelResult::Declined;
   if (!open || !w.hit_test(m.x, m.y)) return WheelResult::Declined;
+  // Horizontal wheel reports belong to the open modal list but do not move
+  // its vertical viewport. Consume them before hover so the pointer position
+  // cannot rewrite the highlight (#319).
+  if (m.scroll_left || m.scroll_right) return WheelResult::Consumed;
   // No window means nothing to scroll, and it must be checked HERE rather than
   // left to clamp_scroll: that helper's visible_rows <= 0 leg deliberately
   // preserves the scroll it was handed (#48 item 4), which would be the
@@ -300,7 +304,7 @@ enum class WheelResult {
 [[nodiscard]] inline auto dropdown_hover_row(const MouseEvent& m, bool open,
                                              Rect dr, int scroll, int count,
                                              int current, int& row) -> bool {
-  if (m.pressed || m.scroll_up || m.scroll_down) return false;
+  if (m.pressed || m.action() == MouseAction::Wheel) return false;
   if (!open || !dr.contains(m.x, m.y)) return false;
   const int item = dropdown_item_at(dr, scroll, count, m.y);
   row = (item >= 0 && item != current) ? item : current;

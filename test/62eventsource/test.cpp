@@ -590,6 +590,8 @@ TEST_CASE("contradictory source mouse motion is rejected atomically",
           "[event-source][mouse][failure]") {
   for (const MouseEvent malformed : {
            MouseEvent{.button = -1, .scroll_up = true, .motion = true},
+           MouseEvent{.button = -1, .scroll_up = true, .scroll_left = true},
+           MouseEvent{.button = 0, .scroll_right = true},
            MouseEvent{.button = 0, .pressed = true, .motion = true},
        }) {
     auto state = make_source_state();
@@ -608,6 +610,31 @@ TEST_CASE("contradictory source mouse motion is rejected atomically",
           std::string::npos);
     CHECK_FALSE(app.event_source_active());
   }
+}
+
+TEST_CASE("structured sources preserve horizontal wheel direction (#319)",
+          "[event-source][mouse]") {
+  auto state = make_source_state();
+  queue_events(state,
+               {MouseEvent{.x = 4, .y = 3, .button = -1, .scroll_left = true}});
+  SourceProbe app;
+  app.set_frame_ms(0);
+  app.quit_after_renders = 1;
+  REQUIRE(app.set_event_source(std::make_unique<PipeSource>(state),
+                               EventSourceMode::ReplaceTerminal));
+  std::string wire;
+  app.test_run_frames(1, 20, 5, &wire);
+
+  const auto found = std::ranges::find_if(app.events, [](const Event& event) {
+    return std::holds_alternative<MouseEvent>(event);
+  });
+  REQUIRE(found != app.events.end());
+  const auto& mouse = std::get<MouseEvent>(*found);
+  CHECK(mouse.scroll_left);
+  CHECK_FALSE(mouse.scroll_up);
+  CHECK_FALSE(mouse.scroll_down);
+  CHECK(mouse.action() == MouseAction::Wheel);
+  CHECK(errors(app.events).empty());
 }
 
 TEST_CASE("an image invalidation cannot masquerade as source input (#113)",

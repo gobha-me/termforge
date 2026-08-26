@@ -108,7 +108,10 @@ class InputApp final : public App {
         m_mouse_btn = std::format("release {}", m.button);
         break;
       case MouseAction::Wheel:
-        m_mouse_btn = m.scroll_up ? "scroll up" : "scroll down";
+        if (m.scroll_up) m_mouse_btn = "scroll up";
+        if (m.scroll_down) m_mouse_btn = "scroll down";
+        if (m.scroll_left) m_mouse_btn = "scroll left";
+        if (m.scroll_right) m_mouse_btn = "scroll right";
         break;
       case MouseAction::Move: m_mouse_btn = "move"; break;
     }

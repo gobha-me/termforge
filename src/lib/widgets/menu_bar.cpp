@@ -295,7 +295,7 @@ auto MenuBar::handle_mouse(const MouseEvent& m) -> bool {
       m, dropdown_open(), *this, m_scroll, m_selected, count, dr.h);
   if (wheeled == detail::WheelResult::Scrolled) mark_dirty();
   if (wheeled != detail::WheelResult::Declined) return true;
-  if (m.scroll_up || m.scroll_down) return false; // wheel outside: decline
+  if (m.action() == MouseAction::Wheel) return false; // outside: decline
 
   // Hover over the open dropdown moves the selection highlight.
   if (!m.pressed) {
