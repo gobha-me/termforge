@@ -501,6 +501,14 @@ class KittyDriver final : public TerminalDriver {
     ~ImageTally();
   };
 
+  // A clamped placeholder placement is an honoured lesser route. Stage its
+  // one-shot Info until the frame write is accepted; a refused sink must
+  // neither report nor consume the transition.
+  struct ClampReportState {
+    bool reported{false};
+    bool pending{false};
+  };
+
   // The placement half both draw paths share: the classic delete-and-replace
   // dance kitty needs because it will not refresh a live classic placement,
   // and the placeholder grid that is re-emitted every frame because the grid
@@ -566,15 +574,21 @@ class KittyDriver final : public TerminalDriver {
                      std::uint64_t& last_place_key,
                      std::uint64_t& last_place_clock,
                      ImagePlacementOptions options, std::string_view operation,
-                     bool& warned_clamp) -> std::expected<void, ErrorEvent>;
+                     ClampReportState& clamp_report)
+      -> std::expected<void, ErrorEvent>;
   auto retain_resident(Rect cells, std::uint32_t image_id, Extent pixels,
                        std::uint64_t& last_place_key,
                        std::uint64_t& last_place_clock,
                        ImagePlacementOptions options,
-                       std::string_view operation, bool& warned_clamp)
+                       std::string_view operation,
+                       ClampReportState& clamp_report)
       -> std::expected<void, ErrorEvent>;
   auto stage_resident_placements() -> void;
   auto finish_resident_placement_frame(bool accepted) -> void;
+
+  auto stage_clamp_report(std::string_view operation, ClampReportState& state)
+      -> void;
+  auto finish_clamp_reports(bool accepted) noexcept -> void;
 
   // Transmit an opaque payload under `id` via chunked APC sequences.
   // `format` determines Kitty's f=/o= envelope; `px` is the declared pixel
@@ -832,12 +846,13 @@ class KittyDriver final : public TerminalDriver {
   // Locally validated direct transfers resolve at the frame write boundary,
   // so strategy-failure Info events wait at that same boundary.
   std::vector<ErrorEvent> m_frame_success_events;
-  // One latch PER ENTRY POINT. A shared one would let whichever path clamped
+  // One latch per logical route. A shared one would let whichever path clamps
   // first consume the only report the driver ever makes, and the other would
-  // then degrade in silence.
-  bool m_warned_clamp{false};
-  bool m_warned_clamp_pinned{false};
-  bool m_warned_clamp_animation{false};
+  // then degrade in silence. Retain shares the pinned/animation route it keeps
+  // alive, so it cannot duplicate an already-reported placement transition.
+  ClampReportState m_clamp_report;
+  ClampReportState m_clamp_report_pinned;
+  ClampReportState m_clamp_report_animation;
   Extent m_cell_px{kNominalCellPixels};
 };
 

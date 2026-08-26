@@ -62,6 +62,34 @@ auto require_refusal(KittyDriver& driver) -> void {
 
 } // namespace
 
+TEST_CASE("image refusal: clamp Info waits for an accepted frame",
+          "[image-refusal][kitty][region][fallback]") {
+  KittyDriver driver;
+  SwitchSink sink;
+  driver.set_output(&sink);
+  driver.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  driver.flush(); // commit the configured mode before refusing image work
+  sink.accepted.clear();
+  const Image image = art(0);
+  constexpr Rect cells{0, 0, 300, 1};
+
+  sink.refuse = true;
+  REQUIRE(driver.draw_image(cells, image));
+  CHECK(driver.take_driver_events().empty());
+  driver.flush();
+  require_refusal(driver);
+  CHECK(driver.take_driver_events().empty());
+
+  sink.refuse = false;
+  REQUIRE(driver.draw_image(cells, image));
+  driver.flush();
+  const auto events = driver.take_driver_events();
+  REQUIRE(events.size() == 1);
+  CHECK(events.front().severity == Severity::Info);
+  CHECK(events.front().message ==
+        "draw_image: destination clamped to the 297-cell placeholder limit");
+}
+
 TEST_CASE("image refusal: raw region content and placement retry",
           "[image-refusal][kitty][region][raw]") {
   KittyDriver driver;

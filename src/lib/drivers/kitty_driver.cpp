@@ -1602,6 +1602,7 @@ auto KittyDriver::invalidate_images() noexcept -> void {
   m_residency_mutations.clear();
   m_content_mutations.clear();
   m_frame_success_events.clear();
+  finish_clamp_reports(false);
   m_placeholder_clears.clear();
   m_transmitted = false;
 
@@ -1627,7 +1628,7 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image,
     return std::unexpected{pending_warning("draw_pinned", image.id)};
   return draw_resident(cells, image.id, (*entry)->px, (*entry)->last_place_key,
                        (*entry)->last_place_clock, options, "draw_pinned",
-                       m_warned_clamp_pinned);
+                       m_clamp_report_pinned);
 }
 
 auto KittyDriver::draw_animation(Rect cells, AnimationHandle animation,
@@ -1646,14 +1647,15 @@ auto KittyDriver::draw_animation(Rect cells, AnimationHandle animation,
     return std::unexpected{pending_warning("draw_animation", animation.id)};
   return draw_resident(cells, animation.id, (*entry)->px,
                        (*entry)->last_place_key, (*entry)->last_place_clock,
-                       options, "draw_animation", m_warned_clamp_animation);
+                       options, "draw_animation", m_clamp_report_animation);
 }
 
 auto KittyDriver::draw_resident(Rect cells, std::uint32_t image_id,
                                 Extent pixels, std::uint64_t& last_place_key,
                                 std::uint64_t& last_place_clock,
                                 ImagePlacementOptions options,
-                                std::string_view operation, bool& warned_clamp)
+                                std::string_view operation,
+                                ClampReportState& clamp_report)
     -> std::expected<void, ErrorEvent> {
   if (cells.empty()) {
     return std::unexpected{
@@ -1761,14 +1763,7 @@ auto KittyDriver::draw_resident(Rect cells, std::uint32_t image_id,
   last_place_key = rect_key;
   last_place_clock = m_clock;
 
-  if (clamped && !warned_clamp) {
-    warned_clamp = true;
-    return std::unexpected{ErrorEvent{
-        Severity::Warning, "kitty",
-        std::format("{}: destination clamped to the 297-cell placeholder "
-                    "limit",
-                    operation)}};
-  }
+  if (clamped) stage_clamp_report(operation, clamp_report);
   return {};
 }
 
@@ -1787,7 +1782,7 @@ auto KittyDriver::retain_pinned(Rect cells, PinnedImage image,
     return std::unexpected{pending_warning("retain_pinned", image.id)};
   return retain_resident(cells, image.id, (*entry)->px,
                          (*entry)->last_place_key, (*entry)->last_place_clock,
-                         options, "retain_pinned", m_warned_clamp_pinned);
+                         options, "retain_pinned", m_clamp_report_pinned);
 }
 
 auto KittyDriver::retain_animation(Rect cells, AnimationHandle animation,
@@ -1806,7 +1801,7 @@ auto KittyDriver::retain_animation(Rect cells, AnimationHandle animation,
     return std::unexpected{pending_warning("retain_animation", animation.id)};
   return retain_resident(cells, animation.id, (*entry)->px,
                          (*entry)->last_place_key, (*entry)->last_place_clock,
-                         options, "retain_animation", m_warned_clamp_animation);
+                         options, "retain_animation", m_clamp_report_animation);
 }
 
 auto KittyDriver::retain_resident(Rect cells, std::uint32_t image_id,
@@ -1814,7 +1809,7 @@ auto KittyDriver::retain_resident(Rect cells, std::uint32_t image_id,
                                   std::uint64_t& last_place_clock,
                                   ImagePlacementOptions options,
                                   std::string_view operation,
-                                  bool& warned_clamp)
+                                  ClampReportState& clamp_report)
     -> std::expected<void, ErrorEvent> {
   if (cells.empty()) {
     return std::unexpected{
@@ -1844,7 +1839,7 @@ auto KittyDriver::retain_resident(Rect cells, std::uint32_t image_id,
   if (place == m_resident_places.end() || !place->second.placed ||
       place->second.placement != options) {
     return draw_resident(cells, image_id, pixels, last_place_key,
-                         last_place_clock, options, operation, warned_clamp);
+                         last_place_clock, options, operation, clamp_report);
   }
 
   // The same two Unicode-placeholder collisions a resident draw refuses still
@@ -1889,6 +1884,7 @@ auto KittyDriver::retain_resident(Rect cells, std::uint32_t image_id,
   place->second.last_used = ++m_clock;
   last_place_key = rect_key;
   last_place_clock = m_clock;
+  if (clamped) stage_clamp_report(operation, clamp_report);
   return {};
 }
 
@@ -2008,13 +2004,28 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   emit_placement(slot.image_id, kRegionPlacementId, slot.placed, dest, options,
                  content_changed, placement_changed);
 
-  if (clamped && !m_warned_clamp) {
-    m_warned_clamp = true;
-    return std::unexpected{ErrorEvent{
-        Severity::Warning, "kitty",
-        "draw_image: destination clamped to the 297-cell placeholder limit"}};
-  }
+  if (clamped) stage_clamp_report("draw_image", m_clamp_report);
   return {};
+}
+
+auto KittyDriver::stage_clamp_report(std::string_view operation,
+                                     ClampReportState& state) -> void {
+  if (state.reported || state.pending) return;
+  state.pending = true;
+  m_frame_success_events.push_back(ErrorEvent{
+      Severity::Info, "kitty",
+      std::format("{}: destination clamped to the 297-cell placeholder limit",
+                  operation)});
+}
+
+auto KittyDriver::finish_clamp_reports(bool accepted) noexcept -> void {
+  const auto finish = [accepted](ClampReportState& state) {
+    if (accepted && state.pending) state.reported = true;
+    state.pending = false;
+  };
+  finish(m_clamp_report);
+  finish(m_clamp_report_pinned);
+  finish(m_clamp_report_animation);
 }
 
 auto KittyDriver::pending_warning(std::string_view operation,
@@ -2538,6 +2549,7 @@ void KittyDriver::flush() {
       push_driver_event(std::move(event));
   }
   m_frame_success_events.clear();
+  finish_clamp_reports(accepted);
   finish_animation_frame(accepted);
   finish_animation_controls(accepted);
   finish_resident_placement_frame(accepted);

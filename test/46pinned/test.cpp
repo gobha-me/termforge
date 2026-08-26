@@ -1638,11 +1638,11 @@ TEST_CASE("pinned: an empty destination rect refuses",
   CHECK(out.empty());
 }
 
-TEST_CASE("pinned: the clamp warning has its own latch",
-          "[pinned][kitty][failure]") {
-  // m_warned_clamp is one-shot. Shared between the two entry points, whichever
-  // clamped first would consume the only report the driver ever makes and the
-  // other would then degrade in silence — a degradation with no event.
+TEST_CASE("pinned: the clamp Info has its own accepted-write latch",
+          "[pinned][kitty][fallback]") {
+  // Each logical route is one-shot. Shared between unpinned and pinned,
+  // whichever clamped first would consume the only report the driver ever
+  // makes and the other would then degrade in silence.
   KittyDriver d;
   d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
   std::string out;
@@ -1650,18 +1650,55 @@ TEST_CASE("pinned: the clamp warning has its own latch",
 
   // Burn draw_image's latch first.
   const auto unpinned = d.draw_image(Rect{0, 0, 300, 1}, art(39));
-  REQUIRE_FALSE(unpinned.has_value());
-  CHECK(unpinned.error().message.find("draw_image: destination clamped") == 0);
+  REQUIRE(unpinned.has_value());
+  d.flush();
+  auto events = d.take_driver_events();
+  REQUIRE(events.size() == 1);
+  CHECK(events.front().severity == Severity::Info);
+  CHECK(events.front().message.find("draw_image: destination clamped") == 0);
 
   const auto p = d.pin_image(art(40));
   REQUIRE(p.has_value());
   const auto pinned = d.draw_pinned(Rect{0, 4, 300, 1}, *p);
-  REQUIRE_FALSE(pinned.has_value());
-  CHECK(pinned.error().message.find("draw_pinned: destination clamped") == 0);
+  REQUIRE(pinned.has_value());
+  CHECK(d.take_driver_events().empty());
   d.flush();
+  events = d.take_driver_events();
+  REQUIRE(events.size() == 1);
+  CHECK(events.front().severity == Severity::Info);
+  CHECK(events.front().message.find("draw_pinned: destination clamped") == 0);
   // Both are clamped-but-drawn, exactly as the unpinned path has always been:
-  // the placement is emitted at 297 cells and the event says so.
+  // the placement is emitted at 297 cells and the accepted-write event says
+  // so. Retention shares the pinned route and cannot duplicate the transition.
   CHECK(placements_of(out, p->id) == 1);
+  REQUIRE(d.retain_pinned(Rect{0, 4, 300, 1}, *p));
+  d.flush();
+  CHECK(d.take_driver_events().empty());
+}
+
+TEST_CASE("pinned: no-wire retention reports a newly clamped request",
+          "[pinned][kitty][fallback][retain]") {
+  KittyDriver d;
+  d.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  std::string out;
+  d.set_output(&out);
+  const auto p = d.pin_image(art(41));
+  REQUIRE(p);
+  REQUIRE(d.draw_pinned(Rect{0, 0, 297, 1}, *p));
+  d.flush();
+  CHECK(d.take_driver_events().empty());
+  out.clear();
+
+  REQUIRE(d.retain_pinned(Rect{0, 0, 300, 1}, *p));
+  CHECK(d.take_driver_events().empty());
+  d.flush();
+  const auto events = d.take_driver_events();
+  REQUIRE(events.size() == 1);
+  CHECK(events.front().severity == Severity::Info);
+  CHECK(events.front().message ==
+        "retain_pinned: destination clamped to the 297-cell placeholder "
+        "limit");
+  CHECK(out.empty());
 }
 
 TEST_CASE("pinned: unpin refuses an empty and a foreign handle too",

@@ -1395,8 +1395,10 @@ real `SIGCONT` delivery, and prior/newer signal-handler ownership offline.
   operations, but needs terminal placeholder support (kitty ≥ 0.28) and,
   under tmux, APC passthrough that TermForge does not emit yet. Limited
   to 297×297 cells by the diacritic table. A **destination rect** larger
-  than that is clamped and surfaced as a `Warning` event; the image itself
-  transmits at full resolution. (Before #83 this cropped the *image* to
+  than that is clamped and, once the frame write is accepted, surfaced as a
+  one-shot `Info` through the driver event channel; the draw itself succeeds
+  and the image transmits at full resolution. A refused frame neither reports
+  nor consumes that transition. (Before #83 this cropped the *image* to
   297×297 pixels, which was the same thing when a pixel was a cell.)
 
 ## Example: WaveformWidget
