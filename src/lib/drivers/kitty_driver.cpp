@@ -155,14 +155,6 @@ void KittyDriver::draw_text(int x, int y, std::string_view text, Rgb fg, Rgb bg,
 
 namespace {
 
-// Pack a region's screen geometry into a slot-map key.
-auto region_key(int x, int y, int w, int h) -> std::uint64_t {
-  auto u16 = [](int v) {
-    return static_cast<std::uint64_t>(static_cast<std::uint16_t>(v));
-  };
-  return (u16(x) << 48) | (u16(y) << 32) | (u16(w) << 16) | u16(h);
-}
-
 // Both ordinary image transmission and root-frame replacement have identical
 // base64/chunk framing, but kitty gives their continuation APCs different
 // action spelling: an ordinary a=t transfer inherits through bare m= chunks,
@@ -412,8 +404,7 @@ auto KittyDriver::clamp_dest(Rect cells, bool& clamped) const noexcept -> Rect {
 
 auto KittyDriver::region_slot(Rect dest)
     -> std::expected<RegionSlot*, ErrorEvent> {
-  const std::uint64_t key = region_key(dest.x, dest.y, dest.w, dest.h);
-  if (auto it = m_regions.find(key); it != m_regions.end()) return &it->second;
+  if (auto it = m_regions.find(dest); it != m_regions.end()) return &it->second;
 
   RegionSlot slot;
   slot.rect = dest;
@@ -509,7 +500,7 @@ auto KittyDriver::region_slot(Rect dest)
   }
   slot.serial = ++m_next_region_serial;
   if (slot.serial == 0) slot.serial = ++m_next_region_serial;
-  return &m_regions.emplace(key, slot).first->second;
+  return &m_regions.emplace(dest, slot).first->second;
 }
 
 auto KittyDriver::preferred_pixel_extent(Rect cells) const noexcept -> Extent {
@@ -836,27 +827,31 @@ auto KittyDriver::register_animation(std::span<const AnimationFrame> frames)
   gaps.reserve(prepared.size());
   for (const auto& frame : prepared)
     gaps.push_back(frame.gap);
-  m_animations.emplace(
-      id, AnimationEntry{prepared.front().px, prepared.front().format,
-                         prepared.size(), serial, false, false, std::move(gaps),
-                         AnimationEntry::Playback{}, AnimationEntry::Playback{},
-                         0, 0, 0, 0});
+  m_animations.emplace(id, AnimationEntry{prepared.front().px,
+                                          prepared.front().format,
+                                          prepared.size(),
+                                          serial,
+                                          false,
+                                          false,
+                                          std::move(gaps),
+                                          AnimationEntry::Playback{},
+                                          AnimationEntry::Playback{},
+                                          {},
+                                          0,
+                                          {},
+                                          0});
   m_staged_animations.push_back(StagedAnimation{id, serial});
   stage_residency_set(id, serial, ResidencyKind::Pinned,
                       static_cast<std::size_t>(source_bytes));
   if (reply_count != 0) {
-    m_pending_replies.emplace(id, PendingReply{PendingKind::AnimationRegister,
-                                               0,
-                                               serial,
-                                               0,
-                                               m_flush_count,
-                                               0,
-                                               false,
-                                               0,
-                                               reply_count,
-                                               {},
-                                               false,
-                                               {}});
+    m_pending_replies.emplace(
+        id, PendingReply{.kind = PendingKind::AnimationRegister,
+                         .serial = serial,
+                         .issued_flush = m_flush_count,
+                         .remaining_replies = reply_count,
+                         .indirect = {},
+                         .complete_on_flush = false,
+                         .success_event = {}});
   }
   return AnimationHandle{id, instance_token(), serial};
 }
@@ -1194,18 +1189,14 @@ auto KittyDriver::pin_payload(std::span<const std::byte> payload,
   m_staged_pins.push_back(StagedPin{id, serial, hash, transfer.request_reply});
   stage_residency_set(id, serial, ResidencyKind::Pinned, payload.size());
   if (transfer.request_reply) {
-    PendingReply pending{PendingKind::PinTransmit,
-                         0,
-                         serial,
-                         hash,
-                         m_flush_count,
-                         0,
-                         false,
-                         0,
-                         1,
-                         {},
-                         false,
-                         {}};
+    PendingReply pending{.kind = PendingKind::PinTransmit,
+                         .serial = serial,
+                         .candidate_hash = hash,
+                         .issued_flush = m_flush_count,
+                         .remaining_replies = 1,
+                         .indirect = {},
+                         .complete_on_flush = false,
+                         .success_event = {}};
     pending.indirect = std::move(transfer.indirect);
     pending.success_event = std::move(transfer.success_event);
     m_pending_replies.emplace(id, std::move(pending));
@@ -1338,18 +1329,19 @@ auto KittyDriver::replace_payload(std::uint32_t id, PinnedEntry& entry,
   tally_image_transmit(m_buf.size() - before);
   stage_residency_set(id, entry.serial, ResidencyKind::Pinned, payload.size());
   if (request_reply) {
-    m_pending_replies.emplace(id, PendingReply{PendingKind::PinnedReplace,
-                                               0,
-                                               entry.serial,
-                                               hash,
-                                               m_flush_count,
-                                               previous_source_payload_bytes,
-                                               previously_accounted,
-                                               previous_content_hash,
-                                               1,
-                                               {},
-                                               false,
-                                               {}});
+    m_pending_replies.emplace(
+        id, PendingReply{.kind = PendingKind::PinnedReplace,
+                         .serial = entry.serial,
+                         .candidate_hash = hash,
+                         .issued_flush = m_flush_count,
+                         .previous_source_payload_bytes =
+                             previous_source_payload_bytes,
+                         .previously_accounted = previously_accounted,
+                         .previous_content_hash = previous_content_hash,
+                         .remaining_replies = 1,
+                         .indirect = {},
+                         .complete_on_flush = false,
+                         .success_event = {}});
   } else {
     stage_content_hash(id, entry.serial, hash, true);
   }
@@ -1406,18 +1398,18 @@ auto KittyDriver::edit_payload(std::uint32_t id, PinnedEntry& entry,
   stage_content_hash(id, entry.serial, 0, !request_reply);
   stage_residency_add(id, entry.serial, payload.size());
   if (request_reply) {
-    m_pending_replies.emplace(id, PendingReply{PendingKind::PinnedEdit,
-                                               0,
-                                               entry.serial,
-                                               0,
-                                               m_flush_count,
-                                               previous_source_payload_bytes,
-                                               previously_accounted,
-                                               previous_content_hash,
-                                               1,
-                                               {},
-                                               false,
-                                               {}});
+    m_pending_replies.emplace(
+        id, PendingReply{.kind = PendingKind::PinnedEdit,
+                         .serial = entry.serial,
+                         .issued_flush = m_flush_count,
+                         .previous_source_payload_bytes =
+                             previous_source_payload_bytes,
+                         .previously_accounted = previously_accounted,
+                         .previous_content_hash = previous_content_hash,
+                         .remaining_replies = 1,
+                         .indirect = {},
+                         .complete_on_flush = false,
+                         .success_event = {}});
   }
   return {};
 }
@@ -1529,20 +1521,20 @@ auto KittyDriver::finish_resident_placement_frame(bool accepted) -> void {
   for (auto& [id, entry] : m_pinned) {
     (void)id;
     if (accepted) {
-      entry.committed_last_place_key = entry.last_place_key;
+      entry.committed_last_place_rect = entry.last_place_rect;
       entry.committed_last_place_clock = entry.last_place_clock;
     } else {
-      entry.last_place_key = entry.committed_last_place_key;
+      entry.last_place_rect = entry.committed_last_place_rect;
       entry.last_place_clock = entry.committed_last_place_clock;
     }
   }
   for (auto& [id, entry] : m_animations) {
     (void)id;
     if (accepted) {
-      entry.committed_last_place_key = entry.last_place_key;
+      entry.committed_last_place_rect = entry.last_place_rect;
       entry.committed_last_place_clock = entry.last_place_clock;
     } else {
-      entry.last_place_key = entry.committed_last_place_key;
+      entry.last_place_rect = entry.committed_last_place_rect;
       entry.last_place_clock = entry.committed_last_place_clock;
     }
   }
@@ -1626,7 +1618,7 @@ auto KittyDriver::draw_pinned(Rect cells, PinnedImage image,
   if (!entry) return std::unexpected{entry.error()};
   if (!(*entry)->accepted && !staged_pin_ready(image.id, (*entry)->serial))
     return std::unexpected{pending_warning("draw_pinned", image.id)};
-  return draw_resident(cells, image.id, (*entry)->px, (*entry)->last_place_key,
+  return draw_resident(cells, image.id, (*entry)->px, (*entry)->last_place_rect,
                        (*entry)->last_place_clock, options, "draw_pinned",
                        m_clamp_report_pinned);
 }
@@ -1646,12 +1638,12 @@ auto KittyDriver::draw_animation(Rect cells, AnimationHandle animation,
   if (!(*entry)->accepted)
     return std::unexpected{pending_warning("draw_animation", animation.id)};
   return draw_resident(cells, animation.id, (*entry)->px,
-                       (*entry)->last_place_key, (*entry)->last_place_clock,
+                       (*entry)->last_place_rect, (*entry)->last_place_clock,
                        options, "draw_animation", m_clamp_report_animation);
 }
 
 auto KittyDriver::draw_resident(Rect cells, std::uint32_t image_id,
-                                Extent pixels, std::uint64_t& last_place_key,
+                                Extent pixels, Rect& last_place_rect,
                                 std::uint64_t& last_place_clock,
                                 ImagePlacementOptions options,
                                 std::string_view operation,
@@ -1676,8 +1668,7 @@ auto KittyDriver::draw_resident(Rect cells, std::uint32_t image_id,
 
   bool clamped = false;
   const Rect dest = clamp_dest(cells, clamped);
-  const std::uint64_t rect_key = region_key(dest.x, dest.y, dest.w, dest.h);
-  const ResidentPlacementKey key{rect_key, image_id};
+  const ResidentPlacementKey key{dest, image_id};
 
   // Under placeholders a cell names its image by SGR foreground and names no
   // placement at all, so two placements of ONE image id showing at once are
@@ -1695,7 +1686,7 @@ auto KittyDriver::draw_resident(Rect cells, std::uint32_t image_id,
   // The frame window is m_frame_start_clock, the same predicate the collection
   // uses.
   if (m_mode == PlacementMode::UnicodePlaceholders &&
-      last_place_clock > m_frame_start_clock && last_place_key != rect_key) {
+      last_place_clock > m_frame_start_clock && last_place_rect != dest) {
     return std::unexpected{ErrorEvent{
         Severity::Warning, "kitty",
         std::format("{}: a resident image can have only one live placement "
@@ -1707,7 +1698,7 @@ auto KittyDriver::draw_resident(Rect cells, std::uint32_t image_id,
   // exact rect this frame paints its own placeholder grid over these cells
   // with a different id, and whichever ran second wins silently.
   if (m_mode == PlacementMode::UnicodePlaceholders) {
-    if (const auto r = m_regions.find(rect_key);
+    if (const auto r = m_regions.find(dest);
         r != m_regions.end() && r->second.last_used > m_frame_start_clock) {
       return std::unexpected{ErrorEvent{
           Severity::Warning, "kitty",
@@ -1717,7 +1708,7 @@ auto KittyDriver::draw_resident(Rect cells, std::uint32_t image_id,
                       operation)}};
     }
     for (const auto& [other_key, other] : m_resident_places) {
-      if (other_key.rect == rect_key && other_key.image_id != image_id &&
+      if (other_key.rect == dest && other_key.image_id != image_id &&
           other.last_used > m_frame_start_clock) {
         return std::unexpected{ErrorEvent{
             Severity::Warning, "kitty",
@@ -1760,7 +1751,7 @@ auto KittyDriver::draw_resident(Rect cells, std::uint32_t image_id,
   emit_placement(place.image_id, place.placement_id, place.placed, dest,
                  options, false, placement_changed);
 
-  last_place_key = rect_key;
+  last_place_rect = dest;
   last_place_clock = m_clock;
 
   if (clamped) stage_clamp_report(operation, clamp_report);
@@ -1781,7 +1772,7 @@ auto KittyDriver::retain_pinned(Rect cells, PinnedImage image,
   if (!(*entry)->accepted && !staged_pin_ready(image.id, (*entry)->serial))
     return std::unexpected{pending_warning("retain_pinned", image.id)};
   return retain_resident(cells, image.id, (*entry)->px,
-                         (*entry)->last_place_key, (*entry)->last_place_clock,
+                         (*entry)->last_place_rect, (*entry)->last_place_clock,
                          options, "retain_pinned", m_clamp_report_pinned);
 }
 
@@ -1800,12 +1791,12 @@ auto KittyDriver::retain_animation(Rect cells, AnimationHandle animation,
   if (!(*entry)->accepted)
     return std::unexpected{pending_warning("retain_animation", animation.id)};
   return retain_resident(cells, animation.id, (*entry)->px,
-                         (*entry)->last_place_key, (*entry)->last_place_clock,
+                         (*entry)->last_place_rect, (*entry)->last_place_clock,
                          options, "retain_animation", m_clamp_report_animation);
 }
 
 auto KittyDriver::retain_resident(Rect cells, std::uint32_t image_id,
-                                  Extent pixels, std::uint64_t& last_place_key,
+                                  Extent pixels, Rect& last_place_rect,
                                   std::uint64_t& last_place_clock,
                                   ImagePlacementOptions options,
                                   std::string_view operation,
@@ -1829,8 +1820,7 @@ auto KittyDriver::retain_resident(Rect cells, std::uint32_t image_id,
   bool clamped = false;
   const Rect dest = clamp_dest(cells, clamped);
   (void)clamped; // the draw path reports this placement's one-shot warning
-  const std::uint64_t rect_key = region_key(dest.x, dest.y, dest.w, dest.h);
-  const ResidentPlacementKey key{rect_key, image_id};
+  const ResidentPlacementKey key{dest, image_id};
 
   // Retention is the no-wire half of a resident draw. It is valid only while
   // the exact placement App remembers is still live; anything else delegates to
@@ -1838,7 +1828,7 @@ auto KittyDriver::retain_resident(Rect cells, std::uint32_t image_id,
   auto place = m_resident_places.find(key);
   if (place == m_resident_places.end() || !place->second.placed ||
       place->second.placement != options) {
-    return draw_resident(cells, image_id, pixels, last_place_key,
+    return draw_resident(cells, image_id, pixels, last_place_rect,
                          last_place_clock, options, operation, clamp_report);
   }
 
@@ -1846,7 +1836,7 @@ auto KittyDriver::retain_resident(Rect cells, std::uint32_t image_id,
   // exist when no bytes are emitted: an ordinary region can overwrite this
   // retained grid, and retaining two rects for one image is still ambiguous.
   if (m_mode == PlacementMode::UnicodePlaceholders) {
-    if (last_place_clock > m_frame_start_clock && last_place_key != rect_key) {
+    if (last_place_clock > m_frame_start_clock && last_place_rect != dest) {
       return std::unexpected{ErrorEvent{
           Severity::Warning, "kitty",
           std::format("{}: a resident image can have only one live placement "
@@ -1854,7 +1844,7 @@ auto KittyDriver::retain_resident(Rect cells, std::uint32_t image_id,
                       "encodes the image id and not the placement id",
                       operation)}};
     }
-    if (const auto region = m_regions.find(rect_key);
+    if (const auto region = m_regions.find(dest);
         region != m_regions.end() &&
         region->second.last_used > m_frame_start_clock) {
       return std::unexpected{ErrorEvent{
@@ -1865,7 +1855,7 @@ auto KittyDriver::retain_resident(Rect cells, std::uint32_t image_id,
                       operation)}};
     }
     for (const auto& [other_key, other] : m_resident_places) {
-      if (other_key.rect == rect_key && other_key.image_id != image_id &&
+      if (other_key.rect == dest && other_key.image_id != image_id &&
           other.last_used > m_frame_start_clock) {
         return std::unexpected{ErrorEvent{
             Severity::Warning, "kitty",
@@ -1882,7 +1872,7 @@ auto KittyDriver::retain_resident(Rect cells, std::uint32_t image_id,
   // and keeps the within-frame collision predicates exact.
   stage_resident_placements();
   place->second.last_used = ++m_clock;
-  last_place_key = rect_key;
+  last_place_rect = dest;
   last_place_clock = m_clock;
   if (clamped) stage_clamp_report(operation, clamp_report);
   return {};
@@ -1903,9 +1893,8 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   // cell grid over the same cells naming different image ids, and whichever
   // ran second wins with nothing said.
   if (m_mode == PlacementMode::UnicodePlaceholders) {
-    const std::uint64_t k = region_key(dest.x, dest.y, dest.w, dest.h);
     for (const auto& [pin_key, place] : m_resident_places) {
-      if (pin_key.rect == k && place.last_used > m_frame_start_clock) {
+      if (pin_key.rect == dest && place.last_used > m_frame_start_clock) {
         return std::unexpected{ErrorEvent{
             Severity::Warning, "kitty",
             "draw_image: a resident image was already drawn to this rect this "
@@ -1922,8 +1911,8 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   // The key is the destination in CELLS. It has to be: c=/r= are baked into a
   // classic placement and only re-emitted when !placed, so the same pixels in
   // a different cell box are genuinely a different placement. Keying on pixel
-  // dims also let two images collide -- region_key truncates each field to
-  // uint16, and pixel dimensions can exceed that where cell counts cannot.
+  // dimensions also let two images collide because the placement identity
+  // belongs to the complete destination Rect, not to the pixel payload.
   // #139: attribute this call's bytes on every return path. The payload upload
   // goes to image_transmit; everything else this emits — the replacement
   // delete, the placement, the placeholder cell grid — is image_edit. Both are
@@ -1942,9 +1931,8 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   const auto hash = detail::payload_hash(payload, px, format);
   if (const auto pending = m_pending_replies.find(slot.image_id);
       pending != m_pending_replies.end()) {
-    const auto key = region_key(dest.x, dest.y, dest.w, dest.h);
     if (pending->second.kind != PendingKind::RegionTransmit ||
-        pending->second.region_key != key ||
+        pending->second.region_rect != dest ||
         pending->second.serial != slot.serial ||
         pending->second.candidate_hash != hash) {
       return std::unexpected{pending_warning("draw_image", slot.image_id)};
@@ -1962,18 +1950,15 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
     stage_residency_set(slot.image_id, slot.serial, ResidencyKind::Region,
                         payload.size());
     if (transfer.request_reply) {
-      PendingReply pending{PendingKind::RegionTransmit,
-                           region_key(dest.x, dest.y, dest.w, dest.h),
-                           slot.serial,
-                           hash,
-                           m_flush_count,
-                           0,
-                           false,
-                           0,
-                           1,
-                           {},
-                           false,
-                           {}};
+      PendingReply pending{.kind = PendingKind::RegionTransmit,
+                           .region_rect = dest,
+                           .serial = slot.serial,
+                           .candidate_hash = hash,
+                           .issued_flush = m_flush_count,
+                           .remaining_replies = 1,
+                           .indirect = {},
+                           .complete_on_flush = false,
+                           .success_event = {}};
       pending.indirect = std::move(transfer.indirect);
       pending.success_event = std::move(transfer.success_event);
       m_pending_replies.emplace(slot.image_id, std::move(pending));
@@ -1984,13 +1969,14 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   }
   // #137/#114/#115: fit, layer, offset and crop are placement state, and
   // nothing else here can see them change.
-  // region_key is the destination geometry and payload_hash is the content, so
+  // The Rect key is the destination geometry and payload_hash is the content,
+  // so
   // the same image redrawn to the same rect under a DIFFERENT fit matches both
   // — content_changed stays false, slot.placed stays true, and the driver would
   // emit nothing at all. The opt-out would silently not take effect, which is
   // indistinguishable from the bug it exists to fix.
   //
-  // Not folded into region_key: two keys for one rect means two slots, two
+  // Not folded into the Rect key: two keys for one rect means two slots, two
   // image ids and two uploads of identical pixels, with the stale slot alive
   // until the NEXT flush's gc_regions — one frame showing both placements at
   // z=0. Not folded into payload_hash either: that would retransmit the whole
@@ -2252,7 +2238,7 @@ auto KittyDriver::finish_pending(std::uint32_t image_id,
                                  bool report_failure) -> void {
   switch (pending.kind) {
     case PendingKind::RegionTransmit: {
-      const auto it = m_regions.find(pending.region_key);
+      const auto it = m_regions.find(pending.region_rect);
       if (it != m_regions.end() && it->second.image_id == image_id &&
           it->second.serial == pending.serial) {
         if (success) {
@@ -2372,7 +2358,7 @@ auto KittyDriver::retry_indirect_direct(std::uint32_t image_id,
                         ? ResidencyKind::Region
                         : ResidencyKind::Pinned;
   if (pending.kind == PendingKind::RegionTransmit) {
-    const auto region = m_regions.find(pending.region_key);
+    const auto region = m_regions.find(pending.region_rect);
     if (region != m_regions.end() && region->second.image_id == image_id &&
         region->second.serial == pending.serial) {
       // The placement followed the rejected upload on the original stream.

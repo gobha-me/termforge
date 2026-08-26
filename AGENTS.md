@@ -187,6 +187,13 @@ file is the tactical version.
   change re-places without retransmitting. A pinned placement's Classic key is
   `(image id, Rect)`, permitting exact overlap of distinct images; Unicode
   placeholders cannot represent that collision and refuse it with a `Warning`.
+  **Kitty Rect identity is lossless** (#314). Region slots, pending opaque-reply
+  correlations, resident placements and same-frame collision guards compare
+  every accepted `Rect` field at its full signed-`int` width. Hash collisions
+  are ordinary container collisions because equality remains exact; never pack
+  or narrow the fields to manufacture an identity. If a future tier cannot
+  represent a rectangle, validate and return `Warning` before cache lookup,
+  mutation or wire instead of aliasing it.
   **Sub-cell placement and source crops are placement state** (#115).
   `pixel_offset` is non-negative and strictly inside one current cell;
   `source` is a positive `PixelRect` wholly inside the real `Image` extent or

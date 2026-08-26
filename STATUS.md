@@ -6,7 +6,31 @@ which holds standing conventions, not state).
 
 ## Where we are (2026-08-26, latest)
 
-**Current stable release: v0.57.17 — process-safe SIGWINCH ownership.** #310
+**Current stable release: v0.57.19 — lossless Kitty Rect identity.** #314
+replaces Kitty's packed 16-bit destination key with exact `Rect` equality plus
+a private hash. Distinct signed coordinates and positive extents therefore
+cannot share region cache state merely because their low 16 bits match.
+
+The same complete identity now flows through opaque-reply correlation,
+resident pin and animation placements, placeholder collision guards and the
+accepted-write rollback journal. The public API, terminal wire, cache limits
+and per-driver state boundaries are unchanged.
+
+## Previous stable release: v0.57.18
+
+**v0.57.18 — truthful placeholder clamp reporting.** #315 keeps
+Unicode-placeholder destinations clamped to the 297-cell protocol limit while
+returning successful draw and retain results. The honoured lesser route is
+reported once as `Severity::Info`, only after the frame write is accepted;
+sink refusal neither reports nor consumes the transition.
+
+Unpinned, pinned and animation placements retain independent transition
+latches, including no-wire retention. The public API and terminal wire are
+unchanged.
+
+## Previous stable release: v0.57.17
+
+**v0.57.17 — process-safe SIGWINCH ownership.** #310
 replaces App's unconditional `SIG_DFL` teardown with a process-wide disposition
 lease. The first live App captures and installs the complete `sigaction`,
 overlapping Apps share it, and only the final release restores the prior mask,
@@ -3768,9 +3792,9 @@ now clamps the destination rect and the image transmits whole; cropping the
 image was the same thing back when a pixel was a cell, and is a silent loss of
 authored content now that it is not. (2) **`region_key` had to move to cell
 dims** — `c=`/`r=` are baked into a classic placement and only re-emitted when
-`!placed` — which also closes a latent aliasing bug, since the key truncates
-each field to `uint16` and pixel dimensions can exceed that where cell counts
-cannot. (3) **The sampler is integer, and that is a safety invariant**:
+`!placed` — which removed the pixel/cell domain mismatch but left the packed
+key's 16-bit truncation in place until #314 replaced it with full `Rect`
+identity. (3) **The sampler is integer, and that is a safety invariant**:
 `Image::at()` is unchecked, and `(i * src) / dst` is in range by construction
 where the float spelling can round up and index one past the last row. (4)
 **`WaveformWidget` was a rasterizer rewrite, not a rename** — at 640 columns

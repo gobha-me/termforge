@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 
@@ -140,6 +141,31 @@ TEST_CASE("image refusal: raw region content and placement retry",
   REQUIRE(driver.draw_image(cells, second, below));
   driver.flush();
   CHECK(tfsupport::transmits_of(sink.accepted, 1) == 1);
+}
+
+TEST_CASE("image refusal: complete Rect identities survive rollback (#314)",
+          "[image-refusal][kitty][region][raw][rect]") {
+  KittyDriver driver;
+  SwitchSink sink;
+  driver.set_output(&sink);
+  const Image image = art(70);
+  constexpr Rect first{0, 6, 2, 2};
+  constexpr Rect second{65536, 6, 2, 2};
+
+  sink.refuse = true;
+  REQUIRE(driver.draw_image(first, image));
+  REQUIRE(driver.draw_image(second, image));
+  driver.flush();
+  require_refusal(driver);
+  CHECK(driver.residency() == ImageResidency{});
+
+  sink.refuse = false;
+  REQUIRE(driver.draw_image(first, image));
+  REQUIRE(driver.draw_image(second, image));
+  driver.flush();
+  CHECK(tfsupport::total_transmits(sink.accepted) == 2);
+  CHECK(tfsupport::ids_named(sink.accepted) == std::set<std::uint32_t>{1, 2});
+  CHECK(driver.residency() == ImageResidency{2, 0, 32});
 }
 
 TEST_CASE("image refusal: opaque region drops only unwritten correlation",
