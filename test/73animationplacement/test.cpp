@@ -298,6 +298,41 @@ TEST_CASE("animation roots share Unicode placeholder collision rules",
   CHECK(commands(wire, "d").size() == 1);
 }
 
+TEST_CASE("animation placeholder clamps report accepted Info once",
+          "[animation][placement][unicode][fallback]") {
+  KittyDriver driver;
+  driver.set_image_animation_support(true);
+  driver.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  std::string wire;
+  driver.set_output(&wire);
+  const std::array images{image(19), image(20)};
+  const auto animation = driver.register_animation(animation_frames(images));
+  REQUIRE(animation);
+  driver.flush();
+  CHECK(driver.take_driver_events().empty());
+  wire.clear();
+
+  REQUIRE(driver.draw_animation(Rect{0, 0, 300, 1}, *animation));
+  CHECK(driver.take_driver_events().empty());
+  driver.flush();
+  const auto events = driver.take_driver_events();
+  REQUIRE(events.size() == 1);
+  CHECK(events.front().severity == Severity::Info);
+  CHECK(events.front().source == "kitty");
+  CHECK(events.front().message ==
+        "draw_animation: destination clamped to the 297-cell placeholder "
+        "limit");
+  const auto placements = commands(wire, "p");
+  REQUIRE(placements.size() == 1);
+  CHECK(tfsupport::key_value(placements.front(), "c") == "297");
+
+  wire.clear();
+  REQUIRE(driver.retain_animation(Rect{0, 0, 300, 1}, *animation));
+  driver.flush();
+  CHECK(driver.take_driver_events().empty());
+  CHECK(wire.empty());
+}
+
 TEST_CASE("animation placement compatibility defaults remain honest",
           "[animation][placement][compatibility]") {
   tfsupport::LegacyDriver legacy;

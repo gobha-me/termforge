@@ -303,7 +303,7 @@ TEST_CASE("KittyDriver: stale regions are LRU-evicted terminal-side",
 
 TEST_CASE(
     "KittyDriver: oversized destination is clamped to the placeholder limit",
-    "[drivers][kitty][failure]") {
+    "[drivers][kitty][fallback]") {
   // Restated for #83, and the axis is the whole point. This used to crop the
   // IMAGE to 297x297 pixels, which was the same thing when a pixel was a
   // cell. The limit belongs to the diacritic table that indexes *cells*, so
@@ -314,10 +314,17 @@ TEST_CASE(
   d.set_output(&out);
   Image img{10, 10, std::vector<Pixel>(100, Pixel{255, 0, 0, 255})};
   auto r = d.draw_image(Rect{0, 0, 300, 1}, img);
+  REQUIRE(r.has_value());
+  CHECK(d.take_driver_events().empty());
   d.flush();
-  // Clamped to 297 cells and surfaced as a warning (no silent downgrade).
-  REQUIRE_FALSE(r.has_value());
-  REQUIRE(r.error().severity == Severity::Warning);
+  // Clamped to 297 cells and surfaced as an accepted-write Info: the request
+  // was honoured by a lesser route rather than refused after emitting.
+  const auto events = d.take_driver_events();
+  REQUIRE(events.size() == 1);
+  CHECK(events.front().severity == Severity::Info);
+  CHECK(events.front().source == "kitty");
+  CHECK(events.front().message ==
+        "draw_image: destination clamped to the 297-cell placeholder limit");
   REQUIRE(out.find("c=297") != std::string::npos);
   REQUIRE(out.find("r=1") != std::string::npos);
   // The image itself is untouched — this is the assertion that pins "clamps
@@ -329,8 +336,10 @@ TEST_CASE(
        p = out.find("\xF4\x8E\xBB\xAE", p + 4))
     ++ph_count;
   REQUIRE(ph_count == 297);
-  // The warning fires once, not every frame.
+  // The transition Info fires once, not every frame.
   REQUIRE(d.draw_image(Rect{0, 0, 300, 1}, img).has_value());
+  d.flush();
+  CHECK(d.take_driver_events().empty());
 }
 
 TEST_CASE("KittyDriver: an image wider than 297px into a small rect is legal",
