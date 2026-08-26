@@ -237,7 +237,7 @@ auto Dialog::on_event(const Event& ev) -> bool {
   }
 
   if (const auto* m = std::get_if<MouseEvent>(&ev)) {
-    const bool wheel = m->scroll_up || m->scroll_down;
+    const bool wheel = m->action() == MouseAction::Wheel;
     const bool activating_press = m->pressed && m->button == 0;
     const bool motion = !m->pressed && !wheel;
     // A left press acts, the wheel is forwarded so a scrollable control

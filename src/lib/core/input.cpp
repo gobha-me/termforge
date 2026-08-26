@@ -899,13 +899,17 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
       me.alt = (btn & 8) != 0;
       me.ctrl = (btn & 16) != 0;
       // Decode button + wheel/motion from the button code. Wheel events
-      // (bit 6) reuse the low bits for direction — they are not presses
-      // and must not masquerade as button 0/1 clicks.
+      // (bit 6) reuse the low two bits for up/down/left/right — they are not
+      // presses and must not masquerade as button 0/1 clicks.
       if (btn & 64) {
         me.button = -1;
         me.pressed = false;
-        me.scroll_up = (btn & 0x01) == 0;
-        me.scroll_down = (btn & 0x01) == 1;
+        switch (btn & 0x03) {
+          case 0: me.scroll_up = true; break;
+          case 1: me.scroll_down = true; break;
+          case 2: me.scroll_left = true; break;
+          case 3: me.scroll_right = true; break;
+        }
       } else if (btn & 32) {
         // Motion-while-pressed (?1002h drag tracking, bit 5). Report the
         // position but never as a press — otherwise a drag across a widget

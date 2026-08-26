@@ -211,6 +211,19 @@ TEST_CASE("TableWidget: wheel scrolls the selection out of view and it STAYS "
   REQUIRE(t.scroll_offset() == 3);
 }
 
+TEST_CASE(
+    "TableWidget: horizontal wheel does not move its vertical view (#319)",
+    "[tablewidget][mouse][failure]") {
+  TableWidget t;
+  t.set_geometry({0, 0, 20, 4});
+  t.set_columns({{"N", Align::Left}});
+  for (int i = 0; i < 10; ++i)
+    t.add_row({std::format("{}", i)});
+
+  CHECK_FALSE(t.on_event(tfsupport::horizontal_wheel(2, 2, true)));
+  CHECK(t.scroll_offset() == 0);
+}
+
 TEST_CASE("TableWidget: alternating row backgrounds", "[tablewidget]") {
   Screen s{20, 6};
   TableWidget t;

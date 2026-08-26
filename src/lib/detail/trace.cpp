@@ -416,12 +416,17 @@ auto encode_event(const Event& event) -> std::vector<std::uint8_t> {
           append_le(bytes, static_cast<std::int32_t>(value.button));
           std::uint8_t flags{0};
           if (value.pressed) flags |= 1U << 0;
-          if (value.scroll_up) flags |= 1U << 1;
-          if (value.scroll_down) flags |= 1U << 2;
+          // Schema 7 uses the last flag bit as the wheel axis and keeps the
+          // existing negative/positive direction bits for up-or-left and
+          // down-or-right. Old traces have a clear axis bit and decode exactly
+          // as before without widening the record.
+          if (value.scroll_up || value.scroll_left) flags |= 1U << 1;
+          if (value.scroll_down || value.scroll_right) flags |= 1U << 2;
           if (value.ctrl) flags |= 1U << 3;
           if (value.alt) flags |= 1U << 4;
           if (value.shift) flags |= 1U << 5;
           if (value.motion) flags |= 1U << 6;
+          if (value.scroll_left || value.scroll_right) flags |= 1U << 7;
           append_le(bytes, flags);
         } else if constexpr (std::same_as<T, PasteEvent>) {
           append_le(bytes, std::uint8_t{2});
@@ -468,14 +473,35 @@ auto decode_event(const TraceRecord& record)
     const auto y = take_le<std::int32_t>(bytes);
     const auto button = take_le<std::int32_t>(bytes);
     const auto flags = take_le<std::uint8_t>(bytes);
-    if (!x || !y || !button || !flags || !bytes.empty() ||
-        (*flags & ~std::uint8_t{0x7F}) != 0) {
+    if (!x || !y || !button || !flags || !bytes.empty()) {
       return trace_error("posted mouse event is invalid");
     }
-    return Event{MouseEvent{*x, *y, *button, (*flags & 1U) != 0,
-                            (*flags & 2U) != 0, (*flags & 4U) != 0,
-                            (*flags & 8U) != 0, (*flags & 16U) != 0,
-                            (*flags & 32U) != 0, (*flags & 64U) != 0}};
+    const bool horizontal = (*flags & 128U) != 0;
+    const MouseEvent mouse{*x,
+                           *y,
+                           *button,
+                           (*flags & 1U) != 0,
+                           !horizontal && (*flags & 2U) != 0,
+                           !horizontal && (*flags & 4U) != 0,
+                           (*flags & 8U) != 0,
+                           (*flags & 16U) != 0,
+                           (*flags & 32U) != 0,
+                           (*flags & 64U) != 0,
+                           horizontal && (*flags & 2U) != 0,
+                           horizontal && (*flags & 4U) != 0};
+    const int scroll_directions = static_cast<int>(mouse.scroll_up) +
+                                  static_cast<int>(mouse.scroll_down) +
+                                  static_cast<int>(mouse.scroll_left) +
+                                  static_cast<int>(mouse.scroll_right);
+    const bool wheel = mouse.button == -1;
+    if (mouse.button < -1 || mouse.button > 3 ||
+        (horizontal && (!wheel || scroll_directions != 1)) ||
+        (wheel && (scroll_directions != 1 || mouse.pressed || mouse.motion)) ||
+        (!wheel && scroll_directions != 0) || (mouse.motion && mouse.pressed) ||
+        (mouse.button == 3 && mouse.pressed)) {
+      return trace_error("posted mouse event is invalid");
+    }
+    return Event{mouse};
   }
   if (*type == 2) {
     auto text = take_string(bytes);

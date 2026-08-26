@@ -398,6 +398,39 @@ TEST_CASE("Input: SGR mouse scroll down decodes", "[input][mouse]") {
   REQUIRE(m->action() == MouseAction::Wheel);
 }
 
+TEST_CASE("Input: SGR horizontal wheel directions stay horizontal (#319)",
+          "[input][mouse][failure]") {
+  Input in;
+  // Codes 66/67 are wheel-left/right. The second report also carries every
+  // modifier, proving those independent button-code bits survive the axis
+  // decode along with coordinates.
+  const auto events = in.decode("\033[<66;5;6M\033[<95;7;8M");
+  REQUIRE(events.size() == 2);
+
+  const auto& left = std::get<MouseEvent>(events[0]);
+  CHECK(left.button == -1);
+  CHECK_FALSE(left.pressed);
+  CHECK(left.scroll_left);
+  CHECK_FALSE(left.scroll_right);
+  CHECK_FALSE(left.scroll_up);
+  CHECK_FALSE(left.scroll_down);
+  CHECK(left.action() == MouseAction::Wheel);
+  CHECK(left.x == 4);
+  CHECK(left.y == 5);
+
+  const auto& right = std::get<MouseEvent>(events[1]);
+  CHECK(right.button == -1);
+  CHECK(right.scroll_right);
+  CHECK_FALSE(right.scroll_left);
+  CHECK_FALSE(right.scroll_up);
+  CHECK_FALSE(right.scroll_down);
+  CHECK(right.ctrl);
+  CHECK(right.alt);
+  CHECK(right.shift);
+  CHECK(right.x == 6);
+  CHECK(right.y == 7);
+}
+
 TEST_CASE("Input: press drag and release remain distinct", "[input][mouse]") {
   Input in;
   const auto events = in.decode("\033[<0;5;3M"   // left press

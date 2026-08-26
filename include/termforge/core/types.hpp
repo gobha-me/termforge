@@ -810,7 +810,7 @@ enum class MouseMode { None, Click, Drag, Motion };
 //   Press   — a button went down.
 //   Drag    — the pointer moved while `button` remained held.
 //   Release — a button came up.
-//   Wheel   — one scroll-wheel step; direction remains in scroll_up/down.
+//   Wheel   — one scroll-wheel step; exactly one scroll direction is set.
 //   Move    — buttonless pointer motion under MouseMode::Motion.
 enum class MouseAction { Press, Drag, Release, Wheel, Move };
 
@@ -861,8 +861,15 @@ struct MouseEvent {
   // traces retain their meaning.
   bool motion{false};
 
+  // Appended so every pre-#319 positional aggregate initializer keeps its
+  // field mapping. Vertical direction remains in scroll_up/scroll_down for
+  // source and widget compatibility; horizontal SGR reports use these fields
+  // without manufacturing a vertical gesture.
+  bool scroll_left{false}, scroll_right{false};
+
   [[nodiscard]] constexpr auto action() const noexcept -> MouseAction {
-    if (scroll_up || scroll_down) return MouseAction::Wheel;
+    if (scroll_up || scroll_down || scroll_left || scroll_right)
+      return MouseAction::Wheel;
     if (button == 3) return MouseAction::Move;
     if (motion) return MouseAction::Drag;
     return pressed ? MouseAction::Press : MouseAction::Release;

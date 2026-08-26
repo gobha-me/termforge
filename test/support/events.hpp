@@ -85,7 +85,7 @@ inline auto motion(int x, int y) -> Event {
   return Event{e};
 }
 
-// Wheel reports carry pressed == false and button == -1 (input.cpp:221-225).
+// Wheel reports carry pressed == false and button == -1.
 inline auto wheel(int x, int y, bool up = false) -> Event {
   MouseEvent e;
   e.x = x;
@@ -93,6 +93,16 @@ inline auto wheel(int x, int y, bool up = false) -> Event {
   e.button = -1; // wheel, input.cpp:222
   e.scroll_up = up;
   e.scroll_down = !up;
+  return Event{e};
+}
+
+inline auto horizontal_wheel(int x, int y, bool left = false) -> Event {
+  MouseEvent e;
+  e.x = x;
+  e.y = y;
+  e.button = -1;
+  e.scroll_left = left;
+  e.scroll_right = !left;
   return Event{e};
 }
 

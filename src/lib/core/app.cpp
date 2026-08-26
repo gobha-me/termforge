@@ -225,10 +225,14 @@ auto validate_source_batch(std::span<const Event> events,
     }
     if (const auto* mouse = std::get_if<MouseEvent>(&event)) {
       const bool wheel = mouse->button == -1;
-      const bool exactly_one_scroll = mouse->scroll_up != mouse->scroll_down;
+      const int scroll_directions = static_cast<int>(mouse->scroll_up) +
+                                    static_cast<int>(mouse->scroll_down) +
+                                    static_cast<int>(mouse->scroll_left) +
+                                    static_cast<int>(mouse->scroll_right);
       if (mouse->button < -1 || mouse->button > 3 ||
-          (wheel && (!exactly_one_scroll || mouse->pressed || mouse->motion)) ||
-          (!wheel && (mouse->scroll_up || mouse->scroll_down)) ||
+          (wheel &&
+           (scroll_directions != 1 || mouse->pressed || mouse->motion)) ||
+          (!wheel && scroll_directions != 0) ||
           (mouse->motion && mouse->pressed) ||
           (mouse->button == 3 && mouse->pressed)) {
         reason = "malformed mouse event";

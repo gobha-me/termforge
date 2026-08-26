@@ -150,7 +150,7 @@ auto RadioGroup::on_event(const Event& ev) -> bool {
     // a fixed set, not a viewport, so it has no window to scroll. Returning
     // false lets a parent scroll its own panel; a stray scroll must never
     // silently mutate a form value the user is not looking at.
-    if (m->scroll_up || m->scroll_down) return false;
+    if (m->action() == MouseAction::Wheel) return false;
 
     if (m->pressed && m->button == 0 && rect().contains(m->x, m->y)) {
       const int clicked = detail::row_item_at(rect(), /*header_rows=*/0,

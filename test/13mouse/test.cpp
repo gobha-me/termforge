@@ -183,6 +183,25 @@ TEST_CASE("MenuBar: wheel over an open dropdown does not drag the selection",
   REQUIRE(which == 0); // selection stayed on "New"
 }
 
+TEST_CASE(
+    "MenuBar: horizontal wheel is consumed without hover or scroll (#319)",
+    "[mouse][menu][failure]") {
+  MenuBar mb;
+  mb.set_geometry({0, 0, 40, 1});
+  int which = -1;
+  mb.add_menu(
+      {"File", {{"New", [&] { which = 0; }}, {"Open", [&] { which = 1; }}}});
+  Screen s{40, 5};
+  mb.on_event(press(1, 0));
+  mb.draw(s);
+
+  // The pointer sits on Open, but a horizontal wheel is neither vertical
+  // scrolling nor hover. The modal dropdown owns and consumes it unchanged.
+  REQUIRE(mb.on_event(horizontal_wheel(2, 2, /*left=*/true)));
+  mb.on_event(key(Key::Enter));
+  REQUIRE(which == 0);
+}
+
 TEST_CASE("MenuBar: a scrolling wheel carries the selection, it does not pick "
           "the pointer's row (#85, #38)",
           "[mouse][menu][failure]") {
@@ -669,4 +688,21 @@ TEST_CASE(
   REQUIRE(bw.action() == termforge::MouseAction::Wheel);
   REQUIRE(bw.scroll_down == dm->scroll_down);
   REQUIRE(bw.scroll_up == dm->scroll_up);
+
+  // Wheel-left uses the same builder/parser parity without setting either
+  // legacy vertical projection (#319).
+  decoded = in.decode("\x1b[<66;3;3M");
+  REQUIRE(decoded.size() == 1);
+  dm = std::get_if<MouseEvent>(&decoded.front());
+  REQUIRE(dm != nullptr);
+  const auto built_horizontal = horizontal_wheel(2, 2, /*left=*/true);
+  const auto& bh = std::get<MouseEvent>(built_horizontal);
+  REQUIRE(bh.x == dm->x);
+  REQUIRE(bh.y == dm->y);
+  REQUIRE(bh.button == dm->button);
+  REQUIRE(bh.action() == termforge::MouseAction::Wheel);
+  REQUIRE(bh.scroll_left == dm->scroll_left);
+  REQUIRE(bh.scroll_right == dm->scroll_right);
+  REQUIRE_FALSE(bh.scroll_up);
+  REQUIRE_FALSE(bh.scroll_down);
 }

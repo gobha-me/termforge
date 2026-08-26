@@ -388,7 +388,15 @@ file is the tactical version.
   CSI/SS3 parser validates parameter, intermediate and final byte classes; an
   ESC inside an incomplete record retires only that prefix and is reprocessed
   as the next introducer, so one truncated control cannot consume or explode a
-  valid replacement key (#318). **A press-only `EventSource` is discrete**
+  valid replacement key (#318). **SGR wheel direction is lossless** (#319):
+  codes 64/65 remain vertical up/down and 66/67 are horizontal left/right.
+  `MouseEvent` keeps the legacy vertical projections and appends
+  `scroll_left`/`scroll_right`; exactly one direction is valid when
+  `button == -1`. Vertical widgets ignore horizontal reports, while generic
+  modal/hover gates recognize every direction as `MouseAction::Wheel`. Trace
+  schema 7 stores the axis in the last mouse flag bit and reuses the existing
+  negative/positive direction bits, so schemas 1-6 stay byte-compatible.
+  **A press-only `EventSource` is discrete**
   (#311): repeated Press events are independent actions, not held-state
   violations waiting for a Release the route cannot provide. App tracks source
   keys only when repeat or release was declared, synthesizes Release only when
