@@ -785,9 +785,10 @@ emulators without adding a decoder to the library.
 
 ### What this does not deliver
 
-Residency. Slots are keyed on the destination *rect*, capped at 16, ids are
-recycled inside that bounded pool, and `gc_regions()` deletes anything not
-drawn this frame. A resident art set uploaded once at cold start is
+Residency. Slots are keyed on the complete destination *rect* without narrowing
+any accepted `int` field (#314), capped at 16, ids are recycled inside that
+bounded pool, and `gc_regions()` deletes anything not drawn this frame. A
+resident art set uploaded once at cold start is
 `pin_image`'s job
 (#109, below). This lowers the per-plate byte cost and nothing else.
 
@@ -1231,7 +1232,9 @@ retires it.
 - A frame that draws no region retires it immediately. Drawing it again later
   retransmits it; pin content that the application intends to keep resident.
 - A moving ordinary region still uploads under a recycled id because region
-  identity is the destination rectangle. Pinning removes that payload churn.
+  identity is the complete destination rectangle. Pinning removes that payload
+  churn; the driver never collapses distinct rectangles merely because their
+  coordinates or extents have the same low 16 bits (#314).
 - Under `UnicodePlaceholders`, the driver owns both terminal-side image data
   and a text-grid placement. Collection now retires both halves (#201): stale
   rectangle clears are prepended before the frame's already-buffered cell diff,

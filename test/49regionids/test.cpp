@@ -1,5 +1,5 @@
 // TermForge — which image and placement ids the live maps hand out (#190,
-// #200).
+// #200), and which complete Rect values identify them (#314).
 //
 // A subject the other graphics suites keep touching and none of them owns.
 // `test/47frameshape` is about what the CALLER'S CADENCE costs; `test/46pinned`
@@ -45,7 +45,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -54,13 +57,19 @@
 #include "support/terminal_grid.hpp"
 #include "termforge/drivers/kitty_driver.hpp"
 
+using termforge::EncodedImage;
+using termforge::Extent;
 using termforge::Image;
+using termforge::ImageFormat;
 using termforge::KittyDriver;
 using termforge::Pixel;
 using termforge::Rect;
+using termforge::Severity;
+using termforge::TerminalReply;
 using tfsupport::data_deletes_of;
 using tfsupport::ids_named;
 using tfsupport::placement_ids_of;
+using tfsupport::placements_of;
 using tfsupport::total_transmits;
 using tfsupport::transmits_of;
 
@@ -116,6 +125,127 @@ auto placement_delete_ids_of(std::string_view out, std::uint32_t image_id)
 }
 
 } // namespace
+
+// ── complete Rect identity (#314) ──────────────────────────────────────────
+
+TEST_CASE("region identity: no Rect field is truncated to 16 bits (#314)",
+          "[regionids][kitty][rect]") {
+  struct Pair {
+    Rect first;
+    Rect second;
+  };
+  constexpr std::array pairs{
+      Pair{Rect{0, 8, 1, 1}, Rect{65536, 8, 1, 1}},
+      Pair{Rect{8, 0, 1, 1}, Rect{8, 65536, 1, 1}},
+      Pair{Rect{8, 8, 1, 1}, Rect{8, 8, 65537, 1}},
+      Pair{Rect{8, 8, 1, 1}, Rect{8, 8, 1, 65537}},
+      Pair{Rect{-1, 8, 1, 1}, Rect{65535, 8, 1, 1}},
+      Pair{Rect{8, -1, 1, 1}, Rect{8, 65535, 1, 1}},
+      Pair{Rect{8, 8, 65535, 1}, Rect{8, 8, 65536, 1}},
+      Pair{Rect{8, 8, 1, 65535}, Rect{8, 8, 1, 65536}},
+  };
+
+  for (const auto& [first, second] : pairs) {
+    CAPTURE(first.x, first.y, first.w, first.h, second.x, second.y, second.w,
+            second.h);
+    KittyDriver driver;
+    std::string out;
+    driver.set_output(&out);
+    const Image image = art(220);
+
+    REQUIRE(driver.draw_image(first, image));
+    REQUIRE(driver.draw_image(second, image));
+    driver.flush();
+
+    REQUIRE(total_transmits(out) == 2);
+    CHECK(ids_named(out) == std::set<std::uint32_t>{1, 2});
+    CHECK(placements_of(out, 1) == 1);
+    CHECK(placements_of(out, 2) == 1);
+  }
+}
+
+TEST_CASE("region identity: opaque replies retain the complete Rect (#314)",
+          "[regionids][kitty][rect][encoded][reply]") {
+  KittyDriver driver;
+  std::string out;
+  driver.set_output(&out);
+  const std::array bytes{std::byte{0x89}, std::byte{'P'}, std::byte{'N'},
+                         std::byte{'G'}};
+  const EncodedImage image{ImageFormat::Png, bytes, Extent{2, 2}};
+  constexpr Rect first{0, 2, 2, 2};
+  constexpr Rect second{65536, 2, 2, 2};
+
+  REQUIRE(driver.draw_image(first, image));
+  REQUIRE(driver.draw_image(second, image));
+  driver.flush();
+  REQUIRE(ids_named(out) == std::set<std::uint32_t>{1, 2});
+  REQUIRE(total_transmits(out) == 2);
+
+  driver.consume_reply(TerminalReply{1, std::nullopt, "OK"});
+  driver.consume_reply(TerminalReply{2, std::nullopt, "EINVAL"});
+  const auto events = driver.take_driver_events();
+  REQUIRE(events.size() == 1);
+  CHECK(events.front().severity == Severity::Warning);
+
+  out.clear();
+  REQUIRE(driver.draw_image(first, image));
+  REQUIRE(driver.draw_image(second, image));
+  driver.flush();
+  CHECK(transmits_of(out, 1) == 0);
+  CHECK(transmits_of(out, 2) == 1);
+}
+
+TEST_CASE("placement identity: resident Rect keys keep high coordinate bits",
+          "[regionids][pinned][kitty][rect]") {
+  KittyDriver driver;
+  std::string out;
+  driver.set_output(&out);
+  const auto image = driver.pin_image(art(221));
+  REQUIRE(image);
+  driver.flush();
+  out.clear();
+
+  REQUIRE(driver.draw_pinned(Rect{0, 3, 2, 2}, *image));
+  REQUIRE(driver.draw_pinned(Rect{65536, 3, 2, 2}, *image));
+  driver.flush();
+
+  CHECK(placements_of(out, image->id) == 2);
+  CHECK(placement_ids_of(out, image->id) == std::set<std::uint32_t>{1, 2});
+}
+
+TEST_CASE("placeholder identity: aliased low bits do not invent a collision",
+          "[regionids][pinned][kitty][rect][placeholder]") {
+  KittyDriver driver;
+  std::string out;
+  driver.set_output(&out);
+  driver.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  const auto pinned = driver.pin_image(art(222));
+  REQUIRE(pinned);
+  driver.flush();
+  out.clear();
+
+  REQUIRE(driver.draw_image(Rect{0, 4, 2, 2}, art(223)));
+  REQUIRE(driver.draw_pinned(Rect{65536, 4, 2, 2}, *pinned));
+  driver.flush();
+  CHECK(total_transmits(out) == 1);
+  CHECK(placements_of(out, pinned->id) == 1);
+}
+
+TEST_CASE("placeholder identity: one image still refuses two distinct Rects",
+          "[regionids][pinned][kitty][rect][placeholder][failure]") {
+  KittyDriver driver;
+  driver.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+  const auto pinned = driver.pin_image(art(224));
+  REQUIRE(pinned);
+  driver.flush();
+
+  REQUIRE(driver.draw_pinned(Rect{0, 5, 2, 2}, *pinned));
+  const auto second = driver.draw_pinned(Rect{65536, 5, 2, 2}, *pinned);
+  REQUIRE_FALSE(second);
+  CHECK(second.error().severity == Severity::Warning);
+  CHECK(second.error().message.find("only one live placement") !=
+        std::string::npos);
+}
 
 // ── the acceptance test named in #190 ───────────────────────────────────────
 

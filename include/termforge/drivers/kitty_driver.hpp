@@ -266,6 +266,25 @@ class KittyDriver final : public TerminalDriver {
     return (static_cast<int>(c.r) << 16) | (static_cast<int>(c.g) << 8) | c.b;
   }
 
+  // Hash the complete public Rect domain. Hash collisions remain ordinary
+  // unordered-map collisions; Rect::operator== is the lossless identity, so
+  // no coordinate or extent bits are discarded before equality is checked.
+  struct RectHash {
+    [[nodiscard]] auto operator()(const Rect& rect) const noexcept
+        -> std::size_t {
+      std::size_t seed = 0;
+      const auto combine = [&seed](int value) {
+        const auto hash = std::hash<int>{}(value);
+        seed ^= hash + std::size_t{0x9e3779b9U} + (seed << 6) + (seed >> 2);
+      };
+      combine(rect.x);
+      combine(rect.y);
+      combine(rect.w);
+      combine(rect.h);
+      return seed;
+    }
+  };
+
   // One tracked screen region drawn via draw_image. The image id is stable
   // for the region's lifetime: new content retransmits under the same id.
   struct RegionSlot {
@@ -278,16 +297,18 @@ class KittyDriver final : public TerminalDriver {
     // Complete placement state, not content (#137, #114, #115). A fit, layer,
     // offset or crop change invalidates `placed` exactly as a content change
     // does; without it the same image redrawn to the same rect under new
-    // options matches both region_key and content_hash and emits nothing.
+    // options matches both destination Rect and content_hash and emits nothing.
     ImagePlacementOptions placement{};
   };
+
+  using RegionMap = std::unordered_map<Rect, RegionSlot, RectHash>;
 
   // Regions are capped at sixteen entries, so copying the complete map is a
   // small and exact transaction journal. The live map is projected while a
   // frame is assembled; refusal restores entries erased/reused by GC or LRU
   // along with content and placement-only changes.
   struct RegionFrameState {
-    std::unordered_map<std::uint64_t, RegionSlot> regions;
+    RegionMap regions;
     std::uint64_t frame_start_clock{0};
     PlacementMode mode{PlacementMode::Classic};
   };
@@ -314,9 +335,9 @@ class KittyDriver final : public TerminalDriver {
     // path's "is it already placed somewhere else *this frame*" in O(1)
     // instead of a scan over every placement on every draw. Stale values are
     // harmless because the clock is what gates them.
-    std::uint64_t last_place_key{0};
+    Rect last_place_rect{};
     std::uint64_t last_place_clock{0};
-    std::uint64_t committed_last_place_key{0};
+    Rect committed_last_place_rect{};
     std::uint64_t committed_last_place_clock{0};
   };
 
@@ -352,9 +373,9 @@ class KittyDriver final : public TerminalDriver {
     std::vector<std::chrono::milliseconds> gaps;
     Playback committed;
     Playback projected;
-    std::uint64_t last_place_key{0};
+    Rect last_place_rect{};
     std::uint64_t last_place_clock{0};
-    std::uint64_t committed_last_place_key{0};
+    Rect committed_last_place_rect{};
     std::uint64_t committed_last_place_clock{0};
   };
 
@@ -389,7 +410,7 @@ class KittyDriver final : public TerminalDriver {
   // layers at the same viewport replace each other before z-order could help
   // (#114).
   struct ResidentPlacementKey {
-    std::uint64_t rect{0};
+    Rect rect{};
     std::uint32_t image_id{0};
     auto operator==(const ResidentPlacementKey&) const -> bool = default;
   };
@@ -397,7 +418,7 @@ class KittyDriver final : public TerminalDriver {
   struct ResidentPlacementKeyHash {
     [[nodiscard]] auto operator()(
         const ResidentPlacementKey& key) const noexcept -> std::size_t {
-      const auto a = std::hash<std::uint64_t>{}(key.rect);
+      const auto a = RectHash{}(key.rect);
       const auto b = std::hash<std::uint32_t>{}(key.image_id);
       return a ^ (b + 0x9e3779b9U + (a << 6) + (a >> 2));
     }
@@ -428,7 +449,7 @@ class KittyDriver final : public TerminalDriver {
 
   struct PendingReply {
     PendingKind kind{PendingKind::RegionTransmit};
-    std::uint64_t region_key{0};
+    Rect region_rect{};
     std::uint32_t serial{0};
     std::uint64_t candidate_hash{0};
     std::uint64_t issued_flush{0};
@@ -571,14 +592,12 @@ class KittyDriver final : public TerminalDriver {
       -> std::expected<std::uint32_t, ErrorEvent>;
 
   auto draw_resident(Rect cells, std::uint32_t image_id, Extent pixels,
-                     std::uint64_t& last_place_key,
-                     std::uint64_t& last_place_clock,
+                     Rect& last_place_rect, std::uint64_t& last_place_clock,
                      ImagePlacementOptions options, std::string_view operation,
                      ClampReportState& clamp_report)
       -> std::expected<void, ErrorEvent>;
   auto retain_resident(Rect cells, std::uint32_t image_id, Extent pixels,
-                       std::uint64_t& last_place_key,
-                       std::uint64_t& last_place_clock,
+                       Rect& last_place_rect, std::uint64_t& last_place_clock,
                        ImagePlacementOptions options,
                        std::string_view operation,
                        ClampReportState& clamp_report)
@@ -792,9 +811,9 @@ class KittyDriver final : public TerminalDriver {
   // placeholder conflict guards and draw_payload's reciprocal are written
   // against, so anything that changes WHEN this advances moves all four.
   std::uint64_t m_frame_start_clock{0};
-  // Region key (packed x,y,w,h) -> slot. Bounded: LRU-evicted past
+  // Complete destination Rect -> slot. Bounded: LRU-evicted past
   // kMaxRegionSlots, freeing the terminal-side image data too.
-  std::unordered_map<std::uint64_t, RegionSlot> m_regions;
+  RegionMap m_regions;
   std::optional<RegionFrameState> m_region_frame;
   std::unordered_map<std::uint32_t, PendingReply> m_pending_replies;
   std::unordered_set<std::uint32_t> m_quarantined_ids;

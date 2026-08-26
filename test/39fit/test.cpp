@@ -402,7 +402,7 @@ TEST_CASE("Exact and Stretch coincide when the image is a whole cell rect") {
 // ── 6. the slot cache must not swallow a fit change ─────────────────────────
 
 TEST_CASE("changing only the fit re-places, without retransmitting") {
-  // The bug the issue body does not mention. region_key is the destination
+  // The bug the issue body does not mention. The Rect key is the destination
   // geometry and payload_hash is the content, so the SAME image to the SAME
   // rect under a new fit matches both -- and without slot.fit the driver would
   // emit nothing at all on the second frame. The opt-out would silently fail
