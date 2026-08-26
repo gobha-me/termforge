@@ -720,8 +720,8 @@ class App {
     return m_max_tick_dt;
   }
 
-  // Called by the SIGWINCH handler (async-signal context): just sets a flag
-  // the loop consumes next frame. Public so the signal trampoline can reach it.
+  // Arm the same per-session resize path SIGWINCH feeds through its leased
+  // process generation. Direct callers never touch the process disposition.
   auto request_resize() -> void { m_resize_pending = true; }
   // SIGCONT trampoline counterpart to request_resize().  Public only because
   // the process signal handler cannot be a member; applications use
@@ -745,6 +745,7 @@ class App {
       dispatch_event(ev);
   }
   auto test_take_resize() -> bool {
+    observe_winch();
     const bool was = m_resize_pending.exchange(false);
     return was;
   }
@@ -811,8 +812,8 @@ class App {
   // the contract being pinned. Give your probe a hard frame cap: a regressed
   // guard must fail the suite, not hang it. Returns run_loop()'s exit code.
   auto test_run_guarded(int cols, int rows, std::string* sink) -> int;
-  // True while setup()'s SIGWINCH handler is installed. teardown() clears it,
-  // so a probe reads it to witness that teardown() ran — real production
+  // True while this App owns one SIGWINCH disposition lease. teardown() clears
+  // it, so a probe reads it to witness that teardown() ran — real production
   // state rather than a test-only counter, and the one piece of that state
   // whose undo writes nothing to a terminal.
   [[nodiscard]] auto test_winch_hooked() const -> bool {
@@ -1178,8 +1179,11 @@ class App {
       -> bool;
   auto apply_image_invalidation() -> void;
   auto setup() -> std::expected<void, ErrorEvent>;
+  // Translate the process SIGWINCH generation into this App's ordinary
+  // per-session resize flag. Called only from the App's loop thread.
+  auto observe_winch() noexcept -> void;
   // The exact inverse of setup(): leave the alt-screen, restore cooked mode,
-  // return SIGWINCH to its default, and deregister from the resize handler.
+  // release this App's SIGWINCH lease, and deregister from signal handlers.
   // Idempotent, and called from four places — run()'s setup-failure return,
   // run()'s catch, the end of run_loop(), run_loop()'s catch, and ~App — so on
   // the exception path it runs twice by design. Each half is gated on the
@@ -1439,15 +1443,19 @@ class App {
   // after the call, cleared right before the matching on_stop() -- so the
   // hook never fires when setup()/on_start() failed, and never fires twice.
   bool m_app_started{false};
-  // Whether setup() replaced the SIGWINCH disposition. teardown() restores the
-  // default only if it did — an unconditional reset would clobber a handler an
-  // embedding program owns on the run where setup() failed before installing.
+  // Whether this App owns one process-wide SIGWINCH lease. The first lease
+  // installs the handler and the last restores the complete prior sigaction,
+  // but only while TermForge is still the current owner (#310).
   bool m_winch_hooked{false};
+  // Last process resize generation observed by this App. Unlike a borrowed
+  // App* in the signal handler, this remains safe across overlapping sessions
+  // and arbitrary teardown order.
+  unsigned int m_winch_generation{0};
   // SIGCONT is leased separately from SIGWINCH because it must preserve a
   // prior/newer process handler rather than resetting it unconditionally.
   bool m_cont_hooked{false};
-  // Set from the SIGWINCH handler — must be atomic (lock-free atomics are
-  // async-signal-safe; a plain bool write from a handler is a data race).
+  // Set by direct resize requests or by observe_winch() on the loop thread.
+  // Atomic because embedding code may arm a resize from another thread.
   std::atomic<bool> m_resize_pending{false};
   // A signal handler can only set the atomic half.  frame_step translates it
   // into the ordinary staged event at the next clean driver boundary.

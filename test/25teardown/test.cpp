@@ -1,11 +1,17 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <csignal>
 #include <stdexcept>
 #include <string>
+#include <variant>
 #include <vector>
 
+#include <signal.h>
+#include <unistd.h>
+
 #include "detail/tty_restore.hpp"
+#include "detail/winch.hpp"
 #include "termforge/core/app.hpp"
 #include "termforge/core/screen.hpp"
 #include "termforge/core/terminal.hpp"
@@ -61,6 +67,87 @@ class GuardProbe : public App {
   std::chrono::steady_clock::time_point m_now{};
   std::string m_sink;
 };
+
+class QuietPipe {
+ public:
+  QuietPipe() { m_ok = ::pipe(m_fd) == 0; }
+  ~QuietPipe() {
+    for (const int fd : m_fd)
+      if (fd >= 0) ::close(fd);
+  }
+  QuietPipe(const QuietPipe&) = delete;
+  auto operator=(const QuietPipe&) -> QuietPipe& = delete;
+
+  [[nodiscard]] auto ok() const noexcept -> bool { return m_ok; }
+  [[nodiscard]] auto read_fd() const noexcept -> int { return m_fd[0]; }
+
+ private:
+  int m_fd[2]{-1, -1};
+  bool m_ok{false};
+};
+
+class SignalActionGuard {
+ public:
+  explicit SignalActionGuard(int signal) : m_signal(signal) {
+    m_ok = ::sigaction(signal, nullptr, &m_prior) == 0;
+  }
+  ~SignalActionGuard() {
+    if (m_ok) (void)::sigaction(m_signal, &m_prior, nullptr);
+  }
+  SignalActionGuard(const SignalActionGuard&) = delete;
+  auto operator=(const SignalActionGuard&) -> SignalActionGuard& = delete;
+
+  [[nodiscard]] auto ok() const noexcept -> bool { return m_ok; }
+
+ private:
+  int m_signal;
+  struct sigaction m_prior{};
+  bool m_ok{false};
+};
+
+volatile sig_atomic_t g_prior_winch_calls{0};
+void prior_winch_handler(int) {
+  g_prior_winch_calls = 1;
+}
+
+volatile sig_atomic_t g_newer_winch_calls{0};
+void newer_winch_handler(int) {
+  g_newer_winch_calls = 1;
+}
+
+class WinchProbe final : public App {
+ public:
+  auto configure(int fd) -> bool {
+    set_frame_ms(0);
+    return terminal().set_io(TerminalIo{fd, -1}).has_value() &&
+           terminal().set_capabilities(Capabilities{}).has_value() &&
+           set_size(Size{20, 8}).has_value();
+  }
+
+  auto on_event(const Event& event) -> void override {
+    const auto* error = std::get_if<ErrorEvent>(&event);
+    if (error == nullptr ||
+        error->message.find("SIGWINCH") == std::string::npos)
+      return;
+    ++winch_errors;
+    last_winch_severity = error->severity;
+  }
+
+  auto on_render(Screen&) -> void override {}
+
+  int winch_errors{0};
+  Severity last_winch_severity{Severity::Info};
+};
+
+auto install_prior_winch_action() -> void {
+  struct sigaction prior{};
+  prior.sa_handler = prior_winch_handler;
+  ::sigemptyset(&prior.sa_mask);
+  REQUIRE(::sigaddset(&prior.sa_mask, SIGUSR1) == 0);
+  prior.sa_flags = SA_RESTART;
+  REQUIRE(::sigaction(SIGWINCH, &prior, nullptr) == 0);
+  g_prior_winch_calls = 0;
+}
 
 } // namespace
 
@@ -268,4 +355,134 @@ TEST_CASE("lifecycle: apps that override nothing are unaffected",
   REQUIRE(probe.go() == 0);
   REQUIRE(probe.renders == 3);
   REQUIRE_FALSE(probe.test_winch_hooked());
+}
+
+TEST_CASE("SIGWINCH restores the complete prior process action (#310)",
+          "[teardown][signal][winch]") {
+  SignalActionGuard restore{SIGWINCH};
+  REQUIRE(restore.ok());
+  REQUIRE(detail::winch_leases_for_test() == 0);
+  install_prior_winch_action();
+
+  QuietPipe pipe;
+  REQUIRE(pipe.ok());
+  WinchProbe app;
+  REQUIRE(app.configure(pipe.read_fd()));
+  REQUIRE(app.test_setup().has_value());
+  REQUIRE(app.test_winch_hooked());
+  REQUIRE(detail::winch_leases_for_test() == 1);
+  app.test_teardown();
+
+  REQUIRE_FALSE(app.test_winch_hooked());
+  REQUIRE(detail::winch_leases_for_test() == 0);
+  struct sigaction current{};
+  REQUIRE(::sigaction(SIGWINCH, nullptr, &current) == 0);
+  REQUIRE((current.sa_flags & SA_SIGINFO) == 0);
+  CHECK(current.sa_handler == prior_winch_handler);
+  CHECK((current.sa_flags & SA_RESTART) != 0);
+  CHECK(::sigismember(&current.sa_mask, SIGUSR1) == 1);
+  REQUIRE(::raise(SIGWINCH) == 0);
+  CHECK(g_prior_winch_calls == 1);
+}
+
+TEST_CASE("SIGWINCH teardown preserves a newer process owner (#310)",
+          "[teardown][signal][winch][ownership]") {
+  SignalActionGuard restore{SIGWINCH};
+  REQUIRE(restore.ok());
+  install_prior_winch_action();
+
+  QuietPipe pipe;
+  REQUIRE(pipe.ok());
+  WinchProbe app;
+  REQUIRE(app.configure(pipe.read_fd()));
+  REQUIRE(app.test_setup().has_value());
+
+  struct sigaction newer{};
+  newer.sa_handler = newer_winch_handler;
+  ::sigemptyset(&newer.sa_mask);
+  newer.sa_flags = SA_RESTART;
+  g_newer_winch_calls = 0;
+  REQUIRE(::sigaction(SIGWINCH, &newer, nullptr) == 0);
+  app.test_teardown();
+
+  REQUIRE(detail::winch_leases_for_test() == 0);
+  struct sigaction current{};
+  REQUIRE(::sigaction(SIGWINCH, nullptr, &current) == 0);
+  CHECK(current.sa_handler == newer_winch_handler);
+  CHECK((current.sa_flags & SA_RESTART) != 0);
+  REQUIRE(::raise(SIGWINCH) == 0);
+  CHECK(g_newer_winch_calls == 1);
+}
+
+TEST_CASE("failed SIGWINCH install queues one warning and owns no lease (#310)",
+          "[teardown][signal][winch][failure]") {
+  SignalActionGuard restore{SIGWINCH};
+  REQUIRE(restore.ok());
+  install_prior_winch_action();
+  detail::fail_next_winch_install_for_test();
+
+  QuietPipe pipe;
+  REQUIRE(pipe.ok());
+  WinchProbe app;
+  REQUIRE(app.configure(pipe.read_fd()));
+  REQUIRE(app.test_setup().has_value());
+  CHECK_FALSE(app.test_winch_hooked());
+  CHECK(detail::winch_leases_for_test() == 0);
+  app.test_pump({});
+  CHECK(app.winch_errors == 1);
+  CHECK(app.last_winch_severity == Severity::Warning);
+  app.test_teardown();
+
+  struct sigaction current{};
+  REQUIRE(::sigaction(SIGWINCH, nullptr, &current) == 0);
+  CHECK(current.sa_handler == prior_winch_handler);
+}
+
+TEST_CASE("overlapping Apps share SIGWINCH until the final lease (#310)",
+          "[teardown][signal][winch][lease]") {
+  SignalActionGuard restore{SIGWINCH};
+  REQUIRE(restore.ok());
+  install_prior_winch_action();
+
+  QuietPipe first_pipe;
+  QuietPipe second_pipe;
+  REQUIRE(first_pipe.ok());
+  REQUIRE(second_pipe.ok());
+  WinchProbe first;
+  WinchProbe second;
+  REQUIRE(first.configure(first_pipe.read_fd()));
+  REQUIRE(second.configure(second_pipe.read_fd()));
+  REQUIRE(first.test_setup().has_value());
+  REQUIRE(second.test_setup().has_value());
+  REQUIRE(detail::winch_leases_for_test() == 2);
+
+  REQUIRE(::raise(SIGWINCH) == 0);
+  CHECK(first.test_take_resize());
+  CHECK(second.test_take_resize());
+
+  // Release the older App first: teardown order is deliberately not LIFO.
+  first.test_teardown();
+  REQUIRE(detail::winch_leases_for_test() == 1);
+  struct sigaction current{};
+  REQUIRE(::sigaction(SIGWINCH, nullptr, &current) == 0);
+  CHECK(detail::owns_winch_action(current));
+  REQUIRE(::raise(SIGWINCH) == 0);
+  CHECK(second.test_take_resize());
+
+  second.test_teardown();
+  REQUIRE(detail::winch_leases_for_test() == 0);
+  REQUIRE(::sigaction(SIGWINCH, nullptr, &current) == 0);
+  CHECK(current.sa_handler == prior_winch_handler);
+
+  // A later session acquires and releases a fresh first/last lease normally.
+  QuietPipe repeated_pipe;
+  REQUIRE(repeated_pipe.ok());
+  WinchProbe repeated;
+  REQUIRE(repeated.configure(repeated_pipe.read_fd()));
+  REQUIRE(repeated.test_setup().has_value());
+  CHECK(detail::winch_leases_for_test() == 1);
+  repeated.test_teardown();
+  CHECK(detail::winch_leases_for_test() == 0);
+  REQUIRE(::sigaction(SIGWINCH, nullptr, &current) == 0);
+  CHECK(current.sa_handler == prior_winch_handler);
 }

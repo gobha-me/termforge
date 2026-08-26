@@ -4,9 +4,25 @@ A session-local snapshot of where the project is and what's next. Keep it
 current — it's the handoff memory across conversations (supplements AGENTS.md,
 which holds standing conventions, not state).
 
-## Where we are (2026-08-25, latest)
+## Where we are (2026-08-26, latest)
 
-**Current stable release: v0.57.16 — bounded Screen spill reclamation.**
+**Current stable release: v0.57.17 — process-safe SIGWINCH ownership.** #310
+replaces App's unconditional `SIG_DFL` teardown with a process-wide disposition
+lease. The first live App captures and installs the complete `sigaction`,
+overlapping Apps share it, and only the final release restores the prior mask,
+flags and handler while TermForge is still the owner. A newer embedding handler
+is never overwritten, and failed installation queues one `Warning` without
+claiming a lease.
+
+The signal handler now advances a lock-free process resize generation instead
+of retaining a borrowed `App*`. Every leased App observes that generation on
+its loop thread, preserving the ordinary resize boundary while making repeated,
+overlapping and non-LIFO session teardown safe. Public API and terminal wire are
+unchanged.
+
+## Previous stable release: v0.57.16
+
+**v0.57.16 — bounded Screen spill reclamation.**
 #305 reclaims long-grapheme spill strings after their last live `Cell` token is
 superseded, so steady-size incremental rendering no longer retains every prior
 value until `clear()` or `resize()`. Renderer presentation is the normal safe

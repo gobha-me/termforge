@@ -33,24 +33,19 @@
 #include "detail/placement.hpp"
 #include "detail/requirements.hpp"
 #include "detail/trace.hpp"
+#include "detail/winch.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
 
 namespace termforge {
 
-// Track the active app for SIGWINCH -> resize push. Single-app assumption for
-// now (one TUI per process); a registry is overkill at this layer.
 namespace {
-// Plain pointer store is async-signal-safe; relaxed because we only need the
-// write to be indivisible, not ordered. (A non-atomic App* read+written from
-// a signal handler would be a data race.)
-std::atomic<App*> g_active{nullptr};
-void on_winch(int) {
-  if (auto* app = g_active.load(std::memory_order_relaxed); app != nullptr)
-    app->request_resize();
-}
-
+// SIGCONT retains the historical one-active-App route.  SIGWINCH is separate:
+// detail/winch.hpp broadcasts a process generation so overlapping App leases
+// never leave a borrowed App pointer in a signal handler (#310).
+std::atomic<App*> g_resume_active{nullptr};
 void on_cont(int) {
-  if (auto* app = g_active.load(std::memory_order_relaxed); app != nullptr)
+  if (auto* app = g_resume_active.load(std::memory_order_relaxed);
+      app != nullptr)
     app->request_resume_invalidation();
 }
 
@@ -1442,9 +1437,18 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
 
   m_term.enter_screen();
   m_in_screen = true;
-  g_active.store(this, std::memory_order_relaxed);
-  std::signal(SIGWINCH, on_winch);
-  m_winch_hooked = true;
+  // Snapshot before acquisition: a SIGWINCH that lands after the first
+  // handler is installed must remain visible to this App.  A signal just
+  // before installation belongs to the embedding process's prior action.
+  m_winch_generation = detail::winch_generation();
+  if (detail::install_winch_handler()) {
+    m_winch_hooked = true;
+  } else {
+    m_input.push_error(
+        ErrorEvent{Severity::Warning, "app",
+                   "setup: could not install SIGWINCH resize handler"});
+  }
+  g_resume_active.store(this, std::memory_order_relaxed);
   if (install_continue_handler()) {
     m_cont_hooked = true;
   } else {
@@ -1461,6 +1465,14 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
   return {};
 }
 
+auto App::observe_winch() noexcept -> void {
+  if (!m_winch_hooked) return;
+  const unsigned int generation = detail::winch_generation();
+  if (generation == m_winch_generation) return;
+  m_winch_generation = generation;
+  m_resize_pending.store(true, std::memory_order_relaxed);
+}
+
 auto App::teardown() -> void {
   stop_event_source();
   if (m_in_screen) {
@@ -1472,7 +1484,7 @@ auto App::teardown() -> void {
   // where setup() never got this far: an unconditional reset would clobber a
   // SIGWINCH disposition an embedding program owns and we never replaced.
   if (m_winch_hooked) {
-    std::signal(SIGWINCH, SIG_DFL);
+    detail::uninstall_winch_handler();
     m_winch_hooked = false;
   }
   if (m_cont_hooked) {
@@ -1484,8 +1496,8 @@ auto App::teardown() -> void {
   // outlive teardown on the one path (an exception escaping main) where ~App
   // is never going to run.
   App* expected = this;
-  g_active.compare_exchange_strong(expected, nullptr,
-                                   std::memory_order_relaxed);
+  g_resume_active.compare_exchange_strong(expected, nullptr,
+                                          std::memory_order_relaxed);
   m_resume_invalidation_pending.store(false, std::memory_order_relaxed);
   m_image_invalidation_pending.reset();
   close_post_pipe();
@@ -1595,6 +1607,7 @@ auto App::run_loop() -> int {
 }
 
 auto App::frame_step() -> void {
+  observe_winch();
   m_frame_active = true;
   m_input_drain_bytes_left = kInputDrainMaxBytes;
   m_input_drain_reads_left = kInputDrainMaxReads;
@@ -1857,6 +1870,7 @@ auto App::wait_for_sources(int timeout_ms) -> bool {
     }
     if (result == 0) return false;
     if (errno != EINTR) return false;
+    observe_winch();
     // A resize signal is itself a demand-mode source. Continuous frames keep
     // their historical authoritative budget; demand frames wake promptly or
     // the newly armed resize could be stranded in an indefinite wait.
@@ -1905,6 +1919,7 @@ auto App::wait_frame(std::chrono::steady_clock::time_point frame_start,
   // request_resize()/set_size() may be called after this frame's resize point,
   // without a signal to interrupt poll. Demand mode must hand control straight
   // to the next frame so the armed resize is consumed rather than sleeping.
+  observe_winch();
   if (m_render_mode == RenderMode::Demand && m_resize_pending.load()) return;
 
   // The pump already gave this frame its fair share of terminal work. Do not

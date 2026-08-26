@@ -399,7 +399,15 @@ file is the tactical version.
   that fd has been recycled. The handlers are borrowed process state too: the
   first lease captures each complete prior `sigaction`, the last restores it
   only while TermForge still owns that signal, and a newer handler is never
-  overwritten during teardown (#193). On the discovered path both predicates are
+  overwritten during teardown (#193). **SIGWINCH has the same ownership
+  contract independently** (#310): the first App lease captures and installs,
+  overlapping Apps share the disposition, and only the final lease may restore
+  the complete prior action while TermForge still owns it. The handler
+  publishes a lock-free process resize generation rather than borrowing an
+  `App*`; each leased App observes it on its loop thread, so teardown order
+  cannot leave a dangling signal target. Installation failure owns no lease and
+  surfaces one `Warning` through the App event channel. On the discovered path
+  both predicates are
   tautologies (`out_fd` was chosen *by* `isatty`), which is exactly why nothing
   an existing program does changes by one byte.
   **The size is pushed too** (#180). `App::set_size` takes the dimensions the
