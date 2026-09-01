@@ -599,18 +599,30 @@ TEST_CASE("TextInput: on_change fires on edit", "[primitives][input]") {
   REQUIRE(last == "x");
 }
 
-TEST_CASE("TextInput: cursor renders as inverted cell", "[primitives][input]") {
+TEST_CASE("TextInput: cursor rendition follows insertion position and focus",
+          "[primitives][input][failure]") {
   Screen s{10, 1};
   TextInput ti;
   ti.set_geometry({0, 0, 10, 1});
   ti.set_focused(true);
+
+  ti.draw(s);
+  REQUIRE(termforge::any(s.at(0, 0).attrs & termforge::Attr::Reverse));
+
   ti.set_text("ab");
   ti.draw(s);
+  REQUIRE(termforge::any(s.at(2, 0).attrs & termforge::Attr::Reverse));
+  REQUIRE_FALSE(termforge::any(s.at(1, 0).attrs & termforge::Attr::Reverse));
 
-  // Cursor at end (position 2). Cell (2, 0) should have inverted colors.
-  const auto& cell = s.at(2, 0);
-  REQUIRE(cell.fg == Rgb(0x0A, 0x0A, 0x14)); // cursor_fg
-  REQUIRE(cell.bg == Rgb(0xE0, 0xE0, 0xF0)); // cursor_bg
+  REQUIRE(ti.on_event(Event{KeyEvent{Key::Left}}));
+  ti.draw(s);
+  REQUIRE(termforge::any(s.at(1, 0).attrs & termforge::Attr::Reverse));
+  REQUIRE_FALSE(termforge::any(s.at(2, 0).attrs & termforge::Attr::Reverse));
+
+  ti.set_focused(false);
+  ti.draw(s);
+  for (int x = 0; x < s.cols(); ++x)
+    REQUIRE_FALSE(termforge::any(s.at(x, 0).attrs & termforge::Attr::Reverse));
 }
 
 TEST_CASE("TextInput: set_text scrolls so the cursor stays visible (#12)",
@@ -624,8 +636,7 @@ TEST_CASE("TextInput: set_text scrolls so the cursor stays visible (#12)",
   // immediately after the programmatic replace, not after the next keypress.
   ti.set_text("0123456789abcdefghij");
   ti.draw(s);
-  REQUIRE(s.at(9, 0).fg == Rgb(0x0A, 0x0A, 0x14)); // cursor_fg
-  REQUIRE(s.at(9, 0).bg == Rgb(0xE0, 0xE0, 0xF0)); // cursor_bg
+  REQUIRE(termforge::any(s.at(9, 0).attrs & termforge::Attr::Reverse));
 }
 
 TEST_CASE(
@@ -642,8 +653,7 @@ TEST_CASE(
   ti.set_focused(true);
 
   ti.draw(s);
-  REQUIRE(s.at(9, 0).fg == Rgb(0x0A, 0x0A, 0x14)); // cursor visible at col 9
-  REQUIRE(s.at(9, 0).bg == Rgb(0xE0, 0xE0, 0xF0));
+  REQUIRE(termforge::any(s.at(9, 0).attrs & termforge::Attr::Reverse));
 }
 
 TEST_CASE("TextInput: an unfocused pre-filled field head-anchors (#40)",
@@ -677,8 +687,7 @@ TEST_CASE("TextInput: focusing a pre-filled field reveals the cursor",
 
   ti.set_focused(true);
   ti.draw(s);
-  REQUIRE(s.at(9, 0).fg == Rgb(0x0A, 0x0A, 0x14)); // cursor window active
-  REQUIRE(s.at(9, 0).bg == Rgb(0xE0, 0xE0, 0xF0));
+  REQUIRE(termforge::any(s.at(9, 0).attrs & termforge::Attr::Reverse));
 }
 
 // ── Frame ───────────────────────────────────────────────────────────────────
@@ -1362,10 +1371,10 @@ TEST_CASE("TextInput: arrows step over multi-byte code points",
 }
 
 namespace {
-// The inverted cursor cell is painted with the cursor background (0xE0,0xE0,
-// 0xF0); ordinary cells keep the field background (0x0A,0x0A,0x14).
+// The focused cursor cell carries semantic reverse video, which survives the
+// colorless fallback tier. Ordinary cells carry no reverse attribute.
 auto is_cursor_cell(const termforge::Cell& c) -> bool {
-  return c.bg.r == 0xE0 && c.bg.g == 0xE0 && c.bg.b == 0xF0;
+  return termforge::any(c.attrs & termforge::Attr::Reverse);
 }
 } // namespace
 

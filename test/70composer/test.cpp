@@ -13,6 +13,8 @@
 #include "detail/wrap.hpp"
 #include "support/events.hpp"
 #include "support/screen.hpp"
+#include "termforge/core/renderer.hpp"
+#include "termforge/drivers/fallback_driver.hpp"
 #include "termforge/widgets/composer.hpp"
 #include "termforge/widgets/focus_ring.hpp"
 
@@ -92,8 +94,63 @@ TEST_CASE("Composer: exact-width cursor paints on the following row",
   composer.draw(screen);
 
   CHECK(row_text(screen, 0) == "abcd");
-  CHECK(screen.at(0, 1).fg == termforge::theme::kFocusFg);
-  CHECK(screen.at(0, 1).bg == termforge::theme::kFg);
+  CHECK(termforge::any(screen.at(0, 1).attrs & termforge::Attr::Reverse));
+}
+
+TEST_CASE("Composer: cursor rendition follows insertion position and focus",
+          "[composer][cursor][failure]") {
+  Screen screen{6, 2};
+  Composer composer = focused_composer(6, 2);
+
+  composer.draw(screen);
+  CHECK(termforge::any(screen.at(0, 0).attrs & termforge::Attr::Reverse));
+
+  composer.set_text("abc");
+  composer.draw(screen);
+  CHECK(termforge::any(screen.at(3, 0).attrs & termforge::Attr::Reverse));
+  CHECK_FALSE(termforge::any(screen.at(2, 0).attrs & termforge::Attr::Reverse));
+
+  REQUIRE(composer.on_event(key(Key::Left)));
+  REQUIRE(composer.on_event(key(Key::Left)));
+  composer.draw(screen);
+  CHECK(termforge::any(screen.at(1, 0).attrs & termforge::Attr::Reverse));
+  CHECK_FALSE(termforge::any(screen.at(3, 0).attrs & termforge::Attr::Reverse));
+
+  composer.set_text("abc\ndef");
+  composer.draw(screen);
+  CHECK(termforge::any(screen.at(3, 1).attrs & termforge::Attr::Reverse));
+
+  composer.set_focused(false);
+  composer.draw(screen);
+  for (int y = 0; y < screen.rows(); ++y) {
+    for (int x = 0; x < screen.cols(); ++x) {
+      CHECK_FALSE(
+          termforge::any(screen.at(x, y).attrs & termforge::Attr::Reverse));
+    }
+  }
+}
+
+TEST_CASE("Composer: fallback wire preserves and clears cursor reverse video",
+          "[composer][cursor][fallback][failure]") {
+  Screen screen{3, 1};
+  Composer composer = focused_composer(3, 1);
+  composer.set_text("ab");
+  REQUIRE(composer.on_event(key(Key::Left)));
+  composer.draw(screen);
+
+  termforge::FallbackDriver driver;
+  std::string output;
+  driver.set_output(&output);
+  termforge::Renderer renderer{driver};
+  renderer.present(screen);
+  renderer.flush();
+
+  const auto enabled = output.find("\033[7m");
+  REQUIRE(enabled != std::string::npos);
+  const auto cursor = output.find('b', enabled);
+  REQUIRE(cursor != std::string::npos);
+  const auto cleared = output.find("\033[0m", cursor);
+  REQUIRE(cleared != std::string::npos);
 }
 
 TEST_CASE("Composer: UTF-8 movement and deletion keep byte boundaries",
@@ -265,6 +322,7 @@ TEST_CASE("Composer: viewport follows the cursor and clears stale rows",
   composer.draw(screen);
   CHECK(row_text(screen, 0) == "c   ");
   CHECK(row_text(screen, 1) == "d   ");
+  CHECK(termforge::any(screen.at(1, 1).attrs & termforge::Attr::Reverse));
 
   composer.clear();
   composer.draw(screen);

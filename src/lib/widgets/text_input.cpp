@@ -110,7 +110,10 @@ auto TextInput::draw(Screen& screen) -> void {
                               static_cast<std::size_t>(
                                   utf8_next(m_text, m_cursor) - m_cursor))
               : " ";
-      screen.write_text(r.x + cx, y, under, m_cursor_fg, m_cursor_bg);
+      // Reverse is semantic cursor state, not a colour choice. The fallback
+      // driver deliberately drops colours but preserves reverse video, so
+      // the insertion point remains visible on every rendering tier.
+      screen.write_text(r.x + cx, y, under, m_fg, m_bg, Attr::Reverse);
     }
   }
 

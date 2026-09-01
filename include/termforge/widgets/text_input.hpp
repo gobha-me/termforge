@@ -76,8 +76,6 @@ class TextInput final : public Widget {
 
   Rgb m_fg{theme::kFg};
   Rgb m_bg{theme::kBg};
-  Rgb m_cursor_fg{theme::kFocusFg};
-  Rgb m_cursor_bg{theme::kFg};
   Rgb m_placeholder_fg{0x50, 0x50, 0x60};
 
   std::function<void(const std::string&)> m_on_change;
