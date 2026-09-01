@@ -8,6 +8,7 @@ set(EXAMPLES
   sprites
   pinned
   animation_control
+  obscura_layers
   obscura_dissolve
   input
   chat
