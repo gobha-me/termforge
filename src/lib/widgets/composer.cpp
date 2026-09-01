@@ -292,8 +292,11 @@ auto Composer::draw(Screen& screen) -> void {
           const std::size_t next = next_boundary(m_text, m_cursor);
           under = m_text.substr(m_cursor, next - m_cursor);
         }
-        screen.write_text(r.x + col, r.y + screen_row, under, m_cursor_fg,
-                          m_cursor_bg);
+        // Reverse is semantic cursor state, not a colour choice. The fallback
+        // driver deliberately drops colours but preserves reverse video, so
+        // the insertion point remains visible on every rendering tier.
+        screen.write_text(r.x + col, r.y + screen_row, under, m_fg, m_bg,
+                          Attr::Reverse);
       }
     }
   }
