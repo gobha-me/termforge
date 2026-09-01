@@ -1,0 +1,11 @@
+// GENERATED FILE — do not edit or commit.
+// Source: examples/assets/obscura-dissolve/reveal-*.png
+
+#pragma once
+
+#include <array>
+
+namespace termforge::example::obscura {
+
+@TERMFORGE_OBSCURA_DISSOLVE_DECLARATIONS@
+} // namespace termforge::example::obscura

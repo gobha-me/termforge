@@ -8,6 +8,7 @@ set(EXAMPLES
   sprites
   pinned
   animation_control
+  obscura_dissolve
   input
   chat
   low_level
@@ -25,6 +26,18 @@ foreach(EXAMPLE ${EXAMPLES})
   add_executable(${TARGET} ${EXAMPLE}.cpp)
   target_link_libraries(${TARGET} PRIVATE ${PROJECT_NAME}::lib)
 endforeach()
+
+# OBSCURA's M0 spike carries committed PNG frames rather than runtime file I/O.
+# Generate the private byte arrays at configure time for the example; its
+# focused test calls the same helper so tests remain buildable when examples
+# are disabled.
+include(${PROJECT_SOURCE_DIR}/cmake/embed_obscura_dissolve.cmake)
+termforge_embed_obscura_dissolve(
+  ${PROJECT_BINARY_DIR}/generated/termforge/examples/obscura_dissolve_assets.hpp
+)
+target_include_directories(${PROJECT_NAME}_example_obscura_dissolve PRIVATE
+  ${PROJECT_BINARY_DIR}/generated
+)
 
 # #252: exercise the shipped CLI, not a replay of GameWorkload's internals.
 # This lives after the example targets (rather than in test/) because test/ is

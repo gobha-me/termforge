@@ -16,6 +16,26 @@ add_test(
           -P ${PROJECT_SOURCE_DIR}/cmake/check_catch2_without_git.cmake
 )
 
+# The committed M0 reveal frames are generated art.  Verify decompressed
+# palette indices rather than zlib bytes, whose representation may move across
+# Python/zlib versions without changing one pixel.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if (Python3_FOUND)
+  add_test(
+    NAME obscura-dissolve-assets-check
+    COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/examples/obscura_dissolve_bake.py
+            --check ${PROJECT_SOURCE_DIR}/examples/assets/obscura-dissolve
+  )
+else ()
+  add_test(
+    NAME obscura-dissolve-assets-check
+    COMMAND ${CMAKE_COMMAND} -E echo
+      "obscura-dissolve-assets-check: python3 is required to verify the committed reveal PNGs"
+  )
+  set_tests_properties(obscura-dissolve-assets-check PROPERTIES WILL_FAIL TRUE)
+endif ()
+
 file(GLOB TEST_DIRS ${CMAKE_CURRENT_LIST_DIR}/*)
 
 foreach(TEST_DIR ${TEST_DIRS})
