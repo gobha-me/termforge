@@ -600,6 +600,28 @@ TEST_CASE("trace codec preserves signed and high-bit integer fields",
   CHECK(trace->records[1].frame == kHigh + 3U);
 }
 
+TEST_CASE("schema 8 preserves reported cell geometry on posted resizes",
+          "[trace][compatibility][resize]") {
+  const ResizeEvent original{80, 24, Extent{10, 20}};
+  detail::TraceRecord posted{detail::TraceKind::Posted,
+                             detail::TracePhase::Posted, 0, 0,
+                             detail::encode_event(Event{original})};
+
+  const auto decoded = detail::decode_event(posted);
+  REQUIRE(decoded.has_value());
+  const auto& resize = std::get<ResizeEvent>(*decoded);
+  CHECK(resize.cols == 80);
+  CHECK(resize.rows == 24);
+  CHECK(resize.cell_pixels == Extent{10, 20});
+
+  // Schemas 1-7 encoded only cols/rows. Their public event meaning after the
+  // upgrade is the same grid transition with honestly unknown pixel geometry.
+  posted.payload.resize(9);
+  const auto legacy = detail::decode_event(posted, 7);
+  REQUIRE(legacy.has_value());
+  CHECK_FALSE(std::get<ResizeEvent>(*legacy).cell_pixels.has_value());
+}
+
 TEST_CASE("trace codec rejects high-bit terminal reply status",
           "[trace][kitty-reply][failure]") {
   std::string status;
@@ -669,7 +691,7 @@ TEST_CASE("malformed traces are rejected before the App starts",
   SECTION("unknown schema") {
     std::string broken = artifact.trace;
     REQUIRE(broken.size() > 9);
-    broken[8] = 8;
+    broken[8] = 9;
     const auto [wire, error] = play_bytes(std::move(broken));
     REQUIRE(wire.empty());
     REQUIRE(error.message.find("schema") != std::string::npos);

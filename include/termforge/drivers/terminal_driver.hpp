@@ -826,15 +826,33 @@ class TerminalDriver {
 
   // The terminal's measured cell size in pixels, pushed by App from
   // TIOCGWINSZ (App is the only ioctl reader in the library, and it re-pushes
-  // on resize). A non-positive dimension means "the terminal would not say" —
-  // the driver keeps its nominal default rather than treating it as an error,
-  // because a nominal cell is a correct-shaped guess and the alternative is a
-  // divide by zero.
+  // on resize). A non-positive dimension means "the terminal would not say".
+  // The base records that distinction for reported_cell_pixel_size(); a tier
+  // may still keep a nominal effective value for rendering, as Kitty does.
   //
-  // Default no-op: only a tier whose pixels-per-cell depends on the font has
-  // anything to store. It is also the seam that keeps driver tests offline
-  // (AGENTS.md) — without it the nominal path would be the only one CI runs.
-  virtual auto set_cell_pixel_size(Extent /*cell*/) noexcept -> void {}
+  // NON-PURE: an out-of-tree driver written before the query keeps compiling.
+  // An override delegates here before applying its tier-specific behavior so
+  // the driver-neutral report cannot drift from the value App pushed.
+  virtual auto set_cell_pixel_size(Extent cell) noexcept -> void {
+    remember_reported_cell_pixel_size(cell);
+  }
+
+  // What the terminal actually reported for one cell, distinct from a
+  // driver's nominal/effective rendering value (#143). Unknown is a failed
+  // query rather than a numeric sentinel: an application that needs exact
+  // physical geometry must be able to distinguish it from a guessed 8x16.
+  //
+  // NON-VIRTUAL base-owned state. There is one measured fact for the selected
+  // session and no per-tier behavior to override. The differently named
+  // KittyDriver::cell_pixel_size() remains source-compatible and continues to
+  // expose Kitty's effective value, including its nominal fallback.
+  [[nodiscard]] auto reported_cell_pixel_size() const
+      -> std::expected<Extent, ErrorEvent> {
+    if (m_reported_cell_px) return *m_reported_cell_px;
+    return std::unexpected{ErrorEvent{
+        Severity::Warning, "driver",
+        "reported_cell_pixel_size: terminal did not report cell geometry"}};
+  }
 
   // How many cells `image` occupies when drawn at this tier's native
   // resolution — the honest inverse of preferred_pixel_extent, and what an app
@@ -1173,6 +1191,15 @@ class TerminalDriver {
   friend class App;
   friend class Renderer;
 
+  // App records the measured fact at the base boundary before calling the
+  // open virtual setter. A pre-#143 out-of-tree override may not delegate to
+  // the base, but it must not make the driver-neutral query lie or forget the
+  // geometry App just measured.
+  auto remember_reported_cell_pixel_size(Extent cell) noexcept -> void {
+    m_reported_cell_px =
+        cell.w > 0 && cell.h > 0 ? std::optional<Extent>{cell} : std::nullopt;
+  }
+
   // Renderer owns the cell shadow, while emit_frame owns the only observable
   // write result. Reset before calling the open virtual flush() so a legacy
   // driver that bypasses emit_frame retains that documented limitation rather
@@ -1227,6 +1254,7 @@ class TerminalDriver {
   ByteSink* m_sink{nullptr};
   StringSink m_string_sink{};
   std::shared_ptr<ImageTransport> m_image_transport;
+  std::optional<Extent> m_reported_cell_px;
   std::optional<ErrorEvent> m_output_error{};
   std::deque<ErrorEvent> m_driver_events;
   // Latched by shutdown() after per-tier cleanup, immediately before the

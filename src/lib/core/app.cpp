@@ -525,7 +525,8 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
           return std::unexpected{
               trace_warning("play: record phases are out of order")};
         last_phase = record.phase;
-        if (auto event = detail::decode_event(record); !event) {
+        if (auto event = detail::decode_event(record, parsed->schema_version);
+            !event) {
           return std::unexpected{std::move(event.error())};
         } else {
           std::string reason;
@@ -587,7 +588,8 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
               trace_warning("play: record phases are out of order")};
         }
         last_phase = record.phase;
-        if (auto event = detail::decode_event(record); !event) {
+        if (auto event = detail::decode_event(record, parsed->schema_version);
+            !event) {
           return std::unexpected{std::move(event.error())};
         } else if (!std::holds_alternative<ImageInvalidatedEvent>(*event)) {
           return std::unexpected{trace_warning(
@@ -605,7 +607,8 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
               trace_warning("play: record phases are out of order")};
         }
         last_phase = record.phase;
-        if (auto event = detail::decode_event(record); !event)
+        if (auto event = detail::decode_event(record, parsed->schema_version);
+            !event)
           return std::unexpected{std::move(event.error())};
         break;
       case detail::TraceKind::End:
@@ -912,7 +915,8 @@ auto App::playback_apply_frame_transitions() -> void {
           Size{decoded->cols, decoded->rows, decoded->px_w, decoded->px_h};
       m_resize_pending.store(true);
     } else {
-      auto event = detail::decode_event(record);
+      auto event =
+          detail::decode_event(record, m_playback->trace.schema_version);
       const auto* invalidated =
           event ? std::get_if<ImageInvalidatedEvent>(&*event) : nullptr;
       if (!event || invalidated == nullptr ||
@@ -973,7 +977,8 @@ auto App::playback_feed(TracePoint point) -> int {
       m_terminal_replies.push_back(std::move(*reply));
       if (total < std::numeric_limits<int>::max()) ++total;
     } else if (record.kind == detail::TraceKind::Source) {
-      auto event = detail::decode_event(record);
+      auto event =
+          detail::decode_event(record, m_playback->trace.schema_version);
       if (!event) {
         m_playback->failure = std::move(event.error());
         quit();
@@ -1013,7 +1018,7 @@ auto App::playback_dispatch_posted() -> void {
       m_playback->clock.advance(std::chrono::nanoseconds{
           record.offset_ns - static_cast<std::uint64_t>(now_ns)});
     }
-    auto event = detail::decode_event(record);
+    auto event = detail::decode_event(record, m_playback->trace.schema_version);
     if (!event) {
       m_playback->failure = std::move(event.error());
       quit();
@@ -1754,12 +1759,12 @@ auto App::frame_step() -> void {
     // Before the dispatch, and so before this frame's collect pass: push it
     // after and the first frame of every resize rasterizes at the old cell
     // geometry, which under kitty is a visibly wrong scale.
-    push_cell_pixel_size(size);
+    const auto cell_pixels = push_cell_pixel_size(size);
     // #91: re-evaluate the floor on every resize. Crossing it is an event and
     // a latch that suppresses enhanced submission — not a modal the framework
     // invents, and not a silent downgrade.
     update_requirements(size);
-    dispatch_event(ResizeEvent{size.cols, size.rows});
+    dispatch_event(ResizeEvent{size.cols, size.rows, cell_pixels});
   }
   m_trace_point = TracePoint::InputPump;
   pump_input();
@@ -3129,8 +3134,8 @@ auto App::current_size() const -> Size {
   return {80, 24}; // sane default if ioctl fails
 }
 
-auto App::push_cell_pixel_size(Size size) -> void {
-  if (!m_driver) return;
+auto App::push_cell_pixel_size(Size size) -> std::optional<Extent> {
+  if (!m_driver) return std::nullopt;
   // Divide the text area by the cell grid. A terminal that reports no pixel
   // geometry (0 is common: tmux, the Linux console, several emulators) leaves
   // this at Extent{}, and the driver keeps its own nominal cell size — the
@@ -3141,7 +3146,11 @@ auto App::push_cell_pixel_size(Size size) -> void {
   if (size.px_w > 0 && size.px_h > 0 && size.cols > 0 && size.rows > 0) {
     cell = Extent{size.px_w / size.cols, size.px_h / size.rows};
   }
+  // Base-owned first: an out-of-tree override written before #143 need not
+  // know it must delegate, but the report still has to reflect App's fact.
+  m_driver->remember_reported_cell_pixel_size(cell);
   m_driver->set_cell_pixel_size(cell);
+  return m_driver->m_reported_cell_px;
 }
 
 auto App::check_requirements_startup(Size size)

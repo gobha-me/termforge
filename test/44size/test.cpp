@@ -43,6 +43,7 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -51,11 +52,13 @@
 
 #include "termforge/core/app.hpp"
 #include "termforge/core/terminal.hpp"
+#include "termforge/drivers/kitty_driver.hpp"
 
 using termforge::App;
 using termforge::ErrorEvent;
 using termforge::Event;
 using termforge::Extent;
+using termforge::KittyDriver;
 using termforge::Rect;
 using termforge::ResizeEvent;
 using termforge::Screen;
@@ -147,6 +150,9 @@ class SizeApp final : public App {
   // dynamic_cast, so the oracle does not name a tier.
   auto cell_px() -> Extent {
     return driver().preferred_pixel_extent(Rect{0, 0, 1, 1});
+  }
+  auto reported_cell_px() -> std::expected<Extent, ErrorEvent> {
+    return driver().reported_cell_pixel_size();
   }
 
   auto on_render(Screen& s) -> void override {
@@ -517,6 +523,51 @@ TEST_CASE("App: pushed pixel geometry reaches the driver's cell size",
   REQUIRE(got == std::pair{120, 30});
   REQUIRE(cell.w == 10);
   REQUIRE(cell.h == 30);
+}
+
+TEST_CASE("App: a pixel-only size change reports geometry before rendering",
+          "[size][app][image][regression]") {
+  // A font-size change can preserve the 40x20 cell grid while changing the
+  // complete pixel area. The first frame pushes the change; the second must
+  // deliver one enriched ResizeEvent before its on_render call.
+  SizeApp app;
+  app.push_at = 0;
+  app.pending = {40, 20, 480, 360};
+
+  auto kitty = std::make_unique<KittyDriver>();
+  kitty->set_cell_pixel_size({10, 20});
+  std::string sink;
+  app.test_run_frames(2, 40, 20, &sink, std::move(kitty));
+
+  REQUIRE(app.push_result.has_value());
+  REQUIRE(app.renders.size() == 2);
+  REQUIRE(app.renders[0] == std::pair{40, 20});
+  REQUIRE(app.renders[1] == std::pair{40, 20});
+  REQUIRE(app.resizes.size() == 1);
+  REQUIRE(app.resizes[0].cols == 40);
+  REQUIRE(app.resizes[0].rows == 20);
+  REQUIRE(app.resizes[0].cell_pixels == Extent{12, 18});
+  REQUIRE(app.reported_cell_px() == Extent{12, 18});
+  REQUIRE(app.cell_px() == Extent{12, 18});
+}
+
+TEST_CASE("App: missing pixel geometry is reported as unknown, not nominal",
+          "[size][app][image][failure]") {
+  SizeApp app;
+  app.push_at = 0;
+  app.pending = {40, 20};
+
+  auto kitty = std::make_unique<KittyDriver>();
+  kitty->set_cell_pixel_size({10, 20});
+  std::string sink;
+  app.test_run_frames(2, 40, 20, &sink, std::move(kitty));
+
+  REQUIRE(app.resizes.size() == 1);
+  REQUIRE_FALSE(app.resizes[0].cell_pixels.has_value());
+  REQUIRE_FALSE(app.reported_cell_px().has_value());
+  // Rendering remains safe and shaped through Kitty's separate nominal
+  // fallback, but the new report never presents that guess as measured.
+  REQUIRE(app.cell_px() == KittyDriver::kNominalCellPixels);
 }
 
 TEST_CASE("App: current_size is public and names the source of the next resize",

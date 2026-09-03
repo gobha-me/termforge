@@ -886,6 +886,12 @@ struct MouseEvent {
 
 struct ResizeEvent {
   int cols{0}, rows{0};
+
+  // The terminal-reported size of one cell in pixels after this transition.
+  // Missing means the terminal did not report a complete positive pixel pair;
+  // it never contains a driver's nominal rendering fallback. Appended so
+  // existing ResizeEvent{cols, rows} aggregate initialization remains valid.
+  std::optional<Extent> cell_pixels{};
 };
 
 // Why resident terminal-side image data is no longer usable (#113).  Resize is
