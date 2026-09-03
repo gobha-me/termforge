@@ -17,6 +17,7 @@ set(EXAMPLES
   game
   motion
   pixel_surface
+  cell_geometry
   widgets
   dialogs
   forms

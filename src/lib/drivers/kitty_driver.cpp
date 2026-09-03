@@ -514,6 +514,7 @@ auto KittyDriver::preferred_pixel_extent(Rect cells) const noexcept -> Extent {
 }
 
 auto KittyDriver::set_cell_pixel_size(Extent cell) noexcept -> void {
+  TerminalDriver::set_cell_pixel_size(cell);
   m_cell_px = (cell.w > 0 && cell.h > 0) ? cell : kNominalCellPixels;
 }
 

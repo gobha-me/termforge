@@ -811,24 +811,32 @@ TEST_CASE("Drivers: preferred_pixel_extent reflects each tier's packing",
 TEST_CASE("KittyDriver: cell geometry is pushed in, and 0 means nominal",
           "[drivers][kitty][failure]") {
   KittyDriver d;
+  termforge::TerminalDriver& base = d;
   const Rect r{0, 0, 10, 4};
   REQUIRE(d.cell_pixel_size() == KittyDriver::kNominalCellPixels);
+  const auto initially_unknown = base.reported_cell_pixel_size();
+  REQUIRE_FALSE(initially_unknown.has_value());
+  REQUIRE(initially_unknown.error().severity == Severity::Warning);
+  REQUIRE(initially_unknown.error().source == "driver");
 
   d.set_cell_pixel_size(Extent{10, 20});
+  REQUIRE(base.reported_cell_pixel_size() == Extent{10, 20});
   REQUIRE(d.preferred_pixel_extent(r) == Extent{100, 80});
 
   // ws_xpixel == 0 is what tmux, the Linux console and several emulators
-  // report. It must not propagate a zero into a divisor, and it must not be
-  // an error — a nominal cell is a correctly-shaped guess.
+  // report. It must not propagate a zero into a divisor: Kitty's effective
+  // rendering value stays nominal while the reported query remains unknown.
   d.set_cell_pixel_size(Extent{0, 0});
+  REQUIRE_FALSE(base.reported_cell_pixel_size().has_value());
   REQUIRE(d.cell_pixel_size() == KittyDriver::kNominalCellPixels);
   REQUIRE(d.preferred_pixel_extent(r) == Extent{80, 64});
 
   d.set_cell_pixel_size(Extent{8, -16});
+  REQUIRE_FALSE(base.reported_cell_pixel_size().has_value());
   REQUIRE(d.preferred_pixel_extent(r) == Extent{80, 64});
 }
 
-TEST_CASE("Drivers: the base set_cell_pixel_size is a no-op for flat tiers",
+TEST_CASE("Drivers: flat tiers report geometry without changing their packing",
           "[drivers]") {
   AnsiRgbDriver ansi;
   FallbackDriver fb;
@@ -836,6 +844,8 @@ TEST_CASE("Drivers: the base set_cell_pixel_size is a no-op for flat tiers",
   ansi.set_cell_pixel_size(Extent{10, 20});
   fb.set_cell_pixel_size(Extent{10, 20});
   // Neither tier's packing depends on the font: half-blocks are half-blocks.
+  REQUIRE(ansi.reported_cell_pixel_size() == Extent{10, 20});
+  REQUIRE(fb.reported_cell_pixel_size() == Extent{10, 20});
   REQUIRE(ansi.preferred_pixel_extent(r) == Extent{10, 8});
   REQUIRE(fb.preferred_pixel_extent(r) == Extent{10, 4});
 }

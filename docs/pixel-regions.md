@@ -481,9 +481,12 @@ Kitty's cell geometry comes from `TIOCGWINSZ` `ws_xpixel`/`ws_ypixel`
 divided by the cell grid, pushed in by `App` (the library's only ioctl
 reader) at setup and again on every resize, *before* the frame that would
 use it. A terminal reporting `0` — common under tmux, on the Linux
-console, and in emulators that never bothered — keeps a nominal **8×16**.
-That is not an `ErrorEvent`: a nominal cell is a correctly-shaped guess,
-not a degraded capability.
+console, and in emulators that never bothered — keeps Kitty's effective
+rendering value at a nominal **8×16**. That guess is never exposed as a
+measurement: `reported_cell_pixel_size()` returns an expected positive extent
+or a `Warning`, and `ResizeEvent::cell_pixels` is absent when the report is
+unknown. A generated image may use a nominal shape; exact shipped art can
+refuse without confusing the two.
 
 ### Why this mattered more than a missing feature
 
@@ -1303,8 +1306,15 @@ user that skips `shutdown()` may leave terminal-side images behind.
 
 A resize arms the same path `SIGWINCH` uses: clear the pending flag, remeasure
 size, resize the `Screen`, invalidate the cell renderer, push
-`set_cell_pixel_size`, dispatch one `ResizeEvent`, and set
+`set_cell_pixel_size`, dispatch one `ResizeEvent` carrying the optional
+reported cell extent, and set
 `m_pixel_force_repaint` for that frame's pixel pass.
+
+The grid need not change. A font-size change or pushed `Size` can preserve
+`cols`/`rows` while changing the whole text-area pixel pair; it still produces
+that same event before rendering, so an exact producer can rebuild against the
+new geometry. `examples/cell_geometry.cpp` demonstrates this with a fixed
+22x9-cell exact plate and no assumed cell dimensions.
 
 On Kitty Persistent regions and on `draw_pinned`:
 

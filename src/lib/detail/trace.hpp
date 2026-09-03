@@ -13,7 +13,7 @@
 
 namespace termforge::detail {
 
-inline constexpr std::uint16_t kTraceSchemaVersion{7};
+inline constexpr std::uint16_t kTraceSchemaVersion{8};
 
 enum class TraceKind : std::uint8_t {
   Frame = 1,
@@ -63,6 +63,7 @@ struct TraceRecord {
 };
 
 struct Trace {
+  std::uint16_t schema_version{kTraceSchemaVersion};
   TraceHeader header;
   std::vector<TraceRecord> records;
 };
@@ -77,7 +78,8 @@ auto encode_size(TraceSize size) -> std::vector<std::uint8_t>;
 auto decode_size(const TraceRecord& record)
     -> std::expected<TraceSize, ErrorEvent>;
 auto encode_event(const Event& event) -> std::vector<std::uint8_t>;
-auto decode_event(const TraceRecord& record)
+auto decode_event(const TraceRecord& record,
+                  std::uint16_t schema_version = kTraceSchemaVersion)
     -> std::expected<Event, ErrorEvent>;
 auto encode_input_capabilities(InputCapabilities capabilities)
     -> std::vector<std::uint8_t>;

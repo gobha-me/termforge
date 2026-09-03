@@ -258,6 +258,7 @@ auto read_trace(std::istream& in) -> std::expected<Trace, ErrorEvent> {
   std::span<const std::uint8_t> header{raw_header};
 
   Trace trace;
+  trace.schema_version = *schema;
   const auto major = take_le<std::uint32_t>(header);
   const auto minor = take_le<std::uint32_t>(header);
   const auto patch = take_le<std::uint32_t>(header);
@@ -435,6 +436,10 @@ auto encode_event(const Event& event) -> std::vector<std::uint8_t> {
           append_le(bytes, std::uint8_t{3});
           append_le(bytes, static_cast<std::int32_t>(value.cols));
           append_le(bytes, static_cast<std::int32_t>(value.rows));
+          append_le(bytes, static_cast<std::int32_t>(
+                               value.cell_pixels ? value.cell_pixels->w : 0));
+          append_le(bytes, static_cast<std::int32_t>(
+                               value.cell_pixels ? value.cell_pixels->h : 0));
         } else if constexpr (std::same_as<T, ErrorEvent>) {
           append_le(bytes, std::uint8_t{4});
           append_le(bytes, static_cast<std::uint8_t>(value.severity));
@@ -449,7 +454,7 @@ auto encode_event(const Event& event) -> std::vector<std::uint8_t> {
   return bytes;
 }
 
-auto decode_event(const TraceRecord& record)
+auto decode_event(const TraceRecord& record, std::uint16_t schema_version)
     -> std::expected<Event, ErrorEvent> {
   std::span<const std::uint8_t> bytes{record.payload};
   const auto type = take_le<std::uint8_t>(bytes);
@@ -512,10 +517,20 @@ auto decode_event(const TraceRecord& record)
   if (*type == 3) {
     const auto cols = take_le<std::int32_t>(bytes);
     const auto rows = take_le<std::int32_t>(bytes);
-    if (!cols || !rows || !bytes.empty()) {
+    std::optional<std::int32_t> cell_w{0};
+    std::optional<std::int32_t> cell_h{0};
+    if (schema_version >= 8) {
+      cell_w = take_le<std::int32_t>(bytes);
+      cell_h = take_le<std::int32_t>(bytes);
+    }
+    if (!cols || !rows || !cell_w || !cell_h || !bytes.empty() || *cols <= 0 ||
+        *rows <= 0 || *cell_w < 0 || *cell_h < 0 ||
+        ((*cell_w == 0) != (*cell_h == 0))) {
       return trace_error("posted resize event is invalid");
     }
-    return Event{ResizeEvent{*cols, *rows}};
+    const auto cell_pixels =
+        *cell_w > 0 ? std::optional<Extent>{{*cell_w, *cell_h}} : std::nullopt;
+    return Event{ResizeEvent{*cols, *rows, cell_pixels}};
   }
   if (*type == 4) {
     const auto severity = take_le<std::uint8_t>(bytes);

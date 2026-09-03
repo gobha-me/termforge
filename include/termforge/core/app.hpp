@@ -935,9 +935,10 @@ class App {
   // pixels — is worse, because it *derives* a cell size from two measurements
   // of different moments: 800px of pty divided by the peer's new 120 columns is
   // a confidently wrong number, where the nominal cell is an honestly shaped
-  // guess (push_cell_pixel_size says so, and treats "unknown" as no error at
-  // all). If your client tells you its pixel geometry, push it; if it does not,
-  // the nominal cell is the correct answer and not a degradation.
+  // rendering fallback. The driver's reported-cell query still says unknown;
+  // App does not emit a spontaneous degradation event merely for using the
+  // fallback. If your client tells you its pixel geometry, push it; if it does
+  // not, the rendering path remains safe without presenting a guess as fact.
   //
   // THREADING: loop thread only, exactly like every other method on App. A
   // remote window-change usually arrives on a reader thread, and that thread
@@ -987,9 +988,9 @@ class App {
   // that can push a size has to be able to read one back. It is the SOURCE of
   // the next resize, not a report of the current frame: between a push and the
   // frame that consumes it this and screen().cols() disagree, and that is the
-  // honest answer both times. #143's other halves — a cell-pixel query on the
-  // TerminalDriver base, and an event for a cell-size change with the grid
-  // unchanged — are untouched, and #143 stays open.
+  // honest answer both times. #143 complements it with the driver-neutral
+  // reported-cell query and the optional per-cell geometry carried by the
+  // ResizeEvent this size source produces.
   [[nodiscard]] auto current_size() const -> Size;
 
  protected:
@@ -1520,7 +1521,7 @@ class App {
   // Push the terminal's cell geometry to the driver, so a rasterizing widget
   // can be told what resolution to render at (#83). Called at setup and again
   // on every resize, *before* the frame that would use it.
-  auto push_cell_pixel_size(Size size) -> void;
+  auto push_cell_pixel_size(Size size) -> std::optional<Extent>;
   // Startup uses Severity::Error; live size/mode changes use Warning and emit
   // only when the floor's truth value changes.
   auto check_requirements_startup(Size size) -> std::expected<void, ErrorEvent>;

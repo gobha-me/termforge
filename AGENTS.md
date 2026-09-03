@@ -173,6 +173,14 @@ file is the tactical version.
   acknowledged only after the frame's sink write is accepted. Persistent
   region identity is `(Widget*, pixel_regions vector index)`, never its Rect;
   keep the vector order stable while a region lives.
+  **Reported cell geometry is distinct from a rendering fallback** (#143).
+  `TerminalDriver::reported_cell_pixel_size()` is base-owned, non-virtual
+  session state and returns `std::expected`: a positive measurement is a value,
+  while an absent/partial terminal report is a `Warning`, never Kitty's nominal
+  8x16 presented as fact. `ResizeEvent` appends an optional measured `Extent`;
+  a pixel-only change with an unchanged grid still travels through the one
+  resize path before rendering. Keep old two-field aggregate initialization
+  valid, and keep schemas 1-7 readable with that appended value unknown.
   **Image stacking is semantic placement state** (#114). `ImageLayer` maps
   `above_text(rank)`, `below_text(rank)` and `below_background(rank)` onto the
   Kitty signed z domain; rank zero is nearest the named boundary, and `raw(z)`
