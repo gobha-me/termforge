@@ -736,13 +736,17 @@ class App {
   // is the lone-ESC boundary applied. This does not model #312's per-frame
   // fairness allowance; test/23pacing reaches that through frame_step().
   auto test_pump(std::initializer_list<std::string_view> chunks) -> void {
+    poll_keyboard_watchdog();
     for (auto chunk : chunks)
       if (!chunk.empty()) m_input.feed(chunk);
     collect_terminal_replies(false);
     m_input.flush();
     dispatch_terminal_replies();
-    for (auto& ev : m_input.poll())
+    for (auto& ev : m_input.poll()) {
+      if (const auto* key = std::get_if<KeyEvent>(&ev))
+        track_terminal_key(*key);
       dispatch_event(ev);
+    }
   }
   auto test_take_resize() -> bool {
     observe_winch();
@@ -1207,6 +1211,13 @@ class App {
   auto dispatch_source_events() -> void;
   auto collect_terminal_replies(bool record_normalized) -> void;
   auto dispatch_terminal_replies() -> void;
+  [[nodiscard]] auto keyboard_watchdog_active() const noexcept -> bool;
+  auto poll_keyboard_watchdog() -> void;
+  auto apply_terminal_keyboard_state(bool available,
+                                     std::optional<ErrorEvent> cause = {})
+      -> void;
+  auto track_terminal_key(const KeyEvent& key) -> void;
+  auto retire_terminal_keys() -> void;
   struct InputDrainResult {
     std::size_t bytes{0};
     bool source_empty{false};
@@ -1286,6 +1297,10 @@ class App {
   std::unique_ptr<Renderer> m_renderer;
   Input m_input;
   std::deque<TerminalReplyRecord> m_terminal_replies;
+  bool m_terminal_keyboard_available{true};
+  std::chrono::steady_clock::time_point m_keyboard_query_due{};
+  std::vector<KeyEvent> m_terminal_held;
+  static constexpr auto kKeyboardQueryInterval = std::chrono::seconds{1};
   std::unique_ptr<EventSource> m_event_source;
   EventSourceMode m_event_source_mode{EventSourceMode::ReplaceTerminal};
   InputCapabilities m_source_capabilities{};

@@ -736,7 +736,15 @@ struct TerminalReply {
   [[nodiscard]] auto ok() const noexcept -> bool { return status == "OK"; }
 };
 
-using TerminalReplyRecord = std::variant<TerminalReply, ErrorEvent>;
+// Reply to the kitty keyboard protocol's "query current flags" control.
+// Kept out of Event for the same reason as graphics acknowledgements: this is
+// terminal state, never application input.
+struct KeyboardFlagsReply {
+  std::uint32_t flags{0};
+};
+
+using TerminalReplyRecord =
+    std::variant<TerminalReply, KeyboardFlagsReply, ErrorEvent>;
 
 enum class Key {
   Unknown,

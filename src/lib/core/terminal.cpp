@@ -726,6 +726,10 @@ auto Terminal::set_keyboard_mode(KeyboardMode mode) -> void {
   emit(m_impl->out_fd, detail::keyboard_set_seq(mode));
 }
 
+auto Terminal::query_keyboard_flags() const -> void {
+  emit(m_impl->out_fd, detail::kKeyboardQuery);
+}
+
 auto Terminal::quiesce_keyboard_input() noexcept -> void {
   emit(m_impl->out_fd, detail::kKeyboardQuery);
 

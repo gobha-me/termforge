@@ -133,6 +133,22 @@ reports the effective replacement or composed route, and keyboard
 `AppRequirements` use that value. See
 [event-sources.md](event-sources.md).
 
+### Runtime loss
+
+For a non-Legacy terminal route, TermForge re-queries the current flags once a
+second. A reply that no longer contains every requested flag is a live
+degradation: `input_capabilities()` drops the terminal's repeat, release and
+modifier-transition claims before held terminal keys are retired, unmet
+`AppRequirements` are reported, and a `Warning` from source `keyboard` reaches
+`on_event`. Repeated degraded replies do not repeat the transition. A later
+matching reply restores the capability claims and reports one `Info` event.
+
+No reply is not treated as loss — an absent or delayed answer cannot establish
+the terminal's current state. A malformed current-flags reply does fail closed.
+The watchdog also supplies a deadline to demand rendering, so an otherwise idle
+application still performs the check. A replacement `EventSource` disables the
+terminal watchdog because terminal bytes are not an input route in that mode.
+
 **Design for it.** A game must degrade to discrete-step movement rather than
 wait for a release that will never arrive: treat "no release" as a mode, not as
 an error. Auto-repeat still works there — it simply arrives as more presses.

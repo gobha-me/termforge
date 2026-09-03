@@ -237,15 +237,17 @@ auto run_case(bool throw_frame, bool queue_release, bool release_at_barrier)
 
   const auto& wire = peer.wire();
   REQUIRE(count_substring(wire, termforge::detail::kKeyboardPop) == 1);
-  REQUIRE(count_substring(wire, termforge::detail::kKeyboardQuery) == 1);
+  REQUIRE(count_substring(wire, termforge::detail::kKeyboardQuery) == 2);
   REQUIRE(count_substring(wire, "\033[?1003l") == 1);
   REQUIRE(count_substring(wire, "\033[?1002l") == 1);
   REQUIRE(count_substring(wire, "\033[?1000l") == 1);
   REQUIRE(count_substring(wire, "\033[?1006l") == 1);
   REQUIRE(count_substring(wire, "\033[?2004l") == 1);
   REQUIRE(count_substring(wire, "\033[?1049l") == 1);
+  REQUIRE(wire.find(termforge::detail::kKeyboardQuery) <
+          wire.find(termforge::detail::kKeyboardPop));
   REQUIRE(wire.find(termforge::detail::kKeyboardPop) <
-          wire.find(termforge::detail::kKeyboardQuery));
+          wire.rfind(termforge::detail::kKeyboardQuery));
   REQUIRE(wire.find(termforge::detail::kKeyboardQuery) <
           wire.find("\033[?1049l"));
 

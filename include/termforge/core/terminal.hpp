@@ -295,6 +295,11 @@ class Terminal {
     return m_keyboard_mode;
   }
 
+  // Ask the terminal which progressive-enhancement flags are active now.
+  // The reply is decoded by Input as KeyboardFlagsReply; this method only
+  // emits the control-plane query and is a no-op without an output route.
+  auto query_keyboard_flags() const -> void;
+
   // True when stdout is a console VT (no graphical terminal attached) — the
   // only case where the optional framebuffer driver is even considered.
   [[nodiscard]] auto is_console_vt() const noexcept -> bool;

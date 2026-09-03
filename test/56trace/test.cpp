@@ -306,6 +306,41 @@ TEST_CASE("raw chunks, external pushes and timing replay byte-identically",
   REQUIRE(first_input->offset_ns > 0);
 }
 
+TEST_CASE("runtime keyboard degradation replays before later input",
+          "[trace][keyboard][capabilities]") {
+  QuietPipe record_pipe;
+  REQUIRE(record_pipe.ok());
+  TraceProbe recorded;
+  REQUIRE(recorded.configure_io(record_pipe.read_fd()));
+  Capabilities caps;
+  caps.kitty_keyboard = true;
+  REQUIRE(recorded.push_caps(caps));
+  REQUIRE(recorded.set_size(App::Size{20, 5}).has_value());
+  recorded.set_keyboard_mode(KeyboardMode::Enhanced);
+  recorded.require(AppRequirements{.key_release = true});
+  SyntheticClock clock;
+  recorded.use_script(clock, {{50ms, "\033[32;1:1;32u"},
+                              {150ms, "\033[?0u"},
+                              {250ms, "\033[113;1:1;113u"}});
+  std::ostringstream artifact{std::ios::binary};
+  recorded.start_recording(artifact);
+  REQUIRE(recorded.run() == 0);
+  REQUIRE(std::count(recorded.events.begin(), recorded.events.end(), 'E') == 2);
+
+  QuietPipe replay_pipe;
+  REQUIRE(replay_pipe.ok());
+  TraceProbe played;
+  REQUIRE(played.configure_io(replay_pipe.read_fd()));
+  played.set_keyboard_mode(KeyboardMode::Enhanced);
+  played.require(AppRequirements{.key_release = true});
+  std::istringstream input{artifact.str(), std::ios::binary};
+  REQUIRE(played.play(input).has_value());
+  CHECK(played.events == recorded.events);
+  CHECK(played.wire == recorded.wire);
+  CHECK(played.ticks == recorded.ticks);
+  CHECK(played.renders == recorded.renders);
+}
+
 TEST_CASE("a stopped recording is a playable one-frame prefix",
           "[trace][lifecycle]") {
   const Artifact artifact = make_artifact(true);
@@ -495,6 +530,7 @@ TEST_CASE("terminal reply records round-trip without becoming Events",
           "[trace][kitty-reply]") {
   for (const TerminalReplyRecord& original :
        {TerminalReplyRecord{TerminalReply{42, 7, "OK"}},
+        TerminalReplyRecord{KeyboardFlagsReply{27}},
         TerminalReplyRecord{
             ErrorEvent{Severity::Warning, "input", "malformed kitty reply"}}}) {
     detail::TraceRecord record{detail::TraceKind::TerminalReply,
@@ -508,6 +544,8 @@ TEST_CASE("terminal reply records round-trip without becoming Events",
       CHECK(std::get<TerminalReply>(*decoded).placement_id ==
             reply->placement_id);
       CHECK(std::get<TerminalReply>(*decoded).status == reply->status);
+    } else if (const auto* flags = std::get_if<KeyboardFlagsReply>(&original)) {
+      CHECK(std::get<KeyboardFlagsReply>(*decoded).flags == flags->flags);
     } else {
       CHECK(std::get<ErrorEvent>(*decoded).message ==
             std::get<ErrorEvent>(original).message);
