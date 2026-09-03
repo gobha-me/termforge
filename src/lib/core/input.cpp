@@ -414,6 +414,10 @@ auto Input::push_error(ErrorEvent e) -> void {
   m_events.push_back(std::move(e));
 }
 
+auto Input::push_event(Event event) -> void {
+  m_events.push_back(std::move(event));
+}
+
 auto Input::decode_one(std::string_view buf) -> std::size_t {
   if (buf.empty()) return 0;
 
@@ -926,6 +930,26 @@ auto Input::parse_csi(std::string_view buf) -> std::size_t {
       return i;
     }
     // Not a mouse event despite '<' marker — fall through to generic CSI.
+  }
+
+  // The kitty keyboard protocol's current-flags reply is the one private
+  // report the live loop consumes. Parse the whole unsigned value strictly:
+  // accepting a prefix after overflow or punctuation would turn an unknown
+  // terminal state into a false capability claim.
+  if (buf[2] == '?' && buf.back() == 'u') {
+    const auto digits = buf.substr(3, buf.size() - 4);
+    std::uint32_t flags{0};
+    const auto parsed =
+        std::from_chars(digits.data(), digits.data() + digits.size(), flags);
+    if (digits.empty() || parsed.ec != std::errc{} ||
+        parsed.ptr != digits.data() + digits.size()) {
+      m_replies.emplace_back(ErrorEvent{
+          Severity::Warning, "keyboard",
+          "keyboard protocol degraded: malformed current-flags reply"});
+    } else {
+      m_replies.emplace_back(KeyboardFlagsReply{flags});
+    }
+    return buf.size();
   }
 
   // CSI private-marker device reports: '?', '>', '=' introduce terminal

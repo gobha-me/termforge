@@ -216,6 +216,46 @@ TEST_CASE("Input: kitty graphics replies use a separate ordered channel",
   CHECK(reply->ok());
 }
 
+TEST_CASE("Input: keyboard flag replies stay on the control-plane channel",
+          "[input][keyboard-reply]") {
+  Input in;
+  in.feed("a\033[?2");
+  CHECK(in.poll_replies().empty());
+  in.feed("7ub");
+
+  const auto events = in.poll();
+  REQUIRE(events.size() == 2);
+  CHECK(std::get<KeyEvent>(events[0]).ch == U'a');
+  CHECK(std::get<KeyEvent>(events[1]).ch == U'b');
+
+  const auto replies = in.poll_replies();
+  REQUIRE(replies.size() == 1);
+  const auto* reply =
+      std::get_if<termforge::KeyboardFlagsReply>(&replies.front());
+  REQUIRE(reply != nullptr);
+  CHECK(reply->flags == 27);
+}
+
+TEST_CASE("Input: malformed keyboard flag replies fail closed",
+          "[input][keyboard-reply][failure]") {
+  for (const std::string_view bytes : {
+           "\033[?u",
+           "\033[?12;3u",
+           "\033[?42949672960u",
+       }) {
+    Input in;
+    in.feed(bytes);
+    CHECK(in.poll().empty());
+    const auto replies = in.poll_replies();
+    REQUIRE(replies.size() == 1);
+    const auto* error = std::get_if<termforge::ErrorEvent>(&replies.front());
+    REQUIRE(error != nullptr);
+    CHECK(error->severity == termforge::Severity::Warning);
+    CHECK(error->source == "keyboard");
+    CHECK(error->message.find("degraded") != std::string::npos);
+  }
+}
+
 TEST_CASE("Input: high-bit kitty reply status is rejected as non-ASCII",
           "[input][kitty-reply][failure]") {
   Input in;

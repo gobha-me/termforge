@@ -396,6 +396,49 @@ TEST_CASE("App: a terminal that answers the query raises nothing",
   REQUIRE(app.errors.empty());
 }
 
+TEST_CASE("App: live keyboard flag loss retires held keys and restores once",
+          "[keyboard][requirements][failure]") {
+  PtyCapture pty;
+  REQUIRE(pty.ok());
+  pty.arm();
+  KeyboardProbe app;
+  app.set_keyboard_mode(KeyboardMode::Enhanced);
+  app.require(termforge::AppRequirements{.key_release = true});
+  REQUIRE(app.pre_raw());
+  pty.feed_master("\033[?27u\033[?62;22c");
+  REQUIRE(app.test_setup().has_value());
+
+  app.test_pump({"\033[?27u\033[32;1:1;32u"});
+  REQUIRE(app.keys.size() == 1);
+  CHECK(app.keys[0].action == KeyAction::Press);
+  CHECK(app.input_capabilities().key_release);
+  CHECK(app.requirements_met());
+
+  app.test_pump({"\033[?0u"});
+  REQUIRE(app.keys.size() == 2);
+  CHECK(app.keys[1].action == KeyAction::Release);
+  CHECK_FALSE(app.input_capabilities().key_release);
+  CHECK_FALSE(app.requirements_met());
+  REQUIRE(app.errors.size() == 2);
+  CHECK(app.errors[0].source == "requirements");
+  CHECK(app.errors[1].source == "keyboard");
+  CHECK(app.errors[1].severity == Severity::Warning);
+
+  app.test_pump({"\033[?0u"});
+  CHECK(app.errors.size() == 2);
+  app.test_pump({"\033[?27u"});
+  CHECK(app.input_capabilities().key_release);
+  CHECK(app.requirements_met());
+  REQUIRE(app.errors.size() == 4);
+  CHECK(app.errors[2].source == "requirements");
+  CHECK(app.errors[3].source == "keyboard");
+  CHECK(app.errors[3].severity == Severity::Info);
+
+  pty.feed_master("\033[?0u");
+  app.test_teardown();
+  pty.disarm();
+}
+
 TEST_CASE("App: a Legacy app is never told anything about the keyboard",
           "[keyboard]") {
   PtyCapture pty;

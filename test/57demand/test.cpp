@@ -212,6 +212,31 @@ class InputWakeApp final : public App {
   std::string wire;
 };
 
+class WatchdogDemandApp final : public App {
+ public:
+  WatchdogDemandApp() {
+    set_render_mode(RenderMode::Demand);
+    set_frame_ms(0);
+    set_keyboard_mode(KeyboardMode::Enhanced);
+  }
+
+  auto configure(int input_fd) -> bool {
+    if (!terminal().set_io(TerminalIo{input_fd, input_fd})) return false;
+    Capabilities caps;
+    caps.kitty_keyboard = true;
+    if (!terminal().set_capabilities(caps)) return false;
+    return set_size(Size{20, 5}).has_value();
+  }
+
+  auto on_tick(std::chrono::duration<double>) -> void override {
+    if (++ticks == 3) quit();
+  }
+  auto on_render(Screen&) -> void override { ++renders; }
+
+  int ticks{0};
+  int renders{0};
+};
+
 } // namespace
 
 TEST_CASE("continuous rendering remains the default", "[demand][compat]") {
@@ -358,6 +383,23 @@ TEST_CASE("terminal input ends a long demand wait without early dispatch",
   REQUIRE(result == 0);
   REQUIRE(app.renders.load() == 2);
   REQUIRE(elapsed < 1500ms);
+}
+
+TEST_CASE("keyboard watchdog wakes an otherwise idle demand loop",
+          "[demand][keyboard][timer]") {
+  SocketPair socket;
+  REQUIRE(socket.ok());
+  WatchdogDemandApp app;
+  REQUIRE(app.configure(socket.app_fd()));
+
+  const auto started = std::chrono::steady_clock::now();
+  REQUIRE(app.run() == 0);
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+
+  REQUIRE(app.ticks == 3);
+  REQUIRE(app.renders == 1);
+  REQUIRE(elapsed >= 900ms);
+  REQUIRE(elapsed < 3s);
 }
 
 TEST_CASE("demand frame shape survives record and playback",

@@ -140,8 +140,10 @@ auto trace_warning(std::string message) -> ErrorEvent {
 }
 
 [[nodiscard]] constexpr auto terminal_input_capabilities(
-    const Capabilities& caps, KeyboardMode mode) noexcept -> InputCapabilities {
-  const bool enhanced = caps.kitty_keyboard && mode == KeyboardMode::Enhanced;
+    const Capabilities& caps, KeyboardMode mode,
+    bool keyboard_available = true) noexcept -> InputCapabilities {
+  const bool enhanced = caps.kitty_keyboard && keyboard_available &&
+                        mode == KeyboardMode::Enhanced;
   return {true, enhanced, enhanced, enhanced};
 }
 
@@ -306,8 +308,8 @@ auto App::set_builtin_driver(BuiltinDriver driver)
 
 auto App::input_capabilities() const noexcept -> InputCapabilities {
   if (m_playback) return m_playback->trace.header.input_capabilities;
-  const auto terminal_caps =
-      terminal_input_capabilities(m_caps, m_term.keyboard_mode());
+  const auto terminal_caps = terminal_input_capabilities(
+      m_caps, m_term.keyboard_mode(), m_terminal_keyboard_available);
   if (!m_event_source) return terminal_caps;
 
   // A configured source is the declared route between runs; a failed source in
@@ -408,7 +410,17 @@ auto App::clear_event_source() -> void {
 }
 
 auto App::set_keyboard_mode(KeyboardMode mode) -> void {
+  const auto prior = m_term.keyboard_mode();
+  if (prior != mode && m_in_screen && prior == KeyboardMode::Enhanced &&
+      mode != KeyboardMode::Enhanced)
+    retire_terminal_keys();
   m_term.set_keyboard_mode(mode);
+  if (prior != mode) {
+    m_terminal_keyboard_available =
+        mode == KeyboardMode::Legacy || m_caps.kitty_keyboard;
+    if (m_in_screen && mode != KeyboardMode::Legacy)
+      m_keyboard_query_due = now_steady();
+  }
   // Before setup there are no observed facts to evaluate; setup owns the
   // Error-grade startup decision. During a live session, changing away from
   // Enhanced can invalidate a repeat/release floor just as surely as a resize
@@ -642,6 +654,9 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
   auto prior_source_events = std::move(m_source_events);
   auto prior_terminal_replies = std::move(m_terminal_replies);
   auto prior_source_held = std::move(m_source_held);
+  auto prior_terminal_held = std::move(m_terminal_held);
+  const bool prior_terminal_keyboard_available = m_terminal_keyboard_available;
+  const auto prior_keyboard_query_due = m_keyboard_query_due;
   const bool prior_source_woke = m_source_woke;
 
   const auto& initial = playback->trace.header.initial_size;
@@ -655,6 +670,8 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
   m_source_events.clear();
   m_terminal_replies.clear();
   m_source_held.clear();
+  m_terminal_held.clear();
+  m_keyboard_query_due = {};
   m_source_woke = false;
   m_playback = std::move(playback);
   m_clock = &m_playback->clock;
@@ -674,6 +691,9 @@ auto App::play(std::istream& in) -> std::expected<void, ErrorEvent> {
     m_source_events = std::move(prior_source_events);
     m_terminal_replies = std::move(prior_terminal_replies);
     m_source_held = std::move(prior_source_held);
+    m_terminal_held = std::move(prior_terminal_held);
+    m_terminal_keyboard_available = prior_terminal_keyboard_available;
+    m_keyboard_query_due = prior_keyboard_query_due;
     m_source_woke = prior_source_woke;
     m_playback.reset();
     if (pushed_caps) m_term.clear_capabilities();
@@ -1259,13 +1279,95 @@ auto App::dispatch_terminal_replies() -> void {
   for (auto& record : ready) {
     if (auto* reply = std::get_if<TerminalReply>(&record)) {
       if (m_driver) m_driver->consume_reply(*reply);
+    } else if (const auto* flags = std::get_if<KeyboardFlagsReply>(&record)) {
+      const auto required = static_cast<std::uint32_t>(
+          detail::keyboard_flags(m_term.keyboard_mode()));
+      apply_terminal_keyboard_state((flags->flags & required) == required);
     } else {
-      dispatch_event(std::get<ErrorEvent>(record));
+      auto error = std::get<ErrorEvent>(std::move(record));
+      if (error.source == "keyboard") {
+        apply_terminal_keyboard_state(false, std::move(error));
+      } else {
+        dispatch_event(error);
+      }
     }
   }
   if (!m_driver) return;
   for (auto& error : m_driver->take_driver_events())
     dispatch_event(error);
+}
+
+auto App::keyboard_watchdog_active() const noexcept -> bool {
+  if (m_playback || !m_in_screen || !m_caps.kitty_keyboard ||
+      m_term.keyboard_mode() == KeyboardMode::Legacy || m_term.io().out < 0)
+    return false;
+  return !m_event_source ||
+         m_event_source_mode != EventSourceMode::ReplaceTerminal;
+}
+
+auto App::poll_keyboard_watchdog() -> void {
+  if (!keyboard_watchdog_active()) return;
+  const auto now = now_steady();
+  if (now < m_keyboard_query_due) return;
+  m_term.query_keyboard_flags();
+  m_keyboard_query_due = now + kKeyboardQueryInterval;
+}
+
+auto App::retire_terminal_keys() -> void {
+  for (auto key : m_terminal_held) {
+    key.action = KeyAction::Release;
+    m_input.push_event(Event{key});
+  }
+  m_terminal_held.clear();
+}
+
+auto App::apply_terminal_keyboard_state(bool available,
+                                        std::optional<ErrorEvent> cause)
+    -> void {
+  if (m_term.keyboard_mode() == KeyboardMode::Legacy ||
+      available == m_terminal_keyboard_available)
+    return;
+
+  if (!available) retire_terminal_keys();
+  m_terminal_keyboard_available = available;
+
+  if (m_playback) {
+    const auto terminal_caps = terminal_input_capabilities(
+        m_caps, m_term.keyboard_mode(), m_terminal_keyboard_available);
+    InputCapabilities source_caps{};
+    if (m_event_source) source_caps = m_event_source->capabilities();
+    m_playback->trace.header.input_capabilities =
+        m_event_source &&
+                m_event_source_mode == EventSourceMode::ReplaceTerminal
+            ? source_caps
+            : combine_input_capabilities(terminal_caps, source_caps);
+  }
+
+  if (m_in_screen) update_requirements(current_size());
+  if (cause) {
+    m_input.push_error(std::move(*cause));
+  } else if (available) {
+    m_input.push_error(ErrorEvent{Severity::Info, "keyboard",
+                                  "keyboard protocol capabilities restored"});
+  } else {
+    m_input.push_error(ErrorEvent{
+        Severity::Warning, "keyboard",
+        "keyboard protocol degraded: requested flags are no longer active"});
+  }
+}
+
+auto App::track_terminal_key(const KeyEvent& key) -> void {
+  const auto it = std::find_if(
+      m_terminal_held.begin(), m_terminal_held.end(),
+      [&](const KeyEvent& prior) { return same_source_key(prior, key); });
+  if (key.action == KeyAction::Press) {
+    if (m_terminal_keyboard_available &&
+        m_term.keyboard_mode() == KeyboardMode::Enhanced &&
+        it == m_terminal_held.end())
+      m_terminal_held.push_back(key);
+  } else if (key.action == KeyAction::Release && it != m_terminal_held.end()) {
+    m_terminal_held.erase(it);
+  }
 }
 
 auto App::drain_terminal_input(bool discard_events) -> InputDrainResult {
@@ -1405,6 +1507,8 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
   m_persistent_pixels.clear();
   m_pixel_placement_fallbacks.clear();
   if (auto r = m_term.query_capabilities(); r) m_caps = *r;
+  m_terminal_keyboard_available = m_caps.kitty_keyboard;
+  m_terminal_held.clear();
   m_driver = m_term.select_driver(m_caps, m_builtin_driver);
   if (auto r = m_driver->init(); !r) return r;
 
@@ -1441,6 +1545,8 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
 
   m_term.enter_screen();
   m_in_screen = true;
+  if (m_term.keyboard_mode() != KeyboardMode::Legacy)
+    m_keyboard_query_due = now_steady();
   // Snapshot before acquisition: a SIGWINCH that lands after the first
   // handler is installed must remain visible to this App.  A signal just
   // before installation belongs to the embedding process's prior action.
@@ -1479,6 +1585,8 @@ auto App::observe_winch() noexcept -> void {
 
 auto App::teardown() -> void {
   stop_event_source();
+  m_terminal_held.clear();
+  m_keyboard_query_due = {};
   if (m_in_screen) {
     m_term.leave_screen();
     m_in_screen = false;
@@ -1937,9 +2045,17 @@ auto App::wait_frame(std::chrono::steady_clock::time_point frame_start,
                            !rendered && !m_render_requested &&
                            !m_input.esc_pending();
   if (demand_idle && !m_playback) {
-    // No timer is armed. A real run blocks in the terminal/post poll; a
-    // headless override sees INT_MAX as the nonnegative spelling of this wait.
-    if (wait_for_sources(-1)) {
+    int timeout_ms{-1};
+    if (keyboard_watchdog_active()) {
+      const auto left = m_keyboard_query_due - now_steady();
+      if (left <= std::chrono::steady_clock::duration::zero()) return;
+      timeout_ms = static_cast<int>(
+          std::chrono::ceil<std::chrono::milliseconds>(left).count());
+    }
+    // The keyboard watchdog is the only timer an otherwise-idle demand frame
+    // owns. Its deadline returns control to the ordinary next-frame pump,
+    // which sends the query without creating a second dispatch path.
+    if (wait_for_sources(timeout_ms)) {
       // Bytes are deliberately only absorbed here. They are decoded and
       // dispatched at the next frame's ordinary pump, preserving frame order.
       if (!m_playback && m_event_source &&
@@ -1954,6 +2070,8 @@ auto App::wait_frame(std::chrono::steady_clock::time_point frame_start,
   }
 
   auto deadline = frame_start + std::chrono::milliseconds(m_frame_ms);
+  if (keyboard_watchdog_active() && m_keyboard_query_due < deadline)
+    deadline = m_keyboard_query_due;
   // The sanctioned overrun: a half-arrived escape sequence gets kEscGraceMs
   // to finish, even under a tighter budget, or a 16ms frame would chop every
   // arrow key into ESC + '[' + 'A'.
@@ -2104,6 +2222,7 @@ auto App::stop_app() noexcept -> void {
 }
 
 auto App::pump_input() -> void {
+  poll_keyboard_watchdog();
   const bool replacing_terminal =
       !m_playback && m_event_source &&
       m_event_source_mode == EventSourceMode::ReplaceTerminal;
@@ -2133,8 +2252,10 @@ auto App::pump_input() -> void {
   dispatch_terminal_replies();
   for (auto& ev : preserved_events)
     dispatch_event(ev);
-  for (auto& ev : m_input.poll())
+  for (auto& ev : m_input.poll()) {
+    if (const auto* key = std::get_if<KeyEvent>(&ev)) track_terminal_key(*key);
     dispatch_event(ev);
+  }
   dispatch_source_events();
 }
 

@@ -84,6 +84,12 @@ class Input {
   auto push_error(ErrorEvent e) -> void;
 
  private:
+  friend class App;
+
+  // Queue a framework-generated input event. Used when a live input route
+  // loses release semantics and held keys must be retired deterministically.
+  auto push_event(Event event) -> void;
+
   std::deque<Event> m_events;
   std::deque<TerminalReplyRecord> m_replies;
   std::string m_pending;     // incomplete sequence carried across feed() calls

@@ -573,6 +573,9 @@ auto encode_terminal_reply(const TerminalReplyRecord& record)
                     static_cast<std::uint8_t>(value.placement_id.has_value()));
           if (value.placement_id) append_le(bytes, *value.placement_id);
           append_string(bytes, value.status);
+        } else if constexpr (std::same_as<T, KeyboardFlagsReply>) {
+          append_le(bytes, std::uint8_t{2});
+          append_le(bytes, value.flags);
         } else {
           append_le(bytes, std::uint8_t{1});
           append_le(bytes, static_cast<std::uint8_t>(value.severity));
@@ -624,6 +627,12 @@ auto decode_terminal_reply(const TraceRecord& record)
     return TerminalReplyRecord{ErrorEvent{static_cast<Severity>(*severity),
                                           std::move(*source),
                                           std::move(*message)}};
+  }
+  if (*type == 2) {
+    const auto flags = take_le<std::uint32_t>(bytes);
+    if (!flags || !bytes.empty())
+      return trace_error("terminal-reply keyboard-flags record is invalid");
+    return TerminalReplyRecord{KeyboardFlagsReply{*flags}};
   }
   return trace_error("terminal-reply record has an unknown type");
 }
