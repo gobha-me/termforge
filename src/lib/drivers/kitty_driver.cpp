@@ -1469,7 +1469,8 @@ auto KittyDriver::next_resident_placement_id(std::uint32_t image_id,
   std::unordered_set<std::uint32_t> held;
   for (const auto& [key, place] : m_resident_places) {
     (void)key;
-    if (place.image_id == image_id) held.insert(place.placement_id);
+    if (place.image_id == image_id && !place.retire_on_accept)
+      held.insert(place.placement_id);
   }
 
   std::uint32_t id = 1;
@@ -1553,17 +1554,28 @@ auto KittyDriver::unpin_image(PinnedImage image)
   auto entry = resolve_pin(image, "unpin_image");
   if (!entry) return std::unexpected{entry.error()};
 
+  if (!m_pin_retirement_frame)
+    m_pin_retirement_frame = PinRetirementFrame{m_pinned, {}};
   const std::size_t before = m_buf.size();
-  if (m_pending_replies.erase(image.id) != 0)
+  if (const auto pending = m_pending_replies.find(image.id);
+      pending != m_pending_replies.end()) {
+    m_pin_retirement_frame->replies.push_back(
+        {image.id, std::move(pending->second),
+         m_quarantined_ids.contains(image.id)});
+    m_pending_replies.erase(pending);
     m_quarantined_ids.insert(image.id);
+  }
   // d=I frees the data AND every placement of it, so the placements need no
   // separate escape -- only their bookkeeping has to go.
   delete_image(image.id, (*entry)->serial);
-  std::erase_if(m_resident_places, [&](const auto& kv) {
-    if (kv.second.image_id != image.id) return false;
-    queue_placeholder_clear(kv.second.rect, kv.second.last_used);
-    return true;
-  });
+  stage_resident_placements();
+  for (auto& [key, place] : m_resident_places) {
+    (void)key;
+    if (place.image_id != image.id || place.retire_on_accept) continue;
+    queue_placeholder_clear(place.rect, place.last_used);
+    place.placed = false;
+    place.retire_on_accept = true;
+  }
   m_pinned.erase(image.id);
   tally_image_edit(m_buf.size() - before);
   return {};
@@ -1585,6 +1597,7 @@ auto KittyDriver::invalidate_images() noexcept -> void {
   m_region_frame.reset();
   m_pinned.clear();
   m_staged_pins.clear();
+  m_pin_retirement_frame.reset();
   m_animations.clear();
   m_staged_animations.clear();
   m_staged_animation_controls.clear();
@@ -1709,7 +1722,8 @@ auto KittyDriver::draw_resident(Rect cells, std::uint32_t image_id,
                       operation)}};
     }
     for (const auto& [other_key, other] : m_resident_places) {
-      if (other_key.rect == dest && other_key.image_id != image_id &&
+      if (!other.retire_on_accept && other_key.rect == dest &&
+          other_key.image_id != image_id &&
           other.last_used > m_frame_start_clock) {
         return std::unexpected{ErrorEvent{
             Severity::Warning, "kitty",
@@ -1744,6 +1758,7 @@ auto KittyDriver::draw_resident(Rect cells, std::uint32_t image_id,
     place_it = m_resident_places.emplace(key, replacement).first;
   }
   auto& place = place_it->second;
+  place.retire_on_accept = false;
   const bool placement_changed = place.placement != options;
   place.placement = options;
   place.last_used = ++m_clock;
@@ -1856,7 +1871,8 @@ auto KittyDriver::retain_resident(Rect cells, std::uint32_t image_id,
                       operation)}};
     }
     for (const auto& [other_key, other] : m_resident_places) {
-      if (other_key.rect == dest && other_key.image_id != image_id &&
+      if (!other.retire_on_accept && other_key.rect == dest &&
+          other_key.image_id != image_id &&
           other.last_used > m_frame_start_clock) {
         return std::unexpected{ErrorEvent{
             Severity::Warning, "kitty",
@@ -1895,7 +1911,8 @@ auto KittyDriver::draw_payload(Rect cells, std::span<const std::byte> payload,
   // ran second wins with nothing said.
   if (m_mode == PlacementMode::UnicodePlaceholders) {
     for (const auto& [pin_key, place] : m_resident_places) {
-      if (pin_key.rect == dest && place.last_used > m_frame_start_clock) {
+      if (!place.retire_on_accept && pin_key.rect == dest &&
+          place.last_used > m_frame_start_clock) {
         return std::unexpected{ErrorEvent{
             Severity::Warning, "kitty",
             "draw_image: a resident image was already drawn to this rect this "
@@ -2195,6 +2212,20 @@ auto KittyDriver::finish_pin_frame(bool accepted) -> void {
     }
   }
   m_staged_pins.clear();
+}
+
+auto KittyDriver::finish_pin_retirements(bool accepted) -> void {
+  if (!m_pin_retirement_frame) return;
+  if (!accepted) {
+    m_pinned = std::move(m_pin_retirement_frame->pins);
+    for (auto& retired : m_pin_retirement_frame->replies) {
+      m_pending_replies.insert_or_assign(retired.image_id,
+                                         std::move(retired.reply));
+      if (!retired.previously_quarantined)
+        m_quarantined_ids.erase(retired.image_id);
+    }
+  }
+  m_pin_retirement_frame.reset();
 }
 
 auto KittyDriver::finish_animation_frame(bool accepted) -> void {
@@ -2530,6 +2561,9 @@ void KittyDriver::flush() {
   // guarantees collection precedes wrap. emit_frame stays AFTER gc_regions()
   // above, or the deletions land in the next frame.
   const bool accepted = emit_frame(m_buf);
+  // Restore retired correlations before discarding this unwritten frame's
+  // newly issued ones; old accepted operations survive, current ones do not.
+  finish_pin_retirements(accepted);
   if (!accepted) discard_unwritten_image_work();
   if (accepted) {
     for (auto& event : m_frame_success_events)
@@ -3086,6 +3120,7 @@ auto KittyDriver::on_shutdown() -> void {
   m_buf += kDeleteAll;
   tally_image_edit(kDeleteAll.size());
   const bool accepted = emit_frame(m_buf);
+  finish_pin_retirements(accepted);
   finish_animation_controls(accepted);
   if (accepted) {
     m_accounted_images.clear();

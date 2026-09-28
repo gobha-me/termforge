@@ -1097,6 +1097,7 @@ auto App::apply_image_invalidation() -> void {
   m_image_invalidation_pending.reset();
 
   if (m_driver) m_driver->invalidate_images();
+  m_retiring_pixels.clear();
   if (m_renderer) m_renderer->invalidate();
   m_pixel_force_repaint = true;
 
@@ -1510,6 +1511,7 @@ auto App::setup() -> std::expected<void, ErrorEvent> {
   // short-circuits on the push itself.
   m_caps = {};
   m_persistent_pixels.clear();
+  m_retiring_pixels.clear();
   m_pixel_placement_fallbacks.clear();
   if (auto r = m_term.query_capabilities(); r) m_caps = *r;
   m_terminal_keyboard_available = m_caps.kitty_keyboard;
@@ -2159,6 +2161,7 @@ auto App::test_wire_headless(int cols, int rows, std::string* sink,
   // about.
   m_driver = std::move(driver);
   m_persistent_pixels.clear();
+  m_retiring_pixels.clear();
   m_pixel_placement_fallbacks.clear();
   m_driver->set_output(sink);
   m_screen = std::make_unique<Screen>(cols, rows);
@@ -2736,6 +2739,28 @@ auto App::flush_pixel_regions() -> void {
   const bool enhanced =
       m_driver && enhanced_image_path(*m_driver) && m_requirements_met;
 
+  auto retire_pending = [&] {
+    for (auto it = m_retiring_pixels.begin(); it != m_retiring_pixels.end();) {
+      if (it->queued) {
+        ++it;
+        continue;
+      }
+      // A refused initial upload (or invalidation) left no resident root.
+      // Never manufacture a stale-handle Warning merely to erase its key.
+      if (!m_driver->pinned_image_status(it->pin).valid) {
+        it = m_retiring_pixels.erase(it);
+        continue;
+      }
+      if (auto released = m_driver->unpin_image(it->pin); !released)
+        m_input.push_error(std::move(released.error()));
+      else
+        it->queued = true;
+      ++it;
+    }
+  };
+  // Retry refused deletes before new uploads can consume the resident pool.
+  retire_pending();
+
   // Ungated: m_pixel_regions can only be non-empty if collect_pixel_regions
   // already passed the same test.
   for (const auto& pr : m_pixel_regions) {
@@ -2954,15 +2979,10 @@ auto App::flush_pixel_regions() -> void {
       ++it;
       continue;
     }
-    if (it->pin) {
-      if (auto released = m_driver->unpin_image(it->pin); !released) {
-        m_input.push_error(std::move(released.error()));
-        ++it;
-        continue;
-      }
-    }
+    if (it->pin) m_retiring_pixels.push_back({it->pin, false});
     it = m_persistent_pixels.erase(it);
   }
+  retire_pending();
 
   std::erase_if(
       m_pixel_placement_fallbacks,
@@ -2986,6 +3006,13 @@ auto App::flush_pixel_regions() -> void {
 }
 
 auto App::finish_pixel_frame(bool output_accepted) -> void {
+  if (output_accepted)
+    std::erase_if(m_retiring_pixels,
+                  [](const RetiringPixelImage& image) { return image.queued; });
+  // Kitty restored its committed roots on refusal. Keep only their handles
+  // for the next frame's delete retry, even if the producer was destroyed.
+  for (auto& image : m_retiring_pixels)
+    image.queued = false;
   const FrameBytes emitted = m_driver->last_frame_bytes();
   const bool image_wire =
       emitted.image_transmit != 0 || emitted.image_edit != 0;

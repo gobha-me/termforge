@@ -83,6 +83,11 @@ file is the tactical version.
   a new pin/animation handle whose upload never reached the terminal. Never
   retain a borrowed payload merely to manufacture an automatic retry; App
   re-borrows widget-owned content on its next production frame.
+  **Explicit pin retirement shares that boundary** (#376): refused unpin
+  restores the committed handle, placements and prior reply/transport lease.
+  App drops an omitted producer but holds a pointer-free retirement handle
+  until its delete write is accepted. Never retain the Widget or payload to
+  retry cleanup; invalidation clears those obsolete handles without wire.
 - **Indirect image transport is explicit embedding policy** (#111). Never
   infer a shared filesystem/shm namespace from `TERM`, SSH variables, a tty,
   or an emulator name. `TerminalDriver::set_image_transport` is base-owned

@@ -477,6 +477,19 @@ class KittyDriver final : public TerminalDriver {
     std::optional<ErrorEvent> success_event;
   };
 
+  struct RetiredPinReply {
+    std::uint32_t image_id{0};
+    PendingReply reply;
+    bool previously_quarantined{false};
+  };
+  // Explicit unpin is projected too. The pin map is bounded at 256 roots;
+  // reply records move (their indirect leases must not be copied or released
+  // before the delete write is accepted).
+  struct PinRetirementFrame {
+    std::unordered_map<std::uint32_t, PinnedEntry> pins;
+    std::vector<RetiredPinReply> replies;
+  };
+
   struct TransmitResult {
     bool request_reply{false};
     std::optional<IndirectTransfer> indirect;
@@ -722,6 +735,7 @@ class KittyDriver final : public TerminalDriver {
   auto stage_region_frame() -> void;
   auto finish_region_frame(bool accepted) -> void;
   auto finish_pin_frame(bool accepted) -> void;
+  auto finish_pin_retirements(bool accepted) -> void;
   [[nodiscard]] auto staged_pin_ready(std::uint32_t image_id,
                                       std::uint32_t serial) const noexcept
       -> bool;
@@ -821,6 +835,7 @@ class KittyDriver final : public TerminalDriver {
   // gc_regions or region_slot can reach this map -- that is the feature.
   std::unordered_map<std::uint32_t, PinnedEntry> m_pinned;
   std::vector<StagedPin> m_staged_pins;
+  std::optional<PinRetirementFrame> m_pin_retirement_frame;
   std::unordered_map<std::uint32_t, AnimationEntry> m_animations;
   std::vector<StagedAnimation> m_staged_animations;
   std::unordered_set<std::uint32_t> m_staged_animation_controls;

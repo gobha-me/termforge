@@ -1406,6 +1406,15 @@ class App {
   };
   std::vector<PersistentPixelRegion> m_persistent_pixels;
 
+  // Omission ends the producer's lifetime, not the terminal image's. Keep
+  // only generation-qualified handles until their delete frame is accepted;
+  // no Widget pointer or borrowed content survives here.
+  struct RetiringPixelImage {
+    PinnedImage pin{};
+    bool queued{false};
+  };
+  std::vector<RetiringPixelImage> m_retiring_pixels;
+
   // Unsupported widget placement options fall back to the authored cell
   // Baseline before draw_pixels() is borrowed or those cells are blanked.
   // Keep one transition latch per declared region so a continuous renderer
