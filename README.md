@@ -52,7 +52,8 @@ Landed and verified:
 - **Widgets** — `Widget` base (with immediate and persistent pixel-region
   support), `PixelSurface` (an owned, fixed-resolution software framebuffer
   with producer-directed dirty submission and an ASCII cell fallback),
-  TextBox scrollback, Composer multiline input/history, TableWidget,
+  TextBox scrollback ([embedded blocks and geometry](docs/textbox-blocks.md)),
+  Composer multiline input/history, TableWidget,
   ListWidget, WaveformWidget, MapWidget (tile
   maps: TileSet + camera + layers + a persistent atlas-sprite tier), and the
   primitives Label, Button, ProgressBar, TextInput, Frame, MenuBar, TabBar.

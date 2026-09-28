@@ -1,7 +1,9 @@
 #include "termforge/widgets/text_box.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <limits>
+#include <stdexcept>
 #include <string_view>
 
 #include "detail/utf8.hpp"
@@ -13,6 +15,59 @@
 
 namespace termforge {
 namespace {
+
+std::atomic<std::uint64_t> g_next_block_owner{1};
+
+auto next_block_owner() -> std::uint64_t {
+  auto id = g_next_block_owner.load(std::memory_order_relaxed);
+  while (id != std::numeric_limits<std::uint64_t>::max()) {
+    if (g_next_block_owner.compare_exchange_weak(
+            id, id + 1, std::memory_order_relaxed, std::memory_order_relaxed))
+      return id;
+  }
+  throw std::overflow_error{"termforge: TextBox block owner space exhausted"};
+}
+
+auto block_error(std::string message) -> std::unexpected<ErrorEvent> {
+  return std::unexpected{
+      ErrorEvent{Severity::Warning, "textbox", std::move(message)}};
+}
+
+// Wrapped rows fit their width, except for the progress-preserving case of
+// one wide glyph in a one-column row. Pad that row instead of leaking into a
+// neighboring widget. Screen still supplies sanitization and screen clipping.
+auto paint_text_row(Screen& screen, int x, int y, const StyledText& row,
+                    int width) -> void {
+  if (width == 1) {
+    for (const auto& span : row) {
+      if (detail::display_width(span.text) > 1) {
+        screen.write_text(x, y, " ", span.style.fg, span.style.bg,
+                          span.style.attrs);
+        return;
+      }
+    }
+  }
+  screen.write_styled(x, y, row);
+}
+
+// Preserve the full track's thumb geometry, but iterate only on-screen rows.
+// A caller may reserve INT_MAX block rows without allocating or walking them.
+auto paint_textbox_scrollbar(Screen& screen, Rect track, int total, int offset,
+                             ScrollGlyphs glyphs, Rgb track_fg, Rgb thumb_fg)
+    -> void {
+  const auto [start, length] =
+      detail::thumb_window(track.h, total, offset, track.h);
+  const auto first = std::max(std::int64_t{0}, std::int64_t{track.y});
+  const auto end =
+      std::min(std::int64_t{screen.rows()}, std::int64_t{track.y} + track.h);
+  for (auto y = first; y < end; ++y) {
+    const auto row = y - track.y;
+    const bool thumb = row >= start && row < std::int64_t{start} + length;
+    screen.write_text(track.x, static_cast<int>(y),
+                      thumb ? glyphs.thumb : glyphs.track,
+                      thumb ? thumb_fg : track_fg, {});
+  }
+}
 
 // Default style for the plain-string append path — matches the colours draw()
 // historically hard-coded (theme fg, zeroed bg, no attrs).
@@ -75,12 +130,72 @@ auto sanitize_spans(StyledText& line) -> void {
 
 } // namespace
 
+TextBox::BlockOwner::BlockOwner() : id(next_block_owner()) {
+}
+TextBox::BlockOwner::BlockOwner(const BlockOwner&) : BlockOwner() {
+}
+TextBox::BlockOwner::BlockOwner(BlockOwner&& other) : BlockOwner() {
+  other.id = next_block_owner();
+}
+auto TextBox::BlockOwner::operator=(const BlockOwner& other) -> BlockOwner& {
+  if (this != &other) id = next_block_owner();
+  return *this;
+}
+auto TextBox::BlockOwner::operator=(BlockOwner&& other) -> BlockOwner& {
+  if (this != &other) {
+    id = next_block_owner();
+    other.id = next_block_owner();
+  }
+  return *this;
+}
+
+TextBox::TextBox(TextBox&& other)
+    : Widget(other), m_block_owner(std::move(other.m_block_owner)),
+      m_slots(std::move(other.m_slots)), m_order(std::move(other.m_order)),
+      m_free(std::move(other.m_free)), m_live(other.m_live),
+      m_anchor(other.m_anchor), m_scroll(other.m_scroll),
+      m_follow(other.m_follow), m_retention(other.m_retention),
+      m_retained_bytes(other.m_retained_bytes),
+      m_wrap_build_count(other.m_wrap_build_count),
+      m_block_limits(other.m_block_limits), m_block_count(other.m_block_count),
+      m_block_rows(other.m_block_rows), m_style(other.m_style),
+      m_track_fg(other.m_track_fg), m_thumb_fg(other.m_thumb_fg) {
+  // Reinitialize the moved-from document counters as well as its containers.
+  other.clear();
+}
+
+auto TextBox::operator=(TextBox&& other) -> TextBox& {
+  if (this == &other) return *this;
+  Widget::operator=(other);
+  m_block_owner = std::move(other.m_block_owner);
+  m_slots = std::move(other.m_slots);
+  m_order = std::move(other.m_order);
+  m_free = std::move(other.m_free);
+  m_live = other.m_live;
+  m_anchor = other.m_anchor;
+  m_scroll = other.m_scroll;
+  m_follow = other.m_follow;
+  m_retention = other.m_retention;
+  m_retained_bytes = other.m_retained_bytes;
+  m_wrap_build_count = other.m_wrap_build_count;
+  m_block_limits = other.m_block_limits;
+  m_block_count = other.m_block_count;
+  m_block_rows = other.m_block_rows;
+  m_layout = {};
+  m_style = other.m_style;
+  m_track_fg = other.m_track_fg;
+  m_thumb_fg = other.m_thumb_fg;
+  other.clear();
+  return *this;
+}
+
 auto TextBox::append(std::string line) -> void {
   // Single-span compatibility wrapper over the styled document path (#25).
   append(plain_text(std::move(line)));
 }
 
 auto TextBox::append(StyledText line) -> void {
+  m_layout.valid = false;
   sanitize_spans(line);
   if (m_live) {
     if (Entry* live = resolve(*m_live)) {
@@ -95,7 +210,7 @@ auto TextBox::append(StyledText line) -> void {
   if (m_follow) m_scroll = 0;
   const bool evicted = enforce_retention();
   if (evicted && !m_follow && !m_anchor)
-    m_scroll = std::numeric_limits<int>::max();
+    m_scroll = std::numeric_limits<std::size_t>::max();
   mark_dirty();
 }
 
@@ -108,6 +223,7 @@ auto TextBox::begin_entry(std::string initial) -> TextEntryHandle {
 }
 
 auto TextBox::begin_entry(StyledText initial) -> TextEntryHandle {
+  m_layout.valid = false;
   if (m_live) {
     if (Entry* live = resolve(*m_live)) {
       const std::size_t old_bytes = live->bytes;
@@ -128,7 +244,7 @@ auto TextBox::begin_entry(StyledText initial) -> TextEntryHandle {
   }
   const bool evicted = enforce_retention();
   if (evicted && !m_follow && !m_anchor)
-    m_scroll = std::numeric_limits<int>::max();
+    m_scroll = std::numeric_limits<std::size_t>::max();
   mark_dirty();
   return handle;
 }
@@ -152,7 +268,7 @@ auto TextBox::append_to_entry(TextEntryHandle handle, StyledText chunk)
   const bool evicted = enforce_retention();
   if (evicted) mark_dirty();
   if (evicted && !m_follow && !m_anchor)
-    m_scroll = std::numeric_limits<int>::max();
+    m_scroll = std::numeric_limits<std::size_t>::max();
   return true;
 }
 
@@ -167,7 +283,7 @@ auto TextBox::replace_entry(TextEntryHandle handle, StyledText text) -> bool {
   const bool evicted = enforce_retention();
   if (evicted) mark_dirty();
   if (evicted && !m_follow && !m_anchor)
-    m_scroll = std::numeric_limits<int>::max();
+    m_scroll = std::numeric_limits<std::size_t>::max();
   return true;
 }
 
@@ -184,6 +300,174 @@ auto TextBox::finalize_entry(TextEntryHandle handle) -> bool {
   return true;
 }
 
+auto TextBox::resolve_block(TextBlockHandle handle) const noexcept
+    -> const Entry* {
+  if (!handle || handle.owner != m_block_owner.id ||
+      handle.index >= m_slots.size())
+    return nullptr;
+  const auto& slot = m_slots[handle.index];
+  if (slot.generation != handle.generation || !slot.entry ||
+      !slot.entry->block_rows)
+    return nullptr;
+  return &*slot.entry;
+}
+
+auto TextBox::validate_block_rows(int rows, int previous) const
+    -> std::expected<void, ErrorEvent> {
+  if (rows < 0 || rows > m_block_limits.max_rows_per_block)
+    return block_error("block height is outside the configured row budget");
+  const auto remaining = m_block_rows - static_cast<std::size_t>(previous);
+  if (static_cast<std::size_t>(rows) >
+      m_block_limits.max_total_rows - remaining)
+    return block_error("block would exceed the aggregate row budget");
+  return {};
+}
+
+auto TextBox::set_block_limits(TextBoxBlockLimits limits)
+    -> std::expected<void, ErrorEvent> {
+  const auto maximum =
+      static_cast<std::size_t>(std::numeric_limits<int>::max());
+  if (limits.max_rows_per_block < 0 || limits.max_blocks > maximum ||
+      limits.max_total_rows > maximum || limits.max_blocks < m_block_count ||
+      limits.max_total_rows < m_block_rows)
+    return block_error("invalid block limits or limits below current use");
+  for (const auto index : m_order) {
+    const auto& entry = *m_slots[index].entry;
+    if (entry.block_rows && *entry.block_rows > limits.max_rows_per_block)
+      return block_error("per-block row limit is below current use");
+  }
+  m_block_limits = limits;
+  return {};
+}
+
+auto TextBox::append_block(int rows, StyledText fallback)
+    -> std::expected<TextBlockHandle, ErrorEvent> {
+  if (m_block_count >= m_block_limits.max_blocks)
+    return block_error("block count budget exhausted");
+  if (const auto valid = validate_block_rows(rows, 0); !valid)
+    return std::unexpected{valid.error()};
+  sanitize_spans(fallback);
+  std::size_t bytes = 0;
+  for (const auto& span : fallback) {
+    if (span.text.size() > std::numeric_limits<std::size_t>::max() - bytes)
+      return block_error("block fallback byte count overflows");
+    bytes += span.text.size();
+  }
+  if (bytes > std::numeric_limits<std::size_t>::max() - m_retained_bytes)
+    return block_error("retained block byte count overflows");
+
+  if (m_live) (void)finalize_entry(*m_live);
+  const auto entry = allocate_entry(std::move(fallback), true);
+  m_slots[entry.index].entry->block_rows = rows;
+  ++m_block_count;
+  m_block_rows += static_cast<std::size_t>(rows);
+  m_layout.valid = false;
+  if (m_follow) m_scroll = 0;
+  (void)enforce_retention();
+  mark_dirty();
+  return TextBlockHandle{entry.index, entry.generation, m_block_owner.id};
+}
+
+auto TextBox::update_block(TextBlockHandle handle, int rows,
+                           StyledText fallback)
+    -> std::expected<void, ErrorEvent> {
+  const auto* current = resolve_block(handle);
+  if (!current) return block_error("empty, stale, or foreign block handle");
+  if (const auto valid = validate_block_rows(rows, *current->block_rows);
+      !valid)
+    return std::unexpected{valid.error()};
+  sanitize_spans(fallback);
+  std::size_t bytes = 0;
+  for (const auto& span : fallback) {
+    if (span.text.size() > std::numeric_limits<std::size_t>::max() - bytes)
+      return block_error("block fallback byte count overflows");
+    bytes += span.text.size();
+  }
+  if (bytes > std::numeric_limits<std::size_t>::max() -
+                  (m_retained_bytes - current->bytes))
+    return block_error("retained block byte count overflows");
+
+  Entry& entry = *m_slots[handle.index].entry;
+  m_block_rows -= static_cast<std::size_t>(*entry.block_rows);
+  m_block_rows += static_cast<std::size_t>(rows);
+  entry.block_rows = rows;
+  const auto old_bytes = entry.bytes;
+  entry.text = std::move(fallback);
+  note_entry_change(entry, old_bytes, true);
+  (void)enforce_retention();
+  return {};
+}
+
+auto TextBox::set_block_rows(TextBlockHandle handle, int rows)
+    -> std::expected<void, ErrorEvent> {
+  const auto* current = resolve_block(handle);
+  if (!current) return block_error("empty, stale, or foreign block handle");
+  if (const auto valid = validate_block_rows(rows, *current->block_rows);
+      !valid)
+    return std::unexpected{valid.error()};
+  if (*current->block_rows == rows) return {};
+  m_block_rows -= static_cast<std::size_t>(*current->block_rows);
+  m_block_rows += static_cast<std::size_t>(rows);
+  m_slots[handle.index].entry->block_rows = rows;
+  m_layout.valid = false;
+  if (m_follow) m_scroll = 0;
+  mark_dirty();
+  return {};
+}
+
+auto TextBox::remove_block(TextBlockHandle handle)
+    -> std::expected<void, ErrorEvent> {
+  if (!resolve_block(handle))
+    return block_error("empty, stale, or foreign block handle");
+  release_slot(std::find(m_order.begin(), m_order.end(), handle.index));
+  mark_dirty();
+  return {};
+}
+
+auto TextBox::block_geometry(TextBlockHandle handle) const
+    -> std::expected<TextBlockGeometry, ErrorEvent> {
+  const auto* block = resolve_block(handle);
+  if (!block) return block_error("empty, stale, or foreign block handle");
+  TextBlockGeometry result;
+  if (!m_layout.valid || m_layout.owner != m_block_owner.id ||
+      m_layout.widget != rect())
+    return result;
+  if (m_layout.viewport.empty()) {
+    result.state = TextBlockLayoutState::Empty;
+    return result;
+  }
+  std::size_t first = 0;
+  for (const auto index : m_order) {
+    if (index == handle.index) break;
+    const auto& entry = *m_slots[index].entry;
+    if (entry.block_rows) {
+      first += static_cast<std::size_t>(*entry.block_rows);
+    } else {
+      const auto& cache = entry.wrap.width == m_layout.width
+                              ? entry.wrap
+                              : entry.alternate_wrap;
+      first += cache.rows.size();
+    }
+  }
+  const std::int64_t y = std::int64_t{rect().y} +
+                         static_cast<std::int64_t>(first) -
+                         static_cast<std::int64_t>(m_layout.top);
+  result.allocation =
+      TextBlockAllocation{rect().x, y, m_layout.width, *block->block_rows};
+  result.state = *block->block_rows == 0 ? TextBlockLayoutState::Empty
+                                         : TextBlockLayoutState::Offscreen;
+  const Rect v = m_layout.viewport;
+  const auto top = std::max(y, std::int64_t{v.y});
+  const auto bottom = std::min(y + *block->block_rows, std::int64_t{v.y} + v.h);
+  if (top < bottom) {
+    result.state = TextBlockLayoutState::Visible;
+    result.visible = {v.x, static_cast<int>(top), v.w,
+                      static_cast<int>(bottom - top)};
+    result.source_row = static_cast<int>(top - y);
+  }
+  return result;
+}
+
 auto TextBox::set_retention(TextBoxRetention retention) -> void {
   if (m_retention == retention) return;
   m_retention = retention;
@@ -197,6 +481,7 @@ auto TextBox::retention_over_budget() const noexcept -> bool {
 }
 
 auto TextBox::clear() -> void {
+  m_layout.valid = false;
   m_order.clear();
   m_free.clear();
   for (std::size_t i = 0; i < m_slots.size(); ++i) {
@@ -209,6 +494,8 @@ auto TextBox::clear() -> void {
   m_live.reset();
   m_anchor.reset();
   m_retained_bytes = 0;
+  m_block_count = 0;
+  m_block_rows = 0;
   m_scroll = 0;
   m_follow = true;
   mark_dirty();
@@ -229,15 +516,21 @@ auto TextBox::scroll(int delta) -> void {
   //
   // #217's per-entry caches make the wrapped count available here too, so the
   // anchor can be captured before a producer mutates the tail.
-  m_scroll =
-      std::max(0, m_scroll + (delta < 0 ? -delta : 0)); // up increases m_scroll
-  if (delta > 0) m_scroll = std::max(0, m_scroll - delta); // down decreases
+  if (delta < 0) {
+    const auto up = static_cast<std::size_t>(-std::int64_t{delta});
+    m_scroll +=
+        std::min(up, std::numeric_limits<std::size_t>::max() - m_scroll);
+  } else {
+    m_scroll -= std::min(m_scroll, static_cast<std::size_t>(delta));
+  }
+  m_layout.valid = false;
   m_follow = (m_scroll == 0);
   refresh_anchor_from_scroll();
   mark_dirty();
 }
 
 auto TextBox::scroll_to_bottom() -> void {
+  m_layout.valid = false;
   m_scroll = 0;
   m_follow = true;
   m_anchor.reset();
@@ -286,25 +579,32 @@ auto TextBox::on_event(const Event& ev) -> bool {
 auto TextBox::content_w() const noexcept -> int {
   const int w = rect().w;
   if (w <= 0) return 0;
-  // The bar's existence depends on the WRAPPED row count, which only draw()
-  // computes -- so the width it will claim is decided in two passes there
-  // (wrap at full width, and if the content then overflows, keep the bar and
-  // the text keeps this narrower width on the NEXT wrap). To avoid a
-  // one-frame oscillation where the bar toggles the wrap width every frame,
-  // content_w() reports the bar-aware width whenever the bar COULD be up:
-  // logical lines alone already exceeding the view is a stable lower bound
-  // (wrapping never shrinks the row count). A single short logical line that
-  // wraps to exactly the view height is the edge where the two passes
-  // disagree for one frame; the bar then appears with the text already
-  // wrapped for it, which is the harmless direction.
-  const bool bar_possible =
-      rect().h > 0 && m_order.size() > static_cast<std::size_t>(rect().h);
-  return std::max(0, w - (bar_possible ? 1 : 0));
+  if (m_layout.valid && m_layout.owner == m_block_owner.id &&
+      m_layout.widget == rect())
+    return m_layout.width;
+  const std::size_t minimum_rows =
+      m_order.size() - m_block_count + m_block_rows;
+  const bool bar = w > 1 && rect().h > 0 &&
+                   minimum_rows > static_cast<std::size_t>(rect().h);
+  return w - (bar ? 1 : 0);
+}
+
+auto TextBox::layout_width() -> int {
+  const Rect r = rect();
+  if (r.w <= 1 || r.h <= 0) return std::max(0, r.w);
+  const std::size_t minimum_rows =
+      m_order.size() - m_block_count + m_block_rows;
+  if (minimum_rows > static_cast<std::size_t>(r.h) ||
+      wrapped_total(r.w) > static_cast<std::size_t>(r.h))
+    return r.w - 1;
+  return r.w;
 }
 
 auto TextBox::draw(Screen& screen) -> void {
+  m_layout.valid = false;
   const Rect r = rect();
   if (r.w <= 0 || r.h <= 0) {
+    m_layout = Layout{r, {}, 0, std::max(0, r.w), m_block_owner.id, true};
     clear_dirty();
     return;
   }
@@ -314,23 +614,17 @@ auto TextBox::draw(Screen& screen) -> void {
   // leave stale text behind (immediate-mode contract, see widget.hpp).
   screen.fill_rect(r.x, r.y, r.w, r.h, fg, {});
 
-  // Wrap at the bar-aware width (see content_w()): when the bar is possible
-  // the text already leaves its column free, so an appearing bar covers no
-  // text and the wrap is stable frame to frame.
-  //
-  // A cw of 0 still wraps: wrap_into(width <= 0) means "don't wrap", so the
-  // logical lines pass through and the paint loop clips them to the columns
-  // that exist. (Skipping the wrap here produced total == 0: a blank box
-  // with no bar -- erasing the content AND the bar's reason to exist.)
-  const int cw = content_w();
+  // Resolve the actual width before painting or publishing child geometry.
+  // If full-width wrapping overflows, reflow with the scrollbar reserved;
+  // keeping both width caches avoids rebuilding that pair every frame.
+  const int cw = layout_width();
   const std::size_t total_size = wrapped_total(cw);
   const int total = static_cast<int>(std::min<std::size_t>(
       total_size, static_cast<std::size_t>(std::numeric_limits<int>::max())));
   // Clamp the scroll offset now that the wrapped line count is known --
   // scroll() can't bound it (content may have changed since). m_scroll counts
   // UP from the bottom (inverted, see scroll()), but the bounds are symmetric:
-  // the valid range is [0, max(0, total - h)] in either convention, so the
-  // shared clamp applies directly.
+  // the valid range is [0, max(0, total - h)] in either convention.
   const std::size_t max_top = total_size > static_cast<std::size_t>(r.h)
                                   ? total_size - static_cast<std::size_t>(r.h)
                                   : 0;
@@ -339,31 +633,39 @@ auto TextBox::draw(Screen& screen) -> void {
       const std::size_t visible_end =
           std::min(total_size, *top + static_cast<std::size_t>(r.h));
       const std::size_t from_bottom = total_size - visible_end;
-      m_scroll = static_cast<int>(std::min<std::size_t>(
-          from_bottom,
-          static_cast<std::size_t>(std::numeric_limits<int>::max())));
+      m_scroll = from_bottom;
     }
   }
-  m_scroll = detail::clamp_offset(m_scroll, total, r.h);
+  m_scroll = std::min(m_scroll, max_top);
   m_follow = (m_scroll == 0);
-  const std::size_t bottom = total_size - static_cast<std::size_t>(m_scroll);
+  const std::size_t bottom = total_size - m_scroll;
   const std::size_t top = bottom > static_cast<std::size_t>(r.h)
                               ? bottom - static_cast<std::size_t>(r.h)
                               : 0;
 
+  const Rect viewport = Rect{r.x, r.y, cw, r.h}.intersect(
+      Rect{0, 0, screen.cols(), screen.rows()});
+  m_layout = Layout{r, viewport, top, cw, m_block_owner.id, false};
+  const auto clipped_top =
+      viewport.empty()
+          ? 0
+          : top + static_cast<std::size_t>(std::int64_t{viewport.y} - r.y);
+  const auto clipped_bottom =
+      clipped_top + static_cast<std::size_t>(viewport.h);
   std::size_t flat = 0;
-  int paint_row = 0;
   for (const std::size_t slot_index : m_order) {
     Entry& entry = *m_slots[slot_index].entry;
-    const auto& rows = ensure_wrapped(entry, cw);
-    for (const StyledText& row : rows) {
-      if (flat >= top && flat < bottom && paint_row < r.h) {
-        screen.write_styled(r.x, r.y + paint_row, row);
-        ++paint_row;
+    const auto count = entry_rows(entry, cw);
+    const auto first = std::max(flat, clipped_top);
+    const auto end = std::min(flat + count, clipped_bottom);
+    if (!viewport.empty() && first < end) {
+      const auto& rows = ensure_wrapped(entry, cw);
+      for (auto row = first; row < end && row - flat < rows.size(); ++row) {
+        const auto y = std::int64_t{r.y} + static_cast<std::int64_t>(row - top);
+        paint_text_row(screen, r.x, static_cast<int>(y), rows[row - flat], cw);
       }
-      ++flat;
-      if (flat >= bottom) break;
     }
+    flat += count;
     if (flat >= bottom) break;
   }
 
@@ -373,8 +675,10 @@ auto TextBox::draw(Screen& screen) -> void {
     anchor_from_top(top, cw);
 
   // scroll indicator when not at the bottom
-  if (m_scroll > 0 && r.w > 8) {
-    screen.write_text(r.x + r.w - 7, r.y, "[more]", theme::kDim, {});
+  const auto more_x = std::int64_t{r.x} + r.w - 7;
+  if (m_scroll > 0 && r.w > 8 && !viewport.empty() &&
+      more_x <= std::numeric_limits<int>::max()) {
+    screen.write_text(static_cast<int>(more_x), r.y, "[more]", theme::kDim, {});
   }
 
   // #21: the scrollbar claims the last column when the wrapped content
@@ -385,18 +689,18 @@ auto TextBox::draw(Screen& screen) -> void {
   // detail/viewport.hpp: the helper's offset is rows past the TOP, while
   // m_scroll counts UP from the bottom.
   //
-  // The cw > 0 guard is the NARROW exception, and it resolves the other way
-  // from ListWidget's w == 2 (which gives the strip the last column): a
-  // 1-wide TextBox keeps its text and drops the bar. The guard exists for
-  // the normal case -- a box wide enough for text keeps the strip out of it
-  // -- and at 1 wide a position-only box is the worse half of the trade for
-  // a widget whose whole job is text (its caller can give it two columns).
-  if (total > r.h && cw > 0) {
-    const int offset = total - m_scroll - r.h;
-    detail::draw_scrollbar(screen, {r.x + r.w - 1, r.y, 1, r.h}, total, offset,
-                           r.h, scrollbar_glyphs(m_style), m_track_fg,
-                           m_thumb_fg, Rgb{});
+  // One-column views keep their content and drop the bar. Compute its column
+  // wide and clip before narrowing, just like the block's full allocation.
+  const auto bar_x = std::int64_t{r.x} + r.w - 1;
+  if (total_size > static_cast<std::size_t>(r.h) && r.w > 1 && bar_x >= 0 &&
+      bar_x < screen.cols() && !viewport.empty()) {
+    const auto offset = static_cast<int>(
+        std::min(top, static_cast<std::size_t>(std::max(0, total - r.h))));
+    paint_textbox_scrollbar(screen, {static_cast<int>(bar_x), r.y, 1, r.h},
+                            total, offset, scrollbar_glyphs(m_style),
+                            m_track_fg, m_thumb_fg);
   }
+  m_layout.valid = true;
   clear_dirty();
 }
 
@@ -520,6 +824,7 @@ auto TextBox::note_entry_change(Entry& entry, std::size_t old_bytes,
   entry.bytes = payload_bytes(entry);
   m_retained_bytes += entry.bytes;
   if (visible_changed) {
+    m_layout.valid = false;
     ++entry.content_revision;
     if (entry.content_revision == 0) ++entry.content_revision;
     entry.wrap.valid = false;
@@ -550,6 +855,11 @@ auto TextBox::release_slot(std::deque<std::size_t>::iterator position) -> void {
   Slot& slot = m_slots[index];
   const TextEntryHandle handle{index, slot.generation};
   m_retained_bytes -= slot.entry->bytes;
+  if (slot.entry->block_rows) {
+    --m_block_count;
+    m_block_rows -= static_cast<std::size_t>(*slot.entry->block_rows);
+  }
+  m_layout.valid = false;
   slot.entry.reset();
   ++slot.generation;
   if (slot.generation == 0) ++slot.generation;
@@ -557,30 +867,39 @@ auto TextBox::release_slot(std::deque<std::size_t>::iterator position) -> void {
   m_order.erase(position);
   if (m_anchor && m_anchor->entry == handle) {
     m_anchor.reset();
-    if (!m_follow) m_scroll = std::numeric_limits<int>::max();
+    if (!m_follow) m_scroll = std::numeric_limits<std::size_t>::max();
   }
 }
 
 auto TextBox::ensure_wrapped(Entry& entry, int width)
     -> const std::vector<StyledText>& {
-  if (!entry.wrap.valid || entry.wrap.width != width ||
-      entry.wrap.content_revision != entry.content_revision ||
-      entry.wrap.policy_revision != kWrapPolicyRevision) {
-    entry.wrap.rows.clear();
-    detail::wrap_styled_into(entry.wrap.rows, entry.text, width);
-    entry.wrap.width = width;
-    entry.wrap.content_revision = entry.content_revision;
-    entry.wrap.policy_revision = kWrapPolicyRevision;
-    entry.wrap.valid = true;
+  // Two-entry LRU: widths after a resize replace BOTH old widths, rather than
+  // thrashing a single alternate while the first-ever width stays protected.
+  if (entry.wrap.width != width) std::swap(entry.wrap, entry.alternate_wrap);
+  auto& cache = entry.wrap;
+  if (!cache.valid || cache.width != width ||
+      cache.content_revision != entry.content_revision ||
+      cache.policy_revision != kWrapPolicyRevision) {
+    cache.rows.clear();
+    detail::wrap_styled_into(cache.rows, entry.text, width);
+    cache.width = width;
+    cache.content_revision = entry.content_revision;
+    cache.policy_revision = kWrapPolicyRevision;
+    cache.valid = true;
     ++m_wrap_build_count;
   }
-  return entry.wrap.rows;
+  return cache.rows;
+}
+
+auto TextBox::entry_rows(Entry& entry, int width) -> std::size_t {
+  return entry.block_rows ? static_cast<std::size_t>(*entry.block_rows)
+                          : ensure_wrapped(entry, width).size();
 }
 
 auto TextBox::wrapped_total(int width) -> std::size_t {
   std::size_t total = 0;
   for (const std::size_t index : m_order)
-    total += ensure_wrapped(*m_slots[index].entry, width).size();
+    total += entry_rows(*m_slots[index].entry, width);
   return total;
 }
 
@@ -588,7 +907,7 @@ auto TextBox::anchor_from_top(std::size_t top, int width) -> void {
   std::size_t first = 0;
   for (const std::size_t index : m_order) {
     Entry& entry = *m_slots[index].entry;
-    const std::size_t count = ensure_wrapped(entry, width).size();
+    const std::size_t count = entry_rows(entry, width);
     if (top < first + count) {
       m_anchor = ViewAnchor{TextEntryHandle{index, m_slots[index].generation},
                             top - first};
@@ -605,14 +924,14 @@ auto TextBox::anchored_top(int width, std::size_t max_top)
   std::size_t first = 0;
   for (const std::size_t index : m_order) {
     Entry& entry = *m_slots[index].entry;
-    const auto& rows = ensure_wrapped(entry, width);
+    const auto count = entry_rows(entry, width);
     const TextEntryHandle handle{index, m_slots[index].generation};
     if (handle == m_anchor->entry) {
       const std::size_t row =
-          rows.empty() ? 0 : std::min(m_anchor->row, rows.size() - 1);
+          count == 0 ? 0 : std::min(m_anchor->row, count - 1);
       return std::min(first + row, max_top);
     }
-    first += rows.size();
+    first += count;
   }
   m_anchor.reset();
   return std::nullopt;
@@ -628,14 +947,14 @@ auto TextBox::refresh_anchor_from_scroll() -> void {
     m_anchor.reset();
     return;
   }
-  const int width = content_w();
+  const int width = layout_width();
   const std::size_t total = wrapped_total(width);
   const std::size_t max_scroll = total > static_cast<std::size_t>(r.h)
                                      ? total - static_cast<std::size_t>(r.h)
                                      : 0;
   const std::size_t scroll =
       std::min<std::size_t>(static_cast<std::size_t>(m_scroll), max_scroll);
-  m_scroll = static_cast<int>(scroll);
+  m_scroll = scroll;
   m_follow = (m_scroll == 0);
   if (m_follow) {
     m_anchor.reset();
