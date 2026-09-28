@@ -94,5 +94,23 @@ auto main() -> int {
       screen.at(0, 1).attrs != termforge::Attr::Underline ||
       screen.text_at(0, 2) != "s")
     return 1;
+
+  // #354 must be available through installed/public headers and linked TUs,
+  // not just an in-tree test that can see private layout internals.
+  termforge::TextBox blocks;
+  if (!blocks.set_block_limits({2, 8, 16})) return 1;
+  const auto block = blocks.append_block(2, styled);
+  if (!block) return 1;
+  blocks.set_geometry({0, 0, 20, 3});
+  blocks.draw(screen);
+  const auto geometry = blocks.block_geometry(*block);
+  if (!geometry ||
+      geometry->state != termforge::TextBlockLayoutState::Visible ||
+      geometry->visible != termforge::Rect{0, 0, 20, 2})
+    return 1;
+  if (!blocks.update_block(*block, 1, styled) ||
+      !blocks.set_block_rows(*block, 0) || !blocks.remove_block(*block) ||
+      blocks.block_geometry(*block))
+    return 1;
   return 0;
 }

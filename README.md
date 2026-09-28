@@ -52,7 +52,8 @@ Landed and verified:
 - **Widgets** — `Widget` base (with immediate and persistent pixel-region
   support), `PixelSurface` (an owned, fixed-resolution software framebuffer
   with producer-directed dirty submission and an ASCII cell fallback),
-  TextBox scrollback, Composer multiline input/history, TableWidget,
+  TextBox scrollback ([embedded blocks and geometry](docs/textbox-blocks.md)),
+  Composer multiline input/history, TableWidget,
   ListWidget, WaveformWidget, MapWidget (tile
   maps: TileSet + camera + layers + a persistent atlas-sprite tier), and the
   primitives Label, Button, ProgressBar, TextInput, Frame, MenuBar, TabBar.
@@ -198,7 +199,7 @@ if (NOT termforge_FOUND)
   include(FetchContent)
   FetchContent_Declare(termforge
     GIT_REPOSITORY https://github.com/gobha-me/termforge.git
-    GIT_TAG        v0.57.25
+    GIT_TAG        v0.57.27
   )
   FetchContent_MakeAvailable(termforge)
 endif ()
