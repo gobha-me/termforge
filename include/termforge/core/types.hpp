@@ -43,8 +43,8 @@ struct Rgb {
 //
 // Per-driver survival: AnsiRgbDriver and KittyDriver pass all six through;
 // FallbackDriver (the floor) emits only Reverse and Bold — universally honored
-// even on a dumb terminal — and drops the rest, surfaced as ErrorEvent{Info}
-// per the degradation-is-an-event contract.
+// even on a dumb terminal — and drops the rest silently. Tier selection is the
+// degradation event; dropped attributes are not reported per cell.
 enum class Attr : std::uint8_t {
   None = 0,
   Bold = 1 << 0,      // SGR 1
