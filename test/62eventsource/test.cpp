@@ -74,14 +74,21 @@ auto make_source_state() -> std::shared_ptr<SourceState> {
   return state;
 }
 
-auto queue_reply(const std::shared_ptr<SourceState>& state, SourceReply reply)
-    -> void {
+// This primitive is also used by a producer thread. Catch2 reporting is not
+// thread-safe, so return its result and assert only on the test's owner thread.
+auto enqueue_reply(const std::shared_ptr<SourceState>& state, SourceReply reply)
+    -> bool {
   {
     std::lock_guard lock{state->mutex};
     state->replies.push_back(std::move(reply));
   }
   constexpr char wake{'s'};
-  REQUIRE(::write(state->pipe[1], &wake, 1) == 1);
+  return ::write(state->pipe[1], &wake, 1) == 1;
+}
+
+auto queue_reply(const std::shared_ptr<SourceState>& state, SourceReply reply)
+    -> void {
+  REQUIRE(enqueue_reply(state, std::move(reply)));
 }
 
 auto queue_events(
@@ -813,12 +820,18 @@ TEST_CASE("source readiness wakes an idle demand loop",
                                EventSourceMode::ReplaceTerminal));
   std::string wire;
 
-  std::jthread producer{[state] {
+  bool producer_woke_source{false};
+  std::jthread producer{[state, &producer_woke_source] {
     std::this_thread::sleep_for(10ms);
-    queue_events(state, {key(Key::Char, KeyAction::Press, U'q')});
+    producer_woke_source = enqueue_reply(
+        state,
+        SourceReply{std::vector<Event>{key(Key::Char, KeyAction::Press, U'q')},
+                    std::nullopt});
   }};
-  REQUIRE(app.test_run_guarded(20, 5, &wire) == 0);
+  const int run_status = app.test_run_guarded(20, 5, &wire);
   producer.join();
+  REQUIRE(producer_woke_source);
+  REQUIRE(run_status == 0);
 
   const auto observed = key_events(app.events);
   REQUIRE(observed.size() == 1);
