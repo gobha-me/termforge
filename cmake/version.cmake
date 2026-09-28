@@ -68,7 +68,7 @@ if (GIT_FOUND AND NOT TERMFORGE_VERSION)
         set(TERMFORGE_VERSION ${CMAKE_MATCH_1})
       endif()
 
-      if (CMAKE_MATCH_3) # Use inplace of tweak?
+      if (CMAKE_MATCH_3) # Use in place of tweak?
         set(DIRTY_BRANCH ${CMAKE_MATCH_3})
       endif()
     endif()
