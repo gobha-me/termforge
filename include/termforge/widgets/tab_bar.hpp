@@ -10,6 +10,8 @@
 // library does not do layout yet (the helper is an open item under #16). A
 // TabBar that renders one row and reports an index composes with whatever an
 // app already does; a container would compete with it.
+// Notebook (#367) is now the separate opt-in composition for borrowed page
+// roots; this strip's API and ownership contract remain unchanged.
 //
 // THE ACTIVE TAB IS THE SELECTION, and the same reasoning as RadioGroup
 // applies: there is no separate "highlighted but not chosen" index, because

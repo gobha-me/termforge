@@ -2,6 +2,12 @@
 
 **Status:** Accepted — implemented by WaveformWidget and PixelSurface.
 
+Composite widgets may expose already-drawn visible children through the optional
+`Widget::pixel_children()` hook. App collects each actual producer, preserving
+its persistent region identity and accepted-write acknowledgement; hidden
+children are not submitted. See [Notebook](notebook.md) for borrowed-page
+composition and lifetime rules. This does not introduce an App-owned widget tree.
+
 ## Problem
 
 TermForge widgets render into `Screen` — a grid of cells, each holding a
