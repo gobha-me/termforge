@@ -242,7 +242,7 @@ and Clang.
 
 - `src/bin` — `forge-top`, a live `/proc` system monitor and permanent
   all-driver dogfooding harness. Under a non-TTY it exits cleanly with
-  "stdout is not a tty" — the failure path working as designed.
+  "stdin/stdout is not a tty" — the failure path working as designed.
 - `examples/` — focused demos per subsystem: `game` (a deterministic 320×180
   workload with headless benchmark and real-Kitty capture modes),
   `pixel_surface` (the persistent framebuffer primitive), `dashboard`
