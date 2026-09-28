@@ -1,6 +1,7 @@
 add_executable(53forgetop-test
   ${PROJECT_SOURCE_DIR}/test/main.cpp
   test.cpp
+  ux.cpp
   ${PROJECT_SOURCE_DIR}/src/bin/cli.cpp
   ${PROJECT_SOURCE_DIR}/src/bin/fake_reader.cpp
   ${PROJECT_SOURCE_DIR}/src/bin/forge_top.cpp
@@ -20,6 +21,22 @@ target_link_libraries(53forgetop-test
   PRIVATE Catch2::Catch2
   PRIVATE ${PROJECT_NAME}::lib
 )
+target_compile_definitions(53forgetop-test PRIVATE
+  FORGE_TOP_CAPTURES="${PROJECT_SOURCE_DIR}/src/bin/captures/forge-top"
+)
+
+# Optional capture utility for the private flagship app, never a consumer API.
+add_executable(termforge_forge_top_capture EXCLUDE_FROM_ALL
+  capture.cpp
+  ${PROJECT_SOURCE_DIR}/src/bin/fake_reader.cpp
+  ${PROJECT_SOURCE_DIR}/src/bin/forge_top.cpp
+  ${PROJECT_SOURCE_DIR}/src/bin/panels.cpp
+)
+target_include_directories(termforge_forge_top_capture PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/bin
+  ${PROJECT_SOURCE_DIR}/test
+)
+target_link_libraries(termforge_forge_top_capture PRIVATE ${PROJECT_NAME}::lib)
 
 # Keep the built program's identity observable at the executable boundary.
 # This target is optional when a consumer enables tests but disables the bin.
