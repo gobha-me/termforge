@@ -30,7 +30,8 @@ new theme type or general clipping/layout seam is introduced.
 - F4 cycles explicitly simulated populated, empty, loading, error and disabled
   data states. Disabled specimens decline interaction; category/card/menu
   navigation remains available. F5 restarts a bounded simulated transcript.
-- F6 opens complete help; Escape closes a dropdown/modal before it quits the
+- F6 opens scrollable help (PgUp/PgDn, arrows, wheel, Home/End; Esc/F6 returns).
+  Escape closes a dropdown/modal before it quits the
   gallery. A modal captures all keys and mouse, while resize and output errors
   still reach the application.
 
@@ -39,6 +40,11 @@ hidden controls receive no edits. At 24x8, decorative borders/help are reduced,
 not the list of reachable specimens. At 80x24 a framed specimen includes
 instructions and its source reference; at 120x32 a reference sidebar is added.
 Viewport widgets use the available body height and their existing scrolling.
+Standard dialog specimens require 24x8; a smaller grid reports a resize
+instruction instead of opening an invisible form, and shrinking an open form
+cancels it without committing a draft. Help remains scrollable below that floor.
+Below 32 columns the wizard uses `<` (Back), `>` (Next), `OK` (Submit) and
+`Esc` (Cancel) so all three final-page buttons fit; wider grids keep full labels.
 There is no attempt to invent a generic ScrollView or pixel clipper.
 
 ## Real results and honest demonstrations
@@ -81,6 +87,9 @@ disabled. It checks decoded keyboard/paste/mouse routing, every specimen at all
 four sizes, silent retained values, simulated states, every modal result, resize
 recovery, pixel suspension/retirement, sink-refused deletion retry, and exact
 cell captures on all three tiers.
+Short-modal tests additionally decode the actual fallback driver's ASCII frame
+output to check reachable help and painted choices, rather than inspecting the
+underlying Screen that App restores after presenting an overlay.
 
 Screen captures are not terminal screenshots: they omit later modal rendering,
 and enhanced-region collection may already have blanked cells. Wire size/hash
