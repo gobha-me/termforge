@@ -6,14 +6,14 @@
 #   tools/consume/run.sh vendored [cxx] -- add_subdirectory from a plain copy
 #                                          inside someone else's tagged repo
 #
-# Both paths must yield the same target spelling (termforge::lib) and must
+# All three paths must yield the same target spelling (termforge::lib) and must
 # build ONLY the library. Everything happens in a mktemp -d, because
 # termforge_TESTS/_EXAMPLES are already cached ON in every existing dev build
 # dir and option() will not lower a cached value -- a reused tree would prove
 # nothing.
 set -euo pipefail
 
-MODE=${1:?usage: run.sh <subdir|install> [cxx-compiler]}
+MODE=${1:?usage: run.sh <subdir|install|vendored> [cxx-compiler]}
 CXX_COMPILER=${2:-}
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
