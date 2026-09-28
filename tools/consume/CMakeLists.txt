@@ -12,7 +12,7 @@ project(termforge_consumer LANGUAGES CXX)
 
 if (TERMFORGE_SOURCE_DIR)
   # Path 1: add_subdirectory with ZERO extra options. If termforge's gating is
-  # wrong this build also grows a demo binary, ten examples and a Catch2 clone
+  # wrong this build also grows a demo binary, nineteen examples and a Catch2 clone
   # -- which is exactly what run.sh asserts against.
   add_subdirectory(${TERMFORGE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/termforge)
 else ()
