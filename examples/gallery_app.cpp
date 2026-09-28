@@ -315,7 +315,7 @@ GalleryApp::GalleryApp(std::filesystem::path browse) {
   auto pixels = m_pixels.pixels();
   for (int y = 0; y < 16; ++y)
     for (int x = 0; x < 32; ++x)
-      pixels[static_cast<std::size_t>(y * 32 + x)] =
+      pixels[static_cast<std::size_t>(y) * 32U + static_cast<std::size_t>(x)] =
           Pixel{static_cast<std::uint8_t>(x * 8),
                 static_cast<std::uint8_t>(y * 16), 96, 255};
   for (auto* dialog : dialogs)
