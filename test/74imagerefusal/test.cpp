@@ -63,6 +63,134 @@ auto require_refusal(KittyDriver& driver) -> void {
 
 } // namespace
 
+TEST_CASE("image refusal: explicit unpin restores the handle and placement",
+          "[image-refusal][kitty][pinned][retirement]") {
+  for (const auto mode : {KittyDriver::PlacementMode::Classic,
+                          KittyDriver::PlacementMode::UnicodePlaceholders}) {
+    CAPTURE(mode);
+    KittyDriver driver;
+    SwitchSink sink;
+    driver.set_output(&sink);
+    driver.set_placement_mode(mode);
+    driver.flush();
+    const Image first = art(1), second = art(2);
+    constexpr Rect rect{0, 0, 2, 2};
+    const auto pin = driver.pin_image(first);
+    REQUIRE(pin);
+    REQUIRE(driver.draw_pinned(rect, *pin));
+    driver.flush();
+    const auto revision = driver.pinned_image_status(*pin).content_revision;
+
+    sink.accepted.clear();
+    sink.refuse = true;
+    REQUIRE(driver.unpin_image(*pin));
+    const auto replacement = driver.pin_image(second);
+    REQUIRE(replacement);
+    REQUIRE(replacement->id == pin->id);
+    REQUIRE(replacement->serial != pin->serial);
+    REQUIRE(driver.draw_pinned(rect, *replacement));
+    driver.flush();
+    require_refusal(driver);
+    CHECK(driver.pinned_image_status(*pin).valid);
+    CHECK(driver.pinned_image_status(*pin).content_revision == revision);
+    CHECK_FALSE(driver.pinned_image_status(*replacement).valid);
+    CHECK(driver.residency() == ImageResidency{0, 1, 16});
+
+    sink.refuse = false;
+    REQUIRE(driver.retain_pinned(rect, *pin));
+    driver.flush();
+    CHECK(tfsupport::apcs(sink.accepted).empty());
+    REQUIRE(driver.unpin_image(*pin));
+    driver.flush();
+    CHECK(tfsupport::data_deletes_of(sink.accepted, pin->id) == 1);
+    CHECK_FALSE(driver.pinned_image_status(*pin).valid);
+    CHECK(driver.residency() == ImageResidency{});
+  }
+}
+
+TEST_CASE("image refusal: an opaque pin's prior reply survives refused unpin",
+          "[image-refusal][kitty][pinned][opaque][retirement]") {
+  KittyDriver driver;
+  SwitchSink sink;
+  driver.set_output(&sink);
+  const std::array bytes{std::byte{1}, std::byte{2}};
+  const auto pin = driver.pin_image(opaque(bytes));
+  REQUIRE(pin);
+  driver.flush();
+  CHECK(driver.pinned_image_status(*pin).update_pending);
+  sink.refuse = true;
+  REQUIRE(driver.unpin_image(*pin));
+  driver.flush();
+  require_refusal(driver);
+  CHECK(driver.pinned_image_status(*pin).valid);
+  CHECK(driver.pinned_image_status(*pin).update_pending);
+  driver.consume_reply(TerminalReply{pin->id, std::nullopt, "OK"});
+  CHECK(driver.pinned_image_status(*pin).content_ready);
+  CHECK_FALSE(driver.pinned_image_status(*pin).update_pending);
+  CHECK(driver.residency() == ImageResidency{0, 1, bytes.size()});
+  sink.refuse = false;
+  REQUIRE(driver.unpin_image(*pin));
+  driver.flush();
+  CHECK_FALSE(driver.pinned_image_status(*pin).valid);
+  CHECK(driver.residency() == ImageResidency{});
+}
+
+TEST_CASE("projected retired placements do not block same-frame replacement",
+          "[image-refusal][kitty][pinned][retirement][placeholders]") {
+  for (bool region : {false, true}) {
+    CAPTURE(region);
+    KittyDriver driver;
+    SwitchSink sink;
+    driver.set_output(&sink);
+    driver.set_placement_mode(KittyDriver::PlacementMode::UnicodePlaceholders);
+    const Image image = art(4);
+    constexpr Rect target{0, 0, 2, 2};
+    const auto first = driver.pin_image(image),
+               second = driver.pin_image(image);
+    REQUIRE(first);
+    REQUIRE(second);
+    REQUIRE(driver.draw_pinned(target, *first));
+    REQUIRE(driver.draw_pinned({4, 0, 2, 2}, *second));
+    driver.flush();
+    REQUIRE(driver.draw_pinned(target, *first));
+    REQUIRE(driver.unpin_image(*first));
+    if (region)
+      REQUIRE(driver.draw_image(target, image));
+    else
+      REQUIRE(driver.draw_pinned(target, *second));
+    driver.flush();
+    CHECK(driver.residency().pinned_images == 1);
+    CHECK(driver.residency().region_images == (region ? 1 : 0));
+  }
+}
+
+TEST_CASE("image refusal: same-frame pin and unpin cannot resurrect an upload",
+          "[image-refusal][kitty][pinned][retirement]") {
+  for (bool encoded : {false, true}) {
+    CAPTURE(encoded);
+    KittyDriver driver;
+    SwitchSink sink;
+    driver.set_output(&sink);
+    sink.refuse = true;
+    const Image image = art(3);
+    const std::array bytes{std::byte{1}, std::byte{2}};
+    const auto pin =
+        encoded ? driver.pin_image(opaque(bytes)) : driver.pin_image(image);
+    REQUIRE(pin);
+    REQUIRE(driver.unpin_image(*pin));
+    driver.flush();
+    require_refusal(driver);
+    CHECK_FALSE(driver.pinned_image_status(*pin).valid);
+    CHECK(driver.residency() == ImageResidency{});
+    sink.refuse = false;
+    const auto retry = driver.pin_image(image);
+    REQUIRE(retry);
+    CHECK(retry->id == pin->id); // no unwritten-reply quarantine leak
+    driver.flush();
+    CHECK(driver.residency() == ImageResidency{0, 1, 16});
+  }
+}
+
 TEST_CASE("image refusal: clamp Info waits for an accepted frame",
           "[image-refusal][kitty][region][fallback]") {
   KittyDriver driver;

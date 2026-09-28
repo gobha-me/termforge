@@ -1380,6 +1380,15 @@ Independently of alt-screen / resize / suspend:
 - omitting a Persistent region outside a modal overlay unpins and erases it;
   an overlay only suspends the placement and keeps the pin.
 
+Explicit pin retirement is committed at the accepted-write boundary (#376).
+Kitty projects unpinning while assembling the frame, but a refused write restores
+the last committed handle, placements and pending reply/transport lease. App
+forgets an omitted producer immediately and retains only a generation-qualified
+retirement handle until a delete write is accepted. Cleanup therefore retries
+without dereferencing a destroyed widget or retaining borrowed image content.
+A returning producer is collected as a new region lifetime and re-borrows its
+own content. Image invalidation clears obsolete retirement handles without wire.
+
 Those rules are what `test/01drivers`, `test/46pinned`, `test/49regionids`, and
 `test/61imagelifecycle` pin offline.
 

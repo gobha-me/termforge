@@ -281,3 +281,37 @@ TEST_CASE("image transport: refused write releases lease and commits nothing",
   REQUIRE(driver.take_output_error());
   CHECK(driver.take_driver_events().empty());
 }
+
+TEST_CASE("image transport: refused unpin preserves an accepted upload's lease",
+          "[image-transport][kitty][sink][retirement]") {
+  for (bool receive_reply : {false, true}) {
+    CAPTURE(receive_reply);
+    auto transport = std::make_shared<FakeTransport>();
+    RefusingSink refusing;
+    std::string out;
+    KittyDriver driver;
+    driver.set_output(&out);
+    driver.set_image_transport(transport);
+    const auto pin = driver.pin_image(sample_image());
+    REQUIRE(pin);
+    driver.flush();
+    driver.set_output(&refusing);
+    REQUIRE(driver.unpin_image(*pin));
+    CHECK(transport->retired == 0);
+    driver.flush();
+    REQUIRE(driver.take_output_error());
+    CHECK(transport->retired == 0);
+    CHECK(driver.pinned_image_status(*pin).valid);
+    CHECK(driver.pinned_image_status(*pin).update_pending);
+    if (receive_reply)
+      driver.consume_reply(TerminalReply{pin->id, std::nullopt, "OK"});
+    driver.set_output(&out);
+    REQUIRE(driver.unpin_image(*pin));
+    driver.flush();
+    CHECK(transport->retired == 1);
+    CHECK(driver.residency() == ImageResidency{});
+    CHECK_FALSE(driver.pinned_image_status(*pin).valid);
+    driver.consume_reply(TerminalReply{pin->id, std::nullopt, "OK"});
+    CHECK(driver.take_driver_events().empty());
+  }
+}

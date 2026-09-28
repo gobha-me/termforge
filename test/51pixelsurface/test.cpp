@@ -9,6 +9,7 @@
 #include <chrono>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -136,6 +137,54 @@ class SurfaceApp final : public App {
   std::chrono::steady_clock::time_point m_now{};
   BlockingOverlay m_overlay;
   int m_frame{0};
+};
+
+// Retirement is independent of a producer's lifetime. Optional deliberately
+// reuses the same object address when a new surface appears after destruction.
+class RetirementApp final : public App {
+ public:
+  std::optional<PixelSurface> surface{std::in_place, Extent{2, 2},
+                                      Pixel{180, 30, 60, 255}};
+  bool destroy_on_omission{true};
+  bool return_after_omission{false};
+  FailingOnceSink sink;
+  int errors{0};
+  std::vector<ImageResidency> before_frames;
+  auto run() -> void {
+    test_run_frames(4, 10, 5, &unused, std::make_unique<KittyDriver>());
+  }
+
+ protected:
+  auto on_render(Screen& screen) -> void override {
+    driver().set_output(&sink);
+    before_frames.push_back(driver().residency());
+    if (frame == 1 && destroy_on_omission) surface.reset();
+    if (frame == 2 && return_after_omission && !surface)
+      surface.emplace(Extent{2, 2}, Pixel{20, 80, 200, 255});
+    screen.clear();
+    if (surface && (frame == 0 || (frame >= 2 && return_after_omission))) {
+      surface->set_geometry({0, 0, 4, 2});
+      surface->draw(screen);
+      render_pixel_regions(*surface);
+    }
+    ++frame;
+  }
+  auto on_event(const Event& event) -> void override {
+    if (std::holds_alternative<ErrorEvent>(event)) ++errors;
+  }
+  auto now_steady() const -> std::chrono::steady_clock::time_point override {
+    return now;
+  }
+  auto wait_readable(int ms) -> bool override {
+    now += std::chrono::milliseconds(ms);
+    return false;
+  }
+  auto read_available(char*, int) -> int override { return 0; }
+
+ private:
+  int frame{0};
+  std::string unused;
+  std::chrono::steady_clock::time_point now{};
 };
 
 // #198 step 6's production workload shape. It mutates one fixed 320x180
@@ -555,4 +604,61 @@ TEST_CASE("a refused clean frame does not manufacture new pixel content",
   CHECK(tfsupport::placements_of(sink.accepted, 272) == 1);
   CHECK(app.surface.submission_count() == 1);
   CHECK_FALSE(app.surface.content_dirty());
+}
+
+TEST_CASE("refused persistent retirement retries the old root deletion",
+          "[pixelsurface][app][kitty][persistent][failure]") {
+  SurfaceApp app;
+  FailingOnceSink sink;
+  sink.fail_on = 2;
+  app.output_override = &sink;
+  app.stop_submitting_on_frame = 1;
+  app.run_with(std::make_unique<KittyDriver>(), 3);
+  REQUIRE(sink.writes == 4);
+  CHECK(app.errors == 1);
+  const auto ids = tfsupport::ids_named(sink.accepted);
+  REQUIRE(ids.size() == 1);
+  CHECK(tfsupport::data_deletes_of(sink.accepted, *ids.begin()) == 1);
+  CHECK(app.surface.submission_count() == 1);
+}
+
+TEST_CASE("retirement owns no producer pointer after an omitted frame",
+          "[pixelsurface][app][kitty][persistent][failure]") {
+  RetirementApp app;
+  app.sink.fail_on = 2;
+  app.run();
+  REQUIRE(app.before_frames.size() == 4);
+  CHECK(app.before_frames[1].pinned_images == 1);
+  CHECK(app.before_frames[2].pinned_images == 1); // refused delete rolled back
+  CHECK(app.before_frames[3].pinned_images == 0); // accepted retry committed
+  CHECK(app.errors == 1);
+}
+
+TEST_CASE("returning and address-reused producers cannot orphan a retired root",
+          "[pixelsurface][app][kitty][persistent][failure]") {
+  for (bool destroy : {false, true}) {
+    CAPTURE(destroy);
+    RetirementApp app;
+    app.destroy_on_omission = destroy;
+    app.return_after_omission = true;
+    app.sink.fail_on = 2;
+    app.run();
+    REQUIRE(app.before_frames.size() == 4);
+    CHECK(app.before_frames[3].pinned_images == 1);
+    REQUIRE(app.surface);
+    CHECK(app.surface->submission_count() == (destroy ? 1 : 2));
+    CHECK(app.errors == 1);
+  }
+}
+
+TEST_CASE("omission after a refused initial upload never unpins a stale handle",
+          "[pixelsurface][app][kitty][persistent][failure]") {
+  RetirementApp app;
+  app.sink.fail_on = 1;
+  app.run();
+  REQUIRE(app.before_frames.size() == 4);
+  CHECK(app.before_frames[1].pinned_images == 0);
+  CHECK(app.before_frames[3].pinned_images == 0);
+  CHECK(app.errors == 1);
+  CHECK(tfsupport::total_data_transmits(app.sink.accepted) == 0);
 }
