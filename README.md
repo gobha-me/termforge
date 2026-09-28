@@ -67,6 +67,9 @@ Landed and verified:
   with `‹ ›` indicators when the titles outrun the columns. It owns the strip
   and nothing else — swapping the content below it stays the app's job (see
   `examples/widgets.cpp`).
+- **Notebook** — persistent tabbed pages borrowing application-owned Widget
+  roots, retaining page content/focus and collecting only active pixel
+  producers. See [docs/notebook.md](docs/notebook.md) and `examples/notebook.cpp`.
 - **Form controls** — `Checkbox`, `RadioGroup` (one tab stop for the whole
   group, arrows move the selection) and `Select` (a dropdown that closes on
   focus loss, and closes-then-declines Tab so one press both dismisses it and

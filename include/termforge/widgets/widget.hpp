@@ -112,6 +112,12 @@ class Widget {
   virtual auto reset_transient() -> void {}
 
   // ── pixel regions ────────────────────────────────────────────────────
+  // Borrowed visible children of a composite. App collects each actual
+  // producer, never a proxy region under the composite's identity. Return
+  // only children drawn this frame; hidden pages are neither borrowed nor
+  // acknowledged. Default empty preserves existing out-of-tree widgets.
+  virtual auto pixel_children() -> std::vector<Widget*> { return {}; }
+
   // Declare rect(s) where this widget can provide pixel data. Called each
   // frame before the pixel pass. Empty (default) = no pixel rendering.
   virtual auto pixel_regions() -> std::vector<Rect> { return {}; }

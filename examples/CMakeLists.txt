@@ -21,6 +21,7 @@ set(EXAMPLES
   widgets
   dialogs
   forms
+  notebook
 )
 
 foreach(EXAMPLE ${EXAMPLES})

@@ -1026,6 +1026,7 @@ class App {
   }
 
   // Render a widget's pixel regions through the active enhanced-image driver
+  // and traverse its visible pixel_children using the actual child identities.
   // (Kitty or ANSI truecolour). Call after widget.draw(screen) in on_render.
   // The cells are collected now and the images are issued in the frame's
   // image window (flush_pixel_regions), which since #148 queues after the cell
@@ -1168,6 +1169,7 @@ class App {
   auto flush_pixel_regions() -> void;
   // The unconditional collection pass render_pixel_regions guards.
   auto collect_pixel_regions(Widget& widget) -> void;
+  auto collect_widget_pixels(Widget& widget) -> void;
   auto finish_pixel_frame(bool output_accepted) -> void;
   auto save_backdrop(const Screen& screen) -> void;
   auto dim_screen(Screen& screen) -> void;

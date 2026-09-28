@@ -16,6 +16,7 @@
 #include <termforge/core/screen.hpp>
 #include <termforge/core/styled_text.hpp>
 #include <termforge/widgets/label.hpp>
+#include <termforge/widgets/notebook.hpp>
 #include <termforge/widgets/text_box.hpp>
 
 namespace {
@@ -54,6 +55,11 @@ class ScriptedApp final : public termforge::App {
 } // namespace
 
 auto main() -> int {
+  termforge::Label notebook_page;
+  termforge::Notebook notebook;
+  if (!notebook.add_page("Page", &notebook_page) ||
+      notebook.active_page() != &notebook_page)
+    return 1;
   termforge::SyntheticClock clock;
   clock.advance(std::chrono::duration<double>{0.25});
   ScriptedApp scripted;

@@ -2503,12 +2503,31 @@ auto App::render_pixel_regions(Widget& widget) -> void {
 }
 
 auto App::collect_pixel_regions(Widget& widget) -> void {
-  // Below the declared floor, keep the authored cell Baseline and do not ask
-  // widgets for enhanced frames (#91). The app observes requirements_met() /
-  // the transition ErrorEvent and decides whether to show its own UI.
+  // Below the declared floor, preserve the authored Baseline without borrowing
+  // enhanced frames or traversing hidden compound content.
   if (!m_driver || !enhanced_image_path(*m_driver) || !m_requirements_met)
     return;
+  collect_widget_pixels(widget);
+  const auto children = widget.pixel_children();
+  if (children.empty()) return; // ordinary leaves need no traversal allocation
+  // Local traversal only: App owns no widget tree. Cycles/duplicate borrowed
+  // children cannot collect or acknowledge the same producer twice.
+  std::vector<Widget*> pending(children.rbegin(), children.rend());
+  std::vector<Widget*> visited{&widget};
+  while (!pending.empty()) {
+    Widget* current = pending.back();
+    pending.pop_back();
+    if (current == nullptr ||
+        std::find(visited.begin(), visited.end(), current) != visited.end())
+      continue;
+    visited.push_back(current);
+    collect_widget_pixels(*current);
+    const auto children = current->pixel_children();
+    pending.insert(pending.end(), children.rbegin(), children.rend());
+  }
+}
 
+auto App::collect_widget_pixels(Widget& widget) -> void {
   const auto regions = widget.pixel_regions();
   for (std::size_t ordinal = 0; ordinal < regions.size(); ++ordinal) {
     const Rect region = regions[ordinal];
