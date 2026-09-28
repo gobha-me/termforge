@@ -24,6 +24,48 @@ auto line(Screen& screen, Rect area, std::string text, Rgb color = theme::kFg,
 }
 } // namespace
 
+GalleryHelp::GalleryHelp() {
+  add_child(&m_document);
+}
+
+auto GalleryHelp::set_document(std::string_view text) -> void {
+  m_document.clear();
+  while (!text.empty()) {
+    const auto newline = text.find('\n');
+    m_document.append(std::string{text.substr(0, newline)});
+    if (newline == std::string_view::npos) break;
+    text.remove_prefix(newline + 1);
+  }
+}
+
+auto GalleryHelp::layout_content(Rect area) -> void {
+  m_document.set_style(border_style());
+  m_document.set_geometry(area);
+}
+
+auto GalleryHelp::on_show() -> void {
+  m_document.scroll(-std::numeric_limits<int>::max());
+}
+
+auto GalleryHelp::on_escape() -> void {
+  if (begin_result()) close();
+}
+
+auto GalleryHelp::on_event(const Event& event) -> bool {
+  if (const auto* key = std::get_if<KeyEvent>(&event)) {
+    if (key->action == KeyAction::Release) return true;
+    switch (key->key) {
+      case Key::F6: on_escape(); return true;
+      case Key::Home: on_show(); return true;
+      case Key::End: m_document.scroll_to_bottom(); return true;
+      case Key::Up: m_document.scroll(-1); return true;
+      case Key::Down: m_document.scroll(1); return true;
+      default: break;
+    }
+  }
+  return Dialog::on_event(event);
+}
+
 auto GalleryPage::card() const -> const GalleryCard& {
   return cards[static_cast<std::size_t>(m_selected)];
 }
@@ -331,8 +373,6 @@ GalleryApp::GalleryApp(std::filesystem::path browse) {
   });
   m_prompt.on_cancel([this] { m_result = "Prompt cancelled; draft kept."; });
   m_choice.set_title("Choose demo features");
-  m_choice.set_text(
-      "Selections are demonstration preferences, not terminal capabilities.");
   m_choice.set_choices({{"Mouse", "Pointer navigation"},
                         {"Motion", "Simulated live data"},
                         {"Detail", "More context"}});
@@ -345,7 +385,6 @@ GalleryApp::GalleryApp(std::filesystem::path browse) {
   });
   ChoiceWizardPage first, second;
   first.title = "Density";
-  first.text = "Choose a demo preference:";
   first.choices = {{"Compact", "Less chrome"}, {"Detailed", "More context"}};
   second.title = "Feedback";
   second.choices = {{"Quiet", "Minimal status"},
@@ -369,7 +408,8 @@ GalleryApp::GalleryApp(std::filesystem::path browse) {
   });
   m_picker.error_overlay_up([this] { return top_overlay() != &m_picker; });
   m_help_dialog.set_title("Widget lab / controls");
-  m_help_dialog.set_text(
+  m_help_dialog.set_document(
+      "Esc/F6: back\nPgUp/PgDn, arrows, wheel: scroll\nHome/End: top/bottom\n\n"
       "Ctrl+Tab / Ctrl+Shift+Tab: category\nF2/F3: previous/next "
       "specimen\nTab: strip, specimen, menu; Shift+Tab: back\nF1: "
       "ASCII/enhanced presentation\nF4: cycle simulated data states\nF5: "
@@ -377,7 +417,10 @@ GalleryApp::GalleryApp(std::filesystem::path browse) {
       "category, specimen < >, controls and menu. Dropdown Escape closes "
       "before quitting.\n\nFocused sources: forms, widgets_reference, chat, "
       "dialogs, pixel_surface, dashboard, game, notebook. FilePicker selects a "
-      "path only. No system clipboard or file writes.");
+      "path only. No system clipboard or file writes.\n\n"
+      "Choice/Wizard preferences are demos, not terminal capabilities.\n"
+      "Compact wizard: < back, > next, OK submits, Esc cancels.\n\n"
+      "End of help. Esc returns.");
   m_help_dialog.on_close([this] { pop_overlay(); });
   m_menu.add_menu(
       {"Demo",
@@ -505,8 +548,28 @@ auto GalleryApp::apply_style(bool ascii) -> void {
 }
 
 auto GalleryApp::show(Dialog& dialog) -> void {
+  if (&dialog != &m_help_dialog &&
+      (screen().cols() < 24 || screen().rows() < 8)) {
+    m_result = "Resize >=24x8 for dialogs; F6 help.";
+    return;
+  }
   push_overlay(dialog);
   m_result = "Modal open; Esc cancels without quitting the gallery.";
+}
+
+auto GalleryApp::cancel_small_forms(int cols, int rows) -> void {
+  if ((cols >= 24 && rows >= 8) || !top_overlay() ||
+      top_overlay() == &m_help_dialog)
+    return;
+  // Shrinking cannot leave an invisible form active. Cancel before this
+  // frame's input pump, so Enter cannot commit a now-hidden draft. A child's
+  // transient state may consume Escape; dropping that overlay is still safe
+  // for these example-owned dialogs and never commits a result.
+  while (auto* dialog = top_overlay()) {
+    (void)dialog->on_event(KeyEvent{.key = Key::Escape});
+    if (top_overlay() == dialog) pop_overlay();
+  }
+  m_result = "Resize >=24x8 for dialogs; F6 help.";
 }
 
 auto GalleryApp::return_to_book() -> void {
@@ -522,7 +585,14 @@ auto GalleryApp::on_render(Screen& screen) -> void {
   const auto caps = driver().capabilities();
   apply_style(
       m_ascii_override.value_or(!caps.truecolor && !caps.kitty_graphics));
+  // Three full labels on the wizard's final page need 32 columns including
+  // borders. Its existing label API keeps every button visible at 24 columns.
+  if (w < 32)
+    m_wizard.set_labels("<", ">", "OK", "Esc");
+  else
+    m_wizard.set_labels("Back", "Next", "Submit", "Cancel");
   m_usable = w >= 12 && h >= 6;
+  cancel_small_forms(w, h);
   if (!m_usable) {
     m_book.reset_transient();
     m_menu.close_dropdown();
@@ -557,7 +627,9 @@ auto GalleryApp::on_render(Screen& screen) -> void {
     m_sidebar.set_geometry(m_sidebar_frame.content_rect());
     m_sidebar.draw(screen);
   }
-  m_status.set_text("Result: " + m_result);
+  m_status.set_text(w < 32 && m_result.starts_with("Resize >=24x8")
+                        ? "Resize>=24x8"
+                        : "Result: " + m_result);
   m_status.set_colors(m_state == 3 ? Rgb{255, 160, 112} : theme::kFg, kChrome);
   m_status.set_geometry({0, h - 2, w, 1});
   m_status.draw(screen);
@@ -595,7 +667,11 @@ auto GalleryApp::on_event(const Event& event) -> void {
     m_result = "TextInput demo: type to edit; Composer supports paste.";
     return;
   }
-  if (std::holds_alternative<ResizeEvent>(event)) return;
+  if (const auto* resized = std::get_if<ResizeEvent>(&event)) {
+    m_usable = resized->cols >= 12 && resized->rows >= 6;
+    cancel_small_forms(resized->cols, resized->rows);
+    return;
+  }
   if (const auto* error = std::get_if<ErrorEvent>(&event)) {
     m_result = error->source + ": " + error->message;
     return;

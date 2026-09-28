@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
 #include <array>
@@ -8,6 +9,7 @@
 #include <functional>
 #include <iterator>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -118,6 +120,57 @@ auto delete_images(const std::string& wire) -> int {
   for (const auto& record : tfsupport::apcs(wire))
     if (record.keys.find("a=d,d=I") != std::string::npos) ++count;
   return count;
+}
+
+// Only the ASCII fallback frames exercised below: absolute cursor, SGR and
+// erase-screen. Fail on any other escape or non-ASCII byte. This is a layout
+// oracle for actual emitted modals, not a general terminal/image emulator.
+auto emitted_cells(const Harness& app, int last, int cols = 24, int rows = 8)
+    -> std::string {
+  std::vector<std::string> grid(
+      static_cast<std::size_t>(rows),
+      std::string(static_cast<std::size_t>(cols), ' '));
+  int x = 0, y = 0;
+  for (int frame = 0; frame <= last; ++frame) {
+    const auto& wire = app.output.frames.at(static_cast<std::size_t>(frame));
+    for (std::size_t i = 0; i < wire.size();) {
+      if (wire[i] == '\033') {
+        if (i + 1 >= wire.size() || wire[i + 1] != '[')
+          throw std::runtime_error("unexpected escape in ASCII layout oracle");
+        const auto start = i + 2;
+        i = start;
+        while (i < wire.size() && (wire[i] < '@' || wire[i] > '~'))
+          ++i;
+        if (i == wire.size()) throw std::runtime_error("truncated CSI");
+        const char final = wire[i++];
+        const auto params = wire.substr(start, i - start - 1);
+        if (final == 'H') {
+          const auto split = params.find(';');
+          if (split == std::string::npos)
+            throw std::runtime_error("expected absolute cursor coordinates");
+          y = std::stoi(params.substr(0, split)) - 1;
+          x = std::stoi(params.substr(split + 1)) - 1;
+        } else if (final == 'J' && params == "2") {
+          for (auto& row : grid)
+            row.assign(static_cast<std::size_t>(cols), ' ');
+        } else if (final != 'm') {
+          throw std::runtime_error("unexpected CSI in ASCII layout oracle");
+        }
+      } else {
+        const auto c = static_cast<unsigned char>(wire[i++]);
+        if (c < 32 || c >= 127)
+          throw std::runtime_error("non-ASCII output in ASCII layout oracle");
+        if (x >= 0 && x < cols && y >= 0 && y < rows)
+          grid[static_cast<std::size_t>(y)][static_cast<std::size_t>(x)] =
+              static_cast<char>(c);
+        ++x;
+      }
+    }
+  }
+  std::string result;
+  for (const auto& row : grid)
+    result += row + '\n';
+  return result;
 }
 } // namespace
 
@@ -335,10 +388,12 @@ TEST_CASE("Gallery decoded modal mouse capture survives a resize") {
 
 TEST_CASE(
     "Gallery modal results are real and file selection never opens a file") {
+  const int cols = GENERATE(24, 80);
+  const int rows = cols == 24 ? 8 : 24;
   SECTION("Message") {
     Harness app;
     app.input = {"", repeats(next_category, 4), "\t\r", "\r"};
-    app.drive(4);
+    app.drive(4, 0, cols, rows);
     CHECK(app.overlay_count() == 0);
     CHECK(app.status() == "Message acknowledged.");
   }
@@ -346,7 +401,7 @@ TEST_CASE(
     Harness app;
     app.input = {"", repeats(next_category, 4) + next_card, "\t\r", "n", "\r",
                  "y"};
-    app.drive(6);
+    app.drive(6, 0, cols, rows);
     CHECK(app.results[3] == "Composer draft kept.");
     CHECK(app.composer_text().empty());
     CHECK(app.status() == "Composer draft cleared.");
@@ -355,7 +410,7 @@ TEST_CASE(
     Harness app;
     app.input = {"", repeats(next_category, 4) + repeats(next_card, 2), "\t\r",
                  "Renamed\r"};
-    app.drive(4);
+    app.drive(4, 0, cols, rows);
     CHECK(app.draft() == "Renamed");
     CHECK(app.status() == "TextInput renamed: Renamed");
   }
@@ -363,7 +418,7 @@ TEST_CASE(
     Harness app;
     app.input = {"", repeats(next_category, 4) + repeats(next_card, 3), "\t\r",
                  " \t\t\t\r"};
-    app.drive(4);
+    app.drive(4, 0, cols, rows);
     CHECK(app.status() == "Choice submitted: 1 selections");
     CHECK(app.overlay_count() == 0);
   }
@@ -371,7 +426,7 @@ TEST_CASE(
     Harness app;
     app.input = {"", repeats(next_category, 4) + repeats(next_card, 4), "\t\r",
                  "\t\r", "\t\t\r"};
-    app.drive(5);
+    app.drive(5, 0, cols, rows);
     CHECK(app.results[3].find("Modal open") != std::string::npos);
     CHECK(app.status() == "Wizard submitted: 2 pages");
     CHECK(app.overlay_count() == 0);
@@ -384,10 +439,111 @@ TEST_CASE(
     app.input = {"", repeats(next_category, 4) + repeats(next_card, 5), "\t\r",
                  "\033[Z\033[H" + repeats("\033[3~", 1000) + source.string() +
                      "\r"};
-    app.drive(4);
+    app.drive(4, 0, cols, rows);
     CHECK(app.status() == "Path selected (not opened): " + source.string());
     CHECK(app.overlay_count() == 0);
     CHECK(std::filesystem::exists(source));
+  }
+}
+
+TEST_CASE("Gallery short help is a reachable scrolling document on emitted "
+          "ASCII frames") {
+  Harness app;
+  app.input = {"",        help_key,        "\033[6~", "\033[F",
+               "\033[H",  "\033[<65;4;4M", "\033[A",  "\033[B",
+               "\033[5~", help_key,        help_key,  "\033",
+               ""};
+  app.drive(static_cast<int>(app.input.size()), 0, 24, 8);
+  CHECK(emitted_cells(app, 1).find("Esc/F6: back") != std::string::npos);
+  CHECK(emitted_cells(app, 2) != emitted_cells(app, 1));
+  CHECK(emitted_cells(app, 3).find("End of help.") != std::string::npos);
+  CHECK(emitted_cells(app, 4) == emitted_cells(app, 1));
+  CHECK(emitted_cells(app, 5) != emitted_cells(app, 4));
+  CHECK(emitted_cells(app, 6) != emitted_cells(app, 5));
+  CHECK(emitted_cells(app, 7) == emitted_cells(app, 5));
+  CHECK(emitted_cells(app, 8) == emitted_cells(app, 1));
+  CHECK(emitted_cells(app, 10) == emitted_cells(app, 1));
+  CHECK(app.overlay_count() == 0);
+  CHECK(app.running());
+  CHECK(app.draft() == "TermForge demo");
+}
+
+TEST_CASE("Gallery short choice and both wizard pages paint actionable "
+          "preferences") {
+  SECTION("Choice keyboard and mouse operate visible options") {
+    Harness app;
+    app.input = {"", repeats(next_category, 4) + repeats(next_card, 3), "\t\r",
+                 click(4, 1), "\t\t\t\r"};
+    app.drive(5, 0, 24, 8);
+    const auto painted = emitted_cells(app, 2);
+    CHECK(painted.find("Mouse") != std::string::npos);
+    CHECK(painted.find("Motion") != std::string::npos);
+    CHECK(painted.find("Detail") != std::string::npos);
+    CHECK(painted.find("Submit") != std::string::npos);
+    CHECK(app.status() == "Choice submitted: 1 selections");
+    CHECK(app.overlay_count() == 0);
+  }
+  SECTION("Wizard keeps both pages and their navigation visible") {
+    Harness app;
+    app.input = {"", repeats(next_category, 4) + repeats(next_card, 4), "\t\r",
+                 "\t\r", "\t\t\r"};
+    app.drive(5, 0, 24, 8);
+    CHECK(emitted_cells(app, 2).find("Compact") != std::string::npos);
+    CHECK(emitted_cells(app, 2).find("Detailed") != std::string::npos);
+    CHECK(emitted_cells(app, 2).find("[ > ]") != std::string::npos);
+    CHECK(emitted_cells(app, 2).find("[ Esc ]") != std::string::npos);
+    CHECK(emitted_cells(app, 3).find("Quiet") != std::string::npos);
+    CHECK(emitted_cells(app, 3).find("Verbose") != std::string::npos);
+    CHECK(emitted_cells(app, 3).find("[ < ]") != std::string::npos);
+    CHECK(emitted_cells(app, 3).find("[ OK ]") != std::string::npos);
+    CHECK(emitted_cells(app, 3).find("[ Esc ]") != std::string::npos);
+    CHECK(app.status() == "Wizard submitted: 2 pages");
+  }
+}
+
+TEST_CASE("Gallery modal floor refuses hidden forms and cancels them on "
+          "shrink while help still reflows") {
+  SECTION("Refuse a form below the floor, then reopen after resize") {
+    const int cols = GENERATE(12, 24);
+    Harness app;
+    app.input = {"", repeats(next_category, 4), "\t\r", "", "\r", "\r"};
+    app.before = [&](int frame) {
+      if (frame == 2) REQUIRE(app.set_size({24, 8}));
+    };
+    app.drive(6, 0, cols, 7);
+    CHECK(app.results[2].find("Resize >=24x8") != std::string::npos);
+    CHECK(emitted_cells(app, 2, cols, 7).find("Resize>=24x8") !=
+          std::string::npos);
+    CHECK(app.status() == "Message acknowledged.");
+    CHECK(app.overlay_count() == 0);
+  }
+  SECTION("Shrink cancels a prompt without committing the typed draft") {
+    Harness app;
+    app.input = {"", repeats(next_category, 4) + repeats(next_card, 2), "\t\r",
+                 "uncommitted", "\r"};
+    app.before = [&](int frame) {
+      if (frame == 3) REQUIRE(app.set_size({24, 7}));
+    };
+    app.drive(5, 0, 24, 8);
+    CHECK(app.overlay_count() == 0);
+    CHECK(app.draft() == "TermForge demo");
+    CHECK(app.status().find("Resize >=24x8") != std::string::npos);
+    CHECK(emitted_cells(app, 4, 24, 7).find("Resize>=24x8") !=
+          std::string::npos);
+  }
+  SECTION("Help remains reachable after shrinking and expanding its viewport") {
+    Harness app;
+    app.input = {"", help_key, "", "\033[F", "", "\033[H", "\033", ""};
+    app.before = [&](int frame) {
+      if (frame == 1) REQUIRE(app.set_size({12, 6}));
+      if (frame == 3) REQUIRE(app.set_size({40, 16}));
+    };
+    app.drive(8, 0, 24, 8);
+    CHECK(emitted_cells(app, 3, 12, 6).find("returns.") != std::string::npos);
+    CHECK(emitted_cells(app, 5, 40, 16).find("Esc/F6: back") !=
+          std::string::npos);
+    CHECK(app.overlay_count() == 0);
+    CHECK(app.running());
   }
 }
 

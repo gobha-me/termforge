@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "termforge/core/app.hpp"
@@ -89,6 +90,27 @@ class GalleryProgress final : public Widget {
   }
 };
 
+// Long help is a document viewport, not a standard dialog's fixed body.
+class GalleryHelp final : public Dialog {
+ public:
+  GalleryHelp();
+  auto set_document(std::string_view text) -> void;
+  auto on_event(const Event& event) -> bool override;
+
+ protected:
+  [[nodiscard]] auto content_rows() const -> int override { return 20; }
+  [[nodiscard]] auto content_cols() const -> int override { return 64; }
+  auto layout_content(Rect area) -> void override;
+  auto draw_content(Screen& screen) -> void override {
+    m_document.draw(screen);
+  }
+  auto on_show() -> void override;
+  auto on_escape() -> void override;
+
+ private:
+  TextBox m_document;
+};
+
 class GalleryApp : public App {
  public:
   explicit GalleryApp(std::filesystem::path browse = ".");
@@ -118,6 +140,7 @@ class GalleryApp : public App {
   auto apply_state(int state) -> void;
   auto apply_style(bool ascii) -> void;
   auto show(Dialog& dialog) -> void;
+  auto cancel_small_forms(int cols, int rows) -> void;
   auto return_to_book() -> void;
 
   TextInput m_input;
@@ -142,7 +165,7 @@ class GalleryApp : public App {
   ChoiceDialog m_choice;
   ChoiceWizardDialog m_wizard;
   FilePickerDialog m_picker{"Select path (read-only)"};
-  MessageDialog m_help_dialog;
+  GalleryHelp m_help_dialog;
   std::array<GalleryPage, 5> m_pages;
   Notebook m_book;
   MenuBar m_menu;
