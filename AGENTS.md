@@ -7,7 +7,7 @@ file is the tactical version.
 
 ## Baseline (keep in sync if changed)
 
-- **CMake ≥ 3.28**, **C++23** (GCC 13+ / Clang 17+).
+- **CMake ≥ 3.28**, **C++23** (GCC 13+ / Clang 19+).
 - **Compiler respects the environment** by default; clang is an opt-in
   toolchain (`cmake/toolchain/clang.cmake`), like the sanitizer toolchains.
 - **Catch2 v3** for tests (`FetchContent`). **Stdlib-only at runtime** — no
