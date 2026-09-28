@@ -1,0 +1,16 @@
+TERMFORGE / WIDGET LAB                  
+*Demo   View   Help                     
+*Controls   Data   Text   Pixels       >
++| Specimen |--------------------------+
+|< 1/7 TextInput                      >|
+|Type; Enter commits a result, not a fi|
+|                                      |
+|TermForge demo                        |
+|                                      |
+|                                      |
+|                                      |
+|                                      |
+|Source: examples/forms.cpp            |
++--------------------------------------+
+Result: Demo reset. Data is simulated; c
+^Tab tabs F2/3 cards F6 ?               

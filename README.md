@@ -66,7 +66,7 @@ Landed and verified:
   (`on_change(int)`); Left/Right and clicks switch it, and the strip scrolls
   with `‹ ›` indicators when the titles outrun the columns. It owns the strip
   and nothing else — swapping the content below it stays the app's job (see
-  `examples/widgets.cpp`).
+  `examples/widgets_reference.cpp`).
 - **Notebook** — persistent tabbed pages borrowing application-owned Widget
   roots, retaining page content/focus and collecting only active pixel
   producers. See [docs/notebook.md](docs/notebook.md) and `examples/notebook.cpp`.
@@ -251,9 +251,15 @@ and Clang.
   workload with headless benchmark and real-Kitty capture modes),
   `pixel_surface` (the persistent framebuffer primitive), `dashboard`
   (TableWidget + WaveformWidget + TextBox), `motion` (`on_tick` — fixed vs
-  variable timestep and the stall clamp, live), `widgets` (all primitives +
-  focus model), `dialogs` (single-page and wizard compositions), `image`,
+  variable timestep and the stall clamp, live), `widgets` (the interactive
+  [widget gallery](docs/widget-gallery.md)), `widgets_reference` (the focused
+  tabs, borders and tick demo), `notebook` (persistent borrowed pages),
+  `dialogs` (single-page and wizard compositions), `image`,
   `chat` (TextBox + Composer), `input`, `colors`, `low_level`, `hello`.
+
+Start with `./build/examples/termforge_example_widgets`; F6 shows controls and
+source references. The gallery labels simulated data and never writes files or
+uses a pretend clipboard. All specimens remain browsable on a 24x8 grid.
 
 The game workload can be measured without a TTY or captured on a real Kitty
 terminal. See [docs/performance.md](docs/performance.md) for commands, metric

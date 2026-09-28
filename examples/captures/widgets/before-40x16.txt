@@ -1,0 +1,16 @@
+▸File   Edit   View   Border            
+┌┤ Controls ├──────┐┌┤ Views ├─────────┐
+│ Widget Showcase  ││▸All Items       ›│
+│                  ││▸ Item  1 — selec█│
+│                  ││  Item  2 — selec││
+│                  ││  Item  3 — selec││
+└─[ OK ] ──[ Cance─┘└──────────────────┘
+┌┤ Signal ├────────────────────────────┐
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+└──────────────────────────────────────┘
+                                        
+Tab to cycle focus | E     Focus: Input 

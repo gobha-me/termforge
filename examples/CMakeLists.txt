@@ -19,6 +19,7 @@ set(EXAMPLES
   pixel_surface
   cell_geometry
   widgets
+  widgets_reference
   dialogs
   forms
   notebook
@@ -29,6 +30,8 @@ foreach(EXAMPLE ${EXAMPLES})
   add_executable(${TARGET} ${EXAMPLE}.cpp)
   target_link_libraries(${TARGET} PRIVATE ${PROJECT_NAME}::lib)
 endforeach()
+
+target_sources(${PROJECT_NAME}_example_widgets PRIVATE gallery_app.cpp)
 
 # OBSCURA's M0 spike carries committed PNG frames rather than runtime file I/O.
 # Generate the private byte arrays at configure time for the example; its

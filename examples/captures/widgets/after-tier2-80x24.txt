@@ -1,0 +1,24 @@
+TERMFORGE / WIDGET LAB                                          Kitty | enhanced
+▸Demo   View   Help                                                             
+▸Controls   Data   Text   Pixels   Dialogs                                      
+╭┤ Specimen ├──────────────────────────────────────────────────────────────────╮
+│< 1/7 TextInput                                                              >│
+│Type; Enter commits a result, not a file.                                     │
+│                                                                              │
+│TermForge demo                                                                │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│Source: examples/forms.cpp                                                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Result: Demo reset. Data is simulated; control results are real.                
+Tab edit | ^Tab tabs | F2/3 cards | F6 ? | Esc quit | Focus: tabs               

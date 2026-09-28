@@ -1,0 +1,8 @@
+TERMFORGE / WIDGET LAB  
+▸Demo   View   Help     
+▸Controls   Data       ›
+< 1/7 TextInput        >
+TermForge demo          
+                        
+Result: Demo reset. Data
+^Tab tabs F2/3 cards F6 
