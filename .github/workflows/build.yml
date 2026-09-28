@@ -1,6 +1,8 @@
 name: build
 
 on:
+  # Recovery entry point for an unavailable automatic validation run.
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
