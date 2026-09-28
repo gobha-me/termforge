@@ -8,10 +8,39 @@
 #include <ranges>
 
 #include "termforge/core/screen.hpp"
+#include "termforge/widgets/detail/width.hpp"
 #include "termforge/widgets/theme.hpp"
 
 namespace termforge::forge_top {
 namespace {
+
+auto panel_line(Screen& screen, Rect area, int row, std::string_view text,
+                Rgb color = theme::kFg) -> void {
+  if (row < 0 || row >= area.h || area.w <= 0) return;
+  screen.write_text(area.x, area.y + row,
+                    detail::truncate_to_width(text, area.w), color, theme::kBg);
+}
+
+// App-authored ASCII projection of the existing widgets' cell plot. Preserve
+// their history, geometry, ownership and enhanced buffers; no SDK glyph seam.
+auto ascii_plot(Screen& screen, Rect area) -> void {
+  area = area.intersect({0, 0, screen.cols(), screen.rows()});
+  for (int y = area.y; y < area.y + area.h; ++y)
+    for (int x = area.x; x < area.x + area.w; ++x) {
+      const auto text = screen.text_at(x, y);
+      std::string_view replacement;
+      if (text == "█")
+        replacement = "#";
+      else if (text == "▄" || text == "▀")
+        replacement = ":";
+      else if (text == "─")
+        replacement = "-";
+      else
+        continue;
+      const auto cell = screen.at(x, y);
+      screen.write_text(x, y, replacement, cell.fg, cell.bg, cell.attrs);
+    }
+}
 
 auto used_fraction(std::uint64_t total, std::uint64_t available) -> float {
   if (total == 0) return 0.0F;
@@ -153,13 +182,18 @@ auto valid_cpu_tile(Rect tile) noexcept -> bool {
   return tile.w >= 1 && tile.h >= 2;
 }
 
+auto tile_index(const CpuGrid& grid, int row, int column = 0) noexcept
+    -> std::size_t {
+  return static_cast<std::size_t>(row) *
+             static_cast<std::size_t>(grid.columns) +
+         static_cast<std::size_t>(column);
+}
+
 auto populated_columns(const CpuGrid& grid, int row) -> int {
   int result = 0;
   for (int col = 0; col < grid.columns; ++col) {
-    const int index = row * grid.columns + col;
-    if (index >= static_cast<int>(grid.tiles.size()) ||
-        !valid_cpu_tile(grid.tiles[static_cast<std::size_t>(index)]))
-      break;
+    const auto index = tile_index(grid, row, col);
+    if (index >= grid.tiles.size() || !valid_cpu_tile(grid.tiles[index])) break;
     ++result;
   }
   return result;
@@ -175,8 +209,7 @@ auto draw_cpu_grid(Screen& screen, const CpuGrid& grid, BorderStyle style)
   for (int row = 0; row < grid.rows; ++row) {
     const int populated = populated_columns(grid, row);
     for (int col = 0; col + 1 < populated; ++col) {
-      const Rect left =
-          grid.tiles[static_cast<std::size_t>(row * grid.columns + col)];
+      const Rect left = grid.tiles[tile_index(grid, row, col)];
       const int x = left.x + left.w;
       for (int y = left.y; y < left.y + left.h; ++y)
         screen.write_text(x, y, glyphs.vertical, theme::kDim, theme::kBg);
@@ -192,18 +225,16 @@ auto draw_cpu_grid(Screen& screen, const CpuGrid& grid, BorderStyle style)
     const int lower = populated_columns(grid, row + 1);
     if (upper == 0 || lower == 0) continue;
 
-    const Rect upper_first =
-        grid.tiles[static_cast<std::size_t>(row * grid.columns)];
-    const Rect upper_last = grid.tiles[static_cast<std::size_t>(
-        row * grid.columns + std::min(upper, lower) - 1)];
+    const Rect upper_first = grid.tiles[tile_index(grid, row)];
+    const Rect upper_last =
+        grid.tiles[tile_index(grid, row, std::min(upper, lower) - 1)];
     const int y = upper_first.y + upper_first.h;
     const int x_end = upper_last.x + upper_last.w;
     for (int x = upper_first.x; x < x_end; ++x)
       screen.write_text(x, y, glyphs.horizontal, theme::kDim, theme::kBg);
 
     for (int col = 0; col + 1 < upper; ++col) {
-      const Rect left =
-          grid.tiles[static_cast<std::size_t>(row * grid.columns + col)];
+      const Rect left = grid.tiles[tile_index(grid, row, col)];
       const int x = left.x + left.w;
       screen.write_text(x, y,
                         col + 1 < lower ? glyphs.junction : glyphs.vertical,
@@ -251,23 +282,27 @@ auto OverviewPanel::set_snapshot(double uptime, std::array<double, 3> load,
 
 auto OverviewPanel::draw(Screen& screen) -> void {
   m_frame.set_geometry(rect());
-  m_frame.draw(screen);
-  const Rect inner = m_frame.content_rect();
+  if (!m_compact) m_frame.draw(screen);
+  const Rect inner = m_compact ? rect() : m_frame.content_rect();
+  const auto separator = is_ascii(m_frame.style()) ? " - " : " · ";
   if (inner.h > 0) {
-    screen.write_text(inner.x, inner.y,
-                      std::format("up {} · load {:.2f} {:.2f} {:.2f}",
-                                  uptime_text(m_uptime), m_load[0], m_load[1],
-                                  m_load[2]),
-                      theme::kFg, theme::kBg);
+    panel_line(screen, inner, 0,
+               std::format("up {}{}load {:.2f} {:.2f} {:.2f}",
+                           uptime_text(m_uptime), separator, m_load[0],
+                           m_load[1], m_load[2]));
   }
   if (inner.h > 1) {
-    screen.write_text(
-        inner.x, inner.y + 1,
-        std::format("Tasks {} total · {} running · {} sleeping · {} stopped · "
-                    "{} zombie",
-                    m_tasks.total, m_tasks.running, m_tasks.sleeping,
-                    m_tasks.stopped, m_tasks.zombie),
-        theme::kDim, theme::kBg);
+    const auto text =
+        inner.w < 60
+            ? std::format("Tasks {} run {} sleep {} stop {} Z {}",
+                          m_tasks.total, m_tasks.running, m_tasks.sleeping,
+                          m_tasks.stopped, m_tasks.zombie)
+            : std::format("Tasks {} total{}{} running{}{} "
+                          "sleeping{}{} stopped{}{} zombie",
+                          m_tasks.total, separator, m_tasks.running, separator,
+                          m_tasks.sleeping, separator, m_tasks.stopped,
+                          separator, m_tasks.zombie);
+    panel_line(screen, inner, 1, text, theme::kDim);
   }
   clear_dirty();
 }
@@ -358,17 +393,37 @@ auto CpuPanel::draw(Screen& screen) -> void {
     const bool compact_label = tile.w < 10;
     std::string name =
         m_per_cpu ? m_names[static_cast<std::size_t>(i)] : m_aggregate_name;
-    if (compact_label && name.starts_with("cpu")) name = "c" + name.substr(3);
+    bool numeric_name = false;
+    if (compact_label && name.starts_with("cpu")) {
+      const auto number = name.substr(3);
+      const bool numeric =
+          !number.empty() && std::ranges::all_of(number, [](char c) {
+            return c >= '0' && c <= '9';
+          });
+      if (numeric) {
+        numeric_name = true;
+        name = number;
+      }
+    }
     std::string label = std::format(
         "{} {:3.0f}%", name,
         (m_per_cpu ? m_usage[static_cast<std::size_t>(i)] : m_aggregate_usage) *
             100.0F);
-    if (label.size() > static_cast<std::size_t>(tile.w))
-      label.resize(static_cast<std::size_t>(tile.w));
+    if (tile.w < 4) label = name;
+    if (numeric_name) {
+      const auto compact = std::format(
+          "{}:{:.0f}%", name, m_usage[static_cast<std::size_t>(i)] * 100.0F);
+      label = detail::display_width(compact) <= tile.w ? compact : name;
+    }
+    if (detail::display_width(label) > tile.w)
+      label = std::string{detail::truncate_to_width(label,
+                                                    std::max(0, tile.w - 1))} +
+              "~";
     screen.write_text(tile.x, tile.y, label, theme::kDim, theme::kBg);
     auto* wave = waves[static_cast<std::size_t>(i)];
     wave->set_geometry({tile.x, tile.y + 1, tile.w, tile.h - 1});
     wave->draw(screen);
+    if (is_ascii(m_frame.style())) ascii_plot(screen, wave->rect());
   }
   clear_dirty();
 }
@@ -420,48 +475,75 @@ MemoryPanel::MemoryPanel() {
 }
 
 auto MemoryPanel::set_style(BorderStyle style) -> void {
+  if (m_frame.style() != style) m_labels_dirty = true;
   m_frame.set_style(style);
 }
 
 auto MemoryPanel::set_memory(const MemoryInfo& memory) -> void {
-  const auto memory_used =
-      memory.total_bytes - std::min(memory.total_bytes, memory.available_bytes);
-  const auto swap_used =
-      memory.swap_total_bytes -
-      std::min(memory.swap_total_bytes, memory.swap_free_bytes);
+  m_info = memory;
+  m_labels_dirty = true;
   m_memory.set_value(used_fraction(memory.total_bytes, memory.available_bytes));
-  const auto memory_scale = byte_scale(memory.total_bytes);
-  m_memory.set_label(std::format(
-      "RAM {} used / {} total · {} available {}",
-      scaled_bytes(memory_used, memory_scale),
-      scaled_bytes(memory.total_bytes, memory_scale),
-      scaled_bytes(memory.available_bytes, memory_scale), memory_scale.unit));
   m_swap.set_value(
       used_fraction(memory.swap_total_bytes, memory.swap_free_bytes));
-  m_swap.set_label(memory.swap_total_bytes == 0 ? "Swap disabled" : [&] {
-    const auto scale = byte_scale(memory.swap_total_bytes);
-    return std::format("Swap {} used / {} total · {} free {}",
-                       scaled_bytes(swap_used, scale),
-                       scaled_bytes(memory.swap_total_bytes, scale),
-                       scaled_bytes(memory.swap_free_bytes, scale), scale.unit);
-  }());
   mark_dirty();
 }
 
 auto MemoryPanel::draw(Screen& screen) -> void {
   m_frame.set_geometry(rect());
-  m_frame.draw(screen);
-  const Rect inner = m_frame.content_rect();
+  if (!m_compact) m_frame.draw(screen);
+  const Rect inner = m_compact ? rect() : m_frame.content_rect();
+  const bool narrow = inner.w < 60;
+  if (m_labels_dirty || m_labels_narrow != narrow) {
+    const auto memory_scale = byte_scale(m_info.total_bytes);
+    const auto swap_scale = byte_scale(m_info.swap_total_bytes);
+    const auto memory_used =
+        m_info.total_bytes -
+        std::min(m_info.total_bytes, m_info.available_bytes);
+    const auto swap_used =
+        m_info.swap_total_bytes -
+        std::min(m_info.swap_total_bytes, m_info.swap_free_bytes);
+    const auto separator = is_ascii(m_frame.style()) ? " - " : " · ";
+    m_memory.set_label(
+        inner.w < 60
+            ? std::format("RAM {}/{} {} avail {}",
+                          scaled_bytes(memory_used, memory_scale),
+                          scaled_bytes(m_info.total_bytes, memory_scale),
+                          memory_scale.unit,
+                          scaled_bytes(m_info.available_bytes, memory_scale))
+            : std::format("RAM {} used / {} total{}{} available {}",
+                          scaled_bytes(memory_used, memory_scale),
+                          scaled_bytes(m_info.total_bytes, memory_scale),
+                          separator,
+                          scaled_bytes(m_info.available_bytes, memory_scale),
+                          memory_scale.unit));
+    m_swap.set_label(
+        m_info.swap_total_bytes == 0 ? "Swap disabled"
+        : inner.w < 60
+            ? std::format("Swap {}/{} {} free {}",
+                          scaled_bytes(swap_used, swap_scale),
+                          scaled_bytes(m_info.swap_total_bytes, swap_scale),
+                          swap_scale.unit,
+                          scaled_bytes(m_info.swap_free_bytes, swap_scale))
+            : std::format("Swap {} used / {} total{}{} free {}",
+                          scaled_bytes(swap_used, swap_scale),
+                          scaled_bytes(m_info.swap_total_bytes, swap_scale),
+                          separator,
+                          scaled_bytes(m_info.swap_free_bytes, swap_scale),
+                          swap_scale.unit));
+    m_labels_dirty = false;
+    m_labels_narrow = narrow;
+  }
   m_memory.set_geometry({inner.x, inner.y, inner.w, inner.h > 0 ? 1 : 0});
   m_swap.set_geometry({inner.x, inner.y + 1, inner.w, inner.h > 1 ? 1 : 0});
   m_memory.draw(screen);
   m_swap.draw(screen);
+  if (is_ascii(m_frame.style())) ascii_plot(screen, inner);
   clear_dirty();
 }
 
 ProcessPanel::ProcessPanel() {
   m_frame.set_style(BorderStyle::Rounded);
-  m_filter.set_placeholder("héllo — filtér…");
+  m_filter.set_placeholder("Filter: name / PID / user");
   m_filter.on_change([this](const std::string&) { rebuild(); });
   update_columns(80);
   m_table.on_select([this](int row, const std::vector<std::string>&) {
@@ -735,14 +817,18 @@ auto ProcessPanel::rebuild() -> void {
   mark_dirty();
 }
 
-auto ProcessPanel::draw(Screen& screen) -> void {
+auto ProcessPanel::layout() -> void {
   m_frame.set_geometry(rect());
-  m_frame.draw(screen);
-  const Rect inner = m_frame.content_rect();
+  const Rect inner = m_compact ? rect() : m_frame.content_rect();
   m_filter.set_geometry({inner.x, inner.y, inner.w, inner.h > 0 ? 1 : 0});
   m_table.set_geometry(
       {inner.x, inner.y + 1, inner.w, std::max(0, inner.h - 1)});
   update_columns(inner.w);
+}
+
+auto ProcessPanel::draw(Screen& screen) -> void {
+  layout();
+  if (!m_compact) m_frame.draw(screen);
   m_filter.draw(screen);
   m_table.draw(screen);
   clear_dirty();

@@ -1,0 +1,8 @@
+*Sort   View   Help     
++| System |------------+
++----------------------+
++| Processes - CPU v |-+
+|héllo — filtér…       |
+|    PID  %CPU  %MEM CO|
++----------------------+
+20 cores · 48 p delay 1s

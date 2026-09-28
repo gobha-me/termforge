@@ -13,6 +13,7 @@
 #include "termforge/widgets/dialogs.hpp"
 #include "termforge/widgets/focus_ring.hpp"
 #include "termforge/widgets/menu_bar.hpp"
+#include "termforge/widgets/text_box.hpp"
 
 namespace termforge::forge_top {
 
@@ -21,17 +22,33 @@ using DriverChoice = BuiltinDriver;
 class HelpPopup final : public Dialog {
  public:
   HelpPopup();
+  auto set_context(std::string context) -> void;
   auto on_event(const Event& event) -> bool override;
+
+ protected:
+  [[nodiscard]] auto content_rows() const -> int override { return 20; }
+  [[nodiscard]] auto content_cols() const -> int override { return 64; }
+  auto layout_content(Rect area) -> void override;
+  auto draw_content(Screen& screen) -> void override {
+    m_document.draw(screen);
+  }
+  auto on_show() -> void override;
+  auto on_escape() -> void override;
+
+ private:
+  TextBox m_document;
 };
 
 class ForgeTopApp final : public App {
  public:
-  explicit ForgeTopApp(std::unique_ptr<SystemReader> reader);
+  explicit ForgeTopApp(std::unique_ptr<SystemReader> reader,
+                       bool simulated = false);
 
   auto force_driver(DriverChoice choice) -> std::expected<void, ErrorEvent>;
   auto run_headless(int frames, int cols, int rows, std::string* sink,
                     DriverChoice choice) -> void;
   auto show_first_process_for_test() -> bool;
+  [[nodiscard]] auto screen_for_test() -> const Screen& { return screen(); }
   [[nodiscard]] auto process_panel_for_test() const -> const ProcessPanel& {
     return m_processes;
   }
@@ -64,6 +81,16 @@ class ForgeTopApp final : public App {
   [[nodiscard]] auto status_for_test() const noexcept -> const std::string& {
     return m_status;
   }
+  [[nodiscard]] auto sample_error_for_test() const noexcept
+      -> const std::string& {
+    return m_sample_error;
+  }
+  [[nodiscard]] auto layout_for_test() const noexcept -> std::string_view {
+    return layout_name();
+  }
+  [[nodiscard]] auto summary_balance_for_test() const noexcept -> int {
+    return m_summary_balance;
+  }
 
   auto on_event(const Event& event) -> void override;
   auto on_tick(std::chrono::duration<double> dt) -> void override;
@@ -84,6 +111,18 @@ class ForgeTopApp final : public App {
   auto show_help() -> void;
   auto set_status(std::string status) -> void;
   auto apply_style(bool ascii) -> void;
+  auto layout(int cols, int rows) -> void;
+  auto cycle_preset() -> void;
+  auto cycle_balance() -> void;
+  auto sort_by(ProcessSort sort) -> void;
+  auto reverse_sort() -> void;
+  [[nodiscard]] auto layout_name() const noexcept -> std::string_view {
+    return m_compact ? "compact" : m_wide ? "wide" : "normal";
+  }
+  [[nodiscard]] auto preset_name() const -> std::string_view;
+  [[nodiscard]] auto focus_name() const -> std::string_view;
+  [[nodiscard]] auto sample_status() const -> std::string;
+  auto cancel_small_forms() -> void;
 
   std::unique_ptr<SystemReader> m_reader;
   OverviewPanel m_overview;
@@ -101,11 +140,18 @@ class ForgeTopApp final : public App {
       m_history;
   std::chrono::duration<double> m_sample_elapsed{};
   std::chrono::duration<double> m_sample_delay{1.0};
+  std::chrono::duration<double> m_sample_age{};
   bool m_show_overview{true};
   bool m_show_cpu{true};
   bool m_show_memory{true};
   bool m_show_processes{true};
-  std::string m_status{"Starting…"};
+  std::string m_status{"Ready."}, m_sample_error;
+  Extent m_grid{80, 24};
+  std::uint64_t m_sample_number{0};
+  int m_summary_balance{0};
+  bool m_simulated{false}, m_have_sample{false}, m_recovered{false};
+  bool m_usable{true}, m_compact{false}, m_wide{false};
+  bool m_geometry_initialized{false};
 };
 
 } // namespace termforge::forge_top

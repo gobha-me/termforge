@@ -1,0 +1,8 @@
+*Sort   View   Help DEMO
+ALL(F2) CPU49% RAM59%   
+Filter: name / PID / use
+    PID  %CPU  %MEM COMM
+   1013  95.9   1.5 wor#
+   1023  95.7   2.7 wor|
+sample #1 age 0.0s d 1s 
+TABLE CPUv d1s F1? /    

@@ -18,7 +18,7 @@ for tests.
 ## Status
 
 Core framework, KittyDriver, the widget system, mouse routing, and the
-`forge-top` dogfooding application are landed and tested across 87 CTest targets;
+`forge-top` dogfooding application are landed and tested by the full CTest suite;
 GCC 13/14 + Clang 19/20 are green in CI, ASan/UBSan is clean, and the
 cross-thread event path has a focused TSan gate.
 
@@ -117,7 +117,11 @@ Landed and verified:
   responsive sortable/filterable process table with
   `PID USER S %CPU %MEM TIME+ RES COMMAND`. A persistent pixel process graph
   remains one Enter away. `--fake` supplies deterministic data and
-  `--driver=kitty|ansi|fallback` forces each rendering tier.
+  `--driver=kitty|ansi|fallback` forces each rendering tier. Compact, paired
+  normal and wide sidebar layouts prioritize useful process rows; F2 cycles
+  views, F3 adjusts summary balance, `/` focuses filtering, and F1 opens
+  scrollable context help. Sample failure keeps last good data visibly stale;
+  simulated data is marked DEMO. See [the ForgeTop guide](docs/forge-top.md).
 
 Deferred per the roadmap: `SixelDriver` (Epic 5), the broader benchmark
 workloads, framebuffer driver.

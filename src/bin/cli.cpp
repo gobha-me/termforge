@@ -63,7 +63,8 @@ auto run_cli(int argc, char** argv) -> int {
   }
 
   try {
-    ForgeTopApp app{options->fake ? make_fake_reader() : make_proc_reader()};
+    ForgeTopApp app{options->fake ? make_fake_reader() : make_proc_reader(),
+                    options->fake};
     if (auto forced = app.force_driver(options->driver); !forced) {
       std::fprintf(stderr, "forge-top: %s\n", forced.error().message.c_str());
       return 1;

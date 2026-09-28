@@ -23,6 +23,7 @@ class OverviewPanel final : public Widget {
  public:
   OverviewPanel();
   auto set_style(BorderStyle style) -> void;
+  auto set_compact(bool compact) -> void { m_compact = compact; }
   auto set_snapshot(double uptime, std::array<double, 3> load, TaskCounts tasks)
       -> void;
   auto draw(Screen& screen) -> void override;
@@ -32,6 +33,7 @@ class OverviewPanel final : public Widget {
   double m_uptime{};
   std::array<double, 3> m_load{};
   TaskCounts m_tasks;
+  bool m_compact{false};
 };
 
 class CpuPanel final : public Widget {
@@ -67,6 +69,7 @@ class MemoryPanel final : public Widget {
  public:
   MemoryPanel();
   auto set_style(BorderStyle style) -> void;
+  auto set_compact(bool compact) -> void { m_compact = compact; }
   auto set_memory(const MemoryInfo& memory) -> void;
   auto draw(Screen& screen) -> void override;
 
@@ -74,6 +77,9 @@ class MemoryPanel final : public Widget {
   Frame m_frame{"Memory"};
   ProgressBar m_memory;
   ProgressBar m_swap;
+  MemoryInfo m_info;
+  bool m_compact{false};
+  bool m_labels_dirty{true}, m_labels_narrow{false};
 };
 
 enum class ProcessSort { Cpu, Memory, Pid, Time, User, State, Command };
@@ -112,6 +118,9 @@ class ProcessPanel final : public Widget {
   }
 
   auto draw(Screen& screen) -> void override;
+  // Private app layout: keep child hit geometry current before resize input.
+  auto layout() -> void;
+  auto set_compact(bool compact) -> void { m_compact = compact; }
 
  private:
   enum class ProcessColumn {
@@ -140,6 +149,7 @@ class ProcessPanel final : public Widget {
   int m_table_width{-1};
   std::vector<ProcessColumn> m_columns;
   BorderStyle m_style{BorderStyle::Rounded};
+  bool m_compact{false};
   std::function<void(const ProcessRow&)> m_on_activate;
 };
 

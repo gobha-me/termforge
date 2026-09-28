@@ -1,0 +1,2 @@
+# Fixed-width golden cells intentionally retain trailing spaces.
+*.txt -whitespace
