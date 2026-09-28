@@ -1,0 +1,2 @@
+# Cell-grid fixtures intentionally retain right-edge padding.
+*.txt whitespace=-blank-at-eol

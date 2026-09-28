@@ -1,0 +1,24 @@
+▸File   Edit   View   Border                                                    
+┌┤ Controls ├──────────────────────────┐┌┤ Views ├─────────────────────────────┐
+│           Widget Showcase            ││▸All Items   Even   Odd   Reversed   ›│
+│                                      ││▸ Item  1 — selectable list entry    █│
+│                                      ││  Item  2 — selectable list entry    █│
+│                                      ││  Item  3 — selectable list entry    █│
+│      [ OK ]           [ Cancel ]     ││  Item  4 — selectable list entry    █│
+│                                      ││  Item  5 — selectable list entry    █│
+│ ──────────── Loading... ──────────── ││  Item  6 — selectable list entry    █│
+│                                      ││  Item  7 — selectable list entry    █│
+│                                      ││  Item  8 — selectable list entry    █│
+│                                      ││  Item  9 — selectable list entry    ││
+│                                      ││  Item 10 — selectable list entry    ││
+│                                      ││  Item 11 — selectable list entry    ││
+└──────────────────────────────────────┘└──────────────────────────────────────┘
+┌┤ Signal ├────────────────────────────────────────────────────────────────────┐
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                                                                
+Tab to cycle focus | ESC to quit                                   Focus: Input 

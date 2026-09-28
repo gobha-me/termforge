@@ -15,7 +15,7 @@ things must be true while it is up, and neither is a property of the dialog:
 
 Before this, `App` could do neither. It has no widget storage: `on_render` is
 pure virtual and the subclass draws everything in whatever order it likes.
-`examples/widgets.cpp` hand-rolled the pattern for its menu dropdown — draw
+`examples/widgets_reference.cpp` hand-rolls the pattern for its menu dropdown — draw
 the MenuBar last, list it last in `route_mouse`, and check for a click-away in
 `on_event` — which works for one widget and does not compose.
 
