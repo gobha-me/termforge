@@ -235,7 +235,7 @@ history yields version `0.0.0.1`; packagers can pin it with
 | `termforge_INSTALL` | ON at top level, else OFF | generate `install()`/`export()` rules |
 | `termforge_BENCH` | OFF | Release-only performance evidence harness |
 
-Both consumption paths are exercised in CI by `tools/consume/run.sh`, on GCC
+All three consumption paths (`subdir`, `install`, and `vendored`) are exercised in CI by `tools/consume/run.sh`, on GCC
 and Clang.
 
 ## Demos
