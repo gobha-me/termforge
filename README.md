@@ -199,7 +199,7 @@ if (NOT termforge_FOUND)
   include(FetchContent)
   FetchContent_Declare(termforge
     GIT_REPOSITORY https://github.com/gobha-me/termforge.git
-    GIT_TAG        v0.57.25
+    GIT_TAG        v0.57.27
   )
   FetchContent_MakeAvailable(termforge)
 endif ()

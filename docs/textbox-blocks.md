@@ -5,6 +5,8 @@ its mutable streaming tail. It owns only document layout and sanitized fallback
 text: the application still owns child widgets, images, decoding and hit routing.
 There is no media, transport, or AIForge dependency.
 
+The block API is available starting with TermForge v0.57.27.
+
 ```cpp
 TextBox transcript;
 transcript.append("An ordinary turn");
