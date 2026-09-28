@@ -72,7 +72,7 @@ Detection results populate a `Capabilities` struct returned via
 
 ## Toolchain
 
-- **Language: C++23.** Minimum GCC 13 / Clang 17 (both default on current LTS distros).
+- **Language: C++23.** Minimum GCC 13 / Clang 19+ (Clang matches the CI libstdc++ <expected> requirement).
   - In use: `std::expected`, `std::print`/`std::format`, `std::span`, `std::variant`,
     `std::jthread`, `std::shared_mutex`, concepts, ranges, deducing `this` where it clarifies.
   - Note: there is **no** `std::base64` in any C++ standard; TermForge ships a small internal
