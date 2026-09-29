@@ -1,8 +1,10 @@
 #include "termforge/widgets/text_input.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <string_view>
 
+#include "detail/sanitize.hpp"
 #include "detail/utf8.hpp"
 #include "detail/width.hpp"
 #include "termforge/widgets/detail/callback.hpp"
@@ -36,6 +38,48 @@ auto utf8_next(const std::string& s, int i) -> int {
 
 } // namespace
 
+auto TextInput::set_text(std::string text, int cursor)
+    -> std::expected<void, ErrorEvent> {
+  const auto capacity =
+      static_cast<std::size_t>(std::numeric_limits<int>::max()) /
+      (m_display_mode == text::SanitizeMode::Escape ? 4U : 1U);
+  if (text.size() > capacity || cursor < 0 ||
+      static_cast<std::size_t>(cursor) > text.size() ||
+      (cursor != 0 && static_cast<std::size_t>(cursor) < text.size() &&
+       is_utf8_continuation(text[static_cast<std::size_t>(cursor)])))
+    return std::unexpected(ErrorEvent{Severity::Warning, "TextInput",
+                                      "Invalid text/cursor boundary"});
+  if (text == m_text && cursor == m_cursor) return {};
+  m_text = std::move(text);
+  m_cursor = cursor;
+  m_scroll = std::min(m_scroll, static_cast<int>(m_text.size()));
+  ensure_cursor_visible();
+  mark_dirty();
+  return {};
+}
+
+auto TextInput::set_display_mode(text::SanitizeMode mode)
+    -> std::expected<void, ErrorEvent> {
+  if ((mode != text::SanitizeMode::Strip &&
+       mode != text::SanitizeMode::Escape) ||
+      (mode == text::SanitizeMode::Escape &&
+       m_text.size() >
+           static_cast<std::size_t>(std::numeric_limits<int>::max()) / 4U))
+    return std::unexpected(
+        ErrorEvent{Severity::Warning, "TextInput",
+                   "Display mode is outside the editor domain"});
+  if (mode == m_display_mode) return {};
+  m_display_mode = mode;
+  mark_dirty();
+  return {};
+}
+
+auto TextInput::rendered_width(std::string_view value) const -> int {
+  return m_display_mode == text::SanitizeMode::Escape
+             ? text::sanitized_width(value, text::SanitizeMode::Escape)
+             : detail::display_width(value);
+}
+
 auto TextInput::ensure_cursor_visible() -> void {
   const int visible = rect().w;
   if (visible <= 0) return;
@@ -43,7 +87,7 @@ auto TextInput::ensure_cursor_visible() -> void {
   // Column of the cursor relative to the scroll origin (display columns, not
   // bytes). Advance the window one grapheme at a time until it fits.
   const auto cursor_col = [&] {
-    return detail::display_width(std::string_view{m_text}.substr(
+    return rendered_width(std::string_view{m_text}.substr(
         static_cast<std::size_t>(m_scroll),
         static_cast<std::size_t>(m_cursor - m_scroll)));
   };
@@ -89,8 +133,15 @@ auto TextInput::draw(Screen& screen) -> void {
   }
 
   // Draw visible text (scrolled window, clipped to r.w display columns).
-  const std::string_view shown = detail::truncate_to_width(
-      std::string_view{m_text}.substr(static_cast<std::size_t>(m_scroll)), r.w);
+  std::string escaped;
+  std::string_view shown =
+      std::string_view{m_text}.substr(static_cast<std::size_t>(m_scroll));
+  if (m_display_mode == text::SanitizeMode::Escape &&
+      !detail::is_strip_sanitized(shown)) {
+    escaped = text::sanitize(shown, text::SanitizeMode::Escape);
+    shown = escaped;
+  }
+  shown = detail::truncate_to_width(shown, r.w);
   if (!shown.empty()) {
     screen.write_text(r.x, y, shown, m_fg, m_bg);
   }
@@ -99,21 +150,26 @@ auto TextInput::draw(Screen& screen) -> void {
   if (focused()) {
     // Cursor screen column = display width of the text between scroll and
     // cursor.
-    const int cx = detail::display_width(std::string_view{m_text}.substr(
+    const int cx = rendered_width(std::string_view{m_text}.substr(
         static_cast<std::size_t>(m_scroll),
         static_cast<std::size_t>(m_cursor - m_scroll)));
     if (cx >= 0 && cx < r.w) {
       // Get the full code point under the cursor (or space if at end).
-      const std::string under =
+      std::string under =
           m_cursor < static_cast<int>(m_text.size())
               ? m_text.substr(static_cast<std::size_t>(m_cursor),
                               static_cast<std::size_t>(
                                   utf8_next(m_text, m_cursor) - m_cursor))
               : " ";
+      if (m_display_mode == text::SanitizeMode::Escape)
+        under = text::sanitize(under, text::SanitizeMode::Escape);
+      const auto clipped = detail::truncate_to_width(under, r.w - cx);
       // Reverse is semantic cursor state, not a colour choice. The fallback
       // driver deliberately drops colours but preserves reverse video, so
       // the insertion point remains visible on every rendering tier.
-      screen.write_text(r.x + cx, y, under, m_fg, m_bg, Attr::Reverse);
+      screen.write_text(r.x + cx, y,
+                        clipped.empty() ? std::string_view{" "} : clipped, m_fg,
+                        m_bg, Attr::Reverse);
     }
   }
 
@@ -135,6 +191,16 @@ auto TextInput::on_event(const Event& ev) -> bool {
     int pos = m_scroll;
     int col = 0;
     while (pos < size) {
+      if (m_display_mode == text::SanitizeMode::Escape) {
+        const int next = utf8_next(m_text, pos);
+        const int cw = rendered_width(std::string_view{m_text}.substr(
+            static_cast<std::size_t>(pos),
+            static_cast<std::size_t>(next - pos)));
+        if (col + cw > target_col) break;
+        col += cw;
+        pos = next;
+        continue;
+      }
       char32_t cp = 0;
       std::size_t len = 0;
       if (!detail::utf8_decode(

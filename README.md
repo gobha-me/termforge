@@ -78,6 +78,10 @@ Landed and verified:
   endpoints and explicitly app-forwarded pointer capture. Silent model setters,
   safe change callbacks and authored ASCII focus/thumb cues; see
   [docs/slider.md](docs/slider.md) and `examples/slider.cpp`.
+- **NumericInput** — exact signed-64-bit and finite-decimal editing with
+  separate drafts, explicit commit/cancel, checked stepping and colorless
+  validation feedback. See [docs/numeric-input.md](docs/numeric-input.md) and
+  the functional `examples/numeric_settings.cpp` preview.
 - **Glyph families** — `widgets/glyphs.hpp` is the single place line and mark
   glyphs are chosen: five border families (`Single`/`Double`/`Rounded`/
   `Heavy`/`Ascii`), matching interior-grid lines, and form-control marks, so an

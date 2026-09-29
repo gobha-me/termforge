@@ -39,6 +39,7 @@ add_library(${PROJECT_NAME}_lib STATIC
   widgets/tab_bar.cpp
   widgets/notebook.cpp
   widgets/slider.cpp
+  widgets/numeric_input.cpp
   drivers/terminal_driver.cpp
   drivers/ansi_rgb_driver.cpp
   drivers/fallback_driver.cpp

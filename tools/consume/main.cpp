@@ -17,6 +17,7 @@
 #include <termforge/core/styled_text.hpp>
 #include <termforge/widgets/label.hpp>
 #include <termforge/widgets/notebook.hpp>
+#include <termforge/widgets/numeric_input.hpp>
 #include <termforge/widgets/slider.hpp>
 #include <termforge/widgets/text_box.hpp>
 
@@ -56,6 +57,19 @@ class ScriptedApp final : public termforge::App {
 } // namespace
 
 auto main() -> int {
+  termforge::NumericInput numeric;
+  if (!numeric.configure(termforge::IntegerInputConfig{-10, 10, 0, 1}) ||
+      !numeric.set_draft("+0007") || !numeric.commit())
+    return 1;
+  numeric.set_geometry({0, 0, 20, 3});
+  termforge::Screen numeric_screen{20, 3};
+  numeric.draw(numeric_screen);
+  if (std::get<std::int64_t>(numeric.value()) != 7 ||
+      numeric_screen.text_at(1, 1) != "7")
+    return 1;
+  if (!numeric.set_draft("bad") || numeric.commit() ||
+      std::get<std::int64_t>(numeric.value()) != 7)
+    return 1;
   termforge::Slider slider;
   if (!slider.configure({-10, 10, 0, 0.5}) || !slider.set_value(1.5)) return 1;
   slider.set_geometry({0, 0, 20, 2});
