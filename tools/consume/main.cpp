@@ -9,6 +9,7 @@
 // cell is blank, which would mean we linked something that does not actually
 // work.
 
+#include <array>
 #include <chrono>
 #include <sstream>
 #include <utility>
@@ -20,6 +21,7 @@
 #include <termforge/drivers/kitty_driver.hpp>
 #include <termforge/widgets/dialogs.hpp>
 #include <termforge/widgets/label.hpp>
+#include <termforge/widgets/layout.hpp>
 #include <termforge/widgets/list_widget.hpp>
 #include <termforge/widgets/notebook.hpp>
 #include <termforge/widgets/numeric_input.hpp>
@@ -64,6 +66,12 @@ class ScriptedApp final : public termforge::App {
 } // namespace
 
 auto main() -> int {
+  constexpr std::array tracks{termforge::LayoutTrack{},
+                              termforge::LayoutTrack{}};
+  const auto panes = termforge::layout_row({0, 0, 5, 1}, tracks);
+  if (!panes || (*panes)[0] != termforge::Rect{0, 0, 2, 1} ||
+      (*panes)[1] != termforge::Rect{2, 0, 3, 1})
+    return 1;
   termforge::KittyDriver resident;
   termforge::TerminalDriver& resident_base = resident;
   if (!resident_base.supports_pinned_image_rollback() ||
