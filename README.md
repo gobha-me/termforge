@@ -74,6 +74,10 @@ Landed and verified:
   group, arrows move the selection) and `Select` (a dropdown that closes on
   focus loss, and closes-then-declines Tab so one press both dismisses it and
   moves on). See `examples/forms.cpp`.
+- **Slider** — a checked finite-double range with keyboard stepping, exact
+  endpoints and explicitly app-forwarded pointer capture. Silent model setters,
+  safe change callbacks and authored ASCII focus/thumb cues; see
+  [docs/slider.md](docs/slider.md) and `examples/slider.cpp`.
 - **Glyph families** — `widgets/glyphs.hpp` is the single place line and mark
   glyphs are chosen: five border families (`Single`/`Double`/`Rounded`/
   `Heavy`/`Ascii`), matching interior-grid lines, and form-control marks, so an
