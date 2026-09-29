@@ -16,6 +16,8 @@
 #include <termforge/core/app.hpp>
 #include <termforge/core/screen.hpp>
 #include <termforge/core/styled_text.hpp>
+#include <termforge/drivers/fallback_driver.hpp>
+#include <termforge/drivers/kitty_driver.hpp>
 #include <termforge/widgets/dialogs.hpp>
 #include <termforge/widgets/label.hpp>
 #include <termforge/widgets/list_widget.hpp>
@@ -62,6 +64,11 @@ class ScriptedApp final : public termforge::App {
 } // namespace
 
 auto main() -> int {
+  termforge::KittyDriver resident;
+  termforge::TerminalDriver& resident_base = resident;
+  if (!resident_base.supports_pinned_image_rollback() ||
+      termforge::FallbackDriver{}.supports_pinned_image_rollback())
+    return 1;
   termforge::Theme presentation;
   presentation.content_fg = {1, 2, 3};
   termforge::Label themed{"snapshot"};

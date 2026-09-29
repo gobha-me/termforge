@@ -656,6 +656,10 @@ auto KittyDriver::max_pinned_images() const noexcept -> std::size_t {
   return kMaxPinnedImages;
 }
 
+auto KittyDriver::supports_pinned_image_rollback() const noexcept -> bool {
+  return true;
+}
+
 auto KittyDriver::residency() const noexcept -> ImageResidency {
   ImageResidency result;
   for (const auto& [id, image] : m_accounted_images) {

@@ -1374,6 +1374,14 @@ class App {
   // only; an unseen normal frame retires the entry without dereferencing it,
   // while an overlay frame deliberately retains the image data and lets the
   // placement alone be collected.
+  // Only fields changed before the write need a checkpoint. No Widget or
+  // payload is retained here; identity replacement must not lose ownership of
+  // the committed old handle when the driver restores it after refusal.
+  struct PixelImageFrameState {
+    PinnedImage pin{};
+    bool content_ready{false};
+    bool awaiting_terminal{false};
+  };
   struct PersistentPixelRegion {
     Widget* owner{nullptr};
     std::size_t ordinal{0};
@@ -1405,6 +1413,7 @@ class App {
     std::uint64_t pending_content_revision{0};
     bool pending_visible{false};
     bool touched_wire{false};
+    std::optional<PixelImageFrameState> frame_start{};
   };
   std::vector<PersistentPixelRegion> m_persistent_pixels;
 

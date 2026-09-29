@@ -186,9 +186,27 @@ buffer. A changed logical extent, raw/encoded kind, or encoded format explicitly
 unpins and repins because those properties are immutable resident identity.
 Fit and layer are placement state: changing either re-places the resident image
 without borrowing or transmitting its content.
+
+On an output refusal, Kitty restores committed resident roots and App restores
+their handle/readiness ownership (#398). Same-identity dirty content is
+re-borrowed and retried under the accepted root; clean producers are neither
+borrowed nor acknowledged again. A refused extent/format/kind replacement keeps
+the prior handle until its eventual accepted retirement, including if the
+producer is omitted or destroyed before retry. Placement visibility is repaired
+without marking source content for recreation: Unicode placeholders repaint
+after Renderer's cell-shadow repair, while unchanged Classic placements remain
+quiet. Checkpoints hold only handles/flags, not Widgets or borrowed payloads.
+
+`TerminalDriver::supports_pinned_image_rollback()` is a non-pure behavior query,
+not a terminal capability. Its default is false; out-of-tree resident drivers
+that have not implemented complete accepted-write rollback retain conservative
+recreation after refused image work. Existing driver source remains compatible.
+
 On ANSI truecolour there is no resident image
 store, so clean stable frames emit nothing; dirty content, movement, and a
 full repaint still rasterize through `draw_image`.
+After sink refusal, the next renderer cell repair redraws clean ANSI raster
+placements as well, without acknowledging or mutating their clean source data.
 
 Omitting a persistent region outside a modal overlay ends its lifetime and
 returns its pin budget. A modal overlay instead suspends only the placement:

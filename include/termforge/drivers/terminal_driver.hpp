@@ -396,6 +396,17 @@ class TerminalDriver {
     return 0;
   }
 
+  // Driver behavior, not a terminal capability (#398). True promises that a
+  // refused emit_frame restores committed pinned roots, hashes, revisions,
+  // placements and retirement/reply/transport ownership, while invalidating
+  // new pins whose upload was unwritten. App may then retry from widget-owned
+  // content without retiring/recreating unrelated accepted roots. NON-PURE:
+  // older resident drivers keep the historical conservative recreation route.
+  [[nodiscard]] virtual auto supports_pinned_image_rollback() const noexcept
+      -> bool {
+    return false;
+  }
+
   // Driver-accounted resident image usage (#112). NON-PURE so a third-party
   // driver written before the query keeps compiling; a tier with no resident
   // image channel has exactly the empty snapshot returned here. Drivers that

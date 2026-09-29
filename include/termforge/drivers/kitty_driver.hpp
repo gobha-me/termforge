@@ -123,6 +123,8 @@ class KittyDriver final : public TerminalDriver {
   // keeps: a pinned payload is transmitted once under an id outside the
   // region pool, and neither the LRU cap nor gc_regions can see it.
   [[nodiscard]] auto max_pinned_images() const noexcept -> std::size_t override;
+  [[nodiscard]] auto supports_pinned_image_rollback() const noexcept
+      -> bool override;
   [[nodiscard]] auto residency() const noexcept -> ImageResidency override;
   [[nodiscard]] auto pinned_image_status(PinnedImage image) const noexcept
       -> PinnedImageStatus override;
