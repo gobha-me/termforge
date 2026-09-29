@@ -282,16 +282,24 @@ auto FilePickerDialog::report_error(const std::string& message) -> void {
   // the decline-navigation behavior for an app that never pushes overlays.
   if (m_error_up_query && m_error_up_query()) return;
   m_error.set_text(message);
-  // Our glyph family reaches our own error dialog too. Pre-existing, but the
-  // same defect #72 fixed one layer down: m_error is a member the app has no
-  // handle on, so an Ascii-tier picker could not stop it drawing a Unicode
-  // border -- on the modal that is, at that moment, the topmost thing on
-  // screen.
-  m_error.set_border_style(border_style());
   if (m_push_overlay) m_push_overlay(m_error);
 }
 
 // ── Dialog overrides ─────────────────────────────────────────────────────────
+
+auto FilePickerDialog::on_theme_changed() -> void {
+  Dialog::on_theme_changed();
+  inherit_theme(m_path);
+  inherit_theme(m_list);
+  inherit_theme(m_ok);
+  inherit_theme(m_cancel);
+  inherit_theme(m_error);
+}
+
+auto FilePickerDialog::on_border_style_changed() -> void {
+  m_list.set_style(border_style());
+  m_error.set_border_style(border_style());
+}
 
 auto FilePickerDialog::content_cols() const -> int {
   // A file browser wants room: filenames, a path field, and the buttons. Ask
@@ -301,15 +309,6 @@ auto FilePickerDialog::content_cols() const -> int {
 }
 
 auto FilePickerDialog::layout_content(Rect area) -> void {
-  // The dialog's glyph family reaches the entry list too, or an ASCII-tier
-  // picker draws a Unicode selection marker in its own file list (#72) -- the
-  // exact failure BorderStyle::Ascii exists to prevent, in a widget whose style
-  // the app cannot otherwise reach. Guarded because this runs every frame and
-  // set_style() unconditionally marks dirty. (report_error does the same for
-  // m_error; there is no Dialog-level "propagate to children" hook to hang
-  // either on, which is worth adding when a third child needs it.)
-  if (m_list.style() != border_style()) m_list.set_style(border_style());
-
   // Path field on top, the entry list filling the middle, a blank spacer row,
   // then the buttons on the bottom row (#45 satellite 7: the content_rows
   // reservation includes that spacer -- 8 list rows + field + spacer +

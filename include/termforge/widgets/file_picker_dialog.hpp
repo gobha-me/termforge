@@ -134,6 +134,8 @@ class FilePickerDialog final : public Dialog {
   // animates WHILE it is up.
 
  protected:
+  auto on_theme_changed() -> void override;
+  auto on_border_style_changed() -> void override;
   // Once per SHOWING (not per frame, #45): seed the path field, re-read the
   // directory, and assert the list as the starting focus.
   auto on_show() -> void override;

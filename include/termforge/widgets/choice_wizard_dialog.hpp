@@ -71,6 +71,8 @@ class ChoiceWizardDialog final : public Dialog {
   auto on_event(const Event& event) -> bool override;
 
  protected:
+  auto on_theme_changed() -> void override;
+  auto on_border_style_changed() -> void override;
   [[nodiscard]] auto content_rows() const -> int override;
   [[nodiscard]] auto content_cols() const -> int override;
   auto layout_content(Rect area) -> void override;

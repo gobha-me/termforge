@@ -15,6 +15,7 @@
 #include <termforge/core/app.hpp>
 #include <termforge/core/screen.hpp>
 #include <termforge/core/styled_text.hpp>
+#include <termforge/widgets/dialogs.hpp>
 #include <termforge/widgets/label.hpp>
 #include <termforge/widgets/list_widget.hpp>
 #include <termforge/widgets/notebook.hpp>
@@ -74,6 +75,25 @@ auto main() -> int {
   if (themed_screen.at(0, 0).fg != termforge::Rgb{7, 8, 9}) return 1;
   themed.clear_theme();
   if (themed.theme_snapshot()) return 1;
+  termforge::PromptDialog prompt{"Prompt", "Body"};
+  prompt.set_value("Draft");
+  presentation.glyphs = termforge::BorderStyle::Ascii;
+  presentation.surface_bg = {30, 31, 32};
+  prompt.set_theme(presentation);
+  termforge::Screen modal_screen{40, 12};
+  prompt.draw(modal_screen);
+  const auto modal = prompt.rect();
+  if (modal_screen.text_at(modal.x, modal.y) != "+" ||
+      modal_screen.at(modal.x, modal.y).bg != presentation.surface_bg ||
+      prompt.value() != "Draft")
+    return 1;
+  termforge::Dialog& base = prompt;
+  base.set_border_style(termforge::BorderStyle::Single);
+  prompt.clear_theme();
+  prompt.draw(modal_screen);
+  if (modal_screen.text_at(modal.x, modal.y) != "┌" ||
+      prompt.value() != "Draft")
+    return 1;
   termforge::NumericInput numeric;
   if (!numeric.configure(termforge::IntegerInputConfig{-10, 10, 0, 1}) ||
       !numeric.set_draft("+0007") || !numeric.commit())

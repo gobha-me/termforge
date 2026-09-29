@@ -230,7 +230,8 @@ auto ChoiceDialog::rebuild_controls(const std::vector<std::size_t>& selected,
   m_multiple.reserve(m_choices.size());
   for (std::size_t i = 0; i < m_choices.size(); ++i) {
     auto checkbox = std::make_unique<Checkbox>(m_choices[i].label);
-    checkbox->set_style(border_style());
+    inherit_theme(*checkbox);
+    if (border_style_overridden()) checkbox->set_style(border_style());
     checkbox->set_checked(wanted.contains(i));
     checkbox->on_change([this](bool) {
       m_validation.clear();
@@ -369,16 +370,25 @@ auto ChoiceDialog::content_cols() const -> int {
   return width;
 }
 
-auto ChoiceDialog::layout_content(Rect area) -> void {
-  // Dialog::set_border_style is intentionally non-virtual. Read the base-owned
-  // state here so styling through either ChoiceDialog or Dialog& reaches the
-  // composed controls without hiding the base setter by name.
-  const BorderStyle style = border_style();
-  if (m_single.style() != style) m_single.set_style(style);
+auto ChoiceDialog::on_theme_changed() -> void {
+  Dialog::on_theme_changed();
+  inherit_theme(m_single);
   for (auto& checkbox : m_multiple)
-    if (checkbox->style() != style) checkbox->set_style(style);
-  if (m_other_check.style() != style) m_other_check.set_style(style);
+    inherit_theme(*checkbox);
+  inherit_theme(m_other_check);
+  inherit_theme(m_other_input);
+  inherit_theme(m_submit);
+  inherit_theme(m_cancel);
+}
 
+auto ChoiceDialog::on_border_style_changed() -> void {
+  m_single.set_style(border_style());
+  for (auto& checkbox : m_multiple)
+    checkbox->set_style(border_style());
+  m_other_check.set_style(border_style());
+}
+
+auto ChoiceDialog::layout_content(Rect area) -> void {
   m_choice_area = m_description_area = m_other_area = m_validation_area =
       m_button_area = empty_rect_at(area);
   m_single.set_geometry(empty_rect_at(area));
@@ -476,13 +486,14 @@ auto ChoiceDialog::draw_content(Screen& screen) -> void {
     screen.write_text(
         m_description_area.x, m_description_area.y,
         detail::truncate_to_width(description, m_description_area.w),
-        Rgb{0x90, 0x98, 0xA8}, bg());
+        theme_color(&Theme::muted, {0x90, 0x98, 0xA8}), bg());
   }
   if (m_validation_area.h > 0 && !m_validation.empty()) {
     screen.write_text(
         m_validation_area.x, m_validation_area.y,
         detail::truncate_to_width(m_validation, m_validation_area.w),
-        Rgb{0xFF, 0xA0, 0x60}, bg());
+        theme_color(&Theme::warning, {0xFF, 0xA0, 0x60}), bg(),
+        theme_snapshot() ? Attr::Bold : Attr::None);
   }
   m_submit.draw(screen);
   m_cancel.draw(screen);

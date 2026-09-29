@@ -60,6 +60,11 @@ auto MessageDialog::build() -> void {
   add_child(&m_ok);
 }
 
+auto MessageDialog::on_theme_changed() -> void {
+  Dialog::on_theme_changed();
+  inherit_theme(m_ok);
+}
+
 auto MessageDialog::set_ok_label(std::string label) -> void {
   m_ok.set_label("[ " + label + " ]");
   mark_dirty();
@@ -103,6 +108,12 @@ auto ConfirmDialog::build() -> void {
   m_no.on_activate([this] { finish(false); });
   add_child(&m_yes); // first added starts focused: Enter confirms
   add_child(&m_no);
+}
+
+auto ConfirmDialog::on_theme_changed() -> void {
+  Dialog::on_theme_changed();
+  inherit_theme(m_yes);
+  inherit_theme(m_no);
 }
 
 auto ConfirmDialog::set_labels(std::string yes, std::string no) -> void {
@@ -170,6 +181,13 @@ auto PromptDialog::build() -> void {
   add_child(&m_input); // first added starts focused: type immediately
   add_child(&m_ok);
   add_child(&m_cancel);
+}
+
+auto PromptDialog::on_theme_changed() -> void {
+  Dialog::on_theme_changed();
+  inherit_theme(m_input);
+  inherit_theme(m_ok);
+  inherit_theme(m_cancel);
 }
 
 auto PromptDialog::set_value(std::string value) -> void {
