@@ -1,13 +1,14 @@
-TERMFORGE / WIDGET LAB                                                                               ANSI RGB | enhanced
+TERMFORGE / WIDGET LAB                                                                        ANSI RGB | enhanced | dark
 ▸Demo   View   Help                                                                                                     
 ▸Controls   Data   Text   Pixels   Dialogs                                                   ╭┤ Explore ├──────────────╮
 ╭┤ Specimen ├───────────────────────────────────────────────────────────────────────────────╮│WIDGET LAB               │
-│< 1/7 TextInput                                                                           >││                         │
+│< 1/9 TextInput                                                                           >││                         │
 │Type; Enter commits a result, not a file.                                                  ││Ctrl+Tab: category       │
 │                                                                                           ││F2 / F3: specimen        │
 │TermForge demo                                                                             ││Tab: edit / navigate     │
 │                                                                                           ││F4: simulated state      │
 │                                                                                           ││F6: full help            │
+│                                                                                           ││View: palette            │
 │                                                                                           ││                         │
 │                                                                                           ││FOCUSED EXAMPLES         │
 │                                                                                           ││forms: form routing      │
@@ -20,7 +21,6 @@ TERMFORGE / WIDGET LAB                                                          
 │                                                                                           ││                         │
 │                                                                                           ││No clipboard / file      │
 │                                                                                           ││writes.                  │
-│                                                                                           ││                         │
 │                                                                                           ││                         │
 │                                                                                           ││                         │
 │                                                                                           ││                         │

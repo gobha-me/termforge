@@ -15,14 +15,59 @@ constexpr Rgb kChrome{20, 26, 40};
 constexpr std::array<const char*, 5> kStates{"populated", "empty", "loading",
                                              "error", "disabled"};
 
-auto line(Screen& screen, Rect area, std::string text, Rgb color = theme::kFg,
-          Rgb background = theme::kBg) -> void {
+auto inherit(Widget& owned, const Widget& parent) -> void {
+  if (parent.theme_snapshot())
+    owned.set_theme(*parent.theme_snapshot());
+  else
+    owned.clear_theme();
+}
+
+auto diagnostic(const Theme& value, Severity severity) -> Rgb {
+  switch (severity) {
+    case Severity::Info: return value.info;
+    case Severity::Warning: return value.warning;
+    case Severity::Error: return value.error;
+  }
+  return value.error;
+}
+
+auto line(Screen& screen, Rect area, std::string text, Rgb color,
+          Rgb background) -> void {
   Label label{std::move(text)};
   label.set_colors(color, background);
   label.set_geometry(area);
   label.draw(screen);
 }
 } // namespace
+
+auto gallery_theme(GalleryPalette palette, bool ascii) -> Theme {
+  Theme value;
+  value.accent = kAccent;
+  value.surface_bg = kChrome;
+  if (palette == GalleryPalette::HighContrast) {
+    value.content_fg = value.surface_fg = {255, 255, 255};
+    value.content_bg = value.surface_bg = {0, 0, 0};
+    value.focus_fg = value.selection_fg = {0, 0, 0};
+    value.focus_bg = {255, 255, 0};
+    value.selection_bg = {0, 255, 255};
+    value.muted = {192, 192, 192};
+    value.accent = {255, 255, 0};
+    value.info = {0, 255, 255};
+    value.warning = {255, 192, 0};
+    value.error = {255, 96, 128};
+  }
+  value.glyphs = ascii ? BorderStyle::Ascii : BorderStyle::Rounded;
+  return value;
+}
+
+auto GalleryHelp::on_theme_changed() -> void {
+  Dialog::on_theme_changed();
+  inherit_theme(m_document);
+}
+
+auto GalleryHelp::on_border_style_changed() -> void {
+  if (border_style_overridden()) m_document.set_style(border_style());
+}
 
 GalleryHelp::GalleryHelp() {
   add_child(&m_document);
@@ -39,8 +84,21 @@ auto GalleryHelp::set_document(std::string_view text) -> void {
 }
 
 auto GalleryHelp::layout_content(Rect area) -> void {
-  m_document.set_style(border_style());
   m_document.set_geometry(area);
+}
+
+auto GalleryPage::on_theme_changed() -> void {
+  for (Widget* owned : std::array<Widget*, 3>{&m_frame, &m_help, &m_reference})
+    inherit(*owned, *this);
+  // cards are borrowed: GalleryApp explicitly applies their snapshots.
+}
+
+auto GallerySignal::on_theme_changed() -> void {
+  inherit(wave, *this);
+}
+
+auto GalleryProgress::on_theme_changed() -> void {
+  inherit(bar, *this);
 }
 
 auto GalleryHelp::on_show() -> void {
@@ -102,17 +160,23 @@ auto GalleryPage::reset_transient() -> void {
 
 auto GalleryPage::draw(Screen& screen) -> void {
   const auto r = rect();
-  screen.fill_rect(r.x, r.y, r.w, r.h, theme::kFg, theme::kBg);
+  const auto fg = theme_color(&Theme::content_fg, theme::kFg);
+  const auto bg = theme_color(&Theme::content_bg, theme::kBg);
+  const auto accent = theme_color(&Theme::accent, kAccent);
+  const auto muted = theme_color(&Theme::muted, theme::kDim);
+  screen.fill_rect(r.x, r.y, r.w, r.h, fg, bg);
   m_body = m_previous = m_next = {};
   for (const auto& specimen : cards)
-    specimen.widget->set_geometry({});
-  if (cards.empty() || r.empty()) return;
+    if (specimen.widget != card().widget) specimen.widget->set_geometry({});
+  if (cards.empty()) return;
+  if (r.empty()) {
+    card().widget->set_geometry({});
+    return;
+  }
   Rect inner = r;
   // Short terminals spend their rows on the specimen, not decorative chrome.
   if (r.h >= 7 && r.w >= 30) {
     m_frame.set_title("Specimen");
-    m_frame.set_style(ascii ? BorderStyle::Ascii : BorderStyle::Rounded);
-    m_frame.set_border_color(theme::kDim);
     m_frame.set_geometry(r);
     m_frame.draw(screen);
     inner = m_frame.content_rect();
@@ -121,25 +185,28 @@ auto GalleryPage::draw(Screen& screen) -> void {
   if (inner.h >= 2) {
     m_previous = {inner.x, inner.y, 1, 1};
     m_next = {inner.x + inner.w - 1, inner.y, 1, 1};
-    line(screen, {inner.x, inner.y, 1, 1}, "<", kAccent);
-    line(screen, {inner.x + 1, inner.y, std::max(0, inner.w - 2), 1},
-         std::format(" {}/{} {}{}", m_selected + 1, cards.size(), card().title,
-                     enabled ? "" : " [disabled]"),
-         kAccent);
-    line(screen, m_next, ">", kAccent);
+    line(screen, {inner.x, inner.y, 1, 1}, "<", accent, bg);
+    const auto title = enabled
+                           ? std::format(" {}/{} {}", m_selected + 1,
+                                         cards.size(), card().title)
+                           : std::format("[disabled] {}/{} {}", m_selected + 1,
+                                         cards.size(), card().title);
+    line(screen, {inner.x + 1, inner.y, std::max(0, inner.w - 2), 1}, title,
+         accent, bg);
+    line(screen, m_next, ">", accent, bg);
     ++inner.y;
     --inner.h;
   }
   if (inner.h >= 6) {
     m_help.set_text(card().help);
     m_help.set_geometry({inner.x, inner.y, inner.w, 1});
-    m_help.set_colors(theme::kDim, theme::kBg);
+    m_help.set_colors(muted, bg);
     m_help.draw(screen);
     inner.y += 2;
     inner.h -= 2;
     m_reference.set_text("Source: examples/" + card().example + ".cpp");
     m_reference.set_geometry({inner.x, inner.y + inner.h - 1, inner.w, 1});
-    m_reference.set_colors(theme::kDim, theme::kBg);
+    m_reference.set_colors(muted, bg);
     m_reference.draw(screen);
     --inner.h;
   }
@@ -148,14 +215,22 @@ auto GalleryPage::draw(Screen& screen) -> void {
   if (card().title == "TextInput" || card().title == "Button" ||
       card().title == "Checkbox" || card().title == "Select" ||
       card().title == "ProgressBar" || card().title == "Label" ||
+      card().title == "Slider" || card().title == "NumericInput" ||
       card().example == "dialogs")
     m_body.h = std::min(1, m_body.h);
   card().widget->set_geometry(m_body);
   set_focused(focused());
   card().widget->draw(screen);
   if (!notice.empty() &&
-      (card().title == "ListWidget" || card().title == "TableWidget"))
-    line(screen, m_body, notice, kAccent);
+      (card().title == "ListWidget" || card().title == "TableWidget")) {
+    line(screen, m_body, notice,
+         theme_snapshot() ? diagnostic(*theme_snapshot(), notice_severity)
+                          : accent,
+         bg);
+    if (notice_severity != Severity::Info)
+      for (int x = m_body.x; x < m_body.x + m_body.w; ++x)
+        screen.at(x, m_body.y).attrs |= Attr::Bold;
+  }
   if (!enabled)
     for (int y = m_body.y; y < m_body.y + m_body.h; ++y)
       for (int x = m_body.x; x < m_body.x + m_body.w; ++x)
@@ -196,7 +271,7 @@ auto GalleryPage::hit_test_tree(int x, int y) const -> bool {
 }
 
 auto GalleryPage::pixel_children() -> std::vector<Widget*> {
-  if (ascii || cards.empty() || m_body.empty()) return {};
+  if (ascii || !enabled || cards.empty() || m_body.empty()) return {};
   return {card().widget};
 }
 
@@ -214,13 +289,16 @@ auto GallerySignal::draw(Screen& screen) -> void {
   }
   const auto r = rect();
   if (r.empty()) return;
-  screen.fill_rect(r.x, r.y, r.w, r.h, theme::kFg, theme::kBg);
+  const auto bg = theme_color(&Theme::content_bg, theme::kBg);
+  screen.fill_rect(r.x, r.y, r.w, r.h,
+                   theme_color(&Theme::content_fg, theme::kFg), bg);
   const auto count = std::min(m_samples.size(), static_cast<std::size_t>(r.w));
   for (std::size_t i = 0; i < count; ++i) {
     const float value = m_samples[m_samples.size() - count + i];
     const int height = std::clamp(static_cast<int>(value * r.h), 0, r.h);
     for (int y = r.y + r.h - height; y < r.y + r.h; ++y)
-      screen.write_text(r.x + static_cast<int>(i), y, "#", kAccent, theme::kBg);
+      screen.write_text(r.x + static_cast<int>(i), y, "#",
+                        theme_color(&Theme::accent, kAccent), bg);
   }
 }
 
@@ -238,10 +316,12 @@ auto GalleryProgress::draw(Screen& screen) -> void {
        bar.indeterminate() ? "[....] Loading (simulated)"
                            : std::format("[{}%] Demo task",
                                          static_cast<int>(bar.value() * 100)),
-       kAccent);
+       theme_color(&Theme::accent, kAccent),
+       theme_color(&Theme::content_bg, theme::kBg));
 }
 
 GalleryApp::GalleryApp(std::filesystem::path browse) {
+  set_mouse_mode(MouseMode::Drag);
   m_pages[0].cards = {
       {"TextInput", "Type; Enter commits a result, not a file.", "forms",
        &m_input},
@@ -256,7 +336,12 @@ GalleryApp::GalleryApp(std::filesystem::path browse) {
       {"ProgressBar", "F4: populated / empty / loading / error / disabled.",
        "widgets_reference", &m_progress, false},
       {"Label", "Unicode data; F1 selects authored ASCII presentation.",
-       "hello", &m_unicode, false}};
+       "hello", &m_unicode, false},
+      {"Slider", "Arrows / Home / End adjust; drag and Esc cancel capture.",
+       "slider", &m_slider},
+      {"NumericInput",
+       "Type an integer; Enter commits; Up/Down step; Esc restores.",
+       "numeric_settings", &m_numeric}};
   m_pages[1].cards = {
       {"ListWidget", "Arrows / wheel scroll; Enter reports the selection.",
        "widgets_reference", &m_list},
@@ -325,9 +410,15 @@ GalleryApp::GalleryApp(std::filesystem::path browse) {
                         "Long option kept reachable with arrows"});
   m_select.on_change(
       [this](int, const std::string& text) { m_result = "Select: " + text; });
-  m_table.set_columns({{"Name", Align::Left, 0},
-                       {"State", Align::Left, 0},
-                       {"Count", Align::Right, 6}});
+  m_slider.set_label("Demo level");
+  (void)m_slider.configure({0, 100, 40, 5});
+  m_slider.on_change(
+      [this](double value) { m_result = std::format("Slider: {}", value); });
+  m_numeric.set_label("Demo count");
+  (void)m_numeric.configure(IntegerInputConfig{0, 100, 12, 1});
+  m_numeric.on_change([this](NumericValue value) {
+    m_result = std::format("NumericInput: {}", std::get<std::int64_t>(value));
+  });
   m_list.on_select(
       [this](int, const std::string& text) { m_result = "List: " + text; });
   m_table.on_select([this](int row, const std::vector<std::string>&) {
@@ -346,10 +437,6 @@ GalleryApp::GalleryApp(std::filesystem::path browse) {
   if (!block) m_result = block.error().message;
   m_blocks.append(
       "This following line survives scrolling and category switches.");
-  TileSet tiles;
-  tiles.define(1, {".", theme::kDim, theme::kBg});
-  tiles.define(2, {"#", kAccent, theme::kBg});
-  m_map.set_tileset(std::move(tiles));
   m_map.set_map_size(16, 8);
   for (int y = 0; y < 8; ++y)
     for (int x = 0; x < 16; ++x)
@@ -402,7 +489,6 @@ GalleryApp::GalleryApp(std::filesystem::path browse) {
                     : "Path selection cancelled.";
   });
   m_picker.on_error_overlay([this](Dialog& error) {
-    error.set_border_style(m_ascii ? BorderStyle::Ascii : BorderStyle::Rounded);
     error.on_close([this] { pop_overlay(); });
     push_overlay(error);
   });
@@ -420,6 +506,8 @@ GalleryApp::GalleryApp(std::filesystem::path browse) {
       "path only. No system clipboard or file writes.\n\n"
       "Choice/Wizard preferences are demos, not terminal capabilities.\n"
       "Compact wizard: < back, > next, OK submits, Esc cancels.\n\n"
+      "View menu: Dark / High contrast palettes. F1 glyph choice is "
+      "independent.\n\n"
       "End of help. Esc returns.");
   m_help_dialog.on_close([this] { pop_overlay(); });
   m_menu.add_menu(
@@ -432,14 +520,17 @@ GalleryApp::GalleryApp(std::filesystem::path browse) {
       {"View",
        {{"Previous specimen", [this] { page().select(specimen() - 1); }},
         {"Next specimen", [this] { page().select(specimen() + 1); }},
-        {"ASCII / enhanced", [this] { m_ascii_override = !m_ascii; }}}});
+        {"ASCII / enhanced", [this] { m_ascii_override = !m_ascii; }},
+        {"Dark palette", [this] { set_palette(GalleryPalette::Dark); }},
+        {"High contrast palette",
+         [this] { set_palette(GalleryPalette::HighContrast); }}}});
   m_menu.add_menu(
       {"Help", {{"Controls and sources", [this] { show(m_help_dialog); }}}});
   for (const char* text :
        {"WIDGET LAB", "", "Ctrl+Tab: category", "F2 / F3: specimen",
-        "Tab: edit / navigate", "F4: simulated state", "F6: full help", "",
-        "FOCUSED EXAMPLES", "forms: form routing", "chat: retained text",
-        "dialogs: modal stack", "pixel_surface: pixels",
+        "Tab: edit / navigate", "F4: simulated state", "F6: full help",
+        "View: palette", "", "FOCUSED EXAMPLES", "forms: form routing",
+        "chat: retained text", "dialogs: modal stack", "pixel_surface: pixels",
         "notebook: page lifetime", "widgets_reference:",
         "  tabs, borders, ticks", "", "No clipboard / file writes."})
     m_sidebar.append(text);
@@ -464,6 +555,8 @@ auto GalleryApp::reset_demo() -> void {
   m_check.set_checked(false);
   m_radio.set_selected(0);
   m_select.set_selected(0);
+  (void)m_slider.set_value(40);
+  (void)m_numeric.set_value(std::int64_t{12});
   m_composer.set_text("Edit this draft; Enter sends it to the transcript.");
   m_composer.clear_history();
   apply_state(0);
@@ -472,6 +565,9 @@ auto GalleryApp::reset_demo() -> void {
 
 auto GalleryApp::apply_state(int state) -> void {
   m_state = state;
+  if (state == 4) m_slider.stop_drag();
+  m_result_severity = state == 3 ? Severity::Error : Severity::Info;
+  m_pages[1].notice_severity = m_result_severity;
   m_pages[1].notice = state == 1   ? "No demo rows. F4 changes state."
                       : state == 2 ? "Loading demo rows... (simulated)"
                       : state == 3 ? "Simulated error. F4 changes state."
@@ -511,29 +607,37 @@ auto GalleryApp::apply_state(int state) -> void {
 }
 
 auto GalleryApp::apply_style(bool ascii) -> void {
-  if (m_style_applied == ascii) return;
-  m_style_applied = ascii;
+  const auto value = gallery_theme(m_palette, ascii);
+  if (m_theme_applied == value) return;
+  const bool glyph_changed = !m_theme_applied || m_ascii != ascii;
+  m_theme_applied = m_theme = value;
   m_ascii = ascii;
-  const auto style = ascii ? BorderStyle::Ascii : BorderStyle::Rounded;
-  for (auto& category_page : m_pages)
+  for (auto& category_page : m_pages) {
     category_page.ascii = ascii;
-  m_book.set_style(style);
-  m_menu.set_style(style);
-  m_check.set_style(style);
-  m_radio.set_style(style);
-  m_select.set_style(style);
-  m_list.set_style(style);
-  m_table.set_style(style);
-  m_transcript.set_style(style);
-  m_blocks.set_style(style);
-  m_sidebar.set_style(style);
-  m_sidebar_frame.set_style(style);
+    category_page.set_theme(value);
+    for (const auto& card : category_page.cards)
+      card.widget->set_theme(value);
+  }
+  for (Widget* widget :
+       std::array<Widget*, 8>{&m_book, &m_menu, &m_sidebar, &m_sidebar_frame,
+                              &m_header, &m_tier, &m_status, &m_help})
+    widget->set_theme(value);
+  // These descriptors are authored *by this app* as semantic roles. The
+  // library never guesses whether arbitrary columns/tiles should recolor.
+  m_table.set_columns(
+      {{"Name", Align::Left, 0, value.accent, value.surface_bg},
+       {"State", Align::Left, 0, value.accent, value.surface_bg},
+       {"Count", Align::Right, 6, value.accent, value.surface_bg}});
+  TileSet tiles;
+  tiles.define(1, {".", value.muted, value.content_bg});
+  tiles.define(2, {"#", value.accent, value.content_bg});
+  m_map.set_tileset(std::move(tiles));
   m_signal.ascii = m_progress.ascii = ascii;
   m_unicode.set_text(ascii ? "ASCII: Gruesse / Nihongo / e + accent"
                            : "Unicode: Grüße / 日本語 / é");
   // Demo-owned option text has an authored ASCII version. User-entered text
   // is never transliterated or destroyed when changing presentation.
-  if (m_select.option_count() == 4) {
+  if (glyph_changed && m_select.option_count() == 4) {
     const int selected = m_select.selected();
     m_select.set_options(
         {"Local demo", "Simulated remote",
@@ -544,7 +648,7 @@ auto GalleryApp::apply_style(bool ascii) -> void {
   for (Dialog* dialog :
        std::array<Dialog*, 7>{&m_message, &m_confirm, &m_prompt, &m_choice,
                               &m_wizard, &m_picker, &m_help_dialog})
-    dialog->set_border_style(style);
+    dialog->set_theme(value);
 }
 
 auto GalleryApp::show(Dialog& dialog) -> void {
@@ -553,6 +657,9 @@ auto GalleryApp::show(Dialog& dialog) -> void {
     m_result = "Resize >=24x8 for dialogs; F6 help.";
     return;
   }
+  // Modal input can swallow the release. End example-owned pointer capture
+  // now, keeping the last chosen value rather than leaving a latent drag.
+  m_slider.stop_drag();
   push_overlay(dialog);
   m_result = "Modal open; Esc cancels without quitting the gallery.";
 }
@@ -580,11 +687,11 @@ auto GalleryApp::return_to_book() -> void {
 }
 
 auto GalleryApp::on_render(Screen& screen) -> void {
-  screen.clear();
   const int w = screen.cols(), h = screen.rows();
   const auto caps = driver().capabilities();
   apply_style(
       m_ascii_override.value_or(!caps.truecolor && !caps.kitty_graphics));
+  screen.clear(m_theme.content_fg, m_theme.content_bg);
   // Three full labels on the wizard's final page need 32 columns including
   // borders. Its existing label API keeps every button visible at 24 columns.
   if (w < 32)
@@ -599,23 +706,28 @@ auto GalleryApp::on_render(Screen& screen) -> void {
     m_book.set_geometry({});
     m_book.draw(screen);
     m_menu.set_geometry({});
-    line(screen, {0, 0, w, std::min(1, h)}, "Resize >=12x6", kAccent);
-    if (h > 1) line(screen, {0, 1, w, 1}, "F6 help; Esc quit");
+    line(screen, {0, 0, w, std::min(1, h)}, "Resize >=12x6", m_theme.warning,
+         m_theme.content_bg);
+    if (h > 1)
+      line(screen, {0, 1, w, 1}, "F6 help; Esc quit", m_theme.content_fg,
+           m_theme.content_bg);
     return;
   }
   const int sidebar = w >= 110 && h >= 20 ? 27 : 0;
   m_header.set_text("TERMFORGE / WIDGET LAB");
-  m_header.set_colors(kAccent, kChrome);
+  m_header.set_colors(m_theme.accent, m_theme.surface_bg);
   const int tier_width = w >= 60 ? 29 : 0;
   m_header.set_geometry({0, 0, w - tier_width, 1});
   m_header.draw(screen);
-  m_tier.set_text(std::format("{} | {}",
-                              caps.kitty_graphics ? "Kitty"
-                              : caps.truecolor    ? "ANSI RGB"
-                                                  : "Baseline",
-                              m_ascii ? "ASCII" : "enhanced"));
+  m_tier.set_text(
+      std::format("{} | {} | {}",
+                  caps.kitty_graphics ? "Kitty"
+                  : caps.truecolor    ? "ANSI RGB"
+                                      : "Baseline",
+                  m_ascii ? "ASCII" : "enhanced",
+                  m_palette == GalleryPalette::Dark ? "dark" : "HC"));
   m_tier.set_align(Label::Align::Right);
-  m_tier.set_colors(theme::kDim, kChrome);
+  m_tier.set_colors(m_theme.muted, m_theme.surface_bg);
   m_tier.set_geometry({w - tier_width, 0, tier_width, 1});
   m_tier.draw(screen);
   m_book.set_geometry({0, 2, w - sidebar, h - 4});
@@ -627,12 +739,26 @@ auto GalleryApp::on_render(Screen& screen) -> void {
     m_sidebar.set_geometry(m_sidebar_frame.content_rect());
     m_sidebar.draw(screen);
   }
-  m_status.set_text(w < 32 && m_result.starts_with("Resize >=24x8")
-                        ? "Resize>=24x8"
-                        : "Result: " + m_result);
-  m_status.set_colors(m_state == 3 ? Rgb{255, 160, 112} : theme::kFg, kChrome);
+  const auto severity = m_state == 3                      ? Severity::Error
+                        : m_result == m_diagnostic_result ? m_result_severity
+                                                          : Severity::Info;
+  const bool compact = w < 32 || h < 8;
+  if (compact && m_state == 4)
+    m_status.set_text("[disabled] " + m_result);
+  else if (compact && severity != Severity::Info)
+    m_status.set_text(
+        std::string{severity == Severity::Error ? "[error] " : "[warning] "} +
+        m_result);
+  else
+    m_status.set_text(w < 32 && m_result.starts_with("Resize >=24x8")
+                          ? "Resize>=24x8"
+                          : "Result: " + m_result);
+  m_status.set_colors(diagnostic(m_theme, severity), m_theme.surface_bg);
   m_status.set_geometry({0, h - 2, w, 1});
   m_status.draw(screen);
+  if (severity != Severity::Info)
+    for (int x = 0; x < w; ++x)
+      screen.at(x, h - 2).attrs |= Attr::Bold;
   const std::string focus = m_menu_focused     ? "menu"
                             : page().focused() ? page().card().title
                                                : "tabs";
@@ -640,7 +766,7 @@ auto GalleryApp::on_render(Screen& screen) -> void {
       w < 60 ? "^Tab tabs F2/3 cards F6 ?"
              : "Tab edit | ^Tab tabs | F2/3 cards | F6 ? | Esc quit | Focus: " +
                    focus);
-  m_help.set_colors(theme::kDim, kChrome);
+  m_help.set_colors(m_theme.muted, m_theme.surface_bg);
   m_help.set_geometry({0, h - 1, w, 1});
   m_help.draw(screen);
   m_menu.set_geometry({0, 1, w, 1});
@@ -668,15 +794,24 @@ auto GalleryApp::on_event(const Event& event) -> void {
     return;
   }
   if (const auto* resized = std::get_if<ResizeEvent>(&event)) {
+    m_slider.stop_drag();
     m_usable = resized->cols >= 12 && resized->rows >= 6;
     cancel_small_forms(resized->cols, resized->rows);
     return;
   }
   if (const auto* error = std::get_if<ErrorEvent>(&event)) {
     m_result = error->source + ": " + error->message;
+    m_diagnostic_result = m_result;
+    m_result_severity = error->severity;
     return;
   }
   if (const auto* mouse = std::get_if<MouseEvent>(&event)) {
+    // A dragging slider gets release/movement outside its current hit area.
+    // This is example-owned routing, never a global framework capture.
+    if (m_slider.dragging()) {
+      (void)m_slider.on_event(event);
+      return;
+    }
     if (m_menu.dropdown_open() && m_menu.hit_test_tree(mouse->x, mouse->y)) {
       (void)m_menu.on_event(event);
       return;

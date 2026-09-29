@@ -6,6 +6,11 @@ recorded before changing the demo. The **after** source is the private gallery
 in this change. Captures use zero first-tick time; no tty, network or random
 data. Tier 0 is FallbackDriver, 1 is AnsiRgbDriver, 2 is KittyDriver.
 
+The after set now includes real Gallery Theme adoption (parent #373, child
+#401), nine Controls specimens, palette identification and reference updates.
+The frozen before set is unchanged. Dark is the initial app palette; native
+Baseline uses ASCII while native ANSI/Kitty use enhanced glyphs.
+
 `before-WxH.txt` contains the original authored cell grid (the layout does not
 vary by selected tier). `after-tierN-WxH.txt` contains the initial Controls
 page at each tier, including its actual default presentation. Empty cells are
@@ -20,6 +25,21 @@ These records are not image screenshots, benchmarks, decoder proof or a human
 real-emulator review. The after pixel path has different authored content and
 extent from the old Waveform; do not compare those byte counts as a speedup.
 
+`theme-evidence.txt` records seven real-App frames (initial, editor focus,
+category activation, focused selection, disabled, error, help) for both dark
+and high-contrast palettes, all three tiers, and native/explicit-ASCII policy:
+84 frames total. Activation is included separately because a borrowed page's
+focusability depends on its laid-out body; selection is observed on the next
+production frame. Each record includes full cell and lossless RGB/attribute-run
+fingerprints, readable header/body/status probes (`fg/bg/attribute-bits`), and
+the actual frame's byte fingerprint/count. The help Screen probe describes the
+backdrop; its wire fingerprint includes the later modal. Unit tests additionally
+read ASCII modal output on both truecolor drivers and assert semantic roles,
+markers, bold/reverse cues and data preservation. Fallback drops RGB/Dim but
+keeps the explicit disabled marker and its supported Bold/Reverse feedback.
+These are deterministic authored-state/emission evidence, not physical screen
+or font/capability claims.
+
 Build/regenerate the after set with the opt-in target (tests enabled):
 
 ```sh
@@ -33,6 +53,21 @@ for size in '24 8' '80 24' '40 16' '120 32'; do
     "$capture" "$1" "$2" "$tier" pixels
   done
 done > examples/captures/widgets/after-wire.txt
+
+for palette in dark hc; do
+  for tier in 0 1 2; do
+    for mode in native ascii; do
+      printf '# palette=%s tier=%s mode=%s\n' "$palette" "$tier" "$mode"
+      options=()
+      if [ "$palette" = hc ]; then options+=(--hc); fi
+      if [ "$mode" = ascii ]; then options+=(--ascii); fi
+      "$capture" 80 24 "$tier" --theme-evidence "${options[@]}"
+    done
+  done
+done > examples/captures/widgets/theme-evidence.txt
+
+# Inspect the complete lossless style runs, not only their fingerprint:
+"$capture" 80 24 2 --hc --ascii --styles
 ```
 
 Regenerate the frozen before source in a task-owned build directory; for exact
