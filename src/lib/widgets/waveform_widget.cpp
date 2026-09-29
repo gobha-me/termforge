@@ -11,6 +11,16 @@ WaveformWidget::WaveformWidget(int capacity)
     : m_capacity(capacity > 0 ? capacity : 256) {
 }
 
+auto WaveformWidget::on_theme_changed() -> void {
+  const auto fg = theme_color(&Theme::accent, {0x00, 0xFF, 0x80});
+  const auto bg = theme_color(&Theme::content_bg, theme::kBg);
+  if (fg == m_fg && bg == m_bg) return;
+  m_fg = fg;
+  m_bg = bg;
+  ++m_gen;
+  m_content_dirty = true;
+}
+
 auto WaveformWidget::push(float value) -> bool {
   if (!std::isfinite(value)) return false;
   m_samples.push_back(value);

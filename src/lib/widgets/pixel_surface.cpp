@@ -54,7 +54,9 @@ auto PixelSurface::draw(Screen& screen) -> void {
   }
 
   const Cell base{};
-  screen.fill_rect(dst.x, dst.y, dst.w, dst.h, base.fg, base.bg);
+  const auto fg = theme_color(&Theme::content_fg, base.fg);
+  const auto bg = theme_color(&Theme::content_bg, base.bg);
+  screen.fill_rect(dst.x, dst.y, dst.w, dst.h, fg, bg);
   if (m_image.empty()) {
     clear_dirty();
     return;
@@ -71,10 +73,10 @@ auto PixelSurface::draw(Screen& screen) -> void {
     const int sy = map(y, m_image.height(), dst.h);
     for (int x = 0; x < cover_w; ++x) {
       const int sx = map(x, m_image.width(), dst.w);
-      const Pixel visible = composite_over(m_image.at(sx, sy), base.bg);
+      const Pixel visible = composite_over(m_image.at(sx, sy), bg);
       const char glyph = luminance_char(visible);
       screen.write_text(dst.x + x, dst.y + y, std::string_view{&glyph, 1},
-                        Rgb{visible.r, visible.g, visible.b}, base.bg);
+                        Rgb{visible.r, visible.g, visible.b}, bg);
     }
   }
 

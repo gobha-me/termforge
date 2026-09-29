@@ -11,6 +11,7 @@
 
 #include <chrono>
 #include <sstream>
+#include <utility>
 
 #include <termforge/core/app.hpp>
 #include <termforge/core/screen.hpp>
@@ -20,6 +21,7 @@
 #include <termforge/widgets/list_widget.hpp>
 #include <termforge/widgets/notebook.hpp>
 #include <termforge/widgets/numeric_input.hpp>
+#include <termforge/widgets/pixel_surface.hpp>
 #include <termforge/widgets/slider.hpp>
 #include <termforge/widgets/text_box.hpp>
 #include <termforge/widgets/theme.hpp>
@@ -93,6 +95,18 @@ auto main() -> int {
   prompt.draw(modal_screen);
   if (modal_screen.text_at(modal.x, modal.y) != "┌" ||
       prompt.value() != "Draft")
+    return 1;
+  termforge::PixelSurface surface{{1, 1}, {80, 90, 100, 255}};
+  surface.set_geometry({0, 0, 2, 1});
+  surface.set_fit(termforge::PlacementFit::Exact);
+  surface.pixel_region_submitted(surface.rect());
+  surface.set_theme(presentation);
+  termforge::Screen surface_screen{2, 1};
+  surface.draw(surface_screen);
+  if (surface.content_dirty() ||
+      std::as_const(surface).image().at(0, 0) !=
+          termforge::Pixel{80, 90, 100, 255} ||
+      surface_screen.at(1, 0).bg != presentation.content_bg)
     return 1;
   termforge::NumericInput numeric;
   if (!numeric.configure(termforge::IntegerInputConfig{-10, 10, 0, 1}) ||
