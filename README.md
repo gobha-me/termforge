@@ -62,6 +62,10 @@ Landed and verified:
   The scrollable three paint a shared one-column scrollbar (track + thumb,
   click-to-page-jump) when their content overflows, so a viewport never hides
   that there's more (`widgets/detail/scrollbar.hpp`).
+- **Cell layout** — `layout_row` / `layout_column` divide a `Rect` by explicit
+  minimum, preferred size, spacing and growth weight. They return checked
+  geometry without taking widget ownership or claiming to clip child drawing;
+  see [docs/layout.md](docs/layout.md) for a copyable placement example.
 - **TabBar** — a horizontal strip of titles that reports which one is active
   (`on_change(int)`); Left/Right and clicks switch it, and the strip scrolls
   with `‹ ›` indicators when the titles outrun the columns. It owns the strip
