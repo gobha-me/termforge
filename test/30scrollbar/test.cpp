@@ -5,16 +5,21 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <limits>
+
 #include "termforge/core/screen.hpp"
 #include "termforge/widgets/detail/scrollbar.hpp"
 #include "termforge/widgets/glyphs.hpp"
 #include "termforge/widgets/theme.hpp"
 
+using termforge::any;
+using termforge::Attr;
 using termforge::BorderStyle;
 using termforge::Rect;
 using termforge::Rgb;
 using termforge::Screen;
 using termforge::scrollbar_glyphs;
+using termforge::ScrollOrientation;
 using termforge::detail::draw_scrollbar;
 using termforge::detail::thumb_window;
 
@@ -232,4 +237,24 @@ TEST_CASE("scrollbar_glyphs: horizontal track is ─ / - (#131)", "[scrollbar]")
     REQUIRE(scrollbar_glyphs(style, ScrollOrientation::Horizontal).thumb ==
             "█");
   }
+}
+
+TEST_CASE("shared painter keeps logical thumb but bounds offscreen work",
+          "[scrollbar][failure]") {
+  constexpr int hi = std::numeric_limits<int>::max();
+  Screen screen{3, 4};
+  const auto vertical = scrollbar_glyphs(BorderStyle::Ascii);
+  draw_scrollbar(screen, {1, -hi + 2, 1, hi}, 100, 0, 10, vertical, {}, {}, {});
+  CHECK(screen.text_at(1, 0) == "|");
+  CHECK(screen.text_at(1, 1) == "|");
+  CHECK(screen.text_at(1, 2).empty());
+
+  const auto horizontal =
+      scrollbar_glyphs(BorderStyle::Ascii, ScrollOrientation::Horizontal);
+  draw_scrollbar(screen, {-hi + 2, 3, hi, 1}, 100, 90, 10, horizontal, {}, {},
+                 {}, ScrollOrientation::Horizontal, Attr::Bold);
+  CHECK(screen.text_at(0, 3) == "#");
+  CHECK(screen.text_at(1, 3) == "#");
+  CHECK(any(screen.at(0, 3).attrs & Attr::Bold));
+  CHECK(screen.text_at(2, 3).empty());
 }

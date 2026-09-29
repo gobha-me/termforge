@@ -36,6 +36,7 @@
 // mark_dirty as they already do.
 
 #include <algorithm>
+#include <cstdint>
 
 #include "termforge/core/screen.hpp"
 #include "termforge/widgets/detail/width.hpp"
@@ -89,7 +90,12 @@ namespace termforge::detail {
   return {start, thumb_len};
 }
 
-// Paint the whole strip: track glyph everywhere, thumb glyph over its window.
+// Paint the on-screen part of the whole logical strip: track glyph everywhere,
+// thumb glyph over its window. Clipping iteration to Screen bounds preserves
+// the logical thumb position while avoiding work proportional to a huge
+// offscreen track. The optional thumb attribute is None for all historical
+// callers; a focused standalone Scrollbar can request Bold without changing
+// their cells or wire.
 // Painting the track cells too -- not just the thumb -- is what erases a
 // SHRINKING thumb: callers fill their rect with their own background colour
 // first, so a track painted only where the thumb isn't would leave last
@@ -108,26 +114,39 @@ namespace termforge::detail {
 inline auto draw_scrollbar(
     Screen& screen, Rect track, int total, int offset, int visible,
     ScrollGlyphs glyphs, Rgb track_fg, Rgb thumb_fg, Rgb bg,
-    ScrollOrientation orient = ScrollOrientation::Vertical) -> void {
+    ScrollOrientation orient = ScrollOrientation::Vertical,
+    Attr thumb_attrs = Attr::None) -> void {
   if (track.w <= 0 || track.h <= 0) return;
   const int track_len =
       orient == ScrollOrientation::Horizontal ? track.w : track.h;
   const auto [start, thumb_len] =
       thumb_window(track_len, total, offset, visible);
   if (orient == ScrollOrientation::Horizontal) {
-    for (int col = 0; col < track.w; ++col) {
+    if (track.y < 0 || track.y >= screen.rows()) return;
+    const auto first = std::max(std::int64_t{track.x}, std::int64_t{0});
+    const auto last =
+        std::min(std::int64_t{track.x} + track.w, std::int64_t{screen.cols()});
+    for (auto x = first; x < last; ++x) {
+      const auto col = x - track.x;
       const bool in_thumb = col >= start && col < start + thumb_len;
-      screen.write_text(track.x + col, track.y,
+      screen.write_text(static_cast<int>(x), track.y,
                         in_thumb ? glyphs.thumb : glyphs.track,
-                        in_thumb ? thumb_fg : track_fg, bg);
+                        in_thumb ? thumb_fg : track_fg, bg,
+                        in_thumb ? thumb_attrs : Attr::None);
     }
     return;
   }
-  for (int row = 0; row < track.h; ++row) {
+  if (track.x < 0 || track.x >= screen.cols()) return;
+  const auto first = std::max(std::int64_t{track.y}, std::int64_t{0});
+  const auto last =
+      std::min(std::int64_t{track.y} + track.h, std::int64_t{screen.rows()});
+  for (auto y = first; y < last; ++y) {
+    const auto row = y - track.y;
     const bool in_thumb = row >= start && row < start + thumb_len;
-    screen.write_text(track.x, track.y + row,
+    screen.write_text(track.x, static_cast<int>(y),
                       in_thumb ? glyphs.thumb : glyphs.track,
-                      in_thumb ? thumb_fg : track_fg, bg);
+                      in_thumb ? thumb_fg : track_fg, bg,
+                      in_thumb ? thumb_attrs : Attr::None);
   }
 }
 

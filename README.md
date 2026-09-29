@@ -66,6 +66,9 @@ Landed and verified:
   minimum, preferred size, spacing and growth weight. They return checked
   geometry without taking widget ownership or claiming to clip child drawing;
   see [docs/layout.md](docs/layout.md) for a copyable placement example.
+- **Standalone Scrollbar** — an application-owned view control over caller
+  content units, with click/wheel/keyboard paging and no hidden capture. See
+  [docs/scrollbar.md](docs/scrollbar.md) and `examples/scrollbar.cpp`.
 - **TabBar** — a horizontal strip of titles that reports which one is active
   (`on_change(int)`); Left/Right and clicks switch it, and the strip scrolls
   with `‹ ›` indicators when the titles outrun the columns. It owns the strip

@@ -41,6 +41,7 @@ add_library(${PROJECT_NAME}_lib STATIC
   widgets/slider.cpp
   widgets/numeric_input.cpp
   widgets/layout.cpp
+  widgets/scrollbar.cpp
   drivers/terminal_driver.cpp
   drivers/ansi_rgb_driver.cpp
   drivers/fallback_driver.cpp
