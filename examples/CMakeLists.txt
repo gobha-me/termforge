@@ -25,6 +25,7 @@ set(EXAMPLES
   notebook
   slider
   numeric_settings
+  scrollbar
 )
 
 foreach(EXAMPLE ${EXAMPLES})

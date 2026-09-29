@@ -26,6 +26,7 @@
 #include <termforge/widgets/notebook.hpp>
 #include <termforge/widgets/numeric_input.hpp>
 #include <termforge/widgets/pixel_surface.hpp>
+#include <termforge/widgets/scrollbar.hpp>
 #include <termforge/widgets/slider.hpp>
 #include <termforge/widgets/text_box.hpp>
 #include <termforge/widgets/theme.hpp>
@@ -66,6 +67,16 @@ class ScriptedApp final : public termforge::App {
 } // namespace
 
 auto main() -> int {
+  termforge::Scrollbar scrollbar;
+  if (!scrollbar.set_viewport({20, 0, 5})) return 1;
+  scrollbar.set_geometry({0, 0, 1, 5});
+  termforge::Screen scrollbar_screen{1, 5};
+  scrollbar.draw(scrollbar_screen);
+  if (scrollbar_screen.text_at(0, 0) != "█" ||
+      !scrollbar.on_event(
+          termforge::KeyEvent{.key = termforge::Key::PageDown}) ||
+      scrollbar.offset() != 5)
+    return 1;
   constexpr std::array tracks{termforge::LayoutTrack{},
                               termforge::LayoutTrack{}};
   const auto panes = termforge::layout_row({0, 0, 5, 1}, tracks);
