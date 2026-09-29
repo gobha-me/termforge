@@ -17,6 +17,7 @@
 #include <termforge/core/styled_text.hpp>
 #include <termforge/widgets/label.hpp>
 #include <termforge/widgets/notebook.hpp>
+#include <termforge/widgets/slider.hpp>
 #include <termforge/widgets/text_box.hpp>
 
 namespace {
@@ -55,6 +56,13 @@ class ScriptedApp final : public termforge::App {
 } // namespace
 
 auto main() -> int {
+  termforge::Slider slider;
+  if (!slider.configure({-10, 10, 0, 0.5}) || !slider.set_value(1.5)) return 1;
+  slider.set_geometry({0, 0, 20, 2});
+  termforge::Screen slider_screen(20, 2);
+  slider.set_style(termforge::BorderStyle::Ascii);
+  slider.draw(slider_screen);
+  if (slider.value() != 1.5 || slider_screen.text_at(11, 1) != "#") return 1;
   termforge::Label notebook_page;
   termforge::Notebook notebook;
   if (!notebook.add_page("Page", &notebook_page) ||

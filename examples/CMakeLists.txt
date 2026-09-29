@@ -23,6 +23,7 @@ set(EXAMPLES
   dialogs
   forms
   notebook
+  slider
 )
 
 foreach(EXAMPLE ${EXAMPLES})
