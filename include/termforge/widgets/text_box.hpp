@@ -112,7 +112,9 @@ class TextBox final : public Widget {
   // the last fitting space, falling back to a display-width-safe hard split
   // for an overlong word. Source whitespace is preserved. Marks the widget
   // dirty and auto-scrolls to the bottom if the user is already at the bottom.
-  // Plain text becomes one default-colour span; sanitization runs here (#25).
+  // Plain text inherits current Theme content roles, or historical default
+  // colors when opted out. Sanitization runs here (#25); provenance is kept
+  // so later snapshots never infer caller intent from color equality.
   auto append(std::string line) -> void;
 
   // Append a styled logical line. Each span's text is sanitized at this
@@ -128,8 +130,8 @@ class TextBox final : public Widget {
   [[nodiscard]] auto begin_entry(std::string initial) -> TextEntryHandle;
   [[nodiscard]] auto begin_entry(StyledText initial) -> TextEntryHandle;
 
-  // Mutate the live tail. Plain chunks use the same default style as the
-  // compatibility append(string) path; styled chunks retain their styles.
+  // Mutate the live tail. Plain chunks inherit the same content roles as the
+  // compatibility append(string) path; styled chunks retain authored styles.
   // A UTF-8 sequence split across styled chunks inherits the style of its
   // lead byte, so completing it cannot recolour half of one code point.
   // Empty chunks are successful no-ops. False means the handle is empty,
@@ -230,6 +232,7 @@ class TextBox final : public Widget {
   // BorderStyle passes it here too, and BorderStyle::Ascii is what keeps the
   // strip 7-bit on a bare TTY. Same convention as ListWidget/TableWidget.
   auto set_style(BorderStyle style) -> void {
+    m_style_override = true;
     m_style = style;
     mark_dirty();
   }
@@ -237,6 +240,7 @@ class TextBox final : public Widget {
 
   // Scrollbar colours (#21): the │ track and the █ thumb.
   auto set_scrollbar_colors(Rgb track_fg, Rgb thumb_fg) -> void {
+    m_scrollbar_override = true;
     m_track_fg = track_fg;
     m_thumb_fg = thumb_fg;
     mark_dirty();
@@ -248,6 +252,22 @@ class TextBox final : public Widget {
   [[nodiscard]] auto content_w() const noexcept -> int;
 
  private:
+  auto on_theme_changed() -> void override;
+  // Provenance belongs to each stored span, not a color comparison or a
+  // parallel vector that could become misaligned after an allocation failure.
+  struct ContentSpan {
+    std::string text;
+    TextStyle style;
+    bool content_roles{false};
+  };
+  static auto content_spans(StyledText text, bool content_roles)
+      -> std::vector<ContentSpan>;
+  auto append_line(StyledText line, bool content_roles) -> void;
+  auto begin_tail(StyledText initial, bool content_roles) -> TextEntryHandle;
+  auto append_tail(TextEntryHandle handle, StyledText chunk, bool content_roles)
+      -> bool;
+  auto replace_tail(TextEntryHandle handle, StyledText text, bool content_roles)
+      -> bool;
   struct WrapCache {
     std::vector<StyledText> rows;
     std::uint64_t content_revision{0};
@@ -257,9 +277,10 @@ class TextBox final : public Widget {
   };
 
   struct Entry {
-    StyledText text;
+    std::vector<ContentSpan> text;
     std::string pending_utf8;
     TextStyle pending_style{};
+    bool pending_content_roles{false};
     std::size_t bytes{0};
     std::uint64_t content_revision{1};
     bool finalized{false};
@@ -300,7 +321,8 @@ class TextBox final : public Widget {
 
   static constexpr std::uint32_t kWrapPolicyRevision = 1;
 
-  [[nodiscard]] auto allocate_entry(StyledText initial, bool finalized)
+  [[nodiscard]] auto allocate_entry(StyledText initial, bool finalized,
+                                    bool content_roles = false)
       -> TextEntryHandle;
   [[nodiscard]] auto resolve(TextEntryHandle handle) noexcept -> Entry*;
   [[nodiscard]] auto resolve_live(TextEntryHandle handle) noexcept -> Entry*;
@@ -310,10 +332,14 @@ class TextBox final : public Widget {
       -> std::expected<void, ErrorEvent>;
   [[nodiscard]] static auto payload_bytes(const Entry& entry) -> std::size_t;
   static auto append_clean_span(Entry& entry, std::string text, TextStyle style,
-                                bool preserve_empty) -> bool;
-  auto ingest_chunks(Entry& entry, StyledText chunks) -> bool;
-  auto append_chunks(Entry& entry, StyledText chunks) -> bool;
-  auto replace_chunks(Entry& entry, StyledText chunks) -> bool;
+                                bool preserve_empty, bool content_roles)
+      -> bool;
+  auto ingest_chunks(Entry& entry, StyledText chunks, bool content_roles)
+      -> bool;
+  auto append_chunks(Entry& entry, StyledText chunks, bool content_roles)
+      -> bool;
+  auto replace_chunks(Entry& entry, StyledText chunks, bool content_roles)
+      -> bool;
   auto finish_pending(Entry& entry) -> void;
   auto note_entry_change(Entry& entry, std::size_t old_bytes,
                          bool visible_changed) -> void;
@@ -349,6 +375,7 @@ class TextBox final : public Widget {
   // #21: the scrollbar strip's family and colours. Default colours mirror
   // the list/table: dim track, selection-blue thumb.
   BorderStyle m_style{BorderStyle::Single};
+  bool m_style_override{false}, m_scrollbar_override{false};
   Rgb m_track_fg{theme::kDim};
   Rgb m_thumb_fg{theme::kFocusBg};
 };

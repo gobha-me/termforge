@@ -145,6 +145,21 @@ auto main() -> int {
   text_box.set_geometry(termforge::Rect{0, 2, 20, 1});
   text_box.append(styled);
   text_box.draw(screen); // widgets/text_box.cpp
+  text_box.set_theme(presentation);
+  text_box.draw(screen);
+  if (screen.at(0, 2).fg != style.fg || screen.at(0, 2).attrs != style.attrs)
+    return 1;
+  text_box.clear();
+  text_box.append("Plain");
+  text_box.draw(screen);
+  if (screen.at(0, 2).fg != presentation.content_fg) return 1;
+  text_box.clear_theme();
+  text_box.draw(screen);
+  if (screen.at(0, 2).fg != termforge::theme::kFg) return 1;
+  // Restore the original styled fixture used by the downstream smoke checks.
+  text_box.clear();
+  text_box.append(styled);
+  text_box.draw(screen);
 
   termforge::Label label{"consumed"};
   label.set_geometry(termforge::Rect{0, 0, 20, 1});

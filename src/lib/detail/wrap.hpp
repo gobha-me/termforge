@@ -39,7 +39,8 @@ struct Position {
   constexpr auto operator==(const Position&) const noexcept -> bool = default;
 };
 
-inline auto normalize(const StyledText& line, Position pos) noexcept
+template <typename Span>
+inline auto normalize(const std::vector<Span>& line, Position pos) noexcept
     -> Position {
   while (pos.span < line.size() && pos.byte >= line[pos.span].text.size()) {
     ++pos.span;
@@ -48,8 +49,9 @@ inline auto normalize(const StyledText& line, Position pos) noexcept
   return pos;
 }
 
-[[nodiscard]] inline auto at_end(const StyledText& line, Position pos) noexcept
-    -> bool {
+template <typename Span>
+[[nodiscard]] inline auto at_end(const std::vector<Span>& line,
+                                 Position pos) noexcept -> bool {
   return normalize(line, pos).span >= line.size();
 }
 
@@ -59,12 +61,13 @@ struct Unit {
   bool breakable_space{false};
 };
 
-[[nodiscard]] inline auto next_unit(const StyledText& line,
+template <typename Span>
+[[nodiscard]] inline auto next_unit(const std::vector<Span>& line,
                                     Position pos) noexcept -> Unit;
 
-template <typename Emit>
-inline auto for_each_range(const StyledText& line, int width, Emit&& emit)
-    -> void {
+template <typename Span, typename Emit>
+inline auto for_each_range(const std::vector<Span>& line, int width,
+                           Emit&& emit) -> void {
   Position row_start = normalize(line, {});
   if (at_end(line, row_start)) {
     std::invoke(emit, row_start, row_start);
@@ -119,7 +122,8 @@ inline auto for_each_range(const StyledText& line, int width, Emit&& emit)
 // zero-column recovery) without crossing a source span. TextBox sanitizes its
 // document before it reaches this helper; the malformed-byte arm keeps the
 // private plain adapter total over its existing input domain.
-[[nodiscard]] inline auto next_unit(const StyledText& line,
+template <typename Span>
+[[nodiscard]] inline auto next_unit(const std::vector<Span>& line,
                                     Position pos) noexcept -> Unit {
   pos = normalize(line, pos);
   const std::string_view remaining{line[pos.span].text.data() + pos.byte,
@@ -135,7 +139,8 @@ inline auto for_each_range(const StyledText& line, int width, Emit&& emit)
 // Copy [begin, end) into one visual row while preserving every source span's
 // style. Empty source spans remain document data but paint nothing, matching
 // the pre-#24 styled wrapper.
-inline auto append_range(StyledText& row, const StyledText& line,
+template <typename Span>
+inline auto append_range(StyledText& row, const std::vector<Span>& line,
                          Position begin, Position end) -> void {
   begin = normalize(line, begin);
   end = normalize(line, end);
@@ -153,8 +158,9 @@ inline auto append_range(StyledText& row, const StyledText& line,
 
 // The single wrapping engine. Span boundaries are invisible to its word and
 // width decisions; they matter only when append_range reconstructs each row.
-inline auto wrap_styled(std::vector<StyledText>& out, const StyledText& line,
-                        int width) -> void {
+template <typename Span>
+inline auto wrap_styled(std::vector<StyledText>& out,
+                        const std::vector<Span>& line, int width) -> void {
   for_each_range(line, width, [&](Position begin, Position end) {
     StyledText row;
     append_range(row, line, begin, end);
@@ -216,8 +222,9 @@ inline auto wrap_byte_ranges(std::string_view text, int width)
 // retained rather than trimmed/collapsed, including the space chosen as a
 // break. Empty spans paint nothing, and an empty logical line yields one empty
 // row.
+template <typename Span>
 inline auto wrap_styled_into(std::vector<StyledText>& out,
-                             const StyledText& line, int width) -> void {
+                             const std::vector<Span>& line, int width) -> void {
   wrap_detail::wrap_styled(out, line, width);
 }
 
