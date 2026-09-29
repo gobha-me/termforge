@@ -32,12 +32,33 @@ auto Dialog::set_max_width(int cols) -> void {
 }
 
 auto Dialog::set_border_style(BorderStyle style) -> void {
+  m_border_style_overridden = true;
   m_frame.set_style(style);
   mark_dirty();
+  on_border_style_changed();
 }
 
 auto Dialog::border_style() const noexcept -> BorderStyle {
   return m_frame.style();
+}
+
+auto Dialog::inherit_theme(Widget& owned) -> void {
+  if (theme_snapshot())
+    owned.set_theme(*theme_snapshot());
+  else
+    owned.clear_theme();
+}
+
+auto Dialog::on_theme_changed() -> void {
+  m_fg = theme_color(&Theme::surface_fg, theme::kFg);
+  m_bg = theme_color(&Theme::surface_bg, theme::kBg);
+  if (theme_snapshot()) {
+    auto chrome = *theme_snapshot();
+    chrome.content_bg = chrome.surface_bg;
+    m_frame.set_theme(chrome);
+  } else {
+    m_frame.clear_theme();
+  }
 }
 
 auto Dialog::on_close(std::function<void()> cb) -> void {

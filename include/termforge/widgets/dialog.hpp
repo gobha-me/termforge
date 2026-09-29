@@ -137,6 +137,16 @@ class Dialog : public Widget {
   [[nodiscard]] auto hit_test_tree(int px, int py) const -> bool override;
 
  protected:
+  // Only known owned controls inherit presentation. Child registrations below
+  // are borrowed input/layout links, not a Theme traversal.
+  auto on_theme_changed() -> void override;
+  auto inherit_theme(Widget& owned) -> void;
+  [[nodiscard]] auto border_style_overridden() const noexcept -> bool {
+    return m_border_style_overridden;
+  }
+  // Non-pure: existing custom dialogs need not implement presentation hooks.
+  virtual auto on_border_style_changed() -> void {}
+
   // Register a control: it is drawn by the subclass and, unless tab_stop is
   // false, joins the dialog's focus ring in call order (so the first one
   // added starts focused). Non-owning, like every other widget list.
@@ -217,8 +227,8 @@ class Dialog : public Widget {
   bool m_reported{false};   // see begin_result
   bool m_shown_once{false}; // has any showing completed its first frame yet
   int m_max_width{48};
-  // Must match Frame's hardcoded background, or the border row and the
-  // interior disagree. There is no Theme type yet to hold this.
+  bool m_border_style_overridden{false};
+  // The private Frame receives the same surface background as the body.
   Rgb m_fg{theme::kFg};
   Rgb m_bg{theme::kBg};
   std::function<void()> m_on_close;

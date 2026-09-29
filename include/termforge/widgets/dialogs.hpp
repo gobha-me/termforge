@@ -51,6 +51,7 @@ class MessageDialog final : public Dialog {
   auto on_ok(std::function<void()> cb) -> void { m_on_ok = std::move(cb); }
 
  protected:
+  auto on_theme_changed() -> void override;
   [[nodiscard]] auto content_rows() const -> int override { return 1; }
   [[nodiscard]] auto content_cols() const -> int override;
   auto layout_content(Rect area) -> void override;
@@ -81,6 +82,7 @@ class ConfirmDialog final : public Dialog {
   auto on_event(const Event& ev) -> bool override;
 
  protected:
+  auto on_theme_changed() -> void override;
   [[nodiscard]] auto content_rows() const -> int override { return 1; }
   [[nodiscard]] auto content_cols() const -> int override;
   auto layout_content(Rect area) -> void override;
@@ -118,6 +120,7 @@ class PromptDialog final : public Dialog {
   auto on_event(const Event& ev) -> bool override;
 
  protected:
+  auto on_theme_changed() -> void override;
   // Input row, spacer, button row.
   [[nodiscard]] auto content_rows() const -> int override { return 3; }
   [[nodiscard]] auto content_cols() const -> int override;

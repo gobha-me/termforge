@@ -30,8 +30,10 @@ The primitives integrate Label, Button, Frame, Checkbox, RadioGroup, TextInput,
 Composer, Slider, NumericInput and TextBox. Selection/presentation controls integrate
 ListWidget, TableWidget, TabBar, MenuBar, Select, ProgressBar and Notebook.
 NumericInput automatically themes its privately owned editor; Notebook themes
-its privately owned TabBar, never its active or hidden borrowed pages. Remaining
-dialog/image-widget integration and Gallery adoption are tracked
+its privately owned TabBar, never its active or hidden borrowed pages. Dialog,
+MessageDialog, ConfirmDialog, PromptDialog, FilePickerDialog, ChoiceDialog and
+ChoiceWizardDialog integrate modal surface roles and their known owned controls.
+Remaining image-widget integration and Gallery adoption are tracked
 in #373; storing a snapshot alone does not claim a custom/remaining widget
 renders these roles.
 
@@ -53,6 +55,23 @@ not change document revisions, bytes, handles, retention, scroll/follow anchors
 or the published block geometry. Palette changes do not rewrap authored-only
 documents; glyph-only snapshots do not rewrap any text. Copying/moving preserves
 provenance and explicit chrome overrides.
+
+Dialogs use surface colors for their body/background and muted border chrome;
+their controls retain content/focus/selection roles. Choice descriptions use
+muted text; validation keeps its authored message and gains warning color and
+bold emphasis. Snapshot changes preserve drafts/cursors, focus, checked choices,
+wizard pages, directory selections and per-showing result/overlay latches. They
+do not refresh the filesystem or rebuild forms. Newly allocated owned controls
+inherit the current snapshot, including wizard page changes. A picker's privately
+owned error dialog inherits too, without being pushed again.
+
+`Dialog::set_border_style` is an explicit override even for `Single` and when
+called through `Dialog&`. It reaches privately owned choice marks, the picker
+list and its error dialog. Theme-derived glyph changes never call those public
+style setters, so applying and clearing remains reversible. Custom dialogs can
+call the protected base `on_theme_changed()` and `inherit_theme(owned)` for known
+owned members, plus the non-pure `on_border_style_changed()` hook for their
+explicit border policy. The registered child list is never theme-traversed.
 
 There is no App-owned widget tree or automatic traversal of borrowed content.
 Apps explicitly theme pages and borrowed children. Custom widgets can override
