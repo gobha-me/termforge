@@ -16,6 +16,7 @@
 #include <termforge/core/screen.hpp>
 #include <termforge/core/styled_text.hpp>
 #include <termforge/widgets/label.hpp>
+#include <termforge/widgets/list_widget.hpp>
 #include <termforge/widgets/notebook.hpp>
 #include <termforge/widgets/numeric_input.hpp>
 #include <termforge/widgets/slider.hpp>
@@ -97,6 +98,21 @@ auto main() -> int {
   termforge::Notebook notebook;
   if (!notebook.add_page("Page", &notebook_page) ||
       notebook.active_page() != &notebook_page)
+    return 1;
+  presentation.glyphs = termforge::BorderStyle::Ascii;
+  notebook.set_theme(presentation);
+  notebook.set_geometry({0, 0, 12, 3});
+  termforge::Screen notebook_screen{12, 3};
+  notebook.draw(notebook_screen);
+  if (notebook_screen.text_at(0, 0) != "*" || notebook_page.theme_snapshot())
+    return 1;
+  termforge::ListWidget choices;
+  choices.set_items({"First", "Second"});
+  choices.set_geometry({0, 0, 12, 2});
+  choices.set_theme(presentation);
+  choices.draw(notebook_screen);
+  if (notebook_screen.at(0, 0).bg != presentation.selection_bg ||
+      notebook_screen.text_at(0, 0) != "*")
     return 1;
   termforge::SyntheticClock clock;
   clock.advance(std::chrono::duration<double>{0.25});

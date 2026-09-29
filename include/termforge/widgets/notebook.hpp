@@ -48,6 +48,12 @@ class Notebook final : public Widget {
   auto pixel_children() -> std::vector<Widget*> override;
 
  private:
+  auto on_theme_changed() -> void override {
+    if (theme_snapshot())
+      m_tabs.set_theme(*theme_snapshot());
+    else
+      m_tabs.clear_theme();
+  }
   struct Page {
     std::string title;
     Widget* root;

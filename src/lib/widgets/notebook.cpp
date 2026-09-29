@@ -127,7 +127,9 @@ auto Notebook::draw(Screen& screen) -> void {
   layout();
   sync_focus();
   const Rect r = rect();
-  screen.fill_rect(r.x, r.y, r.w, r.h, theme::kFg, theme::kBg);
+  screen.fill_rect(r.x, r.y, r.w, r.h,
+                   theme_color(&Theme::content_fg, theme::kFg),
+                   theme_color(&Theme::content_bg, theme::kBg));
   m_tabs.draw(screen);
   const Rect c = content_rect();
   if (auto* page = active_page(); page && c.w > 0 && c.h > 0)

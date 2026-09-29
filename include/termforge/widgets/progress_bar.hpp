@@ -66,6 +66,7 @@ class ProgressBar final : public Widget {
   }
 
   auto set_colors(Rgb fill, Rgb empty, Rgb label) -> void {
+    m_colors_override = true;
     m_fill_fg = fill;
     m_empty_fg = empty;
     m_label_fg = label;
@@ -75,6 +76,7 @@ class ProgressBar final : public Widget {
   // Label background color (defaults to the widget bg — set to a distinct
   // color so the label sits on a solid patch above the animated bar).
   auto set_label_bg(Rgb bg) -> void {
+    m_label_bg_override = true;
     m_label_bg = bg;
     mark_dirty();
   }
@@ -87,6 +89,17 @@ class ProgressBar final : public Widget {
   }
 
  private:
+  auto on_theme_changed() -> void override {
+    if (!m_colors_override) {
+      m_fill_fg = theme_color(&Theme::accent, {0x00, 0xFF, 0x80});
+      m_empty_fg = theme_color(&Theme::muted, {0x30, 0x30, 0x40});
+      m_label_fg = theme_color(&Theme::content_fg, theme::kFg);
+    }
+    if (!m_label_bg_override)
+      m_label_bg = theme_color(&Theme::surface_bg, {0x20, 0x20, 0x40});
+    m_bg = theme_color(&Theme::content_bg, theme::kBg);
+  }
+  bool m_colors_override{false}, m_label_bg_override{false};
   float m_value{0.0f};
   bool m_indeterminate{false};
   // Cells travelled since the mode was entered, NOT elapsed seconds: a rate

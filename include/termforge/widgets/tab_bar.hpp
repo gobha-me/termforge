@@ -128,6 +128,7 @@ class TabBar final : public Widget {
   [[nodiscard]] auto first_visible() const -> int;
 
   auto set_style(BorderStyle style) -> void {
+    m_style_override = true;
     m_style = style;
     mark_dirty();
   }
@@ -157,6 +158,14 @@ class TabBar final : public Widget {
   // nothing here is ever painted outside rect().
 
  private:
+  auto on_theme_changed() -> void override {
+    m_fg = theme_color(&Theme::content_fg, theme::kFg);
+    m_bg = theme_color(&Theme::content_bg, theme::kBg);
+    m_active_fg = theme_color(&Theme::focus_fg, theme::kFocusFg);
+    m_active_bg = theme_color(&Theme::focus_bg, theme::kFocusBg);
+    if (!m_style_override) m_style = theme_glyphs(BorderStyle::Single);
+  }
+  bool m_style_override{false};
   // A tab's painted extent is detail::StripSpan, shared with MenuBar since
   // #130 — the span type, the `display_width(title) + 2` convention, the gap
   // column and the x→index map all live in detail/strip.hpp now, so the two

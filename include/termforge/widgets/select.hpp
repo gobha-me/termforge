@@ -109,6 +109,7 @@ class Select final : public Widget {
   auto set_selected(int index) -> void;
 
   auto set_style(BorderStyle style) -> void {
+    m_style_override = true;
     m_style = style;
     invalidate_line(); // glyphs change: invalidate the composed box line
     mark_dirty();
@@ -162,6 +163,19 @@ class Select final : public Widget {
   }
 
  private:
+  auto on_theme_changed() -> void override {
+    m_fg = theme_color(&Theme::content_fg, theme::kFg);
+    m_bg = theme_color(&Theme::content_bg, theme::kBg);
+    m_focused_fg = theme_color(&Theme::focus_fg, theme::kFocusFg);
+    m_focused_bg = theme_color(&Theme::focus_bg, theme::kFocusBg);
+    m_dropdown_fg = theme_color(&Theme::surface_fg, theme::kDropdownFg);
+    m_dropdown_bg = theme_color(&Theme::surface_bg, theme::kDropdownBg);
+    m_highlight_fg = theme_color(&Theme::selection_fg, theme::kFocusFg);
+    m_highlight_bg = theme_color(&Theme::selection_bg, theme::kFocusBg);
+    if (!m_style_override) m_style = theme_glyphs(BorderStyle::Single);
+    invalidate_line();
+  }
+  bool m_style_override{false};
   // The single geometry source draw(), hit_test() and on_event() share;
   // {0,0,0,0} when closed or empty. Height is clamped to the screen bottom
   // (from the last draw) so off-screen rows are neither painted NOR
