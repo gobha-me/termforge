@@ -67,6 +67,16 @@ class Slider final : public Widget {
   auto on_event(const Event& event) -> bool override;
 
  private:
+  auto on_theme_changed() -> void override {
+    if (!m_colors_override) {
+      m_fg = theme_color(&Theme::content_fg, theme::kFg);
+      m_bg = theme_color(&Theme::content_bg, theme::kBg);
+      m_focus_fg = theme_color(&Theme::focus_fg, theme::kFocusFg);
+      m_focus_bg = theme_color(&Theme::focus_bg, theme::kFocusBg);
+    }
+    if (!m_style_override) m_style = theme_glyphs(BorderStyle::Single);
+  }
+  bool m_colors_override{false}, m_style_override{false};
   auto user_value(double value) -> void;
   [[nodiscard]] auto pointer_value(int x) const -> double;
   SliderConfig m_config;

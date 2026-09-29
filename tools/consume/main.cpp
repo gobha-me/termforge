@@ -20,6 +20,7 @@
 #include <termforge/widgets/numeric_input.hpp>
 #include <termforge/widgets/slider.hpp>
 #include <termforge/widgets/text_box.hpp>
+#include <termforge/widgets/theme.hpp>
 
 namespace {
 
@@ -57,6 +58,21 @@ class ScriptedApp final : public termforge::App {
 } // namespace
 
 auto main() -> int {
+  termforge::Theme presentation;
+  presentation.content_fg = {1, 2, 3};
+  termforge::Label themed{"snapshot"};
+  themed.set_geometry({0, 0, 8, 1});
+  themed.set_theme(presentation);
+  presentation.content_fg = {4, 5, 6};
+  termforge::Screen themed_screen{8, 1};
+  themed.draw(themed_screen);
+  if (themed_screen.at(0, 0).fg != termforge::Rgb{1, 2, 3}) return 1;
+  themed.set_colors({7, 8, 9}, {});
+  themed.set_theme(presentation);
+  themed.draw(themed_screen);
+  if (themed_screen.at(0, 0).fg != termforge::Rgb{7, 8, 9}) return 1;
+  themed.clear_theme();
+  if (themed.theme_snapshot()) return 1;
   termforge::NumericInput numeric;
   if (!numeric.configure(termforge::IntegerInputConfig{-10, 10, 0, 1}) ||
       !numeric.set_draft("+0007") || !numeric.commit())

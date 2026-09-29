@@ -36,6 +36,7 @@
 
 #include "termforge/core/screen.hpp"
 #include "termforge/core/types.hpp"
+#include "termforge/widgets/theme.hpp"
 
 namespace termforge {
 
@@ -64,6 +65,29 @@ struct PixelRegionState {
 class Widget {
  public:
   virtual ~Widget() = default;
+
+  // Base-owned, copied opt-in presentation state. Neither setter changes
+  // content/focus/geometry nor invokes application callbacks. The non-pure
+  // hook lets existing out-of-tree widgets keep compiling unchanged; custom
+  // widgets opt into roles there or read theme_snapshot() while drawing.
+  // Owned compound children may receive the snapshot in that hook. Borrowed
+  // content/pages are NEVER traversed: the app themes them explicitly.
+  auto set_theme(Theme value) -> void {
+    if (m_theme == value) return;
+    m_theme = value;
+    mark_dirty();
+    on_theme_changed();
+  }
+  auto clear_theme() -> void {
+    if (!m_theme) return;
+    m_theme.reset();
+    mark_dirty();
+    on_theme_changed();
+  }
+  [[nodiscard]] auto theme_snapshot() const noexcept
+      -> const std::optional<Theme>& {
+    return m_theme;
+  }
 
   // Draw into the screen, clipped to rect(). Called every frame — must fully
   // repaint the whole rect() (blank it, then draw content on top); see the
@@ -270,11 +294,21 @@ class Widget {
 
  protected:
   auto clear_dirty() -> void { m_dirty = false; }
+  virtual auto on_theme_changed() -> void {}
+  [[nodiscard]] auto theme_color(Rgb Theme::* role, Rgb fallback) const noexcept
+      -> Rgb {
+    return m_theme ? (*m_theme).*role : fallback;
+  }
+  [[nodiscard]] auto theme_glyphs(BorderStyle fallback) const noexcept
+      -> BorderStyle {
+    return m_theme ? m_theme->glyphs : fallback;
+  }
 
  private:
   Rect m_rect;
   bool m_dirty{true};
   bool m_focused{false};
+  std::optional<Theme> m_theme;
 };
 
 } // namespace termforge

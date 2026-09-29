@@ -32,8 +32,8 @@ struct TerminalCell {
 class TerminalGrid {
  public:
   TerminalGrid(int cols, int rows)
-      : m_cols(cols), m_rows(rows),
-        m_cells(static_cast<std::size_t>(cols * rows)) {}
+      : m_cols(cols), m_rows(rows), m_cells(static_cast<std::size_t>(cols) *
+                                            static_cast<std::size_t>(rows)) {}
 
   auto feed(std::string_view wire) -> void {
     std::size_t i = 0;
@@ -63,7 +63,9 @@ class TerminalGrid {
   }
 
   [[nodiscard]] auto at(int x, int y) const -> const TerminalCell& {
-    return m_cells[static_cast<std::size_t>(y * m_cols + x)];
+    return m_cells[static_cast<std::size_t>(y) *
+                       static_cast<std::size_t>(m_cols) +
+                   static_cast<std::size_t>(x)];
   }
 
   [[nodiscard]] auto row_text(int y) const -> std::string {
@@ -136,7 +138,9 @@ class TerminalGrid {
 
   auto put(std::string_view text) -> void {
     if (m_x >= 0 && m_x < m_cols && m_y >= 0 && m_y < m_rows) {
-      auto& cell = m_cells[static_cast<std::size_t>(m_y * m_cols + m_x)];
+      auto& cell = m_cells[static_cast<std::size_t>(m_y) *
+                               static_cast<std::size_t>(m_cols) +
+                           static_cast<std::size_t>(m_x)];
       cell.text = text;
       cell.fg = m_fg;
       cell.bg = m_bg;

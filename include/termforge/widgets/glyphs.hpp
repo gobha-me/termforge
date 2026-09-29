@@ -15,9 +15,9 @@
 //
 // There is deliberately no global default style: a widget's style is its own
 // state, and an app that wants one setting everywhere holds one BorderStyle and
-// passes it (see examples/widgets.cpp). A real Theme type — which would also
-// own the colors currently hardcoded in frame.hpp/dialog.hpp — is the eventual
-// home for a default; this header is not it.
+// passes it (see examples/widgets.cpp). widgets/theme.hpp also offers an
+// app-owned Theme snapshot that includes this policy; explicit per-widget
+// styles still win. Neither mechanism changes a process-global default.
 //
 // Every glyph in every set is exactly one terminal column wide (see
 // detail/width.hpp). That is what lets Frame's title arithmetic, and Dialog's

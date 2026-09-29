@@ -12,12 +12,11 @@
 // A deviation that recurs gets named below (kDim); one-off app/example
 // colors stay literals.
 //
-// This is NOT a theme system: there is no global mutable palette, and
-// changing a constant changes the DEFAULT for widgets that have not been
-// re-colored via their own setters. A real Theme type — owning app-level
-// overrides — remains future work; see the note in widgets/glyphs.hpp.
+// Constants preserve the historical opt-out appearance. Theme below is an
+// explicit app-owned value, never a mutable process-global palette.
 
 #include "termforge/core/types.hpp"
+#include "termforge/widgets/glyphs.hpp"
 
 namespace termforge::theme {
 
@@ -40,3 +39,24 @@ inline constexpr Rgb kDropdownBg{0x15, 0x15, 0x25};
 inline constexpr Rgb kDim{0x7A, 0x7A, 0x9A};
 
 } // namespace termforge::theme
+
+namespace termforge {
+
+// Copy into widgets with Widget::set_theme. Changing/destroying the source
+// does not change a widget: reapply the value explicitly. Existing color and
+// style setters are local overrides and win before or after application,
+// even when explicitly set to the historical default. No font inference:
+// BorderStyle governs existing chrome/mark families, not content or shaping.
+struct Theme {
+  Rgb content_fg{theme::kFg}, content_bg{theme::kBg};
+  Rgb surface_fg{theme::kDropdownFg}, surface_bg{theme::kDropdownBg};
+  Rgb focus_fg{theme::kFocusFg}, focus_bg{theme::kFocusBg};
+  Rgb selection_fg{theme::kFocusFg}, selection_bg{theme::kFocusBg};
+  Rgb muted{theme::kDim}, accent{theme::kFocusBg};
+  Rgb info{0x80, 0xC0, 0xFF}, warning{0xFF, 0xB0, 0x60},
+      error{0xFF, 0x60, 0x70};
+  BorderStyle glyphs{BorderStyle::Single};
+  constexpr auto operator==(const Theme&) const -> bool = default;
+};
+
+} // namespace termforge

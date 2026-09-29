@@ -68,6 +68,14 @@ class Button final : public Widget {
   auto reset_transient() -> void override;
 
  private:
+  auto on_theme_changed() -> void override {
+    m_fg = theme_color(&Theme::content_fg, theme::kFg);
+    m_bg = theme_color(&Theme::content_bg, theme::kBg);
+    m_focused_fg = theme_color(&Theme::focus_fg, theme::kFocusFg);
+    m_focused_bg = theme_color(&Theme::focus_bg, theme::kFocusBg);
+    m_pressed_fg = theme_color(&Theme::selection_fg, {0xFF, 0xFF, 0xFF});
+    m_pressed_bg = theme_color(&Theme::selection_bg, {0x80, 0x40, 0xFF});
+  }
   static constexpr std::chrono::duration<double> kDefaultFlash{0.12};
 
   std::string m_label;

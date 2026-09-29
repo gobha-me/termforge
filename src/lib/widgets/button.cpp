@@ -17,16 +17,19 @@ auto Button::draw(Screen& screen) -> void {
 
   // Pick colors based on state.
   Rgb fg = m_fg, bg = m_bg;
+  Attr attrs = Attr::None;
   if (m_flash_left > std::chrono::duration<double>::zero()) {
     fg = m_pressed_fg;
     bg = m_pressed_bg;
+    if (theme_snapshot()) attrs = Attr::Bold | Attr::Reverse;
   } else if (focused()) {
     fg = m_focused_fg;
     bg = m_focused_bg;
+    if (theme_snapshot()) attrs = Attr::Bold;
   }
 
   // Own the whole rect (immediate-mode contract, see widget.hpp).
-  screen.fill_rect(r.x, r.y, r.w, r.h, fg, bg);
+  screen.fill_rect(r.x, r.y, r.w, r.h, fg, bg, attrs);
 
   // Center the label (by display columns, not bytes).
   const int text_len = detail::display_width(m_label);
@@ -36,7 +39,7 @@ auto Button::draw(Screen& screen) -> void {
   const int max_w = r.x + r.w - start_x;
   if (max_w > 0 && !m_label.empty()) {
     screen.write_text(start_x, start_y,
-                      detail::truncate_to_width(m_label, max_w), fg, bg);
+                      detail::truncate_to_width(m_label, max_w), fg, bg, attrs);
   }
 
   clear_dirty();

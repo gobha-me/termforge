@@ -58,6 +58,7 @@ class Checkbox final : public Widget {
   // Mark family (default Single → Unicode marks). Ascii is the bare-TTY /
   // FallbackDriver choice — see widgets/glyphs.hpp.
   auto set_style(BorderStyle style) -> void {
+    m_style_override = true;
     m_style = style;
     m_line.clear(); // glyphs change: invalidate the composed line
     mark_dirty();
@@ -81,6 +82,15 @@ class Checkbox final : public Widget {
   }
 
  private:
+  auto on_theme_changed() -> void override {
+    m_fg = theme_color(&Theme::content_fg, theme::kFg);
+    m_bg = theme_color(&Theme::content_bg, theme::kBg);
+    m_focused_fg = theme_color(&Theme::focus_fg, theme::kFocusFg);
+    m_focused_bg = theme_color(&Theme::focus_bg, theme::kFocusBg);
+    if (!m_style_override) m_style = theme_glyphs(BorderStyle::Single);
+    m_line.clear();
+  }
+  bool m_style_override{false};
   std::string m_label;
   bool m_checked{false};
   // Composed "[x] label" line, rebuilt in draw() only when something it

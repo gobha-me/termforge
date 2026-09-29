@@ -84,6 +84,11 @@ class TextInput final : public Widget {
   [[nodiscard]] auto cursor_pos() const noexcept -> int { return m_cursor; }
 
  private:
+  auto on_theme_changed() -> void override {
+    m_fg = theme_color(&Theme::content_fg, theme::kFg);
+    m_bg = theme_color(&Theme::content_bg, theme::kBg);
+    m_placeholder_fg = theme_color(&Theme::muted, {0x50, 0x50, 0x60});
+  }
   auto ensure_cursor_visible() -> void;
   [[nodiscard]] auto rendered_width(std::string_view text) const -> int;
 
