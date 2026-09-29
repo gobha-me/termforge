@@ -21,6 +21,8 @@
 // whole rect":
 //   * Frame draws only its border ring; its interior belongs to the child
 //     widgets placed in content_rect(), so it must NOT blank the interior.
+//   * SplitPane draws only its divider; the application owns and repaints its
+//     two pane rectangles before drawing the divider.
 //   * MenuBar's open dropdown draws below rect() on purpose, matched by its
 //     hit_test override, so drawing and hit-testing never disagree.
 //

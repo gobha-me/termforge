@@ -26,6 +26,7 @@ set(EXAMPLES
   slider
   numeric_settings
   scrollbar
+  split_pane
 )
 
 foreach(EXAMPLE ${EXAMPLES})
