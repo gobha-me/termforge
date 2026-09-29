@@ -92,11 +92,12 @@ refusal/retry rules under stable producer identity; no driver protocol or
 image-encoding policy changes are implied.
 
 ANSI's existing translucent-RGBA refusal remains a Warning; a Theme background
-does not authorize the driver to invent alpha composition. On an output refusal,
-App's current conservative mixed-frame recovery may recreate even an unchanged
-resident root (#398). That repair is separate from Theme/source dirty state;
-stable image ids and zero authored retransmission are proved for accepted palette
-transitions, not claimed for that existing recovery path.
+does not authorize the driver to invent alpha composition. Kitty mixed-frame
+refusal recovery restores committed root ownership (#398): dirty generated
+palettes retry under the same ids without re-uploading unchanged authored
+PixelSurface content. Placeholder cells repair the renderer's full cell repaint;
+this is placement work, not source dirtiness. Legacy resident drivers without
+transactional rollback retain their conservative recreation route.
 
 There is no App-owned widget tree or automatic traversal of borrowed content.
 Apps explicitly theme pages and borrowed children. Custom widgets can override

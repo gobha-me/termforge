@@ -1274,6 +1274,8 @@ TEST_CASE("pinned: a driver that never heard of pinning refuses honestly",
   CHECK(base.take_driver_events().empty());
 
   CHECK(base.max_pinned_images() == 0);
+  CHECK_FALSE(base.supports_pinned_image_rollback());
+  CHECK(KittyDriver{}.supports_pinned_image_rollback());
   CHECK_FALSE(base.pinned_image_status(PinnedImage{}).valid);
   const auto legacy_status = base.pinned_image_status(PinnedImage{1, 1, 1});
   CHECK(legacy_status.valid);

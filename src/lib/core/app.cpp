@@ -1738,7 +1738,11 @@ auto App::frame_step() -> void {
   const auto frame_start = m_playback ? m_playback->clock.now() : now_steady();
   record_frame(frame_start);
   playback_apply_frame_transitions();
-  m_pixel_force_repaint = false;
+  // Renderer invalidates its cell shadow after refusal. An in-band raster
+  // must repaint those repaired cells too, without acknowledging clean source
+  // content again. Resident tiers repair placement visibility separately.
+  m_pixel_force_repaint = !m_driver->renderer_flush_accepted() &&
+                          m_driver->max_pinned_images() == 0;
   if (m_resume_invalidation_pending.exchange(false,
                                              std::memory_order_relaxed)) {
     (void)stage_image_invalidation(ImageInvalidationReason::SuspendResume);
@@ -2758,6 +2762,9 @@ auto App::flush_pixel_regions() -> void {
   const bool enhanced =
       m_driver && enhanced_image_path(*m_driver) && m_requirements_met;
 
+  const bool transactional_pins = m_driver->max_pinned_images() != 0 &&
+                                  m_driver->supports_pinned_image_rollback();
+
   auto retire_pending = [&] {
     for (auto it = m_retiring_pixels.begin(); it != m_retiring_pixels.end();) {
       if (it->queued) {
@@ -2805,6 +2812,9 @@ auto App::flush_pixel_regions() -> void {
         });
     if (state_it == m_persistent_pixels.end()) continue;
     auto& state = *state_it;
+    if (transactional_pins && !state.frame_start)
+      state.frame_start = PixelImageFrameState{state.pin, state.content_ready,
+                                               state.awaiting_terminal};
 
     const auto* raw = std::get_if<const Image*>(&pr.payload);
     const auto* encoded = std::get_if<const EncodedImage*>(&pr.payload);
@@ -3037,27 +3047,30 @@ auto App::finish_pixel_frame(bool output_accepted) -> void {
       emitted.image_transmit != 0 || emitted.image_edit != 0;
   for (auto& state : m_persistent_pixels) {
     if (!output_accepted) {
-      // Driver bookkeeping has already advanced past the refused sink write.
-      // Recreate resident content on the next visible frame so its retry
-      // cannot be suppressed by the driver's now-ahead content hash. A clean
-      // Kitty retain advances only collection clocks and emits zero image
-      // bytes; a refusal of an otherwise empty/cell-only frame must not turn
-      // that accepted content dirty again. The per-frame meter is the exact
-      // write-side answer, including for a legacy retain that delegated to a
-      // placement draw.
-      // On a resident tier, a clean retain can touch driver bookkeeping while
-      // emitting no bytes, so the frame meter distinguishes it from a refused
-      // image operation. A non-resident tier has no retain operation: when its
-      // region says it touched wire, draw_image appended its in-band cell
-      // raster and a refusal must retry it even though that traffic belongs to
-      // the meter's cells bucket by construction.
-      const bool refused_region_wire =
-          state.touched_wire &&
-          (m_driver->max_pinned_images() == 0 || image_wire);
-      if (refused_region_wire) {
+      if (state.frame_start) {
+        // The driver restored its committed roots. Restore App's ownership
+        // too, including an old root retired by a refused identity change.
+        // New pins revert to the prior empty handle; retry re-borrows content.
+        state.pin = state.frame_start->pin;
+        state.content_ready = state.frame_start->content_ready;
+        state.awaiting_terminal = state.frame_start->awaiting_terminal;
+        // Renderer repairs its cell shadow after every refused frame. A
+        // Unicode-placeholder placement must repaint that repaired grid;
+        // Classic draw suppresses the unchanged placement without payload.
         state.visible = false;
-        state.recreate = true;
+      } else {
+        // A legacy driver may retain projected hashes after refusal or append
+        // placement bytes from retain_pinned. Preserve its conservative retry
+        // contract. Non-resident rasters are cell traffic, not image tallies.
+        const bool refused_region_wire =
+            state.touched_wire &&
+            (m_driver->max_pinned_images() == 0 || image_wire);
+        if (refused_region_wire) {
+          state.visible = false;
+          state.recreate = true;
+        }
       }
+      state.frame_start.reset();
       state.pending_content = false;
       state.pending_terminal = false;
       state.pending_visible = false;
@@ -3093,6 +3106,7 @@ auto App::finish_pixel_frame(bool output_accepted) -> void {
     state.pending_terminal = false;
     state.pending_visible = false;
     state.touched_wire = false;
+    state.frame_start.reset();
   }
 }
 

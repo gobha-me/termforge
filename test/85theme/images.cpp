@@ -322,24 +322,26 @@ TEST_CASE("Palette writes preserve source acknowledgement through acceptance "
     CHECK(app.map_dirty[3] == refusal);
     CHECK_FALSE(app.source_dirty[3]);
     CHECK(tfsupport::total_data_transmits(app.sink.frames[3]) ==
-          (refusal ? 3 : 0));
+          (refusal ? 2 : 0));
+    for (std::size_t i : {0U, 1U})
+      CHECK(tfsupport::frame_updates_of(app.sink.frames[3], ids[i]) ==
+            (refusal ? 1 : 0));
+    CHECK(tfsupport::frame_updates_of(app.sink.frames[3], ids[2]) == 0);
     CHECK_FALSE(app.wave_dirty[4]);
     CHECK_FALSE(app.map_dirty[4]);
     CHECK(app.sink.frames[4].empty());
-    // Current App recovery conservatively recreates every resident producer
-    // in a refused mixed image frame. This is not a source-dirty Theme change.
-    CHECK(app.pixels.submission_count() == (refusal ? 2 : 1));
+    // Refusal restores committed roots: only the two dirty generated palettes
+    // are retried, without submitting unchanged authored PixelSurface content.
+    CHECK(app.pixels.submission_count() == 1);
     CHECK(app.map.submission_count() == 2);
     CHECK(app.wave.sample_count() == 3);
     CHECK(app.map.tile(0, 1, 0) == 1);
     CHECK(app.residency[1].pinned_images == 3);
     CHECK(app.residency[4].pinned_images == 3);
     for (std::size_t i : {1U, 2U, 3U, 4U}) {
-      const bool repair = refusal && i == 3;
-      CHECK(tfsupport::total_transmits(app.sink.frames[i]) == (repair ? 3 : 0));
+      CHECK(tfsupport::total_transmits(app.sink.frames[i]) == 0);
       for (const auto id : ids) {
-        CHECK(tfsupport::data_deletes_of(app.sink.frames[i], id) ==
-              (repair ? 1 : 0));
+        CHECK(tfsupport::data_deletes_of(app.sink.frames[i], id) == 0);
         CHECK(tfsupport::placement_deletes_of(app.sink.frames[i], id) == 0);
       }
     }

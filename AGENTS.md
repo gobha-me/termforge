@@ -88,6 +88,16 @@ file is the tactical version.
   App drops an omitted producer but holds a pointer-free retirement handle
   until its delete write is accepted. Never retain the Widget or payload to
   retry cleanup; invalidation clears those obsolete handles without wire.
+  **App recovery respects that transaction** (#398): a driver's non-pure
+  `supports_pinned_image_rollback()` query describes its behavior, not a
+  terminal capability. Kitty opts in; legacy drivers default to conservative
+  recreation. App checkpoints only the handle and readiness flags it mutates
+  before the write, without a Widget or payload. Refusal restores ownership of
+  the prior root even across identity replacement, retries dirty content under
+  its committed handle, and repairs placeholder cells without uploading clean
+  sources. The checkpoint is cleared at the frame boundary; omitted producers
+  still retire through pointer-free handles. Non-resident ANSI rasters repaint
+  the next repaired cell grid without acknowledging clean source content again.
 - **Indirect image transport is explicit embedding policy** (#111). Never
   infer a shared filesystem/shm namespace from `TERM`, SSH variables, a tty,
   or an emulator name. `TerminalDriver::set_image_transport` is base-owned
