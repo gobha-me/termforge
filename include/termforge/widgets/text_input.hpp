@@ -12,9 +12,12 @@
 // for submit/cancel).
 
 #include <algorithm>
+#include <expected>
 #include <functional>
 #include <string>
+#include <string_view>
 
+#include "termforge/core/text.hpp"
 #include "termforge/widgets/theme.hpp"
 #include "termforge/widgets/widget.hpp"
 
@@ -40,6 +43,20 @@ class TextInput final : public Widget {
     m_scroll = std::min(m_scroll, static_cast<int>(m_text.size()));
     mark_dirty();
   }
+
+  // Atomic text/cursor update for an embedding editor (e.g. NumericInput's
+  // paste splice). Cursor is a byte offset: zero/end or a non-continuation
+  // boundary. Invalid positions or text outside the int-sized editor domain
+  // return Warning without changing text, cursor or scroll. No callback.
+  [[nodiscard]] auto set_text(std::string text, int cursor)
+      -> std::expected<void, ErrorEvent>;
+
+  // Opt-in visible/inert rendering of raw user data. Default Strip preserves
+  // the original presentation. Escape's worst-case four-column expansion
+  // must fit the int display domain; use the checked text setter for updates
+  // and keep later inserts in that domain. Stored bytes never change.
+  [[nodiscard]] auto set_display_mode(text::SanitizeMode mode)
+      -> std::expected<void, ErrorEvent>;
 
   // Placeholder shown when text is empty.
   auto set_placeholder(std::string ph) -> void {
@@ -68,11 +85,13 @@ class TextInput final : public Widget {
 
  private:
   auto ensure_cursor_visible() -> void;
+  [[nodiscard]] auto rendered_width(std::string_view text) const -> int;
 
   std::string m_text;
   std::string m_placeholder;
   int m_cursor{0}; // byte offset into m_text
   int m_scroll{0}; // byte offset of the leftmost visible column
+  text::SanitizeMode m_display_mode{text::SanitizeMode::Strip};
 
   Rgb m_fg{theme::kFg};
   Rgb m_bg{theme::kBg};

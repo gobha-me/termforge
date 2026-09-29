@@ -24,6 +24,7 @@ set(EXAMPLES
   forms
   notebook
   slider
+  numeric_settings
 )
 
 foreach(EXAMPLE ${EXAMPLES})
