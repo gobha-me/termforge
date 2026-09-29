@@ -33,7 +33,8 @@ NumericInput automatically themes its privately owned editor; Notebook themes
 its privately owned TabBar, never its active or hidden borrowed pages. Dialog,
 MessageDialog, ConfirmDialog, PromptDialog, FilePickerDialog, ChoiceDialog and
 ChoiceWizardDialog integrate modal surface roles and their known owned controls.
-Remaining image-widget integration and Gallery adoption are tracked
+WaveformWidget, MapWidget and PixelSurface integrate their generated/blank
+presentation roles without recoloring authored image data. Gallery adoption is tracked
 in #373; storing a snapshot alone does not claim a custom/remaining widget
 renders these roles.
 
@@ -72,6 +73,30 @@ style setters, so applying and clearing remains reversible. Custom dialogs can
 call the protected base `on_theme_changed()` and `inherit_theme(owned)` for known
 owned members, plus the non-pure `on_border_style_changed()` hook for their
 explicit border policy. The registered child list is never theme-traversed.
+
+WaveformWidget uses accent and content-background colors for its generated plot;
+only changes to those consumed colors invalidate its generated persistent raster.
+Samples, range and region identity are preserved. MapWidget themes its uncovered
+cell fill and generated raster background, not TileDef colors or atlas pixels
+(even when their authored colors equal old defaults). Camera, layers and hit
+mapping are unchanged; unrelated roles do not rebuild its raster.
+
+PixelSurface's logical RGBA grid is entirely app-authored. Theme colors affect
+only its cell Baseline: empty/uncovered cells and the background used for ASCII
+alpha composition. They never change source pixels, logical size, fit or source
+dirty state. The enhanced pass still submits the same authored RGBA image; a
+palette transition alone causes no enhanced content upload. Clearing restores
+the historical Cell-default Baseline, distinct from the usual widget background.
+Generated palette updates follow existing accepted-write acknowledgement and
+refusal/retry rules under stable producer identity; no driver protocol or
+image-encoding policy changes are implied.
+
+ANSI's existing translucent-RGBA refusal remains a Warning; a Theme background
+does not authorize the driver to invent alpha composition. On an output refusal,
+App's current conservative mixed-frame recovery may recreate even an unchanged
+resident root (#398). That repair is separate from Theme/source dirty state;
+stable image ids and zero authored retransmission are proved for accepted palette
+transitions, not claimed for that existing recovery path.
 
 There is no App-owned widget tree or automatic traversal of borrowed content.
 Apps explicitly theme pages and borrowed children. Custom widgets can override

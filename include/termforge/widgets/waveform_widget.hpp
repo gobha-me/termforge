@@ -53,6 +53,8 @@ class WaveformWidget final : public Widget {
   [[nodiscard]] auto capacity() const noexcept -> int { return m_capacity; }
 
  private:
+  auto on_theme_changed() -> void override;
+
   // Render one column of the plot. half-block style:
   // each cell represents 2 vertical sub-positions (upper/lower).
   auto render_column(Screen& screen, int x, int y_top, int height,

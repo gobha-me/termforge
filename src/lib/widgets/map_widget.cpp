@@ -139,6 +139,13 @@ auto MapWidget::invalidate_pixels() noexcept -> void {
   mark_dirty();
 }
 
+auto MapWidget::on_theme_changed() -> void {
+  const auto bg = theme_color(&Theme::content_bg, theme::kBg);
+  if (bg == m_bg) return;
+  m_bg = bg;
+  invalidate_pixels();
+}
+
 auto MapWidget::viewport_tiles() const noexcept -> std::pair<int, int> {
   const Rect r = rect();
   if (r.w <= 0 || r.h <= 0 || m_tile_w <= 0 || m_tile_h <= 0) return {0, 0};
@@ -201,7 +208,8 @@ auto MapWidget::draw(Screen& screen) -> void {
   // Immediate mode: blank the whole rect first, then draw on top. Trailing
   // partial tiles are never drawn, so the leftover columns/rows keep this
   // background fill.
-  screen.fill_rect(r.x, r.y, r.w, r.h, theme::kFg, m_bg);
+  screen.fill_rect(r.x, r.y, r.w, r.h,
+                   theme_color(&Theme::content_fg, theme::kFg), m_bg);
 
   const auto [vtw, vth] = viewport_tiles();
   if (vtw <= 0 || vth <= 0 || m_map_w <= 0 || m_map_h <= 0 ||

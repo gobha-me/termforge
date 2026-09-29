@@ -148,6 +148,8 @@ class MapWidget final : public Widget {
   }
 
  private:
+  auto on_theme_changed() -> void override;
+
   struct Layer {
     std::string name;
     std::vector<int> cells; // row-major, w*h; empty id = falls through
