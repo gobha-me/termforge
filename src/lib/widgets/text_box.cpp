@@ -53,8 +53,8 @@ auto paint_text_row(Screen& screen, int x, int y, const StyledText& row,
 // Preserve the full track's thumb geometry, but iterate only on-screen rows.
 // A caller may reserve INT_MAX block rows without allocating or walking them.
 auto paint_textbox_scrollbar(Screen& screen, Rect track, int total, int offset,
-                             ScrollGlyphs glyphs, Rgb track_fg, Rgb thumb_fg)
-    -> void {
+                             ScrollGlyphs glyphs, Rgb track_fg, Rgb thumb_fg,
+                             Rgb bg) -> void {
   const auto [start, length] =
       detail::thumb_window(track.h, total, offset, track.h);
   const auto first = std::max(std::int64_t{0}, std::int64_t{track.y});
@@ -65,14 +65,8 @@ auto paint_textbox_scrollbar(Screen& screen, Rect track, int total, int offset,
     const bool thumb = row >= start && row < std::int64_t{start} + length;
     screen.write_text(track.x, static_cast<int>(y),
                       thumb ? glyphs.thumb : glyphs.track,
-                      thumb ? thumb_fg : track_fg, {});
+                      thumb ? thumb_fg : track_fg, bg);
   }
-}
-
-// Default style for the plain-string append path — matches the colours draw()
-// historically hard-coded (theme fg, zeroed bg, no attrs).
-[[nodiscard]] auto plain_style() noexcept -> TextStyle {
-  return TextStyle{theme::kFg, Rgb{}, Attr::None};
 }
 
 auto sanitize_spans(StyledText& line) -> void {
@@ -80,8 +74,13 @@ auto sanitize_spans(StyledText& line) -> void {
     span.text = Screen::sanitize(span.text);
 }
 
-[[nodiscard]] auto plain_text(std::string text) -> StyledText {
-  return StyledText{TextSpan{std::move(text), plain_style()}};
+[[nodiscard]] auto plain_text(std::string text,
+                              const std::optional<Theme>& presentation)
+    -> StyledText {
+  return StyledText{TextSpan{
+      std::move(text),
+      TextStyle{presentation ? presentation->content_fg : theme::kFg,
+                presentation ? presentation->content_bg : Rgb{}, Attr::None}}};
 }
 
 // Return the number of bytes at the end that form a still-plausible but
@@ -159,6 +158,8 @@ TextBox::TextBox(TextBox&& other)
       m_wrap_build_count(other.m_wrap_build_count),
       m_block_limits(other.m_block_limits), m_block_count(other.m_block_count),
       m_block_rows(other.m_block_rows), m_style(other.m_style),
+      m_style_override(other.m_style_override),
+      m_scrollbar_override(other.m_scrollbar_override),
       m_track_fg(other.m_track_fg), m_thumb_fg(other.m_thumb_fg) {
   // Reinitialize the moved-from document counters as well as its containers.
   other.clear();
@@ -183,6 +184,8 @@ auto TextBox::operator=(TextBox&& other) -> TextBox& {
   m_block_rows = other.m_block_rows;
   m_layout = {};
   m_style = other.m_style;
+  m_style_override = other.m_style_override;
+  m_scrollbar_override = other.m_scrollbar_override;
   m_track_fg = other.m_track_fg;
   m_thumb_fg = other.m_thumb_fg;
   other.clear();
@@ -190,11 +193,14 @@ auto TextBox::operator=(TextBox&& other) -> TextBox& {
 }
 
 auto TextBox::append(std::string line) -> void {
-  // Single-span compatibility wrapper over the styled document path (#25).
-  append(plain_text(std::move(line)));
+  append_line(plain_text(std::move(line), theme_snapshot()), true);
 }
 
 auto TextBox::append(StyledText line) -> void {
+  append_line(std::move(line), false);
+}
+
+auto TextBox::append_line(StyledText line, bool content_roles) -> void {
   m_layout.valid = false;
   sanitize_spans(line);
   if (m_live) {
@@ -206,7 +212,7 @@ auto TextBox::append(StyledText line) -> void {
     }
     m_live.reset();
   }
-  (void)allocate_entry(std::move(line), true);
+  (void)allocate_entry(std::move(line), true, content_roles);
   if (m_follow) m_scroll = 0;
   const bool evicted = enforce_retention();
   if (evicted && !m_follow && !m_anchor)
@@ -219,10 +225,15 @@ auto TextBox::begin_entry() -> TextEntryHandle {
 }
 
 auto TextBox::begin_entry(std::string initial) -> TextEntryHandle {
-  return begin_entry(plain_text(std::move(initial)));
+  return begin_tail(plain_text(std::move(initial), theme_snapshot()), true);
 }
 
 auto TextBox::begin_entry(StyledText initial) -> TextEntryHandle {
+  return begin_tail(std::move(initial), false);
+}
+
+auto TextBox::begin_tail(StyledText initial, bool content_roles)
+    -> TextEntryHandle {
   m_layout.valid = false;
   if (m_live) {
     if (Entry* live = resolve(*m_live)) {
@@ -237,7 +248,7 @@ auto TextBox::begin_entry(StyledText initial) -> TextEntryHandle {
   const TextEntryHandle handle = allocate_entry({}, false);
   m_live = handle;
   Entry* entry = resolve(handle);
-  (void)append_chunks(*entry, std::move(initial));
+  (void)append_chunks(*entry, std::move(initial), content_roles);
   if (m_follow) {
     m_scroll = 0;
     m_anchor.reset();
@@ -251,11 +262,17 @@ auto TextBox::begin_entry(StyledText initial) -> TextEntryHandle {
 
 auto TextBox::append_to_entry(TextEntryHandle handle, std::string chunk)
     -> bool {
-  return append_to_entry(handle, plain_text(std::move(chunk)));
+  return append_tail(handle, plain_text(std::move(chunk), theme_snapshot()),
+                     true);
 }
 
 auto TextBox::append_to_entry(TextEntryHandle handle, StyledText chunk)
     -> bool {
+  return append_tail(handle, std::move(chunk), false);
+}
+
+auto TextBox::append_tail(TextEntryHandle handle, StyledText chunk,
+                          bool content_roles) -> bool {
   Entry* entry = resolve_live(handle);
   if (!entry) return false;
   if (chunk.empty()) return true;
@@ -264,7 +281,7 @@ auto TextBox::append_to_entry(TextEntryHandle handle, StyledText chunk)
     any_bytes |= !span.text.empty();
   if (!any_bytes) return true;
 
-  (void)append_chunks(*entry, std::move(chunk));
+  (void)append_chunks(*entry, std::move(chunk), content_roles);
   const bool evicted = enforce_retention();
   if (evicted) mark_dirty();
   if (evicted && !m_follow && !m_anchor)
@@ -273,13 +290,19 @@ auto TextBox::append_to_entry(TextEntryHandle handle, StyledText chunk)
 }
 
 auto TextBox::replace_entry(TextEntryHandle handle, std::string text) -> bool {
-  return replace_entry(handle, plain_text(std::move(text)));
+  return replace_tail(handle, plain_text(std::move(text), theme_snapshot()),
+                      true);
 }
 
 auto TextBox::replace_entry(TextEntryHandle handle, StyledText text) -> bool {
+  return replace_tail(handle, std::move(text), false);
+}
+
+auto TextBox::replace_tail(TextEntryHandle handle, StyledText text,
+                           bool content_roles) -> bool {
   Entry* entry = resolve_live(handle);
   if (!entry) return false;
-  (void)replace_chunks(*entry, std::move(text));
+  (void)replace_chunks(*entry, std::move(text), content_roles);
   const bool evicted = enforce_retention();
   if (evicted) mark_dirty();
   if (evicted && !m_follow && !m_anchor)
@@ -387,12 +410,13 @@ auto TextBox::update_block(TextBlockHandle handle, int rows,
                   (m_retained_bytes - current->bytes))
     return block_error("retained block byte count overflows");
 
+  auto spans = content_spans(std::move(fallback), false);
   Entry& entry = *m_slots[handle.index].entry;
   m_block_rows -= static_cast<std::size_t>(*entry.block_rows);
   m_block_rows += static_cast<std::size_t>(rows);
   entry.block_rows = rows;
   const auto old_bytes = entry.bytes;
-  entry.text = std::move(fallback);
+  entry.text = std::move(spans);
   note_entry_change(entry, old_bytes, true);
   (void)enforce_retention();
   return {};
@@ -609,10 +633,11 @@ auto TextBox::draw(Screen& screen) -> void {
     return;
   }
 
-  const Rgb fg = theme::kFg;
+  const Rgb fg = theme_color(&Theme::content_fg, theme::kFg);
+  const Rgb bg = theme_color(&Theme::content_bg, {});
   // Own the whole rect: blank it every frame so clear()/scroll/shrink can't
   // leave stale text behind (immediate-mode contract, see widget.hpp).
-  screen.fill_rect(r.x, r.y, r.w, r.h, fg, {});
+  screen.fill_rect(r.x, r.y, r.w, r.h, fg, bg);
 
   // Resolve the actual width before painting or publishing child geometry.
   // If full-width wrapping overflows, reflow with the scrollbar reserved;
@@ -678,7 +703,8 @@ auto TextBox::draw(Screen& screen) -> void {
   const auto more_x = std::int64_t{r.x} + r.w - 7;
   if (m_scroll > 0 && r.w > 8 && !viewport.empty() &&
       more_x <= std::numeric_limits<int>::max()) {
-    screen.write_text(static_cast<int>(more_x), r.y, "[more]", theme::kDim, {});
+    screen.write_text(static_cast<int>(more_x), r.y, "[more]",
+                      theme_color(&Theme::muted, theme::kDim), bg);
   }
 
   // #21: the scrollbar claims the last column when the wrapped content
@@ -698,14 +724,55 @@ auto TextBox::draw(Screen& screen) -> void {
         std::min(top, static_cast<std::size_t>(std::max(0, total - r.h))));
     paint_textbox_scrollbar(screen, {static_cast<int>(bar_x), r.y, 1, r.h},
                             total, offset, scrollbar_glyphs(m_style),
-                            m_track_fg, m_thumb_fg);
+                            m_track_fg, m_thumb_fg, bg);
   }
   m_layout.valid = true;
   clear_dirty();
 }
 
-auto TextBox::allocate_entry(StyledText initial, bool finalized)
-    -> TextEntryHandle {
+auto TextBox::content_spans(StyledText text, bool content_roles)
+    -> std::vector<ContentSpan> {
+  std::vector<ContentSpan> spans;
+  spans.reserve(text.size());
+  for (auto& span : text)
+    spans.push_back({std::move(span.text), span.style, content_roles});
+  return spans;
+}
+
+auto TextBox::on_theme_changed() -> void {
+  if (!m_style_override) m_style = theme_glyphs(BorderStyle::Single);
+  if (!m_scrollbar_override) {
+    m_track_fg = theme_color(&Theme::muted, theme::kDim);
+    m_thumb_fg = theme_color(&Theme::accent, theme::kFocusBg);
+  }
+  const Rgb fg = theme_color(&Theme::content_fg, theme::kFg);
+  const Rgb bg = theme_color(&Theme::content_bg, {});
+  for (const auto index : m_order) {
+    auto& entry = *m_slots[index].entry;
+    bool changed = false;
+    for (auto& span : entry.text) {
+      if (!span.content_roles || (span.style.fg == fg && span.style.bg == bg))
+        continue;
+      span.style.fg = fg;
+      span.style.bg = bg;
+      changed = true;
+    }
+    if (entry.pending_content_roles) {
+      entry.pending_style.fg = fg;
+      entry.pending_style.bg = bg;
+    }
+    if (changed) {
+      // Colors are embedded in wrapped rows. Rebuild only affected caches;
+      // bytes, content revisions, anchors and published geometry stay intact.
+      entry.wrap.valid = false;
+      entry.alternate_wrap.valid = false;
+    }
+  }
+}
+
+auto TextBox::allocate_entry(StyledText initial, bool finalized,
+                             bool content_roles) -> TextEntryHandle {
+  auto spans = content_spans(std::move(initial), content_roles);
   std::size_t index = 0;
   if (m_free.empty()) {
     index = m_slots.size();
@@ -716,7 +783,7 @@ auto TextBox::allocate_entry(StyledText initial, bool finalized)
   }
   Slot& slot = m_slots[index];
   slot.entry = Entry{};
-  slot.entry->text = std::move(initial);
+  slot.entry->text = std::move(spans);
   slot.entry->finalized = finalized;
   slot.entry->bytes = payload_bytes(*slot.entry);
   m_retained_bytes += slot.entry->bytes;
@@ -739,24 +806,28 @@ auto TextBox::resolve_live(TextEntryHandle handle) noexcept -> Entry* {
 
 auto TextBox::payload_bytes(const Entry& entry) -> std::size_t {
   std::size_t bytes = entry.pending_utf8.size();
-  for (const TextSpan& span : entry.text)
+  for (const auto& span : entry.text)
     bytes += span.text.size();
   return bytes;
 }
 
 auto TextBox::append_clean_span(Entry& entry, std::string text, TextStyle style,
-                                bool preserve_empty) -> bool {
+                                bool preserve_empty, bool content_roles)
+    -> bool {
   if (text.empty() && !preserve_empty) return false;
   if (!text.empty() && !entry.text.empty() &&
-      entry.text.back().style == style && !entry.text.back().text.empty()) {
+      entry.text.back().style == style &&
+      entry.text.back().content_roles == content_roles &&
+      !entry.text.back().text.empty()) {
     entry.text.back().text += text;
   } else {
-    entry.text.push_back(TextSpan{std::move(text), style});
+    entry.text.push_back(ContentSpan{std::move(text), style, content_roles});
   }
   return true;
 }
 
-auto TextBox::ingest_chunks(Entry& entry, StyledText chunks) -> bool {
+auto TextBox::ingest_chunks(Entry& entry, StyledText chunks, bool content_roles)
+    -> bool {
   bool visible_changed = false;
 
   for (TextSpan& span : chunks) {
@@ -769,16 +840,16 @@ auto TextBox::ingest_chunks(Entry& entry, StyledText chunks) -> bool {
       entry.pending_utf8.append(remaining.substr(0, take));
       remaining.remove_prefix(take);
       if (entry.pending_utf8.size() == expected) {
-        visible_changed |=
-            append_clean_span(entry, Screen::sanitize(entry.pending_utf8),
-                              entry.pending_style, false);
+        visible_changed |= append_clean_span(
+            entry, Screen::sanitize(entry.pending_utf8), entry.pending_style,
+            false, entry.pending_content_roles);
         entry.pending_utf8.clear();
       } else if (!plausible_utf8_prefix(entry.pending_utf8)) {
         // A non-continuation proves the held lead was malformed now; do not
         // strand an ordinary ASCII byte until another chunk or finalization.
-        visible_changed |=
-            append_clean_span(entry, Screen::sanitize(entry.pending_utf8),
-                              entry.pending_style, false);
+        visible_changed |= append_clean_span(
+            entry, Screen::sanitize(entry.pending_utf8), entry.pending_style,
+            false, entry.pending_content_roles);
         entry.pending_utf8.clear();
       }
     }
@@ -787,29 +858,35 @@ auto TextBox::ingest_chunks(Entry& entry, StyledText chunks) -> bool {
     const std::size_t pending = incomplete_utf8_suffix(remaining);
     const std::string_view complete =
         remaining.substr(0, remaining.size() - pending);
-    visible_changed |= append_clean_span(entry, Screen::sanitize(complete),
-                                         span.style, !span.text.empty());
+    visible_changed |=
+        append_clean_span(entry, Screen::sanitize(complete), span.style,
+                          !span.text.empty(), content_roles);
     if (pending != 0) {
       entry.pending_utf8.assign(remaining.substr(remaining.size() - pending));
       entry.pending_style = span.style;
+      entry.pending_content_roles = content_roles;
     }
   }
 
   return visible_changed;
 }
 
-auto TextBox::append_chunks(Entry& entry, StyledText chunks) -> bool {
+auto TextBox::append_chunks(Entry& entry, StyledText chunks, bool content_roles)
+    -> bool {
   const std::size_t old_bytes = entry.bytes;
-  const bool visible_changed = ingest_chunks(entry, std::move(chunks));
+  const bool visible_changed =
+      ingest_chunks(entry, std::move(chunks), content_roles);
   note_entry_change(entry, old_bytes, visible_changed);
   return visible_changed;
 }
 
-auto TextBox::replace_chunks(Entry& entry, StyledText chunks) -> bool {
+auto TextBox::replace_chunks(Entry& entry, StyledText chunks,
+                             bool content_roles) -> bool {
   const std::size_t old_bytes = entry.bytes;
   entry.text.clear();
   entry.pending_utf8.clear();
-  const bool visible_changed = ingest_chunks(entry, std::move(chunks));
+  const bool visible_changed =
+      ingest_chunks(entry, std::move(chunks), content_roles);
   note_entry_change(entry, old_bytes, true);
   return visible_changed;
 }
