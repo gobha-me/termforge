@@ -387,6 +387,26 @@ TEST_CASE("TextInput escaped display aligns raw cursor and clips tokens",
   CHECK(tfsupport::row_text(screen, 0).starts_with("ab"));
 }
 
+TEST_CASE("NumericInput invalid zero-width draft keeps its cursor",
+          "[numeric][zero-cursor][failure]") {
+  auto input = prepared();
+  const std::string raw = "a\xcc\x81"
+                          "b";
+  REQUIRE(input.set_draft(raw));
+  REQUIRE(input.on_event(key(Key::Home)));
+  REQUIRE(input.on_event(key(Key::Right)));
+  Screen screen{26, 7};
+  input.draw(screen);
+  const Rect field = input.editor_rect();
+  CHECK(screen.text_at(field.x, field.y) == "a\xcc\x81");
+  CHECK(screen.text_at(field.x + 1, field.y) == "b");
+  CHECK(any(screen.at(field.x + 1, field.y).attrs & Attr::Reverse));
+  CHECK(input.draft() == raw);
+  CHECK(input.cursor_pos() == 1);
+  CHECK(integer(input) == 5);
+  REQUIRE(input.error());
+}
+
 namespace {
 struct RecordingSink final : ByteSink {
   std::vector<std::string> frames;
