@@ -167,9 +167,17 @@ auto TextInput::draw(Screen& screen) -> void {
       // Reverse is semantic cursor state, not a colour choice. The fallback
       // driver deliberately drops colours but preserves reverse video, so
       // the insertion point remains visible on every rendering tier.
-      screen.write_text(r.x + cx, y,
-                        clipped.empty() ? std::string_view{" "} : clipped, m_fg,
-                        m_bg, Attr::Reverse);
+      if (!clipped.empty() && detail::display_width(clipped) == 0) {
+        // A standalone combining/zero-width token paints no cell. Mark the
+        // already-painted insertion cell instead, without erasing its text.
+        const auto x = static_cast<std::int64_t>(r.x) + cx;
+        if (x >= 0 && x < screen.cols() && y >= 0 && y < screen.rows())
+          screen.at(static_cast<int>(x), y).attrs |= Attr::Reverse;
+      } else {
+        screen.write_text(r.x + cx, y,
+                          clipped.empty() ? std::string_view{" "} : clipped,
+                          m_fg, m_bg, Attr::Reverse);
+      }
     }
   }
 

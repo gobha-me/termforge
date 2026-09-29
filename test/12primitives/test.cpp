@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cstdint>
 #include <limits>
 #include <string>
 
@@ -597,6 +598,65 @@ TEST_CASE("TextInput: on_change fires on edit", "[primitives][input]") {
   Event x = KeyEvent{Key::Char, U'x'};
   ti.on_event(x);
   REQUIRE(last == "x");
+}
+
+TEST_CASE("TextInput: zero-width cursor preserves the insertion cell",
+          "[primitives][input][zero-cursor][failure]") {
+  using termforge::any;
+  using termforge::Attr;
+  using termforge::Rect;
+  using termforge::text::SanitizeMode;
+  for (auto mode : {SanitizeMode::Strip, SanitizeMode::Escape}) {
+    for (const std::string& mark :
+         {std::string{"\xcc\x81"}, std::string{"\xe2\x80\x8b"}}) {
+      const std::string raw = "a" + mark + "b";
+      for (const Rect area :
+           {Rect{1, 0, 6, 1}, Rect{1, 0, 1, 1}, Rect{-1, 0, 6, 1},
+            Rect{std::numeric_limits<int>::max(), 0, 6, 1},
+            Rect{1, -1, 6, 1}}) {
+        TextInput input;
+        input.set_geometry(area);
+        input.set_focused(true);
+        REQUIRE(input.set_display_mode(mode));
+        REQUIRE(input.set_text(raw, 1));
+        int changes = 0;
+        input.on_change([&](const std::string&) { ++changes; });
+        Screen screen{10, 1};
+        screen.write_text(0, 0, "!!!!!!!!!!", {}, {});
+        input.draw(screen);
+        const auto cursor_x =
+            static_cast<std::int64_t>(area.x) + (area.w == 1 ? 0 : 1);
+        if (area.y == 0 && cursor_x >= 0 && cursor_x < screen.cols()) {
+          const int x = static_cast<int>(cursor_x);
+          CHECK(screen.text_at(x, 0) == "b");
+          CHECK(any(screen.at(x, 0).attrs & Attr::Reverse));
+          if (area.x == 1 && area.w == 6)
+            CHECK(screen.text_at(1, 0) == "a" + mark);
+          FallbackDriver driver;
+          std::string wire;
+          driver.set_output(&wire);
+          Renderer renderer{driver};
+          renderer.present(screen);
+          renderer.flush();
+          CHECK(wire.find("\033[7m") != std::string::npos);
+        }
+        for (int x = 0; x < screen.cols(); ++x)
+          if (!area.contains(x, 0)) {
+            CHECK(screen.text_at(x, 0) == "!");
+            CHECK_FALSE(any(screen.at(x, 0).attrs & Attr::Reverse));
+          }
+        CHECK(input.text() == raw);
+        CHECK(input.cursor_pos() == 1);
+        CHECK(changes == 0);
+        input.set_focused(false);
+        input.draw(screen);
+        for (int x = 0; x < screen.cols(); ++x)
+          CHECK_FALSE(any(screen.at(x, 0).attrs & Attr::Reverse));
+        CHECK(input.text() == raw);
+        CHECK(input.cursor_pos() == 1);
+      }
+    }
+  }
 }
 
 TEST_CASE("TextInput: cursor rendition follows insertion position and focus",
