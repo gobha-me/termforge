@@ -307,19 +307,20 @@ auto TabBar::draw(Screen& screen) -> void {
     const bool lit = is_active && focused();
     const Rgb& fg = lit ? m_active_fg : m_fg;
     const Rgb& bg = lit ? m_active_bg : m_bg;
+    const auto attrs = lit && theme_snapshot() ? Attr::Bold : Attr::None;
 
-    screen.fill_rect(span.x, r.y, span.w, 1, fg, bg);
+    screen.fill_rect(span.x, r.y, span.w, 1, fg, bg, attrs);
     // The left pad column carries the marker for the active tab -- the half of
     // the state that survives a driver dropping colour (#76). Inactive tabs
     // leave it blank; the fill above already put a space there.
     if (is_active && !mark.empty())
-      screen.write_text(span.x, r.y, mark, fg, bg);
+      screen.write_text(span.x, r.y, mark, fg, bg, attrs);
     // Title starts one column in. The trailing pad is the first thing clipping
     // eats, which is why the budget is w - 1 and not w - 2.
     if (const int avail = span.w - 1; avail > 0)
       screen.write_text(span.x + 1, r.y,
                         detail::truncate_to_width(m_list.at(span.index), avail),
-                        fg, bg);
+                        fg, bg, attrs);
   }
 
   // #131: second-row horizontal track when the rect can host it. Content units
@@ -333,8 +334,10 @@ auto TabBar::draw(Screen& screen) -> void {
     const int offset = std::clamp(content_offset(first), 0, total - r.w);
     detail::draw_scrollbar(
         screen, {r.x, r.y + 1, r.w, 1}, total, offset, r.w,
-        scrollbar_glyphs(m_style, ScrollOrientation::Horizontal), theme::kDim,
-        m_active_bg, m_bg, ScrollOrientation::Horizontal);
+        scrollbar_glyphs(m_style, ScrollOrientation::Horizontal),
+        theme_color(&Theme::muted, theme::kDim),
+        theme_color(&Theme::accent, m_active_bg), m_bg,
+        ScrollOrientation::Horizontal);
   }
 
   clear_dirty();

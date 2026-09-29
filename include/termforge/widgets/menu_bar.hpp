@@ -125,12 +125,25 @@ class MenuBar final : public Widget {
   // BorderStyle passes it here too and BorderStyle::Ascii keeps a bare TTY
   // 7-bit. MenuBar draws no box, so this is its only use for a style.
   auto set_style(BorderStyle style) -> void {
+    m_style_override = true;
     m_style = style;
     mark_dirty();
   }
   [[nodiscard]] auto style() const noexcept -> BorderStyle { return m_style; }
 
  private:
+  auto on_theme_changed() -> void override {
+    m_fg = theme_color(&Theme::surface_fg, theme::kFg);
+    m_bg = theme_color(&Theme::surface_bg, {0x20, 0x20, 0x40});
+    m_active_fg = theme_color(&Theme::focus_fg, theme::kFocusFg);
+    m_active_bg = theme_color(&Theme::focus_bg, theme::kFocusBg);
+    m_dropdown_fg = theme_color(&Theme::surface_fg, theme::kDropdownFg);
+    m_dropdown_bg = theme_color(&Theme::surface_bg, theme::kDropdownBg);
+    m_selected_fg = theme_color(&Theme::selection_fg, theme::kFocusFg);
+    m_selected_bg = theme_color(&Theme::selection_bg, theme::kFocusBg);
+    if (!m_style_override) m_style = theme_glyphs(BorderStyle::Single);
+  }
+  bool m_style_override{false};
   // Where each menu title sits on the bar. The span type, the
   // `display_width(title) + 2` convention, the gap column and the x→index map
   // are shared with TabBar since #130 (detail/strip.hpp); what stays here is

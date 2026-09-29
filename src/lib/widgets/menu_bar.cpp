@@ -182,6 +182,7 @@ auto MenuBar::draw(Screen& screen) -> void {
     const bool lit = is_active && focused();
     const auto& fg = lit ? m_active_fg : m_fg;
     const auto& bg = lit ? m_active_bg : m_bg;
+    const auto attrs = lit && theme_snapshot() ? Attr::Bold : Attr::None;
     const auto& span = layout[i];
     const int mx = span.x;
 
@@ -198,7 +199,7 @@ auto MenuBar::draw(Screen& screen) -> void {
     // leaves image_id alone. Swapping is a separate change with its own
     // zero-delta claim to prove, not a tidy-up to smuggle in here.
     for (int x = 0; x < span.w; ++x)
-      screen.write_text(mx + x, r.y, " ", fg, bg);
+      screen.write_text(mx + x, r.y, " ", fg, bg, attrs);
 
     // AFTER the fill, or the fill erases it. The LEFT PAD COLUMN carries the
     // marker for the active title — the half of the state that survives a
@@ -222,7 +223,7 @@ auto MenuBar::draw(Screen& screen) -> void {
     // (span_width is display_width + 2), so span.w is positive precisely when
     // right - mx is.
     if (is_active && !mark.empty() && span.w > 0)
-      screen.write_text(mx, r.y, mark, fg, bg);
+      screen.write_text(mx, r.y, mark, fg, bg, attrs);
 
     // Title text (1-col padding), clipped to the columns left before the edge.
     // span.w - 1 is the old `right - (mx + 1)` for every input that reaches
@@ -232,7 +233,7 @@ auto MenuBar::draw(Screen& screen) -> void {
     if (const int avail = span.w - 1; avail > 0)
       screen.write_text(mx + 1, r.y,
                         detail::truncate_to_width(m_menus[i].title, avail), fg,
-                        bg);
+                        bg, attrs);
   }
 
   // Draw dropdown if open. Geometry comes from dropdown_rect() so drawing
@@ -262,9 +263,11 @@ auto MenuBar::draw(Screen& screen) -> void {
     detail::draw_dropdown_rows(
         screen, ddr, count, /*highlight=*/m_selected, /*scroll=*/m_scroll,
         /*label_pad=*/2, m_dropdown_fg, m_dropdown_bg, m_selected_fg,
-        m_selected_bg, glyphs, [&](int i) -> const std::string& {
+        m_selected_bg, glyphs,
+        [&](int i) -> const std::string& {
           return menu.items[static_cast<std::size_t>(i)].label;
-        });
+        },
+        theme_snapshot() ? Attr::Bold : Attr::None);
     // Memoize what was just painted (#96). Hover/press/hit_test read this until
     // the next open draw (or until close / content mutation clears it).
     m_paint.record(ddr, m_scroll);

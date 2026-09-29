@@ -151,7 +151,8 @@ template <typename F>
 auto draw_dropdown_rows(Screen& screen, Rect dr, int count, int highlight,
                         int scroll, int label_pad, Rgb normal_fg, Rgb normal_bg,
                         Rgb highlight_fg, Rgb highlight_bg,
-                        const MarkGlyphs& glyphs, F&& label_at) -> void {
+                        const MarkGlyphs& glyphs, F&& label_at,
+                        Attr highlight_attrs = Attr::None) -> void {
   if (dr.w <= 0 || dr.h <= 0) return;
   if (count < 0) count = 0;
   // The same clamp the hit-test applies, from the same function -- see
@@ -189,14 +190,16 @@ auto draw_dropdown_rows(Screen& screen, Rect dr, int count, int highlight,
     const bool is_hl = (item == highlight);
     const Rgb fg = is_hl ? highlight_fg : normal_fg;
     const Rgb bg = is_hl ? highlight_bg : normal_bg;
-    screen.fill_rect(dr.x, dy, dr.w, 1, fg, bg);
+    const auto attrs = is_hl ? highlight_attrs : Attr::None;
+    screen.fill_rect(dr.x, dy, dr.w, 1, fg, bg, attrs);
     // Empty means it did not fit the gutter it was given, so the label wins
     // the columns -- silently, the way every other layout truncation here does
     // (ListWidget's gutter, Frame titles).
-    if (is_hl && !mark.empty()) screen.write_text(dr.x, dy, mark, fg, bg);
+    if (is_hl && !mark.empty())
+      screen.write_text(dr.x, dy, mark, fg, bg, attrs);
     const int avail = std::max(0, dr.w - label_pad - 1);
     screen.write_text(dr.x + label_pad, dy,
-                      truncate_to_width(label_at(item), avail), fg, bg);
+                      truncate_to_width(label_at(item), avail), fg, bg, attrs);
     // Painted in the row's OWN colors, so the hint on the highlighted row
     // reads against the highlight rather than punching a normal-colored hole
     // in it. A one-row window is first AND last, so a list cut at both ends can
@@ -205,7 +208,7 @@ auto draw_dropdown_rows(Screen& screen, Rect dr, int count, int highlight,
     if (room_for_hint &&
         ((vi == 0 && more_above) || (vi == dr.h - 1 && more_below))) {
       screen.write_text(dr.x + dr.w - 1, dy,
-                        (vi == 0 && more_above) ? up : down, fg, bg);
+                        (vi == 0 && more_above) ? up : down, fg, bg, attrs);
     }
   }
 }

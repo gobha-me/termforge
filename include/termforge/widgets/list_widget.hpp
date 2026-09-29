@@ -66,6 +66,7 @@ class ListWidget final : public Widget {
   // to the selection highlight so the two position markers read as one
   // language; the track defaults to theme::kDim, the muted-slate role.
   auto set_scrollbar_colors(Rgb track_fg, Rgb thumb_fg) -> void {
+    m_scrollbar_override = true;
     m_track_fg = track_fg;
     m_thumb_fg = thumb_fg;
     mark_dirty();
@@ -74,11 +75,13 @@ class ListWidget final : public Widget {
   // Row colours. Selected rows use the second pair (#72 -- both were private
   // with no way to override them).
   auto set_colors(Rgb fg, Rgb bg) -> void {
+    m_colors_override = true;
     m_fg = fg;
     m_bg = bg;
     mark_dirty();
   }
   auto set_selected_colors(Rgb fg, Rgb bg) -> void {
+    m_selected_override = true;
     m_selected_fg = fg;
     m_selected_bg = bg;
     mark_dirty();
@@ -88,6 +91,7 @@ class ListWidget final : public Widget {
   // style-aware widget; an app holding one BorderStyle passes it here too, and
   // BorderStyle::Ascii is what keeps the marker 7-bit on a bare TTY.
   auto set_style(BorderStyle style) -> void {
+    m_style_override = true;
     m_style = style;
     mark_dirty();
   }
@@ -170,6 +174,23 @@ class ListWidget final : public Widget {
   [[nodiscard]] auto scroll_offset() const noexcept -> int { return m_scroll; }
 
  private:
+  auto on_theme_changed() -> void override {
+    if (!m_colors_override) {
+      m_fg = theme_color(&Theme::content_fg, theme::kFg);
+      m_bg = theme_color(&Theme::content_bg, theme::kBg);
+    }
+    if (!m_selected_override) {
+      m_selected_fg = theme_color(&Theme::selection_fg, theme::kFocusFg);
+      m_selected_bg = theme_color(&Theme::selection_bg, theme::kFocusBg);
+    }
+    if (!m_scrollbar_override) {
+      m_track_fg = theme_color(&Theme::muted, theme::kDim);
+      m_thumb_fg = theme_color(&Theme::accent, theme::kFocusBg);
+    }
+    if (!m_style_override) m_style = theme_glyphs(BorderStyle::Single);
+  }
+  bool m_colors_override{false}, m_selected_override{false};
+  bool m_scrollbar_override{false}, m_style_override{false};
   // Ensure the selected item is visible (adjust scroll if needed).
   auto ensure_visible() -> void;
 

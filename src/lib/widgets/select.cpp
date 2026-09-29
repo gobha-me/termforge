@@ -146,13 +146,14 @@ auto Select::draw(Screen& screen) -> void {
   const MarkGlyphs g = mark_glyphs(m_style);
 
   Rgb fg = m_fg, bg = m_bg;
+  const auto attrs = focused() && theme_snapshot() ? Attr::Bold : Attr::None;
   if (focused()) {
     fg = m_focused_fg;
     bg = m_focused_bg;
   }
 
   // Own the whole rect (immediate-mode contract, see widget.hpp).
-  screen.fill_rect(r.x, r.y, r.w, r.h, fg, bg);
+  screen.fill_rect(r.x, r.y, r.w, r.h, fg, bg, attrs);
 
   // "[ value…      ▾ ]" — padded so the closing bracket sits on the last
   // column, then truncated once so a narrow rect degrades by one rule.
@@ -184,7 +185,8 @@ auto Select::draw(Screen& screen) -> void {
   line += g.check_close;
 
   const int y = r.y + r.h / 2;
-  screen.write_text(r.x, y, detail::truncate_to_width(line, r.w), fg, bg);
+  screen.write_text(r.x, y, detail::truncate_to_width(line, r.w), fg, bg,
+                    attrs);
 
   // The dropdown draws BELOW rect() — the documented exception, matched by
   // hit_test(). Geometry comes from dropdown_rect() so the two cannot disagree.
@@ -212,7 +214,8 @@ auto Select::draw(Screen& screen) -> void {
       screen, ddr, m_list.count(), /*highlight=*/m_highlight,
       /*scroll=*/m_scroll, /*label_pad=*/1, m_dropdown_fg, m_dropdown_bg,
       m_highlight_fg, m_highlight_bg, g,
-      [this](int i) -> const std::string& { return m_list.at(i); });
+      [this](int i) -> const std::string& { return m_list.at(i); },
+      theme_snapshot() ? Attr::Bold : Attr::None);
   // Memoize what was just painted (#96). Hover/press/hit_test read this until
   // the next open draw (or until close / content mutation clears it).
   m_paint.record(ddr, m_scroll);

@@ -96,6 +96,7 @@ class TableWidget final : public Widget {
   // to the selection highlight so the two position markers read as one
   // language; the track defaults to theme::kDim, the muted-slate role.
   auto set_scrollbar_colors(Rgb track_fg, Rgb thumb_fg) -> void {
+    m_scrollbar_override = true;
     m_track_fg = track_fg;
     m_thumb_fg = thumb_fg;
     mark_dirty();
@@ -115,11 +116,13 @@ class TableWidget final : public Widget {
   // Row colours. A selected row uses the second pair (#76 -- all four were
   // private with no way to override them).
   auto set_colors(Rgb fg, Rgb bg) -> void {
+    m_colors_override = true;
     m_row_fg = fg;
     m_row_bg = bg;
     mark_dirty();
   }
   auto set_selected_colors(Rgb fg, Rgb bg) -> void {
+    m_selected_override = true;
     m_selected_fg = fg;
     m_selected_bg = bg;
     mark_dirty();
@@ -129,6 +132,7 @@ class TableWidget final : public Widget {
   // style-aware widget; an app holding one BorderStyle passes it here too, and
   // BorderStyle::Ascii is what keeps the marker 7-bit on a bare TTY.
   auto set_style(BorderStyle style) -> void {
+    m_style_override = true;
     m_style = style;
     mark_dirty();
   }
@@ -193,6 +197,24 @@ class TableWidget final : public Widget {
   }
 
  private:
+  auto on_theme_changed() -> void override {
+    if (!m_colors_override) {
+      m_row_fg = theme_color(&Theme::content_fg, theme::kFg);
+      m_row_bg = theme_color(&Theme::content_bg, theme::kBg);
+    }
+    m_alt_bg = theme_color(&Theme::surface_bg, {0x10, 0x10, 0x1C});
+    if (!m_selected_override) {
+      m_selected_fg = theme_color(&Theme::selection_fg, theme::kFocusFg);
+      m_selected_bg = theme_color(&Theme::selection_bg, theme::kFocusBg);
+    }
+    if (!m_scrollbar_override) {
+      m_track_fg = theme_color(&Theme::muted, theme::kDim);
+      m_thumb_fg = theme_color(&Theme::accent, theme::kFocusBg);
+    }
+    if (!m_style_override) m_style = theme_glyphs(BorderStyle::Single);
+  }
+  bool m_colors_override{false}, m_selected_override{false};
+  bool m_scrollbar_override{false}, m_style_override{false};
   // Compute effective column widths (auto-size if width==0).
   auto compute_widths() const -> std::vector<int>;
 
@@ -205,8 +227,8 @@ class TableWidget final : public Widget {
 
   // Render a single cell with alignment.
   static auto render_cell(Screen& screen, int x, int y, int w,
-                          const std::string& text, Align align, Rgb fg, Rgb bg)
-      -> void;
+                          const std::string& text, Align align, Rgb fg, Rgb bg,
+                          Attr attrs = Attr::None) -> void;
 
   std::vector<Column> m_columns;
   std::vector<std::vector<std::string>> m_rows;

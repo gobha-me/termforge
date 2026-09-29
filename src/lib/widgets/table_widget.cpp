@@ -82,7 +82,7 @@ auto TableWidget::compute_widths() const -> std::vector<int> {
 
 auto TableWidget::render_cell(Screen& screen, int x, int y, int w,
                               const std::string& text, Align align, Rgb fg,
-                              Rgb bg) -> void {
+                              Rgb bg, Attr attrs) -> void {
   if (w <= 0) return;
   // Clip to the column width by display columns, then align the shown portion.
   const std::string_view shown = detail::truncate_to_width(text, w);
@@ -96,10 +96,10 @@ auto TableWidget::render_cell(Screen& screen, int x, int y, int w,
 
   // Fill background.
   for (int i = 0; i < w; ++i)
-    screen.write_text(x + i, y, " ", fg, bg);
+    screen.write_text(x + i, y, " ", fg, bg, attrs);
 
   // Write text (already clipped to column width).
-  if (!shown.empty()) screen.write_text(x + start, y, shown, fg, bg);
+  if (!shown.empty()) screen.write_text(x + start, y, shown, fg, bg, attrs);
 }
 
 auto TableWidget::draw(Screen& screen) -> void {
@@ -163,18 +163,22 @@ auto TableWidget::draw(Screen& screen) -> void {
     const Rgb fg = is_sel ? m_selected_fg : m_row_fg;
     const Rgb bg =
         is_sel ? m_selected_bg : (row_idx % 2 == 0 ? m_row_bg : m_alt_bg);
+    const auto attrs =
+        is_sel && focused() && theme_snapshot() ? Attr::Bold : Attr::None;
+    if (theme_snapshot())
+      screen.fill_rect(r.x, r.y + 1 + vr, r.w, 1, fg, bg, attrs);
     cx = r.x + gutter;
     for (std::size_t c = 0; c < m_columns.size() && cx < r.x + r.w; ++c) {
       const int w = std::min(widths[c], r.x + r.w - cx);
       const std::string& cell = c < row.size() ? row[c] : std::string{};
-      render_cell(screen, cx, r.y + 1 + vr, w, cell, m_columns[c].align, fg,
-                  bg);
+      render_cell(screen, cx, r.y + 1 + vr, w, cell, m_columns[c].align, fg, bg,
+                  attrs);
       cx += w + 1;
     }
     // The marker in the selected row's gutter, with the row's own colours so
     // the highlight is one unbroken band across the full width.
     if (gutter > 0 && is_sel) {
-      screen.write_text(r.x, r.y + 1 + vr, marker(), fg, bg);
+      screen.write_text(r.x, r.y + 1 + vr, marker(), fg, bg, attrs);
     }
   }
 

@@ -26,11 +26,23 @@ application and survives subsequent snapshots and clearing. To discard all local
 presentation overrides, construct a new widget; this API does not silently
 erase the app's decisions.
 
-The foundation integrates Label, Button, Frame, Checkbox, RadioGroup,
-TextInput, Composer, Slider and NumericInput. NumericInput automatically themes
-its privately owned editor. Remaining controls and Gallery adoption are tracked
+The primitives integrate Label, Button, Frame, Checkbox, RadioGroup, TextInput,
+Composer, Slider and NumericInput. Selection/presentation controls integrate
+ListWidget, TableWidget, TabBar, MenuBar, Select, ProgressBar and Notebook.
+NumericInput automatically themes its privately owned editor; Notebook themes
+its privately owned TabBar, never its active or hidden borrowed pages. Remaining
+text-document/dialog/image-widget integration and Gallery adoption are tracked
 in #373; storing a snapshot alone does not claim a custom/remaining widget
 renders these roles.
+
+Lists/tables/popups use selection colors, focused controls/tab titles use focus
+colors, scrollbars use muted tracks and accent thumbs, and ProgressBar uses an
+accent fill. Its label patch and menus/popups use surface colors. Table's
+alternating rows use the surface background, while column-owned header colors
+are explicit authored styles (even when equal to old defaults): theme those
+descriptors explicitly in the app. Glyph policy changes chrome and choice marks,
+not ProgressBar's content shape. Existing custom markers and marker opt-outs are
+retained; a theme does not override an app's decision to hide an affordance.
 
 There is no App-owned widget tree or automatic traversal of borrowed content.
 Apps explicitly theme pages and borrowed children. Custom widgets can override

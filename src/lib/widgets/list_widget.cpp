@@ -98,21 +98,23 @@ auto ListWidget::draw(Screen& screen) -> void {
     const auto& fg = is_selected ? m_selected_fg : m_fg;
     const auto& bg = is_selected ? m_selected_bg : m_bg;
     const auto& text = m_list.at(idx);
+    const auto attrs =
+        is_selected && focused() && theme_snapshot() ? Attr::Bold : Attr::None;
 
     // Fill the row background.
-    screen.fill_rect(r.x, y, r.w, 1, fg, bg);
+    screen.fill_rect(r.x, y, r.w, 1, fg, bg, attrs);
 
     // Marker and text are written separately, not composed into one string the
     // way Checkbox does it: both sit at fixed columns here, so composing would
     // buy nothing and cost a std::string concat per visible row per frame.
     if (gutter > 0 && is_selected) {
-      screen.write_text(r.x, y, marker(), fg, bg);
+      screen.write_text(r.x, y, marker(), fg, bg, attrs);
     }
 
     // Write the item text (clipped to widget width, by display columns).
     if (!text.empty()) {
       screen.write_text(text_x, y, detail::truncate_to_width(text, max_w), fg,
-                        bg);
+                        bg, attrs);
     }
   }
 
