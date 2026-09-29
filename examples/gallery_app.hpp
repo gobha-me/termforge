@@ -24,16 +24,21 @@
 #include "termforge/widgets/map_widget.hpp"
 #include "termforge/widgets/menu_bar.hpp"
 #include "termforge/widgets/notebook.hpp"
+#include "termforge/widgets/numeric_input.hpp"
 #include "termforge/widgets/pixel_surface.hpp"
 #include "termforge/widgets/progress_bar.hpp"
 #include "termforge/widgets/radio_group.hpp"
 #include "termforge/widgets/select.hpp"
+#include "termforge/widgets/slider.hpp"
 #include "termforge/widgets/table_widget.hpp"
 #include "termforge/widgets/text_box.hpp"
 #include "termforge/widgets/text_input.hpp"
 #include "termforge/widgets/waveform_widget.hpp"
 
 namespace termforge::examples {
+
+enum class GalleryPalette { Dark, HighContrast };
+[[nodiscard]] auto gallery_theme(GalleryPalette palette, bool ascii) -> Theme;
 
 struct GalleryCard {
   std::string title, help, example;
@@ -46,6 +51,7 @@ class GalleryPage final : public Widget {
   std::vector<GalleryCard> cards;
   bool ascii{true}, enabled{true};
   std::string notice;
+  Severity notice_severity{Severity::Info};
   auto select(int index) -> void;
   [[nodiscard]] auto selected() const -> int { return m_selected; }
   [[nodiscard]] auto card() const -> const GalleryCard&;
@@ -60,8 +66,9 @@ class GalleryPage final : public Widget {
   auto pixel_children() -> std::vector<Widget*> override;
 
  private:
+  auto on_theme_changed() -> void override;
   Frame m_frame;
-  Label m_title, m_help, m_reference;
+  Label m_help, m_reference;
   Rect m_body{}, m_previous{}, m_next{};
   int m_selected{0};
 };
@@ -77,6 +84,7 @@ class GallerySignal final : public Widget {
   auto pixel_children() -> std::vector<Widget*> override;
 
  private:
+  auto on_theme_changed() -> void override;
   std::deque<float> m_samples;
 };
 
@@ -88,6 +96,9 @@ class GalleryProgress final : public Widget {
   auto on_tick(std::chrono::duration<double> dt) -> void override {
     bar.on_tick(dt);
   }
+
+ private:
+  auto on_theme_changed() -> void override;
 };
 
 // Long help is a document viewport, not a standard dialog's fixed body.
@@ -98,6 +109,8 @@ class GalleryHelp final : public Dialog {
   auto on_event(const Event& event) -> bool override;
 
  protected:
+  auto on_theme_changed() -> void override;
+  auto on_border_style_changed() -> void override;
   [[nodiscard]] auto content_rows() const -> int override { return 20; }
   [[nodiscard]] auto content_cols() const -> int override { return 64; }
   auto layout_content(Rect area) -> void override;
@@ -130,6 +143,41 @@ class GalleryApp : public App {
   [[nodiscard]] auto counter() const -> int { return m_counter; }
   [[nodiscard]] auto checked() const -> bool { return m_check.checked(); }
   [[nodiscard]] auto ascii() const -> bool { return m_ascii; }
+  auto set_ascii(bool ascii) -> void {
+    m_ascii_override = ascii;
+    request_render();
+  }
+  auto set_palette(GalleryPalette palette) -> void {
+    m_palette = palette;
+    request_render();
+  }
+  [[nodiscard]] auto palette() const -> GalleryPalette { return m_palette; }
+  [[nodiscard]] auto presentation_theme() const -> const Theme& {
+    return m_theme;
+  }
+  [[nodiscard]] auto slider_value() const -> double { return m_slider.value(); }
+  [[nodiscard]] auto numeric_draft() const -> const std::string& {
+    return m_numeric.draft();
+  }
+  [[nodiscard]] auto numeric_value() const -> NumericValue {
+    return m_numeric.value();
+  }
+  [[nodiscard]] auto demo_list() const -> const ListWidget& { return m_list; }
+  [[nodiscard]] auto demo_table() const -> const TableWidget& {
+    return m_table;
+  }
+  [[nodiscard]] auto transcript() const -> const TextBox& {
+    return m_transcript;
+  }
+  [[nodiscard]] auto document_blocks() const -> const TextBox& {
+    return m_blocks;
+  }
+  [[nodiscard]] auto demo_map() const -> const MapWidget& { return m_map; }
+  [[nodiscard]] auto framebuffer() const -> const PixelSurface& {
+    return m_pixels;
+  }
+  [[nodiscard]] auto composer() const -> const Composer& { return m_composer; }
+  [[nodiscard]] auto live_stream() const -> TextEntryHandle { return m_stream; }
   [[nodiscard]] auto pixel_submissions() const -> std::uint64_t {
     return m_pixels.submission_count();
   }
@@ -150,6 +198,8 @@ class GalleryApp : public App {
   Select m_select;
   GalleryProgress m_progress;
   Label m_unicode;
+  Slider m_slider;
+  NumericInput m_numeric;
   ListWidget m_list;
   TableWidget m_table;
   GallerySignal m_signal;
@@ -175,7 +225,12 @@ class GalleryApp : public App {
   TextEntryHandle m_stream;
   std::string m_result{
       "Ready. Data is simulated; controls and results are real."};
-  std::optional<bool> m_ascii_override, m_style_applied;
+  std::optional<bool> m_ascii_override;
+  std::optional<Theme> m_theme_applied;
+  Theme m_theme;
+  GalleryPalette m_palette{GalleryPalette::Dark};
+  Severity m_result_severity{Severity::Info};
+  std::string m_diagnostic_result;
   bool m_ascii{true}, m_menu_focused{false}, m_usable{true};
   int m_counter{0}, m_state{0}, m_stream_chunks{0};
   double m_elapsed{0}, m_stream_elapsed{0};

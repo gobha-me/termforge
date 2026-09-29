@@ -13,7 +13,9 @@ application-owned `GalleryPage` roots hold borrowed specimens in a `Notebook`;
 the application owns every page, widget, dialog and pixel buffer. A page changes
 the visible specimen, not its value. Hiding closes transient dropdowns but
 preserves text, selections, history and scroll positions. No owned widget tree,
-new theme type or general clipping/layout seam is introduced.
+process-global theme or general clipping/layout seam is introduced. Presentation
+uses copied app-owned `Theme` values, explicitly applied to borrowed specimens;
+private wrappers forward only to their known owned children.
 
 ## Explore
 
@@ -27,9 +29,19 @@ new theme type or general clipping/layout seam is introduced.
   enhanced pixel collection, uses the existing ASCII glyph family, and supplies
   private text/bar projections for ProgressBar and WaveformWidget. It does not
   transliterate or discard user-entered Unicode.
+- View > Dark palette / High contrast palette changes actual role colors, not
+  just a label. The active palette appears in the tier header. This is independent
+  of F1's glyph/image presentation choice. Palette changes preserve drafts,
+  committed values, selections, scroll/history, modal results and authored RGBA.
 - F4 cycles explicitly simulated populated, empty, loading, error and disabled
   data states. Disabled specimens decline interaction; category/card/menu
-  navigation remains available. F5 restarts a bounded simulated transcript.
+  navigation remains available. Their leading `[disabled]` marker and Dim cell
+  treatment stay visible; enhanced specimen images are suspended instead of
+  covering that treatment. Fallback keeps the marker even though it drops Dim.
+  Compact status rows lead with `[disabled]`, `[error]` or `[warning]` so the
+  state remains readable when there is no space for a specimen heading.
+  Disabling stops pointer capture immediately, before further batched input.
+  F5 restarts a bounded simulated transcript.
 - F6 opens scrollable help (PgUp/PgDn, arrows, wheel, Home/End; Esc/F6 returns).
   Escape closes a dropdown/modal before it quits the
   gallery. A modal captures all keys and mouse, while resize and output errors
@@ -49,8 +61,15 @@ There is no attempt to invent a generic ScrollView or pixel clipper.
 
 ## Real results and honest demonstrations
 
-Controls include TextInput, Button, Checkbox, RadioGroup, Select, ProgressBar and
-Label. Data includes ListWidget, TableWidget, WaveformWidget and MapWidget. Text
+Controls include TextInput, Button, Checkbox, RadioGroup, Select, ProgressBar,
+Label, Slider and NumericInput. The last two are appended, preserving existing
+specimen indices. Slider arrows/endpoints/drag change its real value; dragging
+receives mouse movement/release outside the hit area and Escape cancels it.
+Opening a modal silently ends Slider capture, retaining its last chosen value;
+a release captured by the modal cannot leave a latent drag after dismissal.
+NumericInput keeps invalid drafts editable, commits on Enter and steps on
+Up/Down; its `!` feedback and bold diagnostic do not rely on color.
+Data includes ListWidget, TableWidget, WaveformWidget and MapWidget. Text
 includes retained/streamed TextBox, Composer history/submission and an authored
 bounded block fallback. Pixels shows a fixed 32x16 persistent PixelSurface with
 a complete ASCII luminance baseline. Frame, MenuBar and Notebook provide the
@@ -74,7 +93,8 @@ There are no fictitious clipboard, save or zoom commands.
 
 Focused sources remain independently buildable and copyable: `forms`,
 `widgets_reference` (tabs/border families/tick split), `chat`, `dialogs`,
-`pixel_surface`, `dashboard`, `game` and `notebook`. New primitives can be added
+`pixel_surface`, `dashboard`, `game`, `notebook`, `slider` and `numeric_settings`.
+New primitives can be added
 to the catalogue as they ship without making this gallery their dependency.
 
 ## Evidence and limits
@@ -90,6 +110,15 @@ cell captures on all three tiers.
 Short-modal tests additionally decode the actual fallback driver's ASCII frame
 output to check reachable help and painted choices, rather than inspecting the
 underlying Screen that App restores after presenting an overlay.
+
+Theme acceptance adds lossless RGB/attribute run captures and deterministic
+seven-frame initial/focus/category/selection/disabled/error/help journeys for both palettes,
+each tier, and native/explicit-ASCII policy. The evidence records cell/style and
+actual frame fingerprints plus readable header/body/status style probes. Tests
+also assert semantic colors, colorless markers and bold/reverse feedback; ASCII
+modal checks read emitted truecolor cells rather than the restored backdrop.
+Use the capture tool's `--styles`, `--hc`, `--ascii` and `--theme-evidence` modes
+to inspect/reproduce these authored states. See the capture README for commands.
 
 Screen captures are not terminal screenshots: they omit later modal rendering,
 and enhanced-region collection may already have blanked cells. Wire size/hash

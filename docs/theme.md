@@ -105,3 +105,10 @@ the non-pure protected `on_theme_changed()` hook, or read the public
 `theme_snapshot()` while drawing. The state/setters are base-owned and
 non-virtual. A hook must preserve content and call no application callbacks;
 compound widgets may explicitly forward to their internally owned children.
+
+The [Widget lab](widget-gallery.md) is a complete application-owned example:
+View selects real dark/high-contrast palettes, F1 independently selects ASCII
+glyph/image presentation, and copied snapshots are applied explicitly to its
+borrowed Notebook pages/specimens. Palette transitions preserve user/model
+state and authored RGBA; deterministic tier/style/wire captures document the
+roles and their colorless markers without claiming physical emulator review.

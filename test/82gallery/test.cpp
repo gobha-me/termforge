@@ -5,6 +5,7 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <functional>
 #include <iterator>
@@ -16,6 +17,7 @@
 #include "gallery_app.hpp"
 #include "gallery_capture.hpp"
 #include "support/apc.hpp"
+#include "support/terminal_grid.hpp"
 #include "termforge/core/byte_sink.hpp"
 #include "termforge/drivers/ansi_rgb_driver.hpp"
 #include "termforge/drivers/fallback_driver.hpp"
@@ -51,14 +53,19 @@ class Harness final : public GalleryApp {
   using GalleryApp::GalleryApp;
   int frame{0};
   std::vector<std::string> input, cells, results;
+  std::vector<Screen> screens;
+  std::vector<FrameBytes> traffic;
+  std::vector<ImageResidency> residency;
   std::vector<Rect> rectangles;
   std::vector<int> categories, specimens, counters;
   std::function<void(int)> before, on_after;
   RecordingSink output;
   auto drive(int frames, int tier = 0, int cols = 80, int rows = 24) -> void {
-    if (on_after)
-      set_frame_observer(
-          [this](const FrameObservation&) { on_after(frame - 1); });
+    set_frame_observer([this](const FrameObservation&) {
+      traffic.push_back(driver().last_frame_bytes());
+      residency.push_back(driver().residency());
+      if (on_after) on_after(frame - 1);
+    });
     std::unique_ptr<TerminalDriver> selected;
     if (tier == 0) selected = std::make_unique<FallbackDriver>();
     if (tier == 1) selected = std::make_unique<AnsiRgbDriver>();
@@ -69,6 +76,7 @@ class Harness final : public GalleryApp {
     driver().set_output(&output);
     GalleryApp::on_render(screen);
     cells.push_back(gallery_cells(screen));
+    screens.push_back(screen);
     rectangles.push_back(specimen_rect());
     categories.push_back(category());
     specimens.push_back(specimen());
@@ -229,7 +237,7 @@ TEST_CASE("Gallery makes every specimen reachable on tiny narrow normal and "
   for (const auto size :
        {Extent{24, 8}, Extent{40, 16}, Extent{80, 24}, Extent{120, 32}}) {
     Harness app;
-    const std::array counts{7, 4, 3, 1, 6};
+    const std::array counts{9, 4, 3, 1, 6};
     app.input.push_back("");
     for (std::size_t category = 0; category < counts.size(); ++category) {
       for (int card = 1; card < counts[category]; ++card)
@@ -606,4 +614,426 @@ TEST_CASE("Gallery sink refusal retries retirement and presentation changes "
   CHECK(delete_images(app.output.frames[3]) == 1);
   CHECK(app.ascii());
   CHECK(app.draft().find("safe") != std::string::npos);
+}
+
+TEST_CASE("Gallery real palette journeys pin styles and actual frames on every "
+          "tier") {
+  std::string evidence;
+  constexpr std::array names{"initial",  "focus", "category", "selection",
+                             "disabled", "error", "help"};
+  for (const auto palette :
+       {GalleryPalette::Dark, GalleryPalette::HighContrast})
+    for (int tier = 0; tier < 3; ++tier)
+      for (const bool ascii : {false, true}) {
+        INFO(static_cast<int>(palette)
+             << " tier=" << tier << " ascii=" << ascii);
+        Harness app;
+        app.set_palette(palette);
+        if (ascii) app.set_ascii(true);
+        app.input = gallery_theme_journey();
+        app.drive(7, tier);
+        const auto value = app.presentation_theme();
+        CHECK(app.palette() == palette);
+        CHECK(app.ascii() == (ascii || tier == 0));
+        CHECK(value.glyphs ==
+              (app.ascii() ? BorderStyle::Ascii : BorderStyle::Rounded));
+        if (palette == GalleryPalette::HighContrast) {
+          CHECK(value.content_fg == Rgb{255, 255, 255});
+          CHECK(value.content_bg == Rgb{0, 0, 0});
+          CHECK(value.focus_bg == Rgb{255, 255, 0});
+          CHECK(value.selection_bg == Rgb{0, 255, 255});
+        }
+        const auto focus = app.rectangles[1];
+        bool cursor = false;
+        for (int x = focus.x; x < focus.x + focus.w; ++x) {
+          const auto& cell = app.screens[1].at(x, focus.y);
+          cursor |= cell.fg == value.focus_fg && cell.bg == value.focus_bg &&
+                    (cell.attrs & Attr::Reverse) != Attr::None;
+        }
+        CHECK(cursor);
+        const auto selected = app.rectangles[3];
+        const auto& marker = app.screens[3].at(selected.x, selected.y);
+        CHECK(marker.fg == value.selection_fg);
+        CHECK(marker.bg == value.selection_bg);
+        CHECK((marker.attrs & Attr::Bold) != Attr::None);
+        CHECK_FALSE(app.screens[3].text_at(selected.x, selected.y).empty());
+        CHECK(app.cells[4].find("[disabled]") != std::string::npos);
+        const auto disabled = app.rectangles[4];
+        for (int y = disabled.y; y < disabled.y + disabled.h; ++y)
+          for (int x = disabled.x; x < disabled.x + disabled.w; ++x)
+            CHECK((app.screens[4].at(x, y).attrs & Attr::Dim) != Attr::None);
+        CHECK(app.results[4] == "Demo data: disabled (simulated).");
+        const auto& status = app.screens[5].at(0, 22);
+        CHECK(status.fg == value.error);
+        CHECK(status.bg == value.surface_bg);
+        CHECK((status.attrs & Attr::Bold) != Attr::None);
+        const auto error = app.rectangles[5];
+        CHECK(app.screens[5].at(error.x, error.y).fg == value.error);
+        CHECK(app.cells[5].find("Simulated error") != std::string::npos);
+        REQUIRE(app.output.frames.size() >= 7);
+        if (tier == 0) {
+          CHECK(app.output.frames[1].find("38;2;") == std::string::npos);
+          CHECK(app.output.frames[3].find("[1m") != std::string::npos);
+          CHECK(app.output.frames[5].find("[1m") != std::string::npos);
+        }
+        if (tier > 0 && app.ascii()) {
+          tfsupport::TerminalGrid terminal{80, 24};
+          for (int i = 0; i < 7; ++i)
+            terminal.feed(app.output.frames[static_cast<std::size_t>(i)]);
+          REQUIRE(app.top_overlay());
+          const auto dialog = app.top_overlay()->rect();
+          // This is the emitted modal, not the restored backdrop Screen.
+          const auto& cell = terminal.at(dialog.x + 1, dialog.y + 1);
+          const auto rgb = [](Rgb color) {
+            return (color.r << 16) | (color.g << 8) | color.b;
+          };
+          CHECK(cell.fg == rgb(value.content_fg));
+          CHECK(cell.bg == rgb(value.content_bg));
+        }
+        evidence += std::format("# palette={} tier={} mode={}\n",
+                                palette == GalleryPalette::Dark ? "dark" : "hc",
+                                tier, ascii ? "ascii" : "native");
+        for (std::size_t i = 0; i < names.size(); ++i)
+          evidence += std::format(
+              "{} {} wire={} bytes={}\n", names[i],
+              gallery_theme_record(app.screens[i], app.rectangles[i]),
+              gallery_fingerprint(app.output.frames[i]),
+              app.output.frames[i].size());
+      }
+  const auto path =
+      std::filesystem::path{GALLERY_CAPTURE_DIR} / "theme-evidence.txt";
+  std::ifstream file{path, std::ios::binary};
+  REQUIRE(file.is_open());
+  const std::string expected{std::istreambuf_iterator<char>{file}, {}};
+  CHECK(evidence == expected);
+}
+
+TEST_CASE("Gallery palette changes preserve models focus history and source "
+          "identity") {
+  const int tier = GENERATE(0, 1, 2);
+  Harness app;
+  app.input = {"", "\t retained", "", "", "", ""};
+  TextEntryHandle stream;
+  std::size_t transcript_bytes = 0, block_bytes = 0;
+  const Pixel* source = nullptr;
+  std::vector<Pixel> rgba;
+  app.before = [&](int frame) {
+    if (frame == 1) {
+      stream = app.live_stream();
+      REQUIRE(stream);
+      transcript_bytes = app.transcript().retained_bytes();
+      block_bytes = app.document_blocks().retained_bytes();
+      source = app.framebuffer().pixels().data();
+      rgba.assign(app.framebuffer().pixels().begin(),
+                  app.framebuffer().pixels().end());
+    }
+    if (frame >= 2)
+      app.set_palette(frame % 2 == 0 ? GalleryPalette::HighContrast
+                                     : GalleryPalette::Dark);
+  };
+  app.drive(6, tier);
+  CHECK(app.draft() == "TermForge demo retained");
+  CHECK(app.results[1] == "Draft changed; Enter commits.");
+  for (std::size_t frame = 2; frame < app.results.size(); ++frame) {
+    CHECK(app.results[frame] == app.results[1]);
+    // The palette header changes; glyph/text content below it does not.
+    CHECK(app.cells[frame].substr(app.cells[frame].find('\n') + 1) ==
+          app.cells[1].substr(app.cells[1].find('\n') + 1));
+  }
+  CHECK(app.live_stream() == stream);
+  CHECK(app.transcript().retained_bytes() == transcript_bytes);
+  CHECK(app.document_blocks().retained_bytes() == block_bytes);
+  CHECK(app.document_blocks().block_count() == 1);
+  CHECK(app.framebuffer().pixels().data() == source);
+  CHECK(
+      std::equal(rgba.begin(), rgba.end(), app.framebuffer().pixels().begin()));
+  CHECK(app.counter() == 0);
+  CHECK_FALSE(app.checked());
+  CHECK(app.composer().history_size() == 0);
+}
+
+TEST_CASE(
+    "Gallery View palette actions preserve draft and existing menu indices") {
+  Harness app;
+  // F10 focuses Demo; Right selects View. Down enters its first item;
+  // four further Down steps reach the appended high-contrast action.
+  app.input = {"", "\t kept",
+               "\033[21~\033[C\033[B" + repeats("\033[B", 4) + "\r",
+               "\033[B" + repeats("\033[B", 3) + "\r"};
+  app.drive(4);
+  CHECK(app.palette() == GalleryPalette::Dark);
+  CHECK(app.draft() == "TermForge demo kept");
+  CHECK(app.results[2] == app.results[1]);
+  CHECK(app.screens[2].at(0, 0).fg == Rgb{255, 255, 0});
+  CHECK(app.screens[3].at(0, 0).fg == Rgb{112, 190, 230});
+  CHECK(app.ascii());
+}
+
+TEST_CASE("Gallery appended Slider and NumericInput have real edits and "
+          "diagnostics") {
+  const int tier = GENERATE(0, 1, 2);
+  Harness app;
+  app.set_palette(GalleryPalette::HighContrast);
+  app.input = {"",
+               repeats(next_card, 7) + "\t\033[C",
+               next_card,
+               "\033[H" + repeats("\033[3~", 3) + "27\r",
+               "\033[H" + repeats("\033[3~", 3) + "bad\r",
+               "",
+               "\033[27u"};
+  app.before = [&](int frame) {
+    if (frame == 5) app.set_palette(GalleryPalette::Dark);
+  };
+  app.drive(7, tier);
+  CHECK(app.slider_value() == 45);
+  CHECK(app.results[1] == "Slider: 45");
+  CHECK(app.results[3] == "NumericInput: 27");
+  CHECK(std::get<std::int64_t>(app.numeric_value()) == 27);
+  CHECK(app.numeric_draft() == "27");
+  CHECK(app.cells[4].find("bad") != std::string::npos);
+  CHECK(app.cells[4].find('!') != std::string::npos);
+  CHECK(app.cells[5].find("bad") != std::string::npos);
+  bool warning = false;
+  const auto body = app.rectangles[4];
+  for (int x = body.x; x < body.x + body.w; ++x) {
+    const auto& cell = app.screens[4].at(x, body.y);
+    warning |=
+        cell.fg == Rgb{255, 192, 0} && (cell.attrs & Attr::Bold) != Attr::None;
+  }
+  CHECK(warning);
+  CHECK(app.running());
+}
+
+TEST_CASE(
+    "Gallery palette changes keep list and table selections with scroll") {
+  const bool table = GENERATE(false, true);
+  const int tier = GENERATE(0, 1, 2);
+  Harness app;
+  app.input = {"",
+               next_category + (table ? next_card : ""),
+               "\t" + repeats("\033[B", 20),
+               "",
+               "",
+               ""};
+  int selected = -1, scroll = -1;
+  app.before = [&](int frame) {
+    if (frame == 2) {
+      selected =
+          table ? app.demo_table().selected() : app.demo_list().selected();
+      scroll = table ? app.demo_table().scroll_offset()
+                     : app.demo_list().scroll_offset();
+      REQUIRE(selected == 20);
+      REQUIRE(scroll > 0);
+    }
+    if (frame == 3) app.set_palette(GalleryPalette::HighContrast);
+    if (frame == 4) app.set_palette(GalleryPalette::Dark);
+  };
+  app.drive(6, tier, 40, 16);
+  CHECK((table ? app.demo_table().selected() : app.demo_list().selected()) ==
+        selected);
+  CHECK((table ? app.demo_table().scroll_offset()
+               : app.demo_list().scroll_offset()) == scroll);
+  CHECK(app.results[3] == app.results[2]);
+  CHECK(app.results[4] == app.results[2]);
+  CHECK(app.demo_table().row_count() == 24);
+}
+
+TEST_CASE(
+    "Gallery palettes preserve Composer history and authored block styles") {
+  const int tier = GENERATE(0, 1, 2);
+  Harness app;
+  app.input = {
+      "",       repeats(next_category, 2) + next_card, "\t\r", "\033[A", "", "",
+      next_card};
+  app.before = [&](int frame) {
+    if (frame == 4) app.set_palette(GalleryPalette::HighContrast);
+  };
+  app.drive(7, tier);
+  CHECK(app.composer().history_size() == 1);
+  CHECK(app.composer_text() ==
+        "Edit this draft; Enter sends it to the transcript.");
+  CHECK(app.results[4] == app.results[3]);
+  CHECK(app.document_blocks().block_count() == 1);
+  bool authored = false, inherited = false;
+  const auto& screen = app.screens[6];
+  const auto body = app.rectangles[6];
+  for (int y = body.y; y < body.y + body.h; ++y)
+    for (int x = body.x; x < body.x + body.w; ++x) {
+      if (screen.text_at(x, y).empty()) continue;
+      const auto& cell = screen.at(x, y);
+      authored |= cell.fg == theme::kFg && cell.bg == theme::kBg;
+      inherited |= cell.fg == Rgb{255, 255, 255} && cell.bg == Rgb{0, 0, 0};
+    }
+  CHECK(authored);
+  CHECK(inherited);
+}
+
+TEST_CASE(
+    "Gallery slider routes drag release outside its hit area and cancels") {
+  const bool cancel = GENERATE(false, true);
+  Harness app;
+  app.input = {"", repeats(next_card, 7) + "\t", "", "", ""};
+  app.before = [&](int frame) {
+    const auto body = app.specimen_rect();
+    if (frame == 1) app.input[2] = click(body.x + body.w / 2, body.y);
+    if (frame == 2) {
+      app.set_palette(GalleryPalette::HighContrast);
+      app.input[3] = std::format("\033[<32;{};1M", body.x + body.w + 1);
+    }
+    if (frame == 3)
+      app.input[4] = cancel ? "\033[27u"
+                            : std::format("\033[<0;{};1m", body.x + body.w + 1);
+  };
+  app.drive(5);
+  CHECK(app.slider_value() == (cancel ? 40 : 100));
+  CHECK(app.running());
+}
+
+TEST_CASE(
+    "Gallery palette changes preserve open selection popup and modal draft") {
+  const int tier = GENERATE(0, 1, 2);
+  SECTION("Selection popup remains open and commits the original choice") {
+    Harness app;
+    app.input = {"", repeats(next_card, 4) + "\t\r", "", "\033[B\r"};
+    app.before = [&](int frame) {
+      if (frame == 2) app.set_palette(GalleryPalette::HighContrast);
+    };
+    app.drive(4, tier);
+    CHECK(app.cells[2].find("Simulated remote") != std::string::npos);
+    CHECK(app.status() == "Select: Simulated remote");
+  }
+  SECTION("Prompt uses the new snapshot without discarding uncommitted text") {
+    Harness app;
+    app.input = {"",     repeats(next_category, 4) + repeats(next_card, 2),
+                 "\t\r", "Kept",
+                 "",     "\r"};
+    app.before = [&](int frame) {
+      if (frame == 4) app.set_palette(GalleryPalette::HighContrast);
+    };
+    app.on_after = [&](int frame) {
+      if (frame == 4) {
+        REQUIRE(app.top_overlay());
+        CHECK(app.top_overlay()->theme_snapshot() == app.presentation_theme());
+      }
+    };
+    app.drive(6, tier);
+    CHECK(app.draft() == "Kept");
+    CHECK(app.status() == "TextInput renamed: Kept");
+  }
+}
+
+TEST_CASE(
+    "Gallery clean authored pixels survive palette changes and refused cells") {
+  const int tier = GENERATE(1, 2);
+  const bool refusal = GENERATE(false, true);
+  Harness app;
+  app.input = {repeats(next_category, 3), "", "", ""};
+  const Pixel* source = nullptr;
+  std::vector<Pixel> rgba;
+  app.before = [&](int frame) {
+    if (frame == 1) {
+      source = app.framebuffer().pixels().data();
+      rgba.assign(app.framebuffer().pixels().begin(),
+                  app.framebuffer().pixels().end());
+      app.set_palette(GalleryPalette::HighContrast);
+    }
+    app.output.refuse = refusal && frame == 1;
+  };
+  app.drive(4, tier, 40, 16);
+  CHECK(app.pixel_submissions() == 1);
+  CHECK(app.framebuffer().pixels().data() == source);
+  CHECK(
+      std::equal(rgba.begin(), rgba.end(), app.framebuffer().pixels().begin()));
+  REQUIRE(app.traffic.size() == 4);
+  for (std::size_t frame = 1; frame < 4; ++frame) {
+    CHECK(app.traffic[frame].image_transmit == 0);
+    CHECK(delete_images(app.output.frames[frame]) == 0);
+    if (tier == 2) {
+      CHECK(app.residency[frame].pinned_images == 1);
+      CHECK(app.residency[frame].source_payload_bytes ==
+            std::uint64_t{32} * 16U * 4U);
+    }
+  }
+  if (refusal) CHECK(app.results[2].find("refused") != std::string::npos);
+}
+
+TEST_CASE(
+    "Gallery disabled pixels use marked cells and retire accepted roots") {
+  const int tier = GENERATE(0, 1, 2);
+  Harness app;
+  app.input = {repeats(next_category, 3), repeats(state_key, 4), ""};
+  app.drive(3, tier, 24, 8);
+  CHECK(app.cells[1].find("[disabled]") != std::string::npos);
+  const auto body = app.rectangles[1];
+  for (int y = body.y; y < body.y + body.h; ++y)
+    for (int x = body.x; x < body.x + body.w; ++x)
+      CHECK((app.screens[1].at(x, y).attrs & Attr::Dim) != Attr::None);
+  CHECK(app.traffic[1].image_transmit == 0);
+  if (tier == 2) {
+    CHECK(delete_images(app.output.frames[1]) == 1);
+    CHECK(app.residency[1].pinned_images == 0);
+  }
+}
+
+TEST_CASE(
+    "Gallery style runs retain every RGB attribute and wide continuation") {
+  Screen screen{4, 1};
+  screen.clear({1, 2, 3}, {4, 5, 6});
+  screen.write_text(0, 0, "日本", {1, 2, 3}, {4, 5, 6}, Attr::Bold);
+  CHECK(gallery_cells(screen) == "日本\n");
+  CHECK(gallery_styles(screen) == "0:0+4 fg=010203 bg=040506 a=1\n");
+  const auto before = gallery_fingerprint(gallery_styles(screen));
+  screen.at(1, 0).attrs = Attr::Reverse;
+  CHECK(gallery_fingerprint(gallery_styles(screen)) != before);
+  CHECK(gallery_cells(screen) == "日本\n");
+  CHECK(gallery_styles(screen) == "0:0+1 fg=010203 bg=040506 a=1\n"
+                                  "0:1+1 fg=010203 bg=040506 a=16\n"
+                                  "0:2+2 fg=010203 bg=040506 a=1\n");
+}
+
+TEST_CASE(
+    "Gallery modal entry stops Slider capture without restoring its value") {
+  Harness app;
+  app.input = {"", repeats(next_card, 7) + "\t", "", help_key, "", "\033[27u",
+               ""};
+  app.before = [&](int frame) {
+    const auto body = app.specimen_rect();
+    if (frame == 1) app.input[2] = click(body.x + body.w / 2, body.y);
+    if (frame == 3)
+      app.input[4] = std::format("\033[<0;{};1m", body.x + body.w + 1);
+    if (frame == 5)
+      app.input[6] = std::format("\033[<32;{};1M", body.x + body.w + 1);
+  };
+  app.drive(7);
+  CHECK(app.overlay_count() == 0);
+  CHECK(app.slider_value() == 0);
+  CHECK(app.running());
+}
+
+TEST_CASE(
+    "Gallery disabling Slider stops capture before the next batched release") {
+  Harness app;
+  app.input = {"", repeats(next_card, 7) + "\t", "", ""};
+  app.before = [&](int frame) {
+    const auto body = app.specimen_rect();
+    if (frame == 1) app.input[2] = click(body.x + body.w / 2, body.y);
+    if (frame == 2)
+      app.input[3] = repeats(state_key, 4) +
+                     std::format("\033[<0;{};1m", body.x + body.w + 1);
+  };
+  app.drive(4);
+  CHECK(app.slider_value() == 0);
+  CHECK(app.results[3] == "Demo data: disabled (simulated).");
+  CHECK(app.cells[3].find("[disabled]") != std::string::npos);
+}
+
+TEST_CASE("Gallery tiny fallback states keep readable diagnostic and disabled "
+          "markers") {
+  Harness app;
+  app.input = {"", repeats(state_key, 4), state_key + repeats(state_key, 3)};
+  app.drive(3, 0, 12, 6);
+  CHECK(app.cells[1].find("[disabled]") != std::string::npos);
+  CHECK(app.cells[2].find("[error]") != std::string::npos);
+  CHECK((app.screens[2].at(0, 4).attrs & Attr::Bold) != Attr::None);
+  CHECK(app.output.frames[2].find("[1m") != std::string::npos);
 }

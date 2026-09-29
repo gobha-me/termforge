@@ -1,8 +1,8 @@
-TERMFORGE / WIDGET LAB                                       ANSI RGB | enhanced
+TERMFORGE / WIDGET LAB                                ANSI RGB | enhanced | dark
 ▸Demo   View   Help                                                             
 ▸Controls   Data   Text   Pixels   Dialogs                                      
 ╭┤ Specimen ├──────────────────────────────────────────────────────────────────╮
-│< 1/7 TextInput                                                              >│
+│< 1/9 TextInput                                                              >│
 │Type; Enter commits a result, not a file.                                     │
 │                                                                              │
 │TermForge demo                                                                │

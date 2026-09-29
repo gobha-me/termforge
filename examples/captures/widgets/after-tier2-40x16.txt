@@ -2,7 +2,7 @@ TERMFORGE / WIDGET LAB
 ▸Demo   View   Help                     
 ▸Controls   Data   Text   Pixels       ›
 ╭┤ Specimen ├──────────────────────────╮
-│< 1/7 TextInput                      >│
+│< 1/9 TextInput                      >│
 │Type; Enter commits a result, not a fi│
 │                                      │
 │TermForge demo                        │
