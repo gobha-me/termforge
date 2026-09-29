@@ -171,12 +171,17 @@ auto TextInput::draw(Screen& screen) -> void {
         // A standalone combining/zero-width token paints no cell. Mark the
         // already-painted insertion cell instead, without erasing its text.
         const auto x = static_cast<std::int64_t>(r.x) + cx;
-        if (x >= 0 && x < screen.cols() && y >= 0 && y < screen.rows())
-          screen.at(static_cast<int>(x), y).attrs |= Attr::Reverse;
+        if (x >= 0 && x < screen.cols() && y >= 0 && y < screen.rows()) {
+          auto& cell = screen.at(static_cast<int>(x), y);
+          cell.attrs |= Attr::Reverse;
+          cell.fg = theme_color(&Theme::focus_fg, m_fg);
+          cell.bg = theme_color(&Theme::focus_bg, m_bg);
+        }
       } else {
         screen.write_text(r.x + cx, y,
                           clipped.empty() ? std::string_view{" "} : clipped,
-                          m_fg, m_bg, Attr::Reverse);
+                          theme_color(&Theme::focus_fg, m_fg),
+                          theme_color(&Theme::focus_bg, m_bg), Attr::Reverse);
       }
     }
   }

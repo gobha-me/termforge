@@ -93,8 +93,9 @@ auto RadioGroup::draw(Screen& screen) -> void {
     const bool highlight = (idx == m_list.selected()) && focused();
     const Rgb fg = highlight ? m_focused_fg : m_fg;
     const Rgb bg = highlight ? m_focused_bg : m_bg;
+    const auto attrs = highlight && theme_snapshot() ? Attr::Bold : Attr::None;
 
-    screen.fill_rect(r.x, y, r.w, 1, fg, bg);
+    screen.fill_rect(r.x, y, r.w, 1, fg, bg, attrs);
 
     // Mark and label composed as one string, truncated once (see Checkbox).
     // The mark cell moves with the selection on every arrow key, so unlike
@@ -110,7 +111,8 @@ auto RadioGroup::draw(Screen& screen) -> void {
     line += ' ';
     line += m_list.at(idx);
 
-    screen.write_text(r.x, y, detail::truncate_to_width(line, r.w), fg, bg);
+    screen.write_text(r.x, y, detail::truncate_to_width(line, r.w), fg, bg,
+                      attrs);
   }
 
   clear_dirty();

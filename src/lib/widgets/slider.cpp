@@ -58,12 +58,14 @@ auto Slider::set_label(std::string label) -> void {
 }
 
 auto Slider::set_style(BorderStyle style) -> void {
+  m_style_override = true;
   if (m_style == style) return;
   m_style = style;
   mark_dirty();
 }
 
 auto Slider::set_colors(Rgb fg, Rgb bg, Rgb focus_fg, Rgb focus_bg) -> void {
+  m_colors_override = true;
   if (m_fg == fg && m_bg == bg && m_focus_fg == focus_fg &&
       m_focus_bg == focus_bg)
     return;
@@ -146,7 +148,8 @@ auto Slider::draw(Screen& screen) -> void {
   }
   const Rgb fg = focused() ? m_focus_fg : m_fg;
   const Rgb bg = focused() ? m_focus_bg : m_bg;
-  screen.fill_rect(r.x, r.y, r.w, r.h, fg, bg);
+  const auto attrs = focused() && theme_snapshot() ? Attr::Bold : Attr::None;
+  screen.fill_rect(r.x, r.y, r.w, r.h, fg, bg, attrs);
   const Rect track = track_rect();
   if (m_value_text.empty()) m_value_text = std::format("{}", value());
   if (m_line.empty()) {
@@ -159,7 +162,7 @@ auto Slider::draw(Screen& screen) -> void {
     screen.write_text(r.x, r.y,
                       detail::truncate_to_width(
                           label_cols < 3 ? m_value_text : m_line, label_cols),
-                      fg, bg);
+                      fg, bg, attrs);
   if (track.empty()) {
     clear_dirty();
     return;
@@ -167,14 +170,14 @@ auto Slider::draw(Screen& screen) -> void {
   const auto glyphs = scrollbar_glyphs(m_style, ScrollOrientation::Horizontal);
   const auto clipped = track.intersect({0, 0, screen.cols(), screen.rows()});
   for (int x = clipped.x; x < clipped.x + clipped.w; ++x)
-    screen.write_text(x, track.y, glyphs.track, fg, bg);
+    screen.write_text(x, track.y, glyphs.track, fg, bg, attrs);
   const double span = m_config.maximum - m_config.minimum;
   const double fraction = span == 0 ? 0 : (value() - m_config.minimum) / span;
   const int offset = static_cast<int>(std::round(fraction * (track.w - 1)));
   const auto thumb = focused() ? mark_glyphs(m_style).selector : glyphs.thumb;
   const auto thumb_x = static_cast<std::int64_t>(track.x) + offset;
   if (thumb_x >= 0 && thumb_x < screen.cols())
-    screen.write_text(static_cast<int>(thumb_x), track.y, thumb, fg, bg);
+    screen.write_text(static_cast<int>(thumb_x), track.y, thumb, fg, bg, attrs);
   clear_dirty();
 }
 

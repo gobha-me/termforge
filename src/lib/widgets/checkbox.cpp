@@ -29,13 +29,14 @@ auto Checkbox::draw(Screen& screen) -> void {
   }
 
   Rgb fg = m_fg, bg = m_bg;
+  const auto attrs = focused() && theme_snapshot() ? Attr::Bold : Attr::None;
   if (focused()) {
     fg = m_focused_fg;
     bg = m_focused_bg;
   }
 
   // Own the whole rect (immediate-mode contract, see widget.hpp).
-  screen.fill_rect(r.x, r.y, r.w, r.h, fg, bg);
+  screen.fill_rect(r.x, r.y, r.w, r.h, fg, bg, attrs);
 
   // Compose mark + label as ONE string and truncate once. Truncating the mark
   // and the label separately would let a wide label glyph land a column short
@@ -54,7 +55,8 @@ auto Checkbox::draw(Screen& screen) -> void {
   }
 
   const int y = r.y + r.h / 2;
-  screen.write_text(r.x, y, detail::truncate_to_width(m_line, r.w), fg, bg);
+  screen.write_text(r.x, y, detail::truncate_to_width(m_line, r.w), fg, bg,
+                    attrs);
 
   clear_dirty();
 }

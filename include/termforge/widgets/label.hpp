@@ -34,6 +34,7 @@ class Label final : public Widget {
   }
 
   auto set_colors(Rgb fg, Rgb bg) -> void {
+    m_colors_override = true;
     m_fg = fg;
     m_bg = bg;
     mark_dirty();
@@ -42,6 +43,12 @@ class Label final : public Widget {
   auto draw(Screen& screen) -> void override;
 
  private:
+  auto on_theme_changed() -> void override {
+    if (m_colors_override) return;
+    m_fg = theme_color(&Theme::content_fg, theme::kFg);
+    m_bg = theme_color(&Theme::content_bg, theme::kBg);
+  }
+  bool m_colors_override{false};
   std::string m_text;
   Align m_align{Align::Left};
   Rgb m_fg{theme::kFg};

@@ -78,6 +78,12 @@ class NumericInput final : public Widget {
   auto on_event(const Event& event) -> bool override;
 
  private:
+  auto on_theme_changed() -> void override {
+    if (theme_snapshot())
+      m_editor.set_theme(*theme_snapshot());
+    else
+      m_editor.clear_theme();
+  }
   [[nodiscard]] auto check_value(NumericValue candidate) const
       -> std::expected<void, ErrorEvent>;
   auto assign_value(NumericValue candidate, bool notify) -> void;

@@ -257,10 +257,14 @@ auto NumericInput::draw(Screen& screen) -> void {
     clear_dirty();
     return;
   }
-  screen.fill_rect(r.x, r.y, r.w, r.h, theme::kFg, theme::kBg);
+  const Rgb fg = theme_color(&Theme::content_fg, theme::kFg);
+  const Rgb bg = theme_color(&Theme::content_bg, theme::kBg);
+  const Rgb warning = theme_color(&Theme::warning, theme::kFg);
+  const auto diagnostic = theme_snapshot() ? Attr::Bold : Attr::None;
+  screen.fill_rect(r.x, r.y, r.w, r.h, fg, bg);
   if (r.h >= 2)
-    screen.write_text(r.x, r.y, detail::truncate_to_width(m_label, r.w),
-                      theme::kFg, theme::kBg);
+    screen.write_text(r.x, r.y, detail::truncate_to_width(m_label, r.w), fg,
+                      bg);
   const Rect field = editor_rect();
   auto visible_field = field;
   // Keep TextInput's cursor addition inside the visible right edge; wholly
@@ -277,16 +281,17 @@ auto NumericInput::draw(Screen& screen) -> void {
                       m_error     ? "!"
                       : focused() ? ">"
                                   : " ",
-                      theme::kFg, theme::kBg);
+                      m_error ? warning : fg, bg,
+                      m_error ? diagnostic : Attr::None);
   else if (!field.empty() && m_error)
-    screen.write_text(r.x, field.y, "!", theme::kFg, theme::kBg,
-                      focused() ? Attr::Reverse : Attr::None);
+    screen.write_text(r.x, field.y, "!", warning, bg,
+                      diagnostic | (focused() ? Attr::Reverse : Attr::None));
   if (r.h >= 3 && m_error) {
     const auto y = static_cast<std::int64_t>(r.y) + 2;
     if (y <= std::numeric_limits<int>::max())
       screen.write_text(r.x, static_cast<int>(y),
                         detail::truncate_to_width(m_error->message, r.w),
-                        theme::kFg, theme::kBg);
+                        warning, bg, diagnostic);
   }
   clear_dirty();
 }

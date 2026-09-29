@@ -47,6 +47,7 @@ class Frame final : public Widget {
   }
 
   auto set_border_color(Rgb color) -> void {
+    m_color_override = true;
     m_border_fg = color;
     mark_dirty();
   }
@@ -54,6 +55,7 @@ class Frame final : public Widget {
   // Border character family (default Single). Ascii is the bare-TTY /
   // FallbackDriver choice — see widgets/glyphs.hpp.
   auto set_style(BorderStyle style) -> void {
+    m_style_override = true;
     m_style = style;
     mark_dirty();
   }
@@ -80,6 +82,13 @@ class Frame final : public Widget {
   auto draw(Screen& screen) -> void override;
 
  private:
+  auto on_theme_changed() -> void override {
+    if (!m_color_override)
+      m_border_fg = theme_color(&Theme::muted, {0x60, 0x60, 0x80});
+    if (!m_style_override) m_style = theme_glyphs(BorderStyle::Single);
+    m_bg = theme_color(&Theme::content_bg, theme::kBg);
+  }
+  bool m_color_override{false}, m_style_override{false};
   std::string m_title;
   BorderStyle m_style{BorderStyle::Single};
   Rgb m_border_fg{0x60, 0x60, 0x80};

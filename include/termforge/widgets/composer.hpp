@@ -69,6 +69,10 @@ class Composer final : public Widget {
   auto on_event(const Event& ev) -> bool override;
 
  private:
+  auto on_theme_changed() -> void override {
+    m_fg = theme_color(&Theme::content_fg, theme::kFg);
+    m_bg = theme_color(&Theme::content_bg, theme::kBg);
+  }
   struct Draft {
     std::string text;
     std::size_t cursor{0};

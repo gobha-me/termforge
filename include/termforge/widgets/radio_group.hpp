@@ -72,6 +72,7 @@ class RadioGroup final : public Widget {
   auto set_selected(int index) -> void;
 
   auto set_style(BorderStyle style) -> void {
+    m_style_override = true;
     m_style = style;
     mark_dirty();
   }
@@ -101,6 +102,14 @@ class RadioGroup final : public Widget {
   }
 
  private:
+  auto on_theme_changed() -> void override {
+    m_fg = theme_color(&Theme::content_fg, theme::kFg);
+    m_bg = theme_color(&Theme::content_bg, theme::kBg);
+    m_focused_fg = theme_color(&Theme::focus_fg, theme::kFocusFg);
+    m_focused_bg = theme_color(&Theme::focus_bg, theme::kFocusBg);
+    if (!m_style_override) m_style = theme_glyphs(BorderStyle::Single);
+  }
+  bool m_style_override{false};
   auto ensure_visible() -> void;
   // Clamp, and fire only if the selection actually moved.
   auto select(int index) -> void;
