@@ -28,6 +28,7 @@
 #include <termforge/widgets/pixel_surface.hpp>
 #include <termforge/widgets/scrollbar.hpp>
 #include <termforge/widgets/slider.hpp>
+#include <termforge/widgets/split_pane.hpp>
 #include <termforge/widgets/text_box.hpp>
 #include <termforge/widgets/theme.hpp>
 
@@ -67,6 +68,21 @@ class ScriptedApp final : public termforge::App {
 } // namespace
 
 auto main() -> int {
+  termforge::SplitPane splitter;
+  if (!splitter.configure({termforge::SplitDirection::LeftRight, 1, 1, 3}))
+    return 1;
+  splitter.set_geometry({0, 0, 10, 2});
+  const auto split = splitter.layout();
+  if (!split || split->first != termforge::Rect{0, 0, 3, 2} ||
+      split->divider != termforge::Rect{3, 0, 1, 2} ||
+      split->second != termforge::Rect{4, 0, 6, 2})
+    return 1;
+  termforge::Screen split_screen{10, 2};
+  splitter.draw(split_screen);
+  if (split_screen.text_at(3, 0) != "│" ||
+      !splitter.on_event(termforge::KeyEvent{.key = termforge::Key::Right}) ||
+      splitter.layout()->divider.x != 4)
+    return 1;
   termforge::Scrollbar scrollbar;
   if (!scrollbar.set_viewport({20, 0, 5})) return 1;
   scrollbar.set_geometry({0, 0, 1, 5});

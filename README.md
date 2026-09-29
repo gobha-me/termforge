@@ -69,6 +69,9 @@ Landed and verified:
 - **Standalone Scrollbar** — an application-owned view control over caller
   content units, with click/wheel/keyboard paging and no hidden capture. See
   [docs/scrollbar.md](docs/scrollbar.md) and `examples/scrollbar.cpp`.
+- **SplitPane** — a non-owning two-pane divider with checked geometry, keyboard
+  resize/collapse, and explicitly forwarded pointer drag. See
+  [docs/split-pane.md](docs/split-pane.md) and `examples/split_pane.cpp`.
 - **TabBar** — a horizontal strip of titles that reports which one is active
   (`on_change(int)`); Left/Right and clicks switch it, and the strip scrolls
   with `‹ ›` indicators when the titles outrun the columns. It owns the strip
