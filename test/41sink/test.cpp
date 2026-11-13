@@ -43,6 +43,7 @@
 #include "support/bypass_driver.hpp"
 #include "support/image.hpp"
 #include "support/legacy_driver.hpp"
+#include "support/temporary_file.hpp"
 #include "termforge/core/app.hpp"
 #include "termforge/core/byte_sink.hpp"
 #include "termforge/core/renderer.hpp"
@@ -154,7 +155,7 @@ auto capture_stdout(const std::function<void()>& body) -> std::string {
   std::cout.flush();
   std::fflush(stdout);
 
-  std::FILE* tmp = std::tmpfile();
+  std::FILE* tmp = tfsupport::temporary_file();
   const int saved = tmp != nullptr ? ::dup(STDOUT_FILENO) : -1;
   const int redirected = saved >= 0 ? ::dup2(::fileno(tmp), STDOUT_FILENO) : -1;
 
