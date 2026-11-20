@@ -40,9 +40,9 @@ namespace {
 
 struct TempProc {
   TempProc() {
-    std::array<char, 32> pattern{};
-    const std::string base = "/tmp/termforge-proc-XXXXXX";
-    std::ranges::copy(base, pattern.begin());
+    std::string pattern =
+        (std::filesystem::temp_directory_path() / "termforge-proc-XXXXXX")
+            .string();
     const char* made = ::mkdtemp(pattern.data());
     REQUIRE(made != nullptr);
     root = made;

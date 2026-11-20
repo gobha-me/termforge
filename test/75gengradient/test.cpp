@@ -3,10 +3,13 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <limits>
 #include <string>
 
 #include "gen_gradient.hpp"
@@ -160,4 +163,96 @@ TEST_CASE("gen_gradient: unopenable target reports failure, creates nothing",
   REQUIRE_FALSE(gen_gradient::write_file(target.string(), 4, 4));
   REQUIRE_FALSE(fs::exists(target));
   REQUIRE_FALSE(fs::exists(missing));
+}
+
+TEST_CASE("gen_gradient: inclusive dimension endpoints reset stale errno",
+          "[gen_gradient][boundary]") {
+  struct Dimension {
+    const char* text;
+    std::uint32_t value;
+  };
+  const Dimension dimensions[] = {{"1", 1}, {"4096", 4096}};
+
+  for (const auto& dimension : dimensions) {
+    CAPTURE(dimension.text);
+    std::uint32_t value = 99;
+    errno = ERANGE;
+    REQUIRE(gen_gradient::parse_dimension(dimension.text, &value));
+    CHECK(value == dimension.value);
+  }
+}
+
+TEST_CASE("gen_gradient: every refused dimension preserves its output",
+          "[gen_gradient][boundary][failure]") {
+  const char* const inputs[] = {
+      nullptr, "",     "0",
+      "4097",  "-1",   "12x",
+      "1.0",   "0x10", "99999999999999999999999999999999999999"};
+
+  for (const auto* input : inputs) {
+    CAPTURE(input);
+    std::uint32_t value = 99;
+    REQUIRE_FALSE(gen_gradient::parse_dimension(input, &value));
+    CHECK(value == 99);
+  }
+  REQUIRE_FALSE(gen_gradient::parse_dimension("1", nullptr));
+}
+
+TEST_CASE("gen_gradient: maximum-width and maximum-height strips are complete",
+          "[gen_gradient][boundary]") {
+  struct Strip {
+    std::uint32_t width;
+    std::uint32_t height;
+    std::string header;
+    std::string penultimate;
+    std::string last;
+  };
+  const Strip strips[] = {
+      {4096, 1, std::string{"\0\x10\0\0\x01\0\0\0", 8},
+       std::string{"\x01\xfe\0\xff", 4}, std::string{"\0\xff\0\xff", 4}},
+      {1, 4096, std::string{"\x01\0\0\0\0\x10\0\0", 8},
+       std::string{"\xff\0\xfe\xff", 4}, std::string{"\xff\0\xff\xff", 4}}};
+
+  for (const auto& strip : strips) {
+    DYNAMIC_SECTION(strip.width << "x" << strip.height) {
+      TempRgba tmp("termforge-gen-gradient-max-strip.rgba");
+      REQUIRE(gen_gradient::write_file(tmp.c_str(), strip.width, strip.height));
+      std::ifstream input{tmp.path, std::ios::binary};
+      REQUIRE(input);
+      const std::string bytes{std::istreambuf_iterator<char>{input}, {}};
+      REQUIRE(bytes.size() == 16392);
+      CHECK(bytes.substr(0, 8) == strip.header);
+      CHECK(bytes.substr(8, 4) == std::string{"\xff\0\0\xff", 4});
+      CHECK(bytes.substr(16384, 4) == strip.penultimate);
+      CHECK(bytes.substr(16388, 4) == strip.last);
+    }
+  }
+}
+
+TEST_CASE("gen_gradient: invalid axes cannot truncate an existing asset",
+          "[gen_gradient][boundary][failure]") {
+  struct InvalidExtent {
+    std::uint32_t width;
+    std::uint32_t height;
+  };
+  constexpr auto largest = std::numeric_limits<std::uint32_t>::max();
+  const InvalidExtent extents[] = {{0, 1},    {1, 0},       {4097, 1},
+                                   {1, 4097}, {largest, 1}, {1, largest}};
+  const std::string original{"retained\0asset", 14};
+
+  for (const auto& extent : extents) {
+    CAPTURE(extent.width, extent.height);
+    TempRgba tmp("termforge-gen-gradient-preserve-existing.rgba");
+    {
+      std::ofstream output{tmp.path, std::ios::binary};
+      REQUIRE(output.write(original.data(),
+                           static_cast<std::streamsize>(original.size())));
+    }
+    REQUIRE_FALSE(
+        gen_gradient::write_file(tmp.c_str(), extent.width, extent.height));
+    std::ifstream input{tmp.path, std::ios::binary};
+    REQUIRE(input);
+    const std::string bytes{std::istreambuf_iterator<char>{input}, {}};
+    CHECK(bytes == original);
+  }
 }

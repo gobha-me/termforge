@@ -1,7 +1,6 @@
 // Public dialog contracts and production App frames, not a live font probe.
 #include <catch2/catch_test_macros.hpp>
 
-#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <filesystem>
@@ -63,9 +62,9 @@ auto identical(const Screen& a, const Screen& b) -> void {
 struct Directory {
   std::filesystem::path root;
   Directory() {
-    std::array<char, 40> name{};
-    const std::string pattern = "/tmp/termforge-theme-dialogs.XXXXXX";
-    std::copy(pattern.begin(), pattern.end(), name.begin());
+    std::string name = (std::filesystem::temp_directory_path() /
+                        "termforge-theme-dialogs.XXXXXX")
+                           .string();
     const auto* made = ::mkdtemp(name.data());
     REQUIRE(made != nullptr);
     root = made;
