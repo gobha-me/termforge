@@ -37,26 +37,32 @@ TEST_CASE("Rect: touching edges return the canonical empty rectangle",
 
 TEST_CASE("Image: cropped blend preserves the source row stride",
           "[image][failure][mutation-boundary]") {
-  const Image source{2, 3,
+  const Image source{3, 3,
                      std::vector<Pixel>{{1, 2, 3, 255},
                                         {11, 12, 13, 255},
                                         {21, 22, 23, 255},
                                         {31, 32, 33, 255},
                                         {41, 42, 43, 255},
-                                        {51, 52, 53, 255}}};
+                                        {51, 52, 53, 255},
+                                        {61, 62, 63, 255},
+                                        {71, 72, 73, 255},
+                                        {81, 82, 83, 255}}};
   Image destination{2, 2, std::vector<Pixel>(4, Pixel{0, 0, 0, 0})};
 
-  destination.blend(source, Rect{0, 1, 2, 2}, 0, 0);
+  destination.blend(source, Rect{1, 1, 2, 2}, 0, 0);
 
-  CHECK(destination.at(0, 0) == Pixel{21, 22, 23, 255});
-  CHECK(destination.at(1, 0) == Pixel{31, 32, 33, 255});
-  CHECK(destination.at(0, 1) == Pixel{41, 42, 43, 255});
-  CHECK(destination.at(1, 1) == Pixel{51, 52, 53, 255});
+  CHECK(destination.at(0, 0) == Pixel{41, 42, 43, 255});
+  CHECK(destination.at(1, 0) == Pixel{51, 52, 53, 255});
+  CHECK(destination.at(0, 1) == Pixel{71, 72, 73, 255});
+  CHECK(destination.at(1, 1) == Pixel{81, 82, 83, 255});
 
   CHECK(source.at(0, 0) == Pixel{1, 2, 3, 255});
   CHECK(source.at(1, 0) == Pixel{11, 12, 13, 255});
-  CHECK(source.at(0, 1) == Pixel{21, 22, 23, 255});
-  CHECK(source.at(1, 1) == Pixel{31, 32, 33, 255});
-  CHECK(source.at(0, 2) == Pixel{41, 42, 43, 255});
-  CHECK(source.at(1, 2) == Pixel{51, 52, 53, 255});
+  CHECK(source.at(2, 0) == Pixel{21, 22, 23, 255});
+  CHECK(source.at(0, 1) == Pixel{31, 32, 33, 255});
+  CHECK(source.at(1, 1) == Pixel{41, 42, 43, 255});
+  CHECK(source.at(2, 1) == Pixel{51, 52, 53, 255});
+  CHECK(source.at(0, 2) == Pixel{61, 62, 63, 255});
+  CHECK(source.at(1, 2) == Pixel{71, 72, 73, 255});
+  CHECK(source.at(2, 2) == Pixel{81, 82, 83, 255});
 }

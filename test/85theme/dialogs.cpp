@@ -1,7 +1,6 @@
 // Public dialog contracts and production App frames, not a live font probe.
 #include <catch2/catch_test_macros.hpp>
 
-#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <filesystem>
